@@ -76,11 +76,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         height: 50,
                         child: ElevatedButton(
                           onPressed: () {
-                            // 로그인 버튼을 누르면 메인 화면으로 부드럽게 넘어가고, 뒤로가기를 못하게 막습니다!
-                            Navigator.pushReplacement(
-                              context,
-                              MaterialPageRoute(builder: (context) => const MainScreen()),
-                            );
+                            Navigator.pushReplacementNamed(context, '/main');
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF4A4EFE), // 버튼 색상

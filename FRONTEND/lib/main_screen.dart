@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'home_screen.dart';
+import 'scan_screen.dart';
+import 'report_screen.dart';
+import 'closet_screen.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -15,9 +18,9 @@ class _MainScreenState extends State<MainScreen> {
   // 4개의 탭에 들어갈 각각의 화면들 (임시로 텍스트만 띄워둡니다)
   final List<Widget> _screens = [
     const HomeScreen(),
-    const Center(child: Text('2. 스캔 및 등록 (AI Scan)', style: TextStyle(fontSize: 24))),
-    const Center(child: Text('3. 의류 상세 리포트 (DPP 리포트)', style: TextStyle(fontSize: 24))),
-    const Center(child: Text('4. 마이 클로젯 (My Closet)', style: TextStyle(fontSize: 24))),
+    const ScanScreen(),
+    const ReportScreen(),
+    const ClosetScreen(),
   ];
 
   // 하단 탭을 눌렀을 때 실행되는 함수
