@@ -12,18 +12,32 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  // 현재 선택된 탭의 인덱스 (0: 홈, 1: 스캔, 2: 리포트, 3: 옷장)
   int _selectedIndex = 0;
+  bool _didLoadInitialRouteArgument = false;
 
-  // 4개의 탭에 들어갈 각각의 화면들 (임시로 텍스트만 띄워둡니다)
-  final List<Widget> _screens = [
-    const HomeScreen(),
-    const ScanScreen(),
-    const ReportScreen(),
-    const ClosetScreen(),
+  final List<Widget> _screens = const [
+    HomeScreen(),
+    ScanScreen(),
+    ReportScreen(),
+    ClosetScreen(),
   ];
 
-  // 하단 탭을 눌렀을 때 실행되는 함수
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    if (_didLoadInitialRouteArgument) return;
+
+    final route = ModalRoute.of(context);
+    final args = route?.settings.arguments;
+
+    if (args is int && args >= 0 && args < _screens.length) {
+      _selectedIndex = args;
+    }
+
+    _didLoadInitialRouteArgument = true;
+  }
+
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
@@ -40,12 +54,15 @@ class _MainScreenState extends State<MainScreen> {
         elevation: 0,
         centerTitle: true,
       ),
-      body: _screens[_selectedIndex], // 현재 선택된 인덱스에 맞는 화면 보여주기
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: _screens,
+      ),
       bottomNavigationBar: BottomNavigationBar(
-        type: BottomNavigationBarType.fixed, // 탭이 4개 이상일 때 아이콘이 움직이지 않게 고정
+        type: BottomNavigationBarType.fixed,
         backgroundColor: Colors.white,
-        selectedItemColor: const Color(0xFF4A4EFE), // 선택된 탭은 메인 파란색!
-        unselectedItemColor: Colors.grey, // 선택 안 된 탭은 회색
+        selectedItemColor: const Color(0xFF4A4EFE),
+        unselectedItemColor: Colors.grey,
         currentIndex: _selectedIndex,
         onTap: _onItemTapped,
         items: const [

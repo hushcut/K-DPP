@@ -1,25 +1,10 @@
-import 'package:flutter/material.dart';
+import 'dart:collection';
 
-class Clothes {
-  final String title;
-  final String category;
-  final int health;
-  final Map<String, dynamic> materials; // 백엔드 데이터와 호환을 위해 dynamic으로 변경!
-  final String careInstruction;
-  final double carbonFootprint;
+import 'package:flutter/foundation.dart';
 
-  Clothes({
-    required this.title,
-    required this.category,
-    required this.health,
-    required this.materials,
-    required this.careInstruction,
-    required this.carbonFootprint,
-  });
-}
+import 'models/clothes.dart';
 
 class ClosetProvider with ChangeNotifier {
-  // 샘플 데이터들도 새로 바뀐 설계도에 맞춰 빈칸을 다 채워줍니다.
   final List<Clothes> _items = [
     Clothes(
       title: '오가닉 코튼 맨투맨',
@@ -39,10 +24,42 @@ class ClosetProvider with ChangeNotifier {
     ),
   ];
 
-  List<Clothes> get items => _items;
+  Clothes? _selectedClothes;
+
+  ClosetProvider() {
+    if (_items.isNotEmpty) {
+      _selectedClothes = _items.last;
+    }
+  }
+
+  UnmodifiableListView<Clothes> get items => UnmodifiableListView(_items);
+
+  int get count => _items.length;
+
+  Clothes? get latestItem => _items.isEmpty ? null : _items.last;
+
+  Clothes? get selectedClothes => _selectedClothes;
+
+  Clothes? get currentReportItem => _selectedClothes ?? latestItem;
+
+  double get totalCarbonFootprint {
+    return _items.fold(0.0, (sum, item) => sum + item.carbonFootprint);
+  }
+
+  double get averageHealth {
+    if (_items.isEmpty) return 0.0;
+    final total = _items.fold<int>(0, (sum, item) => sum + item.health);
+    return total / _items.length;
+  }
 
   void addClothes(Clothes newClothes) {
     _items.add(newClothes);
+    _selectedClothes = newClothes;
+    notifyListeners();
+  }
+
+  void selectClothes(Clothes clothes) {
+    _selectedClothes = clothes;
     notifyListeners();
   }
 }

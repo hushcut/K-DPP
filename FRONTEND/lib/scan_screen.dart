@@ -1,10 +1,11 @@
 import 'dart:io';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
-import 'closet_provider.dart'; // 상태 관리 보관소
+import 'closet_provider.dart';
+import 'models/clothes.dart';
+import 'models/scan_result.dart';
+import 'services/scan_api_service.dart';
 
 class ScanScreen extends StatefulWidget {
   const ScanScreen({super.key});
@@ -19,90 +20,209 @@ class _ScanScreenState extends State<ScanScreen> {
 
   File? _selectedImage;
   final ImagePicker _picker = ImagePicker();
+  final ScanApiService _scanApiService = const ScanApiService();
 
-  // 📡 백엔드에서 받아올 데이터를 담을 변수들
-  Map<String, dynamic> _scannedMaterials = {}; // 예: {"cotton": 80, "polyester": 20}
-  String _scannedCare = ""; // 세탁 지침
+  Map<String, double> _scannedMaterials = {};
+  String _scannedCare = '';
 
-  // 📸 카메라 실행 및 서버로 사진 전송 함수
+  final Map<String, TextEditingController> _materialControllers = {};
+  final TextEditingController _titleController = TextEditingController();
+
+  final List<String> _categoryOptions = ['상의', '하의'];
+  String _selectedCategory = '상의';
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController.text = '새로 스캔한 의류';
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _materialControllers.values) {
+      controller.dispose();
+    }
+    _titleController.dispose();
+    super.dispose();
+  }
+
   Future<void> _takePicture() async {
     final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
 
-    if (photo != null) {
-      setState(() {
-        _selectedImage = File(photo.path);
-        _isScanning = true; // 분석 중 애니메이션 시작
-      });
+    if (photo == null) return;
 
-      try {
-        // 1. 백엔드 팀원이 뚫어준 ngrok 터널 주소로 교체
-        var uri = Uri.parse('https://nonmimetically-unplacid-zachery.ngrok-free.dev/api/scan');
-        var request = http.MultipartRequest('POST', uri);
-        // (ngrok 경고 페이지 무시 패스워드)
-        request.headers.addAll({
-          'ngrok-skip-browser-warning': 'true',
-        });
+    setState(() {
+      _selectedImage = File(photo.path);
+      _isScanning = true;
+      _isScanComplete = false;
+    });
 
-        request.files.add(await http.MultipartFile.fromPath('image', _selectedImage!.path));
+    try {
+      final ScanResult result =
+      await _scanApiService.scanLabel(imageFile: _selectedImage!);
 
-        // 2. 파일 이름표는 이미 'image'로 완벽하게 세팅
-        request.files.add(await http.MultipartFile.fromPath('image', _selectedImage!.path));
+      _setMaterialControllers(result.materials);
 
-        // 3. 전송 후 응답 대기
-        var streamedResponse = await request.send();
-        var response = await http.Response.fromStream(streamedResponse);
-
-        if (response.statusCode == 200) {
-          // 4. 응답 성공: JSON 데이터 번역
-          final decodedData = json.decode(utf8.decode(response.bodyBytes));
-          print("✅ 서버 응답 완료: $decodedData");
-
-          if (decodedData['status'] == 'success') {
-            setState(() {
-              _isScanning = false;
-              _isScanComplete = true;
-
-              // 백엔드의 JSON Key 값에 맞춰서 데이터 꺼내오기
-              _scannedMaterials = decodedData['materials'];
-              _scannedCare = decodedData['care_instruction'];
-            });
-          }
-        } else {
-          print("❌ 서버 에러 발생: ${response.statusCode}");
-          _showErrorFallback();
-        }
-      } catch (e) {
-        print("🔌 서버 통신 실패: $e");
-        _showErrorFallback();
-      }
-    }
-  }
-
-  // 🚨 서버가 꺼져있을 때 테스트를 위한 임시 조치 함수
-  void _showErrorFallback() {
-    Future.delayed(const Duration(seconds: 2), () {
       if (!mounted) return;
       setState(() {
         _isScanning = false;
         _isScanComplete = true;
-        // 서버 연결 실패 시 임시로 보여줄 가짜 데이터
-        _scannedMaterials = {"cotton": 80, "polyester": 20};
-        _scannedCare = "30도 이하 물에서 중성세제로 손세탁하세요.";
+        _scannedMaterials = result.materials;
+        _scannedCare = result.careInstruction;
+        _titleController.text =
+        (result.title?.trim().isNotEmpty ?? false)
+            ? result.title!.trim()
+            : '새로 스캔한 의류';
+        _selectedCategory = _normalizeCategory(result.category);
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('서버 미연결: 임시 결과 화면을 띄웁니다.')),
+    } on ScanApiException catch (e) {
+      _showErrorFallback(e.message);
+    } catch (e) {
+      debugPrint('🔌 서버 통신 실패: $e');
+      _showErrorFallback('서버 통신 실패로 임시 결과를 표시합니다.');
+    }
+  }
+
+  String _normalizeCategory(String? category) {
+    if (category == null) return '상의';
+    if (_categoryOptions.contains(category)) return category;
+    return '상의';
+  }
+
+  void _setMaterialControllers(Map<String, double> materials) {
+    for (final controller in _materialControllers.values) {
+      controller.dispose();
+    }
+    _materialControllers.clear();
+
+    materials.forEach((key, value) {
+      _materialControllers[key] = TextEditingController(
+        text: value % 1 == 0
+            ? value.toInt().toString()
+            : value.toStringAsFixed(1),
       );
     });
   }
 
-  // 스캔 초기화
+  Map<String, double> _collectEditedMaterials() {
+    final updated = <String, double>{};
+
+    _materialControllers.forEach((key, controller) {
+      final parsed = double.tryParse(controller.text.trim()) ?? 0.0;
+      updated[key] = parsed;
+    });
+
+    return updated;
+  }
+
+  double _findMaterialEmissionFactor(String material) {
+    final m = material.toLowerCase();
+
+    if (m.contains('organic cotton')) return 5.0;
+    if (m.contains('cotton')) return 8.0;
+    if (m.contains('linen')) return 6.0;
+    if (m.contains('recycled polyester')) return 7.0;
+    if (m.contains('polyester')) return 12.0;
+    if (m.contains('nylon')) return 14.0;
+    if (m.contains('wool')) return 25.0;
+    if (m.contains('silk')) return 20.0;
+    if (m.contains('viscose') || m.contains('rayon')) return 10.0;
+    if (m.contains('polyurethane') || m.contains('spandex')) return 15.0;
+
+    return 10.0;
+  }
+
+  double _estimateCarbonFootprint(
+      Map<String, double> materials,
+      String category,
+      ) {
+    if (materials.isEmpty) {
+      return category == '하의' ? 12.0 : 9.0;
+    }
+
+    double totalPercent = materials.values.fold(0.0, (sum, value) => sum + value);
+    if (totalPercent <= 0) totalPercent = 100.0;
+
+    double emission = 0.0;
+
+    materials.forEach((material, percent) {
+      final factor = _findMaterialEmissionFactor(material);
+      emission += (percent / totalPercent) * factor;
+    });
+
+    final categoryMultiplier = category == '하의' ? 1.15 : 1.0;
+    final result = emission * categoryMultiplier;
+
+    return double.parse(result.toStringAsFixed(1));
+  }
+
+  int _estimateInitialHealth(Map<String, double> materials) {
+    if (materials.isEmpty) return 80;
+
+    double score = 80.0;
+    final keys = materials.keys.map((e) => e.toLowerCase()).toList();
+
+    if (materials.length == 1) score += 8;
+    if (materials.length >= 3) score -= 8;
+
+    if (keys.any((e) => e.contains('cotton') || e.contains('linen'))) {
+      score += 5;
+    }
+
+    if (keys.any((e) => e.contains('silk') || e.contains('wool'))) {
+      score -= 5;
+    }
+
+    if (keys.any((e) => e.contains('polyurethane') || e.contains('spandex'))) {
+      score -= 3;
+    }
+
+    final clamped = score.round().clamp(60, 95);
+    return clamped.toInt();
+  }
+
+  void _showErrorFallback([
+    String message = '서버 미연결: 임시 결과 화면을 띄웁니다.',
+  ]) {
+    Future.delayed(const Duration(seconds: 1), () {
+      if (!mounted) return;
+
+      final fallbackMaterials = <String, double>{
+        'cotton': 80,
+        'polyester': 20,
+      };
+
+      _setMaterialControllers(fallbackMaterials);
+
+      setState(() {
+        _isScanning = false;
+        _isScanComplete = true;
+        _scannedMaterials = fallbackMaterials;
+        _scannedCare = '30도 이하 물에서 중성세제로 손세탁하세요.';
+        _titleController.text = '새로 스캔한 의류';
+        _selectedCategory = '상의';
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    });
+  }
+
   void _resetScan() {
+    for (final controller in _materialControllers.values) {
+      controller.dispose();
+    }
+    _materialControllers.clear();
+
     setState(() {
       _selectedImage = null;
       _isScanning = false;
       _isScanComplete = false;
       _scannedMaterials = {};
-      _scannedCare = "";
+      _scannedCare = '';
+      _titleController.text = '새로 스캔한 의류';
+      _selectedCategory = '상의';
     });
   }
 
@@ -111,7 +231,6 @@ class _ScanScreenState extends State<ScanScreen> {
     return _isScanComplete ? _buildResultView() : _buildCameraView();
   }
 
-  // 📷 1. 카메라 뷰 화면
   Widget _buildCameraView() {
     return Container(
       color: Colors.black87,
@@ -119,14 +238,19 @@ class _ScanScreenState extends State<ScanScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Text('옷의 케어 라벨을 촬영해 주세요', style: TextStyle(color: Colors.white, fontSize: 16)),
+          const Text(
+            '옷의 케어 라벨을 촬영해 주세요',
+            style: TextStyle(color: Colors.white, fontSize: 16),
+          ),
           const SizedBox(height: 30),
-
           Container(
             width: 250,
             height: 250,
             decoration: BoxDecoration(
-              border: Border.all(color: _isScanning ? Colors.greenAccent : Colors.white, width: 2),
+              border: Border.all(
+                color: _isScanning ? Colors.greenAccent : Colors.white,
+                width: 2,
+              ),
               borderRadius: BorderRadius.circular(12),
               color: Colors.white.withOpacity(0.1),
             ),
@@ -136,7 +260,12 @@ class _ScanScreenState extends State<ScanScreen> {
                 if (_selectedImage != null)
                   ClipRRect(
                     borderRadius: BorderRadius.circular(10),
-                    child: Image.file(_selectedImage!, width: 250, height: 250, fit: BoxFit.cover),
+                    child: Image.file(
+                      _selectedImage!,
+                      width: 250,
+                      height: 250,
+                      fit: BoxFit.cover,
+                    ),
                   ),
                 if (_isScanning)
                   Container(
@@ -147,7 +276,13 @@ class _ScanScreenState extends State<ScanScreen> {
                         children: [
                           CircularProgressIndicator(color: Colors.greenAccent),
                           SizedBox(height: 16),
-                          Text('AI 라벨 분석 중...', style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+                          Text(
+                            'AI 라벨 분석 중...',
+                            style: TextStyle(
+                              color: Colors.greenAccent,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -156,7 +291,6 @@ class _ScanScreenState extends State<ScanScreen> {
             ),
           ),
           const SizedBox(height: 50),
-
           GestureDetector(
             onTap: _isScanning ? null : _takePicture,
             child: Container(
@@ -175,21 +309,113 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  // ✨ 2. 결과 뷰 화면
   Widget _buildResultView() {
+    final previewHealth = _estimateInitialHealth(_scannedMaterials);
+    final previewCarbon =
+    _estimateCarbonFootprint(_scannedMaterials, _selectedCategory);
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Center(child: Icon(Icons.check_circle, color: Colors.green, size: 60)),
+          const Center(
+            child: Icon(Icons.check_circle, color: Colors.green, size: 60),
+          ),
           const SizedBox(height: 16),
-          const Center(child: Text('스캔 완료!', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold))),
+          const Center(
+            child: Text(
+              '스캔 완료!',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+          ),
           const SizedBox(height: 32),
-          const Text('AI 인식 소재 결과', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+
+          const Text(
+            '기본 정보 수정',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 12),
 
-          // 백엔드에서 받은 소재 리스트를 화면에 그리기
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            child: Column(
+              children: [
+                TextFormField(
+                  controller: _titleController,
+                  decoration: InputDecoration(
+                    labelText: '의류 이름',
+                    hintText: '예: 오가닉 코튼 맨투맨',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    prefixIcon: const Icon(Icons.checkroom_outlined),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  value: _selectedCategory,
+                  decoration: InputDecoration(
+                    labelText: '카테고리',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    prefixIcon: const Icon(Icons.category_outlined),
+                  ),
+                  items: _categoryOptions.map((category) {
+                    return DropdownMenuItem(
+                      value: category,
+                      child: Text(category),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _selectedCategory = value;
+                    });
+                  },
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.green.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.green.shade100),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.analytics_outlined, color: Colors.green),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    '예상 건강도: $previewHealth%\n'
+                        '예상 탄소발자국: ${previewCarbon.toStringAsFixed(1)} kg CO2eq',
+                    style: const TextStyle(fontSize: 14, color: Colors.black87),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          const Text(
+            'AI 인식 소재 결과',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -201,80 +427,125 @@ class _ScanScreenState extends State<ScanScreen> {
               children: _scannedMaterials.entries.map((entry) {
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 8.0),
-                  // 키값(예: cotton)을 대문자로 바꾸고, 퍼센티지는 문자열로 바꿈
-                  child: _buildMaterialRow(entry.key.toUpperCase(), entry.value.toString()),
+                  child: _buildMaterialRow(entry.key, entry.key.toUpperCase()),
                 );
               }).toList(),
             ),
           ),
+
           const SizedBox(height: 24),
 
-          // 백엔드에서 받은 세탁 지침 띄우기
           Container(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(12)),
+            decoration: BoxDecoration(
+              color: Colors.blue.shade50,
+              borderRadius: BorderRadius.circular(12),
+            ),
             child: Row(
               children: [
                 const Icon(Icons.local_laundry_service, color: Colors.blue),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text('AI 분석 세탁 지침:\n$_scannedCare', style: const TextStyle(fontSize: 14, color: Colors.black87)),
+                  child: Text(
+                    'AI 분석 세탁 지침:\n$_scannedCare',
+                    style: const TextStyle(fontSize: 14, color: Colors.black87),
+                  ),
                 ),
               ],
             ),
           ),
+
           const SizedBox(height: 40),
 
-          // 옷장 보관소(Provider)에 등록하고 메인으로 돌아가기
           SizedBox(
             width: double.infinity,
             height: 50,
             child: ElevatedButton(
               onPressed: () {
+                final editedMaterials = _collectEditedMaterials();
+                final title = _titleController.text.trim().isEmpty
+                    ? '새로 스캔한 의류'
+                    : _titleController.text.trim();
+                final estimatedHealth = _estimateInitialHealth(editedMaterials);
+                final estimatedCarbon = _estimateCarbonFootprint(
+                  editedMaterials,
+                  _selectedCategory,
+                );
+
                 Provider.of<ClosetProvider>(context, listen: false).addClothes(
                   Clothes(
-                    title: '새로 스캔한 의류',
-                    category: '상의',
-                    health: 100,
-                    materials: _scannedMaterials,
+                    title: title,
+                    category: _selectedCategory,
+                    health: estimatedHealth,
+                    materials: editedMaterials,
                     careInstruction: _scannedCare,
-                    carbonFootprint: 0.0, // 아직 서버에서 안 보내주니 0.0으로 임시 처리
+                    carbonFootprint: estimatedCarbon,
                   ),
                 );
-                Navigator.pushReplacementNamed(context, '/main');
+
+                Navigator.pushReplacementNamed(
+                  context,
+                  '/main',
+                  arguments: 2,
+                );
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF4A4EFE),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
-              child: const Text('홍길동님의 옷장에 등록하기', style: TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
+              child: const Text(
+                '홍길동님의 옷장에 등록하기',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
           ),
+
           const SizedBox(height: 12),
+
           Center(
             child: TextButton(
               onPressed: _resetScan,
-              child: const Text('다시 촬영하기', style: TextStyle(color: Colors.grey)),
+              child: const Text(
+                '다시 촬영하기',
+                style: TextStyle(color: Colors.grey),
+              ),
             ),
-          )
+          ),
         ],
       ),
     );
   }
 
-  // 텍스트 필드 행 (소재 보여주는 위젯)
-  Widget _buildMaterialRow(String name, String percentage) {
+  Widget _buildMaterialRow(String key, String displayName) {
+    final controller = _materialControllers[key]!;
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(name, style: const TextStyle(fontSize: 16)),
+        Text(displayName, style: const TextStyle(fontSize: 16)),
         SizedBox(
           width: 80,
           child: TextFormField(
-            initialValue: percentage,
+            controller: controller,
             textAlign: TextAlign.right,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(suffixText: '%', isDense: true, contentPadding: EdgeInsets.only(bottom: 4)),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(
+              suffixText: '%',
+              isDense: true,
+              contentPadding: EdgeInsets.only(bottom: 4),
+            ),
+            onChanged: (_) {
+              setState(() {
+                _scannedMaterials[key] =
+                    double.tryParse(controller.text.trim()) ?? 0.0;
+              });
+            },
           ),
         ),
       ],
