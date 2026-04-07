@@ -1,7 +1,5 @@
 import 'dart:collection';
-
 import 'package:flutter/foundation.dart';
-
 import 'models/clothes.dart';
 
 class ClosetProvider with ChangeNotifier {
