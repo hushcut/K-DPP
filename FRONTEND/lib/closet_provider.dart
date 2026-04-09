@@ -1,8 +1,11 @@
 import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'models/clothes.dart';
+import 'services/closet_storage_service.dart';
 
 class ClosetProvider with ChangeNotifier {
+  final ClosetStorageService _storageService = ClosetStorageService();
+
   final List<Clothes> _items = [
     Clothes(
       title: '오가닉 코튼 맨투맨',
@@ -23,6 +26,7 @@ class ClosetProvider with ChangeNotifier {
   ];
 
   Clothes? _selectedClothes;
+  bool _isLoaded = false;
 
   ClosetProvider() {
     if (_items.isNotEmpty) {
@@ -31,6 +35,8 @@ class ClosetProvider with ChangeNotifier {
   }
 
   UnmodifiableListView<Clothes> get items => UnmodifiableListView(_items);
+
+  bool get isLoaded => _isLoaded;
 
   int get count => _items.length;
 
@@ -50,14 +56,84 @@ class ClosetProvider with ChangeNotifier {
     return total / _items.length;
   }
 
-  void addClothes(Clothes newClothes) {
+  Future<void> loadFromStorage() async {
+    final hasSavedData = await _storageService.hasSavedClothesList();
+    final savedItems = await _storageService.loadClothesList();
+
+    if (hasSavedData) {
+      _items
+        ..clear()
+        ..addAll(savedItems);
+    }
+
+    _selectedClothes = _items.isNotEmpty ? _items.last : null;
+    _isLoaded = true;
+    notifyListeners();
+  }
+
+  Future<void> _persist() async {
+    await _storageService.saveClothesList(_items);
+  }
+
+  Future<void> addClothes(Clothes newClothes) async {
     _items.add(newClothes);
     _selectedClothes = newClothes;
     notifyListeners();
+    await _persist();
   }
 
   void selectClothes(Clothes clothes) {
     _selectedClothes = clothes;
     notifyListeners();
+  }
+
+  Future<void> removeClothes(Clothes target) async {
+    _items.remove(target);
+
+    if (_items.isEmpty) {
+      _selectedClothes = null;
+    } else if (_selectedClothes == target) {
+      _selectedClothes = _items.last;
+    }
+
+    notifyListeners();
+    await _persist();
+  }
+
+  Future<void> removeClothesBatch(List<Clothes> targets) async {
+    final targetSet = targets.toSet();
+    _items.removeWhere((item) => targetSet.contains(item));
+
+    if (_items.isEmpty) {
+      _selectedClothes = null;
+    } else if (_selectedClothes != null &&
+        targetSet.contains(_selectedClothes)) {
+      _selectedClothes = _items.last;
+    }
+
+    notifyListeners();
+    await _persist();
+  }
+
+  Future<void> setCustomOrder(List<Clothes> newOrder) async {
+    _items
+      ..clear()
+      ..addAll(newOrder);
+
+    if (_items.isEmpty) {
+      _selectedClothes = null;
+    } else if (_selectedClothes != null && !_items.contains(_selectedClothes)) {
+      _selectedClothes = _items.last;
+    }
+
+    notifyListeners();
+    await _persist();
+  }
+
+  Future<void> clearAllClothes() async {
+    _items.clear();
+    _selectedClothes = null;
+    notifyListeners();
+    await _storageService.clearClothesList();
   }
 }

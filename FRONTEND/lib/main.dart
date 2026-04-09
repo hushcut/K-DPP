@@ -4,18 +4,28 @@ import 'closet_provider.dart';
 import 'login_screen.dart';
 import 'main_screen.dart';
 import 'report_screen.dart';
+import 'splash_screen.dart';
 
-void main() {
-  runApp(MyApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  final closetProvider = ClosetProvider();
+
+  runApp(MyApp(closetProvider: closetProvider));
 }
 
 class MyApp extends StatelessWidget {
-  MyApp({super.key});
+  final ClosetProvider closetProvider;
+
+  const MyApp({
+    super.key,
+    required this.closetProvider,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (context) => ClosetProvider(),
+    return ChangeNotifierProvider.value(
+      value: closetProvider,
       child: MaterialApp(
         title: 'EcoLabel',
         debugShowCheckedModeBanner: false,
@@ -25,13 +35,14 @@ class MyApp extends StatelessWidget {
           ),
           useMaterial3: true,
         ),
-        initialRoute: '/login',
+        initialRoute: '/splash',
         routes: {
-          '/login': (context) => LoginScreen(),
-          '/main': (context) => MainScreen(),
+          '/splash': (context) => const SplashScreen(),
+          '/login': (context) => const LoginScreen(),
+          '/main': (context) => const MainScreen(),
           '/report': (context) => Scaffold(
             appBar: AppBar(title: const Text('상세 리포트')),
-            body: ReportScreen(),
+            body: const ReportScreen(),
           ),
         },
       ),
