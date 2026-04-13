@@ -20,5 +20,13 @@ class Clothing(Base):
     carbon_factor = Column(Float)   # 탄소 배출 계수
     expected_life = Column(Integer) # 기대 수명 (개월)
 
-# 4. 서버 실행 시 테이블이 없으면 자동으로 생성해주는 코드
+# 4. 분석 결과 저장 테이블
+class AnalysisResult(Base):
+    __tablename__ = "analysis_results"
+
+    id = Column(Integer, primary_key=True, index=True)
+    materials = Column(String)          # {"cotton": 80, "polyester": 20} 형태를 문자열로 저장
+    carbon_footprint = Column(Float)    # 계산된 탄소발자국 수치
+
+# 5. 서버 실행 시 테이블이 없으면 자동으로 생성해주는 코드
 Base.metadata.create_all(bind=engine)
