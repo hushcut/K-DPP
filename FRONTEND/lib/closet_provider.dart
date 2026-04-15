@@ -4,7 +4,7 @@ import 'models/clothes.dart';
 import 'services/closet_storage_service.dart';
 
 class ClosetProvider with ChangeNotifier {
-  final ClosetStorageService _storageService = ClosetStorageService();
+  final ClosetStorage _storageService;
 
   final List<Clothes> _items = [
     Clothes(
@@ -28,7 +28,8 @@ class ClosetProvider with ChangeNotifier {
   Clothes? _selectedClothes;
   bool _isLoaded = false;
 
-  ClosetProvider() {
+  ClosetProvider({ClosetStorage? storage})
+      : _storageService = storage ?? ClosetStorageService() {
     if (_items.isNotEmpty) {
       _selectedClothes = _items.last;
     }
@@ -106,8 +107,7 @@ class ClosetProvider with ChangeNotifier {
 
     if (_items.isEmpty) {
       _selectedClothes = null;
-    } else if (_selectedClothes != null &&
-        targetSet.contains(_selectedClothes)) {
+    } else if (_selectedClothes != null && targetSet.contains(_selectedClothes)) {
       _selectedClothes = _items.last;
     }
 

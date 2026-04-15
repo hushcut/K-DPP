@@ -83,7 +83,7 @@ class _ScanScreenState extends State<ScanScreen> {
       _showErrorFallback(e.message);
     } catch (e) {
       debugPrint('🔌 서버 통신 실패: $e');
-      _showErrorFallback('서버 통신 실패로 임시 결과를 표시합니다.');
+      _showErrorFallback('서버 연결이 불안정해 임시 결과를 표시합니다.');
     }
   }
 
@@ -281,7 +281,7 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   void _showErrorFallback([
-    String message = '서버 미연결: 임시 결과 화면을 띄웁니다.',
+    String message = '서버 연결이 불안정해 임시 결과를 표시합니다.',
   ]) {
     Future.delayed(const Duration(seconds: 1), () {
       if (!mounted) return;
@@ -304,7 +304,7 @@ class _ScanScreenState extends State<ScanScreen> {
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('옷장에 저장되었습니다.')),
+        SnackBar(content: Text(message)),
       );
     });
   }
@@ -437,6 +437,13 @@ class _ScanScreenState extends State<ScanScreen> {
                 style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
               ),
             ),
+            const SizedBox(height: 8),
+            const Center(
+              child: Text(
+                '분석 결과를 확인하고 저장해 주세요.',
+                style: TextStyle(fontSize: 14, color: Colors.grey),
+              ),
+            ),
             const SizedBox(height: 32),
 
             const Text(
@@ -567,7 +574,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'AI 분석 세탁 지침:\n$_scannedCare',
+                      'AI 분석 세탁 지침\n$_scannedCare',
                       style: const TextStyle(fontSize: 14, color: Colors.black87),
                     ),
                   ),
@@ -589,7 +596,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   ),
                 ),
                 child: const Text(
-                  '홍길동님의 옷장에 등록하기',
+                  '옷장에 저장하기',
                   style: TextStyle(
                     fontSize: 16,
                     color: Colors.white,
@@ -605,7 +612,7 @@ class _ScanScreenState extends State<ScanScreen> {
               child: TextButton(
                 onPressed: _resetScan,
                 child: const Text(
-                  '다시 촬영하기',
+                  '다시 촬영',
                   style: TextStyle(color: Colors.grey),
                 ),
               ),

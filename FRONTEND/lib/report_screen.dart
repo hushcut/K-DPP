@@ -17,7 +17,7 @@ class ReportScreen extends StatelessWidget {
     if (item == null) {
       return const Center(
         child: Text(
-          '아직 옷장에 등록된 옷이 없습니다.\n스캔 탭에서 옷을 등록해 주세요!',
+          '아직 등록된 의류가 없습니다.\n스캔 탭에서 케어 라벨을 촬영해 보세요.',
           textAlign: TextAlign.center,
           style: TextStyle(color: Colors.grey, fontSize: 16),
         ),
@@ -60,10 +60,23 @@ class ReportScreen extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            '홍길동님의 ${item.title}',
-            style: const TextStyle(color: Colors.grey, fontSize: 14),
+            item.title,
+            style: const TextStyle(
+              color: Color(0xFF1A1A1A),
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            '의류 상태와 관리 가이드를 확인하세요.',
+            style: TextStyle(
+              color: Colors.grey,
+              fontSize: 14,
+            ),
           ),
           const SizedBox(height: 16),
+
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -84,7 +97,7 @@ class ReportScreen extends StatelessWidget {
                 child: _buildSummaryCard(
                   title: '총 탄소발자국',
                   value: '${item.carbonFootprint.toStringAsFixed(1)} kg',
-                  subtitle: 'CO2eq 기준 추정',
+                  subtitle: 'CO2eq 기준 추정값',
                   icon: Icons.eco_outlined,
                   color: const Color(0xFF4A4EFE),
                 ),
@@ -94,7 +107,7 @@ class ReportScreen extends StatelessWidget {
                 child: _buildSummaryCard(
                   title: '주요 소재',
                   value: mainMaterial,
-                  subtitle: materialsText.isEmpty ? '정보 없음' : materialsText,
+                  subtitle: materialsText.isEmpty ? '소재 정보 없음' : materialsText,
                   icon: Icons.checkroom_outlined,
                   color: Colors.green,
                 ),
@@ -109,7 +122,7 @@ class ReportScreen extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            '총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 소재/카테고리 기반 추정',
+            '총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 소재와 카테고리 기반 추정',
             style: const TextStyle(color: Colors.grey, fontSize: 13),
           ),
           const SizedBox(height: 16),
@@ -126,7 +139,7 @@ class ReportScreen extends StatelessWidget {
               border: Border.all(color: Colors.orange.shade100),
             ),
             child: const Text(
-              '원단 생산 단계의 배출량이 가장 큰 경우가 많습니다. 소재 선택과 세탁 습관을 함께 관리하면 의류의 전 생애주기 환경 부담을 줄이는 데 도움이 됩니다.',
+              '원단 생산 단계의 배출량이 크게 나타나는 경우가 많습니다. 소재 선택과 세탁 습관을 함께 관리하면 의류의 전 생애주기 환경 부담을 줄이는 데 도움이 됩니다.',
               style: TextStyle(
                 fontSize: 13,
                 color: Colors.black87,
@@ -159,7 +172,7 @@ class ReportScreen extends StatelessWidget {
           const SizedBox(height: 24),
 
           const Text(
-            '관리 이력',
+            '관리 정보',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
@@ -264,7 +277,7 @@ class ReportScreen extends StatelessWidget {
         return AlertDialog(
           title: const Text('의류 삭제'),
           content: Text(
-            '"${item.title}"을(를) 옷장에서 삭제할까요?\n삭제 후에는 홈/옷장/리포트에 반영됩니다.',
+            '"${item.title}"을(를) 삭제할까요?\n이 작업은 되돌릴 수 없습니다.',
             style: const TextStyle(height: 1.5),
           ),
           actions: [
@@ -386,7 +399,7 @@ class ReportScreen extends StatelessWidget {
 
   static String _buildDisposalGuide(Clothes item) {
     if (item.health > 40) {
-      return '아직 사용 가능한 상태입니다. 중고 거래, 기부, 재사용을 우선 검토해 보세요.';
+      return '아직 사용 가능한 상태입니다. 중고 거래, 기부, 재사용을 먼저 검토해 보세요.';
     }
 
     if (_hasMaterial(item, ['cotton', 'linen', 'wool'])) {
@@ -394,7 +407,7 @@ class ReportScreen extends StatelessWidget {
     }
 
     if (_hasMaterial(item, ['polyester', 'nylon', 'polyurethane'])) {
-      return '혼방·합성섬유 의류는 지역 분리배출 기준을 우선 확인하고, 재사용이 어렵다면 의류 수거 체계에 맞춰 배출하세요.';
+      return '혼방·합성섬유 의류는 지역 분리배출 기준을 먼저 확인하고, 재사용이 어렵다면 의류 수거 체계에 맞춰 배출하세요.';
     }
 
     return '상태가 좋지 않다면 지역 의류 수거 또는 섬유 분리배출 기준을 확인해 적절히 처리하는 것이 좋습니다.';

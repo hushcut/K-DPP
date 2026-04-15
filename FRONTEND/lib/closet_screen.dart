@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import 'closet_provider.dart';
 import 'models/clothes.dart';
 
@@ -32,7 +33,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
       case ClosetSortOption.latest:
         return '최신 등록 순';
       case ClosetSortOption.custom:
-        return '사용자 정의';
+        return '내설정순';
     }
   }
 
@@ -56,7 +57,6 @@ class _ClosetScreenState extends State<ClosetScreen> {
         for (int i = 0; i < originalOrder.length; i++) {
           indexMap[originalOrder[i]] = i;
         }
-
         sorted.sort((a, b) {
           final aIndex = indexMap[a] ?? 0;
           final bIndex = indexMap[b] ?? 0;
@@ -109,7 +109,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
         return AlertDialog(
           title: const Text('선택한 의류 삭제'),
           content: Text(
-            '${_selectedItems.length}개의 의류를 삭제할까요?\n삭제 후에는 옷장과 리포트에 반영됩니다.',
+            '${_selectedItems.length}개의 의류를 삭제할까요?\n이 작업은 되돌릴 수 없습니다.',
             style: const TextStyle(height: 1.5),
           ),
           actions: [
@@ -195,6 +195,97 @@ class _ClosetScreenState extends State<ClosetScreen> {
     await context.read<ClosetProvider>().setCustomOrder(newGlobalOrder);
   }
 
+  Future<void> _showSortBottomSheet() async {
+    final selected = await showModalBottomSheet<ClosetSortOption>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '정렬',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                _buildSortOptionTile(
+                  label: '친환경 순',
+                  value: ClosetSortOption.eco,
+                ),
+                _buildSortOptionTile(
+                  label: '건강도 순',
+                  value: ClosetSortOption.health,
+                ),
+                _buildSortOptionTile(
+                  label: '최신 등록 순',
+                  value: ClosetSortOption.latest,
+                ),
+                _buildSortOptionTile(
+                  label: '내설정순',
+                  value: ClosetSortOption.custom,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (selected == null) return;
+
+    setState(() {
+      _sortOption = selected;
+      if (selected != ClosetSortOption.custom) {
+        _reorderMode = false;
+      }
+    });
+  }
+
+  Widget _buildSortOptionTile({
+    required String label,
+    required ClosetSortOption value,
+  }) {
+    final isSelected = _sortOption == value;
+
+    return InkWell(
+      onTap: () => Navigator.pop(context, value),
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 18,
+                  color: isSelected ? const Color(0xFF4A4EFE) : Colors.black87,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ),
+            if (isSelected)
+              const Icon(
+                Icons.check,
+                color: Color(0xFF4A4EFE),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final clothesList = context.watch<ClosetProvider>().items;
@@ -219,144 +310,114 @@ class _ClosetScreenState extends State<ClosetScreen> {
       length: 3,
       child: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-            child: _selectionMode
-                ? Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${_selectedItems.length}개 선택됨',
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1A1A1A),
+          if (_selectionMode)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${_selectedItems.length}개 선택됨',
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1A1A1A),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    TextButton(
-                      onPressed: _exitSelectionMode,
-                      child: const Text('취소'),
-                    ),
-                    const SizedBox(width: 8),
-                    ElevatedButton.icon(
-                      onPressed: _deleteSelectedItems,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.redAccent,
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      TextButton(
+                        onPressed: _exitSelectionMode,
+                        child: const Text('선택 취소'),
                       ),
-                      icon: const Icon(
-                        Icons.delete_outline,
-                        color: Colors.white,
+                      const SizedBox(width: 8),
+                      ElevatedButton.icon(
+                        onPressed: _deleteSelectedItems,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.redAccent,
+                        ),
+                        icon: const Icon(
+                          Icons.delete_outline,
+                          color: Colors.white,
+                        ),
+                        label: const Text(
+                          '선택 삭제',
+                          style: TextStyle(color: Colors.white),
+                        ),
                       ),
-                      label: const Text(
-                        '삭제',
-                        style: TextStyle(color: Colors.white),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                ],
+              ),
             )
-                : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '홍길동님의 옷장',
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1A1A1A),
+          else
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+              child: Column(
+                children: [
+                  Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      const Align(
+                        alignment: Alignment.center,
+                        child: Text(
+                          '내 옷장',
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF1A1A1A),
+                          ),
+                        ),
+                      ),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (_sortOption == ClosetSortOption.custom)
+                              TextButton(
+                                onPressed: _toggleReorderMode,
+                                child: Text(_reorderMode ? '완료' : '편집'),
+                              ),
+                            IconButton(
+                              onPressed: _showSortBottomSheet,
+                              icon: const Icon(
+                                Icons.sort,
+                                color: Color(0xFF4A4EFE),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    if (_sortOption == ClosetSortOption.custom)
-                      OutlinedButton.icon(
-                        onPressed: _toggleReorderMode,
-                        icon: Icon(
-                          _reorderMode
-                              ? Icons.check
-                              : Icons.edit_outlined,
-                          size: 18,
-                        ),
-                        label: Text(_reorderMode ? '편집 완료' : '편집'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF4A4EFE),
-                          side: const BorderSide(
-                            color: Color(0xFF4A4EFE),
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                        ),
-                      ),
-                    PopupMenuButton<ClosetSortOption>(
-                      onSelected: (value) {
-                        setState(() {
-                          _sortOption = value;
-                          if (value != ClosetSortOption.custom) {
-                            _reorderMode = false;
-                          }
-                        });
-                      },
-                      itemBuilder: (context) => const [
-                        PopupMenuItem(
-                          value: ClosetSortOption.eco,
-                          child: Text('친환경 순'),
-                        ),
-                        PopupMenuItem(
-                          value: ClosetSortOption.health,
-                          child: Text('건강도 순'),
-                        ),
-                        PopupMenuItem(
-                          value: ClosetSortOption.latest,
-                          child: Text('최신 등록 순'),
-                        ),
-                        PopupMenuItem(
-                          value: ClosetSortOption.custom,
-                          child: Text('사용자 정의'),
-                        ),
-                      ],
-                      child: OutlinedButton.icon(
-                        onPressed: null,
-                        icon: const Icon(Icons.sort, size: 18),
-                        label: Text(_sortLabel),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF4A4EFE),
-                          disabledForegroundColor:
-                          const Color(0xFF4A4EFE),
-                          side: const BorderSide(
-                            color: Color(0xFF4A4EFE),
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                        ),
-                      ),
+                  const SizedBox(height: 10),
+                  Text(
+                    '현재 정렬: $_sortLabel',
+                    style: const TextStyle(
+                      color: Colors.grey,
+                      fontSize: 13,
                     ),
-                  ],
-                ),
-                if (_sortOption == ClosetSortOption.custom)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 10),
+                  ),
+                  const SizedBox(height: 6),
+                  SizedBox(
+                    height: 18,
                     child: Text(
-                      _reorderMode
-                          ? '현재 탭에서 드래그해 원하는 순서로 정렬할 수 있습니다.'
-                          : '사용자 정의는 내가 원하는 순서대로 직접 정렬할 수 있습니다.',
+                      _sortOption == ClosetSortOption.custom
+                          ? (_reorderMode
+                          ? '드래그해서 순서를 바꿔 보세요.'
+                          : '내설정순으로 정렬되어 있어요.')
+                          : '원하는 방식으로 옷장을 정리해 보세요.',
                       style: const TextStyle(
                         color: Colors.grey,
                         fontSize: 12,
                       ),
                     ),
                   ),
-              ],
+                ],
+              ),
             ),
-          ),
           const TabBar(
             labelColor: Color(0xFF4A4EFE),
             unselectedLabelColor: Colors.grey,
@@ -388,24 +449,24 @@ class _ClosetScreenState extends State<ClosetScreen> {
                   context,
                   topItems,
                   originalOrder,
-                  emptyMessage: '상의 목록이 비어있습니다.',
+                  emptyMessage: '상의 의류가 없습니다.',
                 )
                     : _buildClothesList(
                   context,
                   topItems,
-                  emptyMessage: '상의 목록이 비어있습니다.',
+                  emptyMessage: '상의 의류가 없습니다.',
                 ),
                 _sortOption == ClosetSortOption.custom && _reorderMode
                     ? _buildReorderableClothesList(
                   context,
                   bottomItems,
                   originalOrder,
-                  emptyMessage: '하의 목록이 비어있습니다.',
+                  emptyMessage: '하의 의류가 없습니다.',
                 )
                     : _buildClothesList(
                   context,
                   bottomItems,
-                  emptyMessage: '하의 목록이 비어있습니다.',
+                  emptyMessage: '하의 의류가 없습니다.',
                 ),
               ],
             ),
