@@ -7,10 +7,15 @@ abstract class ClosetStorage {
   Future<void> saveClothesList(List<Clothes> items);
   Future<List<Clothes>> loadClothesList();
   Future<void> clearClothesList();
+
+  Future<void> saveUserName(String userName);
+  Future<String?> loadUserName();
+  Future<void> clearUserName();
 }
 
 class ClosetStorageService implements ClosetStorage {
   static const String _closetItemsKey = 'closet_items';
+  static const String _userNameKey = 'user_name';
 
   final SharedPreferencesAsync _prefs = SharedPreferencesAsync();
 
@@ -56,5 +61,20 @@ class ClosetStorageService implements ClosetStorage {
   @override
   Future<void> clearClothesList() async {
     await _prefs.remove(_closetItemsKey);
+  }
+
+  @override
+  Future<void> saveUserName(String userName) async {
+    await _prefs.setString(_userNameKey, userName);
+  }
+
+  @override
+  Future<String?> loadUserName() async {
+    return _prefs.getString(_userNameKey);
+  }
+
+  @override
+  Future<void> clearUserName() async {
+    await _prefs.remove(_userNameKey);
   }
 }

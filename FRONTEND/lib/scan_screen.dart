@@ -353,7 +353,7 @@ class _ScanScreenState extends State<ScanScreen> {
                 width: 2,
               ),
               borderRadius: BorderRadius.circular(12),
-              color: Colors.white.withOpacity(0.1),
+              color: Colors.white.withValues(alpha: 0.10),
             ),
             child: Stack(
               alignment: Alignment.center,
@@ -370,7 +370,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   ),
                 if (_isScanning)
                   Container(
-                    color: Colors.black.withOpacity(0.6),
+                    color: Colors.black.withValues(alpha: 0.60),
                     child: const Center(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -417,213 +417,271 @@ class _ScanScreenState extends State<ScanScreen> {
     final totalMaterials = _calculateMaterialsTotal(_collectEditedMaterials());
     final isTotalValid = _isMaterialsTotalValid(_collectEditedMaterials());
 
-    return Form(
-      key: _formKey,
-      autovalidateMode: _hasTriedSubmit
-          ? AutovalidateMode.always
-          : AutovalidateMode.disabled,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Center(
-              child: Icon(Icons.check_circle, color: Colors.green, size: 60),
-            ),
-            const SizedBox(height: 16),
-            const Center(
-              child: Text(
-                '스캔 완료!',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final backgroundColor =
+    isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FC);
+    final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final borderColor =
+    isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade300;
+    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+    final secondaryText =
+    isDark ? const Color(0xFFD1D1D6) : Colors.grey;
+    final inputFillColor =
+    isDark ? const Color(0xFF2A2A2E) : Colors.white;
+    final previewBoxColor =
+    isDark ? const Color(0xFF1F2A3D) : Colors.green.shade50;
+    final previewBorderColor =
+    isDark ? const Color(0xFF2C4C7A) : Colors.green.shade100;
+    final careBoxColor =
+    isDark ? const Color(0xFF1E2A3A) : Colors.blue.shade50;
+
+    return Container(
+      color: backgroundColor,
+      child: Form(
+        key: _formKey,
+        autovalidateMode: _hasTriedSubmit
+            ? AutovalidateMode.always
+            : AutovalidateMode.disabled,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Center(
+                child: Icon(Icons.check_circle, color: Colors.green, size: 60),
               ),
-            ),
-            const SizedBox(height: 8),
-            const Center(
-              child: Text(
-                '분석 결과를 확인하고 저장해 주세요.',
-                style: TextStyle(fontSize: 14, color: Colors.grey),
-              ),
-            ),
-            const SizedBox(height: 32),
-
-            const Text(
-              '기본 정보 수정',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade300),
-              ),
-              child: Column(
-                children: [
-                  TextFormField(
-                    controller: _titleController,
-                    validator: _validateTitle,
-                    decoration: InputDecoration(
-                      labelText: '의류 이름',
-                      hintText: '예: 오가닉 코튼 맨투맨',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      prefixIcon: const Icon(Icons.checkroom_outlined),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  DropdownButtonFormField<String>(
-                    value: _selectedCategory,
-                    decoration: InputDecoration(
-                      labelText: '카테고리',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      prefixIcon: const Icon(Icons.category_outlined),
-                    ),
-                    items: _categoryOptions.map((category) {
-                      return DropdownMenuItem(
-                        value: category,
-                        child: Text(category),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setState(() {
-                        _selectedCategory = value;
-                      });
-                    },
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 24),
-
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.green.shade50,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.green.shade100),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.analytics_outlined, color: Colors.green),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      '예상 건강도: $previewHealth%\n'
-                          '예상 탄소발자국: ${previewCarbon.toStringAsFixed(1)} kg CO2eq',
-                      style: const TextStyle(fontSize: 14, color: Colors.black87),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 24),
-
-            const Text(
-              'AI 인식 소재 결과',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-
-            Text(
-              '현재 소재 합계: ${totalMaterials.toStringAsFixed(1)}%',
-              style: TextStyle(
-                color: isTotalValid ? Colors.green : Colors.redAccent,
-                fontWeight: FontWeight.w600,
-                fontSize: 13,
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade300),
-              ),
-              child: Column(
-                children: _scannedMaterials.entries.map((entry) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 12.0),
-                    child: _buildMaterialRow(entry.key, entry.key.toUpperCase()),
-                  );
-                }).toList(),
-              ),
-            ),
-
-            const SizedBox(height: 24),
-
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.blue.shade50,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.local_laundry_service, color: Colors.blue),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'AI 분석 세탁 지침\n$_scannedCare',
-                      style: const TextStyle(fontSize: 14, color: Colors.black87),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 40),
-
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton(
-                onPressed: _submitClothes,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF4A4EFE),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                child: const Text(
-                  '옷장에 저장하기',
+              const SizedBox(height: 16),
+              Center(
+                child: Text(
+                  '스캔 완료!',
                   style: TextStyle(
-                    fontSize: 16,
-                    color: Colors.white,
+                    fontSize: 24,
                     fontWeight: FontWeight.bold,
+                    color: primaryText,
                   ),
                 ),
               ),
-            ),
-
-            const SizedBox(height: 12),
-
-            Center(
-              child: TextButton(
-                onPressed: _resetScan,
-                child: const Text(
-                  '다시 촬영',
-                  style: TextStyle(color: Colors.grey),
+              const SizedBox(height: 8),
+              Center(
+                child: Text(
+                  '분석 결과를 확인하고 저장해 주세요.',
+                  style: TextStyle(fontSize: 14, color: secondaryText),
                 ),
               ),
-            ),
-          ],
+              const SizedBox(height: 32),
+
+              Text(
+                '기본 정보 수정',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: primaryText,
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: borderColor),
+                ),
+                child: Column(
+                  children: [
+                    TextFormField(
+                      controller: _titleController,
+                      validator: _validateTitle,
+                      style: TextStyle(color: primaryText),
+                      decoration: InputDecoration(
+                        filled: true,
+                        fillColor: inputFillColor,
+                        labelText: '의류 이름',
+                        labelStyle: TextStyle(color: secondaryText),
+                        hintText: '예: 홍길동 코튼 맨투맨',
+                        hintStyle: TextStyle(color: secondaryText),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        prefixIcon: const Icon(Icons.checkroom_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      value: _selectedCategory,
+                      dropdownColor: cardColor,
+                      style: TextStyle(color: primaryText),
+                      decoration: InputDecoration(
+                        filled: true,
+                        fillColor: inputFillColor,
+                        labelText: '카테고리',
+                        labelStyle: TextStyle(color: secondaryText),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        prefixIcon: const Icon(Icons.category_outlined),
+                      ),
+                      items: _categoryOptions.map((category) {
+                        return DropdownMenuItem(
+                          value: category,
+                          child: Text(
+                            category,
+                            style: TextStyle(color: primaryText),
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() {
+                          _selectedCategory = value;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: previewBoxColor,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: previewBorderColor),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.analytics_outlined, color: Colors.green),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        '예상 건강도: $previewHealth%\n'
+                            '예상 탄소발자국: ${previewCarbon.toStringAsFixed(1)} kg CO2eq',
+                        style: TextStyle(fontSize: 14, color: primaryText),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              Text(
+                'AI 인식 소재 결과',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: primaryText,
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              Text(
+                '현재 소재 합계: ${totalMaterials.toStringAsFixed(1)}%',
+                style: TextStyle(
+                  color: isTotalValid ? Colors.green : Colors.redAccent,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: borderColor),
+                ),
+                child: Column(
+                  children: _scannedMaterials.entries.map((entry) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12.0),
+                      child: _buildMaterialRow(
+                        entry.key,
+                        entry.key.toUpperCase(),
+                        primaryText: primaryText,
+                        secondaryText: secondaryText,
+                        inputFillColor: inputFillColor,
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: careBoxColor,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.local_laundry_service, color: Colors.blue),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'AI 분석 세탁 지침\n$_scannedCare',
+                        style: TextStyle(fontSize: 14, color: primaryText),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 40),
+
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: _submitClothes,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF4A4EFE),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text(
+                    '옷장에 저장하기',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
+              Center(
+                child: TextButton(
+                  onPressed: _resetScan,
+                  child: Text(
+                    '다시 촬영',
+                    style: TextStyle(color: secondaryText),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildMaterialRow(String key, String displayName) {
+  Widget _buildMaterialRow(
+      String key,
+      String displayName, {
+        required Color primaryText,
+        required Color secondaryText,
+        required Color inputFillColor,
+      }) {
     final controller = _materialControllers[key]!;
 
     return Row(
@@ -634,7 +692,7 @@ class _ScanScreenState extends State<ScanScreen> {
             padding: const EdgeInsets.only(top: 14),
             child: Text(
               displayName,
-              style: const TextStyle(fontSize: 16),
+              style: TextStyle(fontSize: 16, color: primaryText),
             ),
           ),
         ),
@@ -643,12 +701,16 @@ class _ScanScreenState extends State<ScanScreen> {
           child: TextFormField(
             controller: controller,
             validator: _validateMaterialValue,
+            style: TextStyle(color: primaryText),
             textAlign: TextAlign.right,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: inputFillColor,
               suffixText: '%',
+              suffixStyle: TextStyle(color: secondaryText),
               isDense: true,
-              contentPadding: EdgeInsets.only(bottom: 4),
+              contentPadding: const EdgeInsets.only(bottom: 4, right: 8, top: 12),
             ),
             onChanged: (_) {
               setState(() {

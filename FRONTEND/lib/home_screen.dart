@@ -14,18 +14,34 @@ class HomeScreen extends StatelessWidget {
     final averageHealth = closetProvider.averageHealth;
     final latestItem = closetProvider.latestItem;
     final recentItems = _getRecentItems(closetProvider.items.toList());
+    final userName = closetProvider.userName;
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    final primaryText = isDark ? Colors.white : const Color(0xFF1A1A1A);
+    final secondaryText =
+    isDark ? const Color(0xFFD1D1D6) : Colors.grey;
+    final cardColor =
+    isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final cardBorderColor =
+    isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade200;
+    final progressBackgroundColor =
+    isDark ? const Color(0xFF2A2A2E) : Colors.grey.shade200;
+    final tipShadowColor = isDark
+        ? Colors.black.withValues(alpha: 0.18)
+        : Colors.black.withValues(alpha: 0.02);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '안녕하세요 👋',
+          Text(
+            '$userName님, 안녕하세요 👋',
             style: TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.bold,
-              color: Color(0xFF1A1A1A),
+              color: primaryText,
             ),
           ),
           const SizedBox(height: 8),
@@ -33,9 +49,9 @@ class HomeScreen extends StatelessWidget {
             clothesCount > 0
                 ? '현재 옷장에 $clothesCount개의 의류가 등록되어 있어요.'
                 : '아직 등록된 의류가 없어요. 스캔 탭에서 첫 의류를 등록해 보세요.',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
-              color: Colors.grey,
+              color: secondaryText,
               height: 1.5,
             ),
           ),
@@ -50,25 +66,40 @@ class HomeScreen extends StatelessWidget {
           _buildCareTipCard(
             latestItem: latestItem,
             averageHealth: averageHealth,
+            cardColor: cardColor,
+            cardBorderColor: cardBorderColor,
+            primaryText: primaryText,
+            secondaryText: secondaryText,
+            shadowColor: tipShadowColor,
+            isDark: isDark,
           ),
           const SizedBox(height: 24),
 
-          const Text(
+          Text(
             '최근 등록한 의류 상태',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: primaryText,
+            ),
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             '최근 등록된 의류의 상태와 관리 포인트를 확인해 보세요.',
             style: TextStyle(
               fontSize: 13,
-              color: Colors.grey,
+              color: secondaryText,
             ),
           ),
           const SizedBox(height: 16),
 
           if (recentItems.isEmpty)
-            _buildEmptyRecentCard()
+            _buildEmptyRecentCard(
+              cardColor: cardColor,
+              cardBorderColor: cardBorderColor,
+              primaryText: primaryText,
+              secondaryText: secondaryText,
+            )
           else
             ...recentItems.map(
                   (item) => Padding(
@@ -77,6 +108,11 @@ class HomeScreen extends StatelessWidget {
                   title: item.title,
                   percentage: item.health,
                   subtitle: _buildHealthSubtitle(item),
+                  cardColor: cardColor,
+                  cardBorderColor: cardBorderColor,
+                  primaryText: primaryText,
+                  secondaryText: secondaryText,
+                  progressBackgroundColor: progressBackgroundColor,
                 ),
               ),
             ),
@@ -188,6 +224,12 @@ class HomeScreen extends StatelessWidget {
   Widget _buildCareTipCard({
     required Clothes? latestItem,
     required double averageHealth,
+    required Color cardColor,
+    required Color cardBorderColor,
+    required Color primaryText,
+    required Color secondaryText,
+    required Color shadowColor,
+    required bool isDark,
   }) {
     final String tipTitle;
     final String tipBody;
@@ -200,13 +242,15 @@ class HomeScreen extends StatelessWidget {
       tipBody = '새 의류를 등록하면 소재와 상태를 바탕으로 맞춤 관리 팁을 제공할 수 있어요.';
       iconData = Icons.tips_and_updates_outlined;
       iconColor = Colors.orange;
-      iconBgColor = Colors.orange.shade50;
+      iconBgColor =
+      isDark ? const Color(0xFF3A2C1F) : Colors.orange.shade50;
     } else if (averageHealth < 40) {
       tipTitle = '의류 컨디션 점검이 필요해요';
       tipBody = '현재 평균 건강도가 낮아요. 건조기 사용을 줄이고 세탁 지침을 우선 확인해 주세요.';
       iconData = Icons.warning_amber_rounded;
       iconColor = Colors.redAccent;
-      iconBgColor = Colors.red.shade50;
+      iconBgColor =
+      isDark ? const Color(0xFF3A2222) : Colors.red.shade50;
     } else if (latestItem.materials.keys.any(
           (e) => e.toLowerCase().contains('cotton'),
     )) {
@@ -215,25 +259,27 @@ class HomeScreen extends StatelessWidget {
       '${latestItem.title}은(는) 면 소재가 포함되어 있어요. 미지근한 물 세탁과 자연 건조가 잘 어울립니다.';
       iconData = Icons.local_laundry_service_outlined;
       iconColor = Colors.blue;
-      iconBgColor = Colors.blue.shade50;
+      iconBgColor =
+      isDark ? const Color(0xFF1F3045) : Colors.blue.shade50;
     } else {
       tipTitle = '오늘의 관리 팁';
       tipBody =
       '${latestItem.title}의 세탁 지침을 기준으로 관리해 주세요. 라벨 정보를 따르면 의류 수명을 더 늘릴 수 있어요.';
       iconData = Icons.check_circle_outline;
       iconColor = Colors.green;
-      iconBgColor = Colors.green.shade50;
+      iconBgColor =
+      isDark ? const Color(0xFF1F3A2A) : Colors.green.shade50;
     }
 
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: cardColor,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: cardBorderColor),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.02),
+            color: shadowColor,
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -256,16 +302,17 @@ class HomeScreen extends StatelessWidget {
               children: [
                 Text(
                   tipTitle,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 16,
+                    color: primaryText,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   tipBody,
-                  style: const TextStyle(
-                    color: Colors.grey,
+                  style: TextStyle(
+                    color: secondaryText,
                     fontSize: 13,
                     height: 1.5,
                   ),
@@ -278,16 +325,21 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildEmptyRecentCard() {
+  Widget _buildEmptyRecentCard({
+    required Color cardColor,
+    required Color cardBorderColor,
+    required Color primaryText,
+    required Color secondaryText,
+  }) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: cardColor,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: cardBorderColor),
       ),
-      child: const Column(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
@@ -295,13 +347,14 @@ class HomeScreen extends StatelessWidget {
             style: TextStyle(
               fontWeight: FontWeight.bold,
               fontSize: 15,
+              color: primaryText,
             ),
           ),
-          SizedBox(height: 12),
+          const SizedBox(height: 12),
           Text(
             '스캔 탭에서 케어 라벨을 촬영하면 의류 상태와 관리 정보를 여기서 확인할 수 있어요.',
             style: TextStyle(
-              color: Colors.grey,
+              color: secondaryText,
               fontSize: 13,
               height: 1.5,
             ),
@@ -315,6 +368,11 @@ class HomeScreen extends StatelessWidget {
     required String title,
     required int percentage,
     required String subtitle,
+    required Color cardColor,
+    required Color cardBorderColor,
+    required Color primaryText,
+    required Color secondaryText,
+    required Color progressBackgroundColor,
   }) {
     final Color statusColor =
     percentage > 70 ? Colors.green : (percentage > 40 ? Colors.orange : Colors.redAccent);
@@ -322,9 +380,9 @@ class HomeScreen extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: cardColor,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: cardBorderColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -334,9 +392,10 @@ class HomeScreen extends StatelessWidget {
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 15,
+                    color: primaryText,
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -356,7 +415,7 @@ class HomeScreen extends StatelessWidget {
             borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
               value: percentage / 100,
-              backgroundColor: Colors.grey.shade200,
+              backgroundColor: progressBackgroundColor,
               color: statusColor,
               minHeight: 8,
             ),
@@ -364,8 +423,8 @@ class HomeScreen extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             subtitle,
-            style: const TextStyle(
-              color: Colors.grey,
+            style: TextStyle(
+              color: secondaryText,
               fontSize: 12,
               height: 1.5,
             ),

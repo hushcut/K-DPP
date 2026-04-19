@@ -1,8 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
-
 import 'package:http/http.dart' as http;
-
 import '../models/scan_result.dart';
 
 class ScanApiException implements Exception {

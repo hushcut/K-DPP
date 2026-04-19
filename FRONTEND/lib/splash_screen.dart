@@ -62,8 +62,14 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    final backgroundColor =
+    isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FC);
+    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FC),
+      backgroundColor: backgroundColor,
       body: Center(
         child: FadeTransition(
           opacity: _fadeAnimation,
@@ -86,12 +92,12 @@ class _SplashScreenState extends State<SplashScreen>
                   ),
                 ),
                 const SizedBox(height: 20),
-                const Text(
+                Text(
                   'K-DPP',
                   style: TextStyle(
                     fontSize: 28,
                     fontWeight: FontWeight.w700,
-                    color: Color(0xFF111111),
+                    color: primaryText,
                     letterSpacing: -0.5,
                   ),
                 ),

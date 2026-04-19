@@ -27,6 +27,7 @@ class ClosetProvider with ChangeNotifier {
 
   Clothes? _selectedClothes;
   bool _isLoaded = false;
+  String _userName = '홍길동';
 
   ClosetProvider({ClosetStorage? storage})
       : _storageService = storage ?? ClosetStorageService() {
@@ -47,6 +48,21 @@ class ClosetProvider with ChangeNotifier {
 
   Clothes? get currentReportItem => _selectedClothes ?? latestItem;
 
+  String get userName => _userName;
+
+  Future<void> setUserName(String value) async {
+    final trimmed = value.trim();
+    _userName = trimmed.isEmpty ? '홍길동' : trimmed;
+    notifyListeners();
+    await _storageService.saveUserName(_userName);
+  }
+
+  Future<void> logout() async {
+    _userName = '홍길동';
+    notifyListeners();
+    await _storageService.clearUserName();
+  }
+
   double get totalCarbonFootprint {
     return _items.fold(0.0, (sum, item) => sum + item.carbonFootprint);
   }
@@ -60,11 +76,16 @@ class ClosetProvider with ChangeNotifier {
   Future<void> loadFromStorage() async {
     final hasSavedData = await _storageService.hasSavedClothesList();
     final savedItems = await _storageService.loadClothesList();
+    final savedUserName = await _storageService.loadUserName();
 
     if (hasSavedData) {
       _items
         ..clear()
         ..addAll(savedItems);
+    }
+
+    if (savedUserName != null && savedUserName.trim().isNotEmpty) {
+      _userName = savedUserName.trim();
     }
 
     _selectedClothes = _items.isNotEmpty ? _items.last : null;
@@ -107,7 +128,8 @@ class ClosetProvider with ChangeNotifier {
 
     if (_items.isEmpty) {
       _selectedClothes = null;
-    } else if (_selectedClothes != null && targetSet.contains(_selectedClothes)) {
+    } else if (_selectedClothes != null &&
+        targetSet.contains(_selectedClothes)) {
       _selectedClothes = _items.last;
     }
 

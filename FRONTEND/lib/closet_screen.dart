@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
 import 'closet_provider.dart';
 import 'models/clothes.dart';
 
@@ -106,11 +105,25 @@ class _ClosetScreenState extends State<ClosetScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
+        final isDark = Theme.of(dialogContext).brightness == Brightness.dark;
+
         return AlertDialog(
-          title: const Text('선택한 의류 삭제'),
+          backgroundColor:
+          isDark ? const Color(0xFF1C1C1E) : Colors.white,
+          title: Text(
+            '선택한 의류 삭제',
+            style: TextStyle(
+              color: isDark ? Colors.white : const Color(0xFF111111),
+            ),
+          ),
           content: Text(
             '${_selectedItems.length}개의 의류를 삭제할까요?\n이 작업은 되돌릴 수 없습니다.',
-            style: const TextStyle(height: 1.5),
+            style: TextStyle(
+              height: 1.5,
+              color: isDark
+                  ? const Color(0xFFD1D1D6)
+                  : const Color(0xFF444444),
+            ),
           ),
           actions: [
             TextButton(
@@ -196,10 +209,16 @@ class _ClosetScreenState extends State<ClosetScreen> {
   }
 
   Future<void> _showSortBottomSheet() async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+    final sheetColor = isDark ? const Color(0xFF121212) : Colors.white;
+    final secondaryText =
+    isDark ? const Color(0xFFD1D1D6) : const Color(0xFF8C8C8C);
+
     final selected = await showModalBottomSheet<ClosetSortOption>(
       context: context,
       showDragHandle: true,
-      backgroundColor: Colors.white,
+      backgroundColor: sheetColor,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -211,29 +230,42 @@ class _ClosetScreenState extends State<ClosetScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   '정렬',
                   style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.bold,
+                    color: primaryText,
                   ),
                 ),
                 const SizedBox(height: 20),
                 _buildSortOptionTile(
                   label: '친환경 순',
                   value: ClosetSortOption.eco,
+                  primaryText: primaryText,
+                  secondaryText: secondaryText,
+                  isDark: isDark,
                 ),
                 _buildSortOptionTile(
                   label: '건강도 순',
                   value: ClosetSortOption.health,
+                  primaryText: primaryText,
+                  secondaryText: secondaryText,
+                  isDark: isDark,
                 ),
                 _buildSortOptionTile(
                   label: '최신 등록 순',
                   value: ClosetSortOption.latest,
+                  primaryText: primaryText,
+                  secondaryText: secondaryText,
+                  isDark: isDark,
                 ),
                 _buildSortOptionTile(
                   label: '내설정순',
                   value: ClosetSortOption.custom,
+                  primaryText: primaryText,
+                  secondaryText: secondaryText,
+                  isDark: isDark,
                 ),
               ],
             ),
@@ -255,6 +287,9 @@ class _ClosetScreenState extends State<ClosetScreen> {
   Widget _buildSortOptionTile({
     required String label,
     required ClosetSortOption value,
+    required Color primaryText,
+    required Color secondaryText,
+    required bool isDark,
   }) {
     final isSelected = _sortOption == value;
 
@@ -270,16 +305,19 @@ class _ClosetScreenState extends State<ClosetScreen> {
                 label,
                 style: TextStyle(
                   fontSize: 18,
-                  color: isSelected ? const Color(0xFF4A4EFE) : Colors.black87,
+                  color: isSelected
+                      ? const Color(0xFF4A4EFE)
+                      : primaryText,
                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                 ),
               ),
             ),
-            if (isSelected)
-              const Icon(
-                Icons.check,
-                color: Color(0xFF4A4EFE),
-              ),
+            Icon(
+              isSelected ? Icons.check : Icons.radio_button_unchecked,
+              color: isSelected
+                  ? const Color(0xFF4A4EFE)
+                  : secondaryText,
+            ),
           ],
         ),
       ),
@@ -306,6 +344,24 @@ class _ClosetScreenState extends State<ClosetScreen> {
       originalOrder,
     );
 
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final primaryText = isDark ? Colors.white : const Color(0xFF1A1A1A);
+    final secondaryText =
+    isDark ? const Color(0xFFD1D1D6) : Colors.grey;
+    final baseCardColor =
+    isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final borderColor =
+    isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade200;
+    final selectedBgColor =
+    isDark ? const Color(0xFF232A45) : const Color(0xFFEEF1FF);
+    final warningBgColor =
+    isDark ? const Color(0xFF2A1E1E) : Colors.red.shade50;
+    final leadingBgColor =
+    isDark ? const Color(0xFF2A2A2E) : Colors.grey.shade100;
+    final shadowColor = isDark
+        ? Colors.black.withValues(alpha: 0.16)
+        : Colors.black.withValues(alpha: 0.03);
+
     return DefaultTabController(
       length: 3,
       child: Column(
@@ -318,10 +374,10 @@ class _ClosetScreenState extends State<ClosetScreen> {
                 children: [
                   Text(
                     '${_selectedItems.length}개 선택됨',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.bold,
-                      color: Color(0xFF1A1A1A),
+                      color: primaryText,
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -359,14 +415,14 @@ class _ClosetScreenState extends State<ClosetScreen> {
                   Stack(
                     alignment: Alignment.center,
                     children: [
-                      const Align(
+                      Align(
                         alignment: Alignment.center,
                         child: Text(
                           '내 옷장',
                           style: TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.bold,
-                            color: Color(0xFF1A1A1A),
+                            color: primaryText,
                           ),
                         ),
                       ),
@@ -395,8 +451,8 @@ class _ClosetScreenState extends State<ClosetScreen> {
                   const SizedBox(height: 10),
                   Text(
                     '현재 정렬: $_sortLabel',
-                    style: const TextStyle(
-                      color: Colors.grey,
+                    style: TextStyle(
+                      color: secondaryText,
                       fontSize: 13,
                     ),
                   ),
@@ -409,8 +465,8 @@ class _ClosetScreenState extends State<ClosetScreen> {
                           ? '드래그해서 순서를 바꿔 보세요.'
                           : '내설정순으로 정렬되어 있어요.')
                           : '원하는 방식으로 옷장을 정리해 보세요.',
-                      style: const TextStyle(
-                        color: Colors.grey,
+                      style: TextStyle(
+                        color: secondaryText,
                         fontSize: 12,
                       ),
                     ),
@@ -418,12 +474,12 @@ class _ClosetScreenState extends State<ClosetScreen> {
                 ],
               ),
             ),
-          const TabBar(
-            labelColor: Color(0xFF4A4EFE),
-            unselectedLabelColor: Colors.grey,
-            indicatorColor: Color(0xFF4A4EFE),
+          TabBar(
+            labelColor: const Color(0xFF4A4EFE),
+            unselectedLabelColor: secondaryText,
+            indicatorColor: const Color(0xFF4A4EFE),
             indicatorWeight: 3,
-            tabs: [
+            tabs: const [
               Tab(text: '전체'),
               Tab(text: '상의'),
               Tab(text: '하의'),
@@ -438,11 +494,29 @@ class _ClosetScreenState extends State<ClosetScreen> {
                   allItems,
                   originalOrder,
                   emptyMessage: '옷장에 등록된 의류가 없습니다.',
+                  primaryText: primaryText,
+                  secondaryText: secondaryText,
+                  cardColor: baseCardColor,
+                  borderColor: borderColor,
+                  selectedBgColor: selectedBgColor,
+                  warningBgColor: warningBgColor,
+                  leadingBgColor: leadingBgColor,
+                  shadowColor: shadowColor,
+                  isDark: isDark,
                 )
                     : _buildClothesList(
                   context,
                   allItems,
                   emptyMessage: '옷장에 등록된 의류가 없습니다.',
+                  primaryText: primaryText,
+                  secondaryText: secondaryText,
+                  cardColor: baseCardColor,
+                  borderColor: borderColor,
+                  selectedBgColor: selectedBgColor,
+                  warningBgColor: warningBgColor,
+                  leadingBgColor: leadingBgColor,
+                  shadowColor: shadowColor,
+                  isDark: isDark,
                 ),
                 _sortOption == ClosetSortOption.custom && _reorderMode
                     ? _buildReorderableClothesList(
@@ -450,11 +524,29 @@ class _ClosetScreenState extends State<ClosetScreen> {
                   topItems,
                   originalOrder,
                   emptyMessage: '상의 의류가 없습니다.',
+                  primaryText: primaryText,
+                  secondaryText: secondaryText,
+                  cardColor: baseCardColor,
+                  borderColor: borderColor,
+                  selectedBgColor: selectedBgColor,
+                  warningBgColor: warningBgColor,
+                  leadingBgColor: leadingBgColor,
+                  shadowColor: shadowColor,
+                  isDark: isDark,
                 )
                     : _buildClothesList(
                   context,
                   topItems,
                   emptyMessage: '상의 의류가 없습니다.',
+                  primaryText: primaryText,
+                  secondaryText: secondaryText,
+                  cardColor: baseCardColor,
+                  borderColor: borderColor,
+                  selectedBgColor: selectedBgColor,
+                  warningBgColor: warningBgColor,
+                  leadingBgColor: leadingBgColor,
+                  shadowColor: shadowColor,
+                  isDark: isDark,
                 ),
                 _sortOption == ClosetSortOption.custom && _reorderMode
                     ? _buildReorderableClothesList(
@@ -462,11 +554,29 @@ class _ClosetScreenState extends State<ClosetScreen> {
                   bottomItems,
                   originalOrder,
                   emptyMessage: '하의 의류가 없습니다.',
+                  primaryText: primaryText,
+                  secondaryText: secondaryText,
+                  cardColor: baseCardColor,
+                  borderColor: borderColor,
+                  selectedBgColor: selectedBgColor,
+                  warningBgColor: warningBgColor,
+                  leadingBgColor: leadingBgColor,
+                  shadowColor: shadowColor,
+                  isDark: isDark,
                 )
                     : _buildClothesList(
                   context,
                   bottomItems,
                   emptyMessage: '하의 의류가 없습니다.',
+                  primaryText: primaryText,
+                  secondaryText: secondaryText,
+                  cardColor: baseCardColor,
+                  borderColor: borderColor,
+                  selectedBgColor: selectedBgColor,
+                  warningBgColor: warningBgColor,
+                  leadingBgColor: leadingBgColor,
+                  shadowColor: shadowColor,
+                  isDark: isDark,
                 ),
               ],
             ),
@@ -481,12 +591,21 @@ class _ClosetScreenState extends State<ClosetScreen> {
       List<Clothes> clothes,
       List<Clothes> originalOrder, {
         required String emptyMessage,
+        required Color primaryText,
+        required Color secondaryText,
+        required Color cardColor,
+        required Color borderColor,
+        required Color selectedBgColor,
+        required Color warningBgColor,
+        required Color leadingBgColor,
+        required Color shadowColor,
+        required bool isDark,
       }) {
     if (clothes.isEmpty) {
       return Center(
         child: Text(
           emptyMessage,
-          style: const TextStyle(color: Colors.grey),
+          style: TextStyle(color: secondaryText),
         ),
       );
     }
@@ -522,6 +641,15 @@ class _ClosetScreenState extends State<ClosetScreen> {
             isWarning: item.health <= 20,
             showDragHandle: true,
             disableTap: true,
+            primaryText: primaryText,
+            secondaryText: secondaryText,
+            cardColor: cardColor,
+            borderColor: borderColor,
+            selectedBgColor: selectedBgColor,
+            warningBgColor: warningBgColor,
+            leadingBgColor: leadingBgColor,
+            shadowColor: shadowColor,
+            isDark: isDark,
           ),
         );
       },
@@ -532,12 +660,21 @@ class _ClosetScreenState extends State<ClosetScreen> {
       BuildContext context,
       List<Clothes> clothes, {
         required String emptyMessage,
+        required Color primaryText,
+        required Color secondaryText,
+        required Color cardColor,
+        required Color borderColor,
+        required Color selectedBgColor,
+        required Color warningBgColor,
+        required Color leadingBgColor,
+        required Color shadowColor,
+        required bool isDark,
       }) {
     if (clothes.isEmpty) {
       return Center(
         child: Text(
           emptyMessage,
-          style: const TextStyle(color: Colors.grey),
+          style: TextStyle(color: secondaryText),
         ),
       );
     }
@@ -563,6 +700,15 @@ class _ClosetScreenState extends State<ClosetScreen> {
                 ? Icons.sentiment_satisfied_alt
                 : Icons.warning_amber_rounded,
             isWarning: item.health <= 20,
+            primaryText: primaryText,
+            secondaryText: secondaryText,
+            cardColor: cardColor,
+            borderColor: borderColor,
+            selectedBgColor: selectedBgColor,
+            warningBgColor: warningBgColor,
+            leadingBgColor: leadingBgColor,
+            shadowColor: shadowColor,
+            isDark: isDark,
           ),
         );
       },
@@ -577,6 +723,15 @@ class _ClosetScreenState extends State<ClosetScreen> {
         required String status,
         required Color statusColor,
         required IconData statusIcon,
+        required Color primaryText,
+        required Color secondaryText,
+        required Color cardColor,
+        required Color borderColor,
+        required Color selectedBgColor,
+        required Color warningBgColor,
+        required Color leadingBgColor,
+        required Color shadowColor,
+        required bool isDark,
         bool isWarning = false,
         bool showDragHandle = false,
         bool disableTap = false,
@@ -586,20 +741,18 @@ class _ClosetScreenState extends State<ClosetScreen> {
     return Container(
       decoration: BoxDecoration(
         color: isSelected
-            ? const Color(0xFFEEF1FF)
-            : (isWarning ? Colors.red.shade50 : Colors.white),
+            ? selectedBgColor
+            : (isWarning ? warningBgColor : cardColor),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: isSelected
               ? const Color(0xFF4A4EFE)
-              : (isWarning
-              ? Colors.redAccent.shade200
-              : Colors.grey.shade200),
+              : (isWarning ? Colors.redAccent.shade200 : borderColor),
           width: isSelected ? 2 : (isWarning ? 2 : 1),
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
+            color: shadowColor,
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -612,21 +765,27 @@ class _ClosetScreenState extends State<ClosetScreen> {
           height: 60,
           decoration: BoxDecoration(
             color: isSelected
-                ? Colors.white
-                : (isWarning ? Colors.white : Colors.grey.shade100),
+                ? (isDark ? const Color(0xFF1C1C1E) : Colors.white)
+                : (isWarning
+                ? (isDark ? const Color(0xFF1C1C1E) : Colors.white)
+                : leadingBgColor),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Icon(
             Icons.checkroom,
             color: isSelected
                 ? const Color(0xFF4A4EFE)
-                : (isWarning ? Colors.redAccent : Colors.grey),
+                : (isWarning ? Colors.redAccent : secondaryText),
             size: 30,
           ),
         ),
         title: Text(
           title,
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 16,
+            color: primaryText,
+          ),
         ),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 8.0),
@@ -635,8 +794,8 @@ class _ClosetScreenState extends State<ClosetScreen> {
             children: [
               Text(
                 category,
-                style: const TextStyle(
-                  color: Colors.grey,
+                style: TextStyle(
+                  color: secondaryText,
                   fontSize: 12,
                 ),
               ),
@@ -663,7 +822,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
           ),
         ),
         trailing: showDragHandle
-            ? const Icon(Icons.drag_handle, color: Colors.grey)
+            ? Icon(Icons.drag_handle, color: secondaryText)
             : (_selectionMode
             ? Icon(
           isSelected
@@ -671,9 +830,9 @@ class _ClosetScreenState extends State<ClosetScreen> {
               : Icons.radio_button_unchecked,
           color: isSelected
               ? const Color(0xFF4A4EFE)
-              : Colors.grey,
+              : secondaryText,
         )
-            : const Icon(Icons.chevron_right, color: Colors.grey)),
+            : Icon(Icons.chevron_right, color: secondaryText)),
         onTap: disableTap
             ? null
             : () {
