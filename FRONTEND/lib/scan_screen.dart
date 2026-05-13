@@ -17,6 +17,73 @@ class ScanScreen extends StatefulWidget {
 }
 
 class _ScanScreenState extends State<ScanScreen> {
+  static const List<_ClothingTypeOption> _clothingTypeOptions = [
+    _ClothingTypeOption(
+      label: '반팔 티셔츠',
+      category: '상의',
+      weightRangeLabel: '100~250g',
+      estimatedWeightGram: 180,
+      icon: Icons.checkroom_outlined,
+    ),
+    _ClothingTypeOption(
+      label: '셔츠 / 블라우스',
+      category: '상의',
+      weightRangeLabel: '150~350g',
+      estimatedWeightGram: 240,
+      icon: Icons.dry_cleaning_outlined,
+    ),
+    _ClothingTypeOption(
+      label: '긴팔 / 맨투맨',
+      category: '상의',
+      weightRangeLabel: '350~750g',
+      estimatedWeightGram: 520,
+      icon: Icons.checkroom_outlined,
+    ),
+    _ClothingTypeOption(
+      label: '니트',
+      category: '상의',
+      weightRangeLabel: '400~900g',
+      estimatedWeightGram: 620,
+      icon: Icons.texture_outlined,
+    ),
+    _ClothingTypeOption(
+      label: '바지',
+      category: '하의',
+      weightRangeLabel: '450~900g',
+      estimatedWeightGram: 680,
+      icon: Icons.accessibility_new_outlined,
+    ),
+    _ClothingTypeOption(
+      label: '스커트',
+      category: '하의',
+      weightRangeLabel: '250~650g',
+      estimatedWeightGram: 420,
+      icon: Icons.accessibility_new_outlined,
+    ),
+    _ClothingTypeOption(
+      label: '원피스',
+      category: '상의',
+      weightRangeLabel: '350~850g',
+      estimatedWeightGram: 560,
+      icon: Icons.woman_outlined,
+    ),
+    _ClothingTypeOption(
+      label: '아우터',
+      category: '상의',
+      weightRangeLabel: '800~1800g',
+      estimatedWeightGram: 1200,
+      icon: Icons.ac_unit_outlined,
+    ),
+    _ClothingTypeOption(
+      label: '직접 입력',
+      category: '상의',
+      weightRangeLabel: '실제 무게 입력',
+      estimatedWeightGram: 500,
+      icon: Icons.scale_outlined,
+      isDirectWeightPlaceholder: true,
+    ),
+  ];
+
   bool _isScanning = false;
   bool _isScanComplete = false;
   bool _hasTriedSubmit = false;
@@ -33,7 +100,7 @@ class _ScanScreenState extends State<ScanScreen> {
   final Map<String, TextEditingController> _materialControllers = {};
   final TextEditingController _titleController = TextEditingController();
 
-  final List<String> _categoryOptions = ['상의', '하의'];
+  _ClothingTypeOption _selectedClothingType = _clothingTypeOptions.first;
   String _selectedCategory = '상의';
 
   @override
@@ -67,32 +134,142 @@ class _ScanScreenState extends State<ScanScreen> {
       final ScanResult result =
       await _scanApiService.scanLabel(imageFile: _selectedImage!);
 
-      _setMaterialControllers(result.materials);
-
       if (!mounted) return;
+
+      final inferredType = _inferTypeFromCategory(result.category);
+
       setState(() {
         _isScanning = false;
+        _selectedClothingType = inferredType;
+        _selectedCategory = inferredType.category;
+      });
+
+      final selectedType = await _showClothingTypePicker(
+        initialSelection: inferredType,
+        canDismiss: false,
+      ) ??
+          inferredType;
+
+      if (!mounted) return;
+
+      _setMaterialControllers(result.materials);
+
+      setState(() {
+        _selectedClothingType = selectedType;
+        _selectedCategory = selectedType.category;
         _isScanComplete = true;
         _scannedMaterials = result.materials;
         _scannedCare = result.careInstruction;
-        _titleController.text =
-        (result.title?.trim().isNotEmpty ?? false)
+        _titleController.text = (result.title?.trim().isNotEmpty ?? false)
             ? result.title!.trim()
-            : '새로 스캔한 의류';
-        _selectedCategory = _normalizeCategory(result.category);
+            : selectedType.defaultTitle;
       });
     } on ScanApiException catch (e) {
       _showErrorFallback(e.message);
     } catch (e) {
-      debugPrint('🔌 서버 통신 실패: $e');
+      debugPrint('서버 통신 실패: $e');
       _showErrorFallback('서버 연결이 불안정해 임시 결과를 표시합니다.');
     }
   }
 
-  String _normalizeCategory(String? category) {
-    if (category == null) return '상의';
-    if (_categoryOptions.contains(category)) return category;
-    return '상의';
+  _ClothingTypeOption _inferTypeFromCategory(String? category) {
+    final text = category?.toLowerCase().trim() ?? '';
+
+    if (text.contains('아우터') ||
+        text.contains('outer') ||
+        text.contains('jacket') ||
+        text.contains('coat')) {
+      return _clothingTypeOptions.firstWhere((item) => item.label == '아우터');
+    }
+
+    if (text.contains('니트') || text.contains('knit')) {
+      return _clothingTypeOptions.firstWhere((item) => item.label == '니트');
+    }
+
+    if (text.contains('바지') ||
+        text.contains('하의') ||
+        text.contains('pants') ||
+        text.contains('bottom')) {
+      return _clothingTypeOptions.firstWhere((item) => item.label == '바지');
+    }
+
+    if (text.contains('스커트') || text.contains('skirt')) {
+      return _clothingTypeOptions.firstWhere((item) => item.label == '스커트');
+    }
+
+    if (text.contains('원피스') || text.contains('dress')) {
+      return _clothingTypeOptions.firstWhere((item) => item.label == '원피스');
+    }
+
+    if (text.contains('셔츠') ||
+        text.contains('블라우스') ||
+        text.contains('shirt') ||
+        text.contains('blouse')) {
+      return _clothingTypeOptions.firstWhere(
+            (item) => item.label == '셔츠 / 블라우스',
+      );
+    }
+
+    if (text.contains('맨투맨') ||
+        text.contains('긴팔') ||
+        text.contains('sweatshirt')) {
+      return _clothingTypeOptions.firstWhere(
+            (item) => item.label == '긴팔 / 맨투맨',
+      );
+    }
+
+    return _clothingTypeOptions.first;
+  }
+
+  bool _shouldReplaceTitleWithType(String title) {
+    final trimmed = title.trim();
+
+    if (trimmed.isEmpty || trimmed == '새로 스캔한 의류') {
+      return true;
+    }
+
+    if (_selectedClothingType.defaultTitle == trimmed) {
+      return true;
+    }
+
+    return _clothingTypeOptions.any((option) => option.defaultTitle == trimmed);
+  }
+
+  void _applyClothingType(_ClothingTypeOption option) {
+    final shouldReplaceTitle = _shouldReplaceTitleWithType(
+      _titleController.text,
+    );
+
+    setState(() {
+      _selectedClothingType = option;
+      _selectedCategory = option.category;
+
+      if (shouldReplaceTitle) {
+        _titleController.text = option.defaultTitle;
+      }
+    });
+  }
+
+  Future<_ClothingTypeOption?> _showClothingTypePicker({
+    required _ClothingTypeOption initialSelection,
+    bool canDismiss = true,
+  }) {
+    return showModalBottomSheet<_ClothingTypeOption>(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: canDismiss,
+      enableDrag: canDismiss,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return _ClothingTypePickerSheet(
+          options: _clothingTypeOptions,
+          initialSelection: initialSelection,
+          onSelected: (option) {
+            Navigator.pop(sheetContext, option);
+          },
+        );
+      },
+    );
   }
 
   void _setMaterialControllers(Map<String, double> materials) {
@@ -103,9 +280,8 @@ class _ScanScreenState extends State<ScanScreen> {
 
     materials.forEach((key, value) {
       _materialControllers[key] = TextEditingController(
-        text: value % 1 == 0
-            ? value.toInt().toString()
-            : value.toStringAsFixed(1),
+        text:
+        value % 1 == 0 ? value.toInt().toString() : value.toStringAsFixed(1),
       );
     });
   }
@@ -149,10 +325,12 @@ class _ScanScreenState extends State<ScanScreen> {
 
   double _estimateCarbonFootprint(
       Map<String, double> materials,
-      String category,
+      _ClothingTypeOption clothingType,
       ) {
+    final weightKg = clothingType.estimatedWeightGram / 1000;
+
     if (materials.isEmpty) {
-      return category == '하의' ? 12.0 : 9.0;
+      return double.parse((weightKg * 10.0).toStringAsFixed(1));
     }
 
     double totalPercent =
@@ -163,13 +341,14 @@ class _ScanScreenState extends State<ScanScreen> {
 
     materials.forEach((material, percent) {
       final factor = _findMaterialEmissionFactor(material);
-      emission += (percent / totalPercent) * factor;
+      emission += (percent / totalPercent) * weightKg * factor;
     });
 
-    final categoryMultiplier = category == '하의' ? 1.15 : 1.0;
-    final result = emission * categoryMultiplier;
+    if (emission < 0.1) {
+      emission = 0.1;
+    }
 
-    return double.parse(result.toStringAsFixed(1));
+    return double.parse(emission.toStringAsFixed(1));
   }
 
   int _estimateInitialHealth(Map<String, double> materials) {
@@ -256,7 +435,7 @@ class _ScanScreenState extends State<ScanScreen> {
     final estimatedHealth = _estimateInitialHealth(editedMaterials);
     final estimatedCarbon = _estimateCarbonFootprint(
       editedMaterials,
-      _selectedCategory,
+      _selectedClothingType,
     );
 
     final newClothes = Clothes(
@@ -285,7 +464,7 @@ class _ScanScreenState extends State<ScanScreen> {
   void _showErrorFallback([
     String message = '서버 연결이 불안정해 임시 결과를 표시합니다.',
   ]) {
-    Future.delayed(const Duration(seconds: 1), () {
+    Future.delayed(const Duration(seconds: 1), () async {
       if (!mounted) return;
 
       final fallbackMaterials = <String, double>{
@@ -293,15 +472,27 @@ class _ScanScreenState extends State<ScanScreen> {
         'polyester': 20,
       };
 
+      setState(() {
+        _isScanning = false;
+      });
+
+      final selectedType = await _showClothingTypePicker(
+        initialSelection: _selectedClothingType,
+        canDismiss: false,
+      ) ??
+          _selectedClothingType;
+
+      if (!mounted) return;
+
       _setMaterialControllers(fallbackMaterials);
 
       setState(() {
-        _isScanning = false;
+        _selectedClothingType = selectedType;
+        _selectedCategory = selectedType.category;
         _isScanComplete = true;
         _scannedMaterials = fallbackMaterials;
         _scannedCare = '30도 이하 물에서 중성세제로 손세탁하세요.';
-        _titleController.text = '새로 스캔한 의류';
-        _selectedCategory = '상의';
+        _titleController.text = selectedType.defaultTitle;
         _hasTriedSubmit = false;
       });
 
@@ -323,8 +514,9 @@ class _ScanScreenState extends State<ScanScreen> {
       _isScanComplete = false;
       _scannedMaterials = {};
       _scannedCare = '';
+      _selectedClothingType = _clothingTypeOptions.first;
+      _selectedCategory = _selectedClothingType.category;
       _titleController.text = '새로 스캔한 의류';
-      _selectedCategory = '상의';
       _hasTriedSubmit = false;
     });
   }
@@ -414,8 +606,10 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Widget _buildResultView() {
     final previewHealth = _estimateInitialHealth(_scannedMaterials);
-    final previewCarbon =
-    _estimateCarbonFootprint(_scannedMaterials, _selectedCategory);
+    final previewCarbon = _estimateCarbonFootprint(
+      _scannedMaterials,
+      _selectedClothingType,
+    );
     final totalMaterials = _calculateMaterialsTotal(_collectEditedMaterials());
     final isTotalValid = _isMaterialsTotalValid(_collectEditedMaterials());
 
@@ -426,16 +620,13 @@ class _ScanScreenState extends State<ScanScreen> {
     final borderColor =
     isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade300;
     final primaryText = isDark ? Colors.white : const Color(0xFF111111);
-    final secondaryText =
-    isDark ? const Color(0xFFD1D1D6) : Colors.grey;
-    final inputFillColor =
-    isDark ? const Color(0xFF2A2A2E) : Colors.white;
+    final secondaryText = isDark ? const Color(0xFFD1D1D6) : Colors.grey;
+    final inputFillColor = isDark ? const Color(0xFF2A2A2E) : Colors.white;
     final previewBoxColor =
     isDark ? const Color(0xFF1F2A3D) : Colors.green.shade50;
     final previewBorderColor =
     isDark ? const Color(0xFF2C4C7A) : Colors.green.shade100;
-    final careBoxColor =
-    isDark ? const Color(0xFF1E2A3A) : Colors.blue.shade50;
+    final careBoxColor = isDark ? const Color(0xFF1E2A3A) : Colors.blue.shade50;
 
     return Container(
       color: backgroundColor,
@@ -445,7 +636,8 @@ class _ScanScreenState extends State<ScanScreen> {
             ? AutovalidateMode.always
             : AutovalidateMode.disabled,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24.0),
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 140),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -466,7 +658,7 @@ class _ScanScreenState extends State<ScanScreen> {
               const SizedBox(height: 8),
               Center(
                 child: Text(
-                  '분석 결과를 확인하고 저장해 주세요.',
+                  '의류 무게 기준과 분석 결과를 확인해 주세요.',
                   style: TextStyle(fontSize: 14, color: secondaryText),
                 ),
               ),
@@ -507,35 +699,40 @@ class _ScanScreenState extends State<ScanScreen> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    DropdownButtonFormField<String>(
-                      value: _selectedCategory,
-                      dropdownColor: cardColor,
-                      style: TextStyle(color: primaryText),
-                      decoration: InputDecoration(
-                        filled: true,
-                        fillColor: inputFillColor,
-                        labelText: '카테고리',
-                        labelStyle: TextStyle(color: secondaryText),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        prefixIcon: const Icon(Icons.category_outlined),
-                      ),
-                      items: _categoryOptions.map((category) {
-                        return DropdownMenuItem(
-                          value: category,
-                          child: Text(
-                            category,
-                            style: TextStyle(color: primaryText),
-                          ),
+                    InkWell(
+                      onTap: () async {
+                        final picked = await _showClothingTypePicker(
+                          initialSelection: _selectedClothingType,
                         );
-                      }).toList(),
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setState(() {
-                          _selectedCategory = value;
-                        });
+
+                        if (!mounted || picked == null) return;
+                        _applyClothingType(picked);
                       },
+                      borderRadius: BorderRadius.circular(10),
+                      child: InputDecorator(
+                        decoration: InputDecoration(
+                          filled: true,
+                          fillColor: inputFillColor,
+                          labelText: '무게 기준',
+                          labelStyle: TextStyle(color: secondaryText),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          prefixIcon: const Icon(Icons.scale_outlined),
+                          suffixIcon: Icon(
+                            Icons.keyboard_arrow_down,
+                            color: secondaryText,
+                          ),
+                        ),
+                        child: Text(
+                          '${_selectedClothingType.label} · ${_selectedClothingType.weightDisplayText}',
+                          style: TextStyle(
+                            color: primaryText,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -554,9 +751,14 @@ class _ScanScreenState extends State<ScanScreen> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        '예상 건강도: $previewHealth%\n'
+                        '무게 기준: ${_selectedClothingType.label} · ${_selectedClothingType.weightDisplayText}\n'
+                            '예상 건강도: $previewHealth%\n'
                             '예상 탄소발자국: ${previewCarbon.toStringAsFixed(1)} kg CO2eq',
-                        style: TextStyle(fontSize: 14, color: primaryText),
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: primaryText,
+                          height: 1.5,
+                        ),
                       ),
                     ),
                   ],
@@ -713,5 +915,590 @@ class _ScanScreenState extends State<ScanScreen> {
         ),
       ],
     );
+  }
+}
+
+class _ClothingTypePickerSheet extends StatefulWidget {
+  const _ClothingTypePickerSheet({
+    required this.options,
+    required this.initialSelection,
+    required this.onSelected,
+  });
+
+  final List<_ClothingTypeOption> options;
+  final _ClothingTypeOption initialSelection;
+  final ValueChanged<_ClothingTypeOption> onSelected;
+
+  @override
+  State<_ClothingTypePickerSheet> createState() =>
+      _ClothingTypePickerSheetState();
+}
+
+class _ClothingTypePickerSheetState extends State<_ClothingTypePickerSheet> {
+  final TextEditingController _directNameController = TextEditingController();
+  final TextEditingController _directWeightController = TextEditingController();
+
+  bool _isDirectInputMode = false;
+  String _directCategory = '상의';
+  String? _directErrorText;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _directCategory =
+    widget.initialSelection.category == '하의' ? '하의' : '상의';
+
+    if (widget.initialSelection.isDirectWeight) {
+      _directNameController.text = widget.initialSelection.label;
+      _directWeightController.text = _ClothingTypeOption._formatWeightGram(
+        widget.initialSelection.estimatedWeightGram,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _directNameController.dispose();
+    _directWeightController.dispose();
+    super.dispose();
+  }
+
+  void _submitDirectInput() {
+    final name = _directNameController.text.trim();
+    final weightText = _directWeightController.text.trim();
+    final weight = double.tryParse(weightText);
+
+    if (name.isEmpty) {
+      setState(() {
+        _directErrorText = '의류 종류를 입력해 주세요.';
+      });
+      return;
+    }
+
+    if (weight == null || weight <= 0) {
+      setState(() {
+        _directErrorText = '실제 무게를 g 단위로 입력해 주세요.';
+      });
+      return;
+    }
+
+    widget.onSelected(
+      _ClothingTypeOption.directWeight(
+        label: name,
+        category: _directCategory,
+        weightGram: weight,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final sheetColor = isDark ? const Color(0xFF121212) : Colors.white;
+
+    return SafeArea(
+      top: false,
+      child: AnimatedPadding(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+          ),
+          child: Container(
+            decoration: BoxDecoration(
+              color: sheetColor,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(24),
+              ),
+            ),
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              switchInCurve: Curves.easeOut,
+              switchOutCurve: Curves.easeOut,
+              child: _isDirectInputMode
+                  ? _buildDirectInputView(context)
+                  : _buildOptionListView(context),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOptionListView(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final borderColor =
+    isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade200;
+    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+    final secondaryText =
+    isDark ? const Color(0xFFD1D1D6) : const Color(0xFF777777);
+
+    return Padding(
+      key: const ValueKey('option-list'),
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 38,
+              height: 4,
+              decoration: BoxDecoration(
+                color: isDark ? Colors.white24 : Colors.black12,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            '의류 종류 선택',
+            style: TextStyle(
+              color: primaryText,
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '탄소발자국 계산에 사용할 의류 무게 범위를 선택해 주세요.',
+            style: TextStyle(
+              color: secondaryText,
+              fontSize: 13,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 18),
+          Flexible(
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: widget.options.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (context, index) {
+                final option = widget.options[index];
+                final isSelected = option.isDirectWeightPlaceholder
+                    ? widget.initialSelection.isDirectWeight ||
+                    widget.initialSelection.isDirectWeightPlaceholder
+                    : option.label == widget.initialSelection.label;
+
+                return InkWell(
+                  onTap: () {
+                    if (option.isDirectWeightPlaceholder) {
+                      setState(() {
+                        _isDirectInputMode = true;
+                        _directErrorText = null;
+                      });
+                      return;
+                    }
+
+                    widget.onSelected(option);
+                  },
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? const Color(0xFF4A4EFE).withValues(
+                        alpha: isDark ? 0.20 : 0.10,
+                      )
+                          : cardColor,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color:
+                        isSelected ? const Color(0xFF4A4EFE) : borderColor,
+                        width: isSelected ? 1.5 : 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? const Color(0xFF4A4EFE)
+                                : (isDark
+                                ? const Color(0xFF2A2A2E)
+                                : const Color(0xFFF2F3F8)),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            option.icon,
+                            color: isSelected
+                                ? Colors.white
+                                : const Color(0xFF4A4EFE),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                option.label,
+                                style: TextStyle(
+                                  color: primaryText,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                option.isDirectWeightPlaceholder
+                                    ? '실제 무게를 알고 있어요'
+                                    : '${option.category} · 예상 무게 ${option.weightRangeLabel}',
+                                style: TextStyle(
+                                  color: secondaryText,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (isSelected)
+                          const Icon(
+                            Icons.check_circle,
+                            color: Color(0xFF4A4EFE),
+                          )
+                        else
+                          Icon(
+                            option.isDirectWeightPlaceholder
+                                ? Icons.scale_outlined
+                                : Icons.chevron_right,
+                            color: secondaryText,
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDirectInputView(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final borderColor =
+    isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade300;
+    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+    final secondaryText =
+    isDark ? const Color(0xFFD1D1D6) : const Color(0xFF777777);
+    final inputFillColor = isDark ? const Color(0xFF2A2A2E) : Colors.white;
+
+    return SingleChildScrollView(
+      key: const ValueKey('direct-input'),
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 38,
+              height: 4,
+              decoration: BoxDecoration(
+                color: isDark ? Colors.white24 : Colors.black12,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              IconButton(
+                onPressed: () {
+                  setState(() {
+                    _isDirectInputMode = false;
+                    _directErrorText = null;
+                  });
+                },
+                icon: Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  color: primaryText,
+                  size: 20,
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  '직접 무게 입력',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 48),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '실제 무게를 알고 있다면 더 정확하게 탄소발자국을 계산할 수 있어요.',
+            style: TextStyle(
+              color: secondaryText,
+              fontSize: 13,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 18),
+          TextField(
+            controller: _directNameController,
+            autofocus: true,
+            style: TextStyle(color: primaryText),
+            textInputAction: TextInputAction.next,
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: inputFillColor,
+              labelText: '의류 종류',
+              hintText: '예: 가디건, 조끼, 트레이닝복',
+              labelStyle: TextStyle(color: secondaryText),
+              hintStyle: TextStyle(color: secondaryText),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              prefixIcon: const Icon(Icons.edit_outlined),
+            ),
+            onChanged: (_) {
+              if (_directErrorText == null) return;
+              setState(() {
+                _directErrorText = null;
+              });
+            },
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _directWeightController,
+            style: TextStyle(color: primaryText),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            textInputAction: TextInputAction.done,
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: inputFillColor,
+              labelText: '실제 무게',
+              hintText: '예: 620',
+              suffixText: 'g',
+              labelStyle: TextStyle(color: secondaryText),
+              hintStyle: TextStyle(color: secondaryText),
+              suffixStyle: TextStyle(color: secondaryText),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              prefixIcon: const Icon(Icons.scale_outlined),
+            ),
+            onChanged: (_) {
+              if (_directErrorText == null) return;
+              setState(() {
+                _directErrorText = null;
+              });
+            },
+            onSubmitted: (_) => _submitDirectInput(),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            '분류',
+            style: TextStyle(
+              color: primaryText,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _CategoryChoiceChip(
+                  label: '상의',
+                  selected: _directCategory == '상의',
+                  onTap: () {
+                    setState(() {
+                      _directCategory = '상의';
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _CategoryChoiceChip(
+                  label: '하의',
+                  selected: _directCategory == '하의',
+                  onTap: () {
+                    setState(() {
+                      _directCategory = '하의';
+                    });
+                  },
+                ),
+              ),
+            ],
+          ),
+          if (_directErrorText != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              _directErrorText!,
+              style: const TextStyle(
+                color: Colors.redAccent,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          const SizedBox(height: 20),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: borderColor),
+            ),
+            child: Text(
+              '무게는 의류 한 벌 기준으로 g 단위로 입력해 주세요.',
+              style: TextStyle(
+                color: secondaryText,
+                fontSize: 13,
+                height: 1.5,
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton(
+              onPressed: _submitDirectInput,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF4A4EFE),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: const Text(
+                '적용하기',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CategoryChoiceChip extends StatelessWidget {
+  const _CategoryChoiceChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderColor =
+    selected ? const Color(0xFF4A4EFE) : const Color(0xFF8C8C8C);
+    final backgroundColor = selected
+        ? const Color(0xFF4A4EFE).withValues(alpha: isDark ? 0.22 : 0.10)
+        : Colors.transparent;
+    final textColor =
+    selected ? const Color(0xFF4A4EFE) : (isDark ? Colors.white : Colors.black87);
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        height: 46,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: borderColor),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: textColor,
+            fontSize: 14,
+            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ClothingTypeOption {
+  const _ClothingTypeOption({
+    required this.label,
+    required this.category,
+    required this.weightRangeLabel,
+    required this.estimatedWeightGram,
+    required this.icon,
+    this.isDirectWeightPlaceholder = false,
+    this.isDirectWeight = false,
+  });
+
+  factory _ClothingTypeOption.directWeight({
+    required String label,
+    required String category,
+    required double weightGram,
+  }) {
+    return _ClothingTypeOption(
+      label: label,
+      category: category,
+      weightRangeLabel: '${_formatWeightGram(weightGram)}g',
+      estimatedWeightGram: weightGram,
+      icon: Icons.scale_outlined,
+      isDirectWeight: true,
+    );
+  }
+
+  final String label;
+  final String category;
+  final String weightRangeLabel;
+  final double estimatedWeightGram;
+  final IconData icon;
+  final bool isDirectWeightPlaceholder;
+  final bool isDirectWeight;
+
+  String get defaultTitle {
+    if (isDirectWeightPlaceholder) return '홍길동 기타 의류';
+    return '홍길동 $label';
+  }
+
+  String get weightDisplayText {
+    if (isDirectWeight) {
+      return '실제 무게 ${_formatWeightGram(estimatedWeightGram)}g';
+    }
+
+    if (isDirectWeightPlaceholder) {
+      return '실제 무게 입력';
+    }
+
+    return '예상 무게 $weightRangeLabel';
+  }
+
+  static String _formatWeightGram(double value) {
+    if (value % 1 == 0) {
+      return value.toInt().toString();
+    }
+
+    return value.toStringAsFixed(1);
   }
 }

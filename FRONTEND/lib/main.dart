@@ -10,6 +10,7 @@ import 'signup_screen.dart';
 import 'settings_screen.dart';
 import 'theme_provider.dart';
 import 'display_settings_screen.dart';
+import 'report_detail_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -114,10 +115,7 @@ class MyApp extends StatelessWidget {
             '/settings': (context) => const SettingsScreen(),
             '/display-settings': (context) => const DisplaySettingsScreen(),
             '/main': (context) => const MainScreen(),
-            '/report': (context) => Scaffold(
-              appBar: AppBar(title: const Text('상세 리포트')),
-              body: const ReportScreen(),
-            ),
+            '/report': (context) => const ReportDetailScreen(),
           },
         );
       },

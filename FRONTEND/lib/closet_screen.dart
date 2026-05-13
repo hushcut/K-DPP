@@ -11,7 +11,12 @@ enum ClosetSortOption {
 }
 
 class ClosetScreen extends StatefulWidget {
-  const ClosetScreen({super.key});
+  const ClosetScreen({
+    super.key,
+    this.onOpenReport,
+  });
+
+  final ValueChanged<Clothes>? onOpenReport;
 
   @override
   State<ClosetScreen> createState() => _ClosetScreenState();
@@ -842,6 +847,12 @@ class _ClosetScreenState extends State<ClosetScreen> {
           }
 
           context.read<ClosetProvider>().selectClothes(item);
+
+          if (widget.onOpenReport != null) {
+            widget.onOpenReport!(item);
+            return;
+          }
+
           Navigator.pushNamed(context, '/report', arguments: item);
         },
         onLongPress: disableTap
