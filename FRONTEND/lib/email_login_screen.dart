@@ -16,6 +16,20 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
 
   bool _isLoading = false;
   bool _obscurePassword = true;
+  bool _didLoadInitialEmail = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    if (_didLoadInitialEmail) return;
+    _didLoadInitialEmail = true;
+
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is String && args.trim().isNotEmpty) {
+      _emailController.text = args.trim();
+    }
+  }
 
   @override
   void dispose() {

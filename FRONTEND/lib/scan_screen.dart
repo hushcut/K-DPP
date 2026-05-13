@@ -1,7 +1,9 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+
 import 'closet_provider.dart';
 import 'models/clothes.dart';
 import 'models/scan_result.dart';
@@ -257,26 +259,26 @@ class _ScanScreenState extends State<ScanScreen> {
       _selectedCategory,
     );
 
+    final newClothes = Clothes(
+      title: title,
+      category: _selectedCategory,
+      health: estimatedHealth,
+      materials: editedMaterials,
+      careInstruction: _scannedCare,
+      carbonFootprint: estimatedCarbon,
+    );
+
     await Provider.of<ClosetProvider>(
       context,
       listen: false,
-    ).addClothes(
-      Clothes(
-        title: title,
-        category: _selectedCategory,
-        health: estimatedHealth,
-        materials: editedMaterials,
-        careInstruction: _scannedCare,
-        carbonFootprint: estimatedCarbon,
-      ),
-    );
+    ).addClothes(newClothes);
 
     if (!mounted) return;
 
     Navigator.pushReplacementNamed(
       context,
-      '/main',
-      arguments: 2,
+      '/report',
+      arguments: newClothes,
     );
   }
 
@@ -469,7 +471,6 @@ class _ScanScreenState extends State<ScanScreen> {
                 ),
               ),
               const SizedBox(height: 32),
-
               Text(
                 '기본 정보 수정',
                 style: TextStyle(
@@ -479,7 +480,6 @@ class _ScanScreenState extends State<ScanScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -540,9 +540,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   ],
                 ),
               ),
-
               const SizedBox(height: 24),
-
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -564,9 +562,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   ],
                 ),
               ),
-
               const SizedBox(height: 24),
-
               Text(
                 'AI 인식 소재 결과',
                 style: TextStyle(
@@ -576,7 +572,6 @@ class _ScanScreenState extends State<ScanScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-
               Text(
                 '현재 소재 합계: ${totalMaterials.toStringAsFixed(1)}%',
                 style: TextStyle(
@@ -585,9 +580,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   fontSize: 13,
                 ),
               ),
-
               const SizedBox(height: 12),
-
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -610,9 +603,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   }).toList(),
                 ),
               ),
-
               const SizedBox(height: 24),
-
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -632,9 +623,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   ],
                 ),
               ),
-
               const SizedBox(height: 40),
-
               SizedBox(
                 width: double.infinity,
                 height: 50,
@@ -656,9 +645,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   ),
                 ),
               ),
-
               const SizedBox(height: 12),
-
               Center(
                 child: TextButton(
                   onPressed: _resetScan,
@@ -710,7 +697,11 @@ class _ScanScreenState extends State<ScanScreen> {
               suffixText: '%',
               suffixStyle: TextStyle(color: secondaryText),
               isDense: true,
-              contentPadding: const EdgeInsets.only(bottom: 4, right: 8, top: 12),
+              contentPadding: const EdgeInsets.only(
+                bottom: 4,
+                right: 8,
+                top: 12,
+              ),
             ),
             onChanged: (_) {
               setState(() {

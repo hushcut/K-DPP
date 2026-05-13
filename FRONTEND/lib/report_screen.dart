@@ -385,7 +385,7 @@ class ReportScreen extends StatelessWidget {
     Navigator.pushReplacementNamed(
       context,
       '/main',
-      arguments: 3,
+      arguments: 2,
     );
   }
 

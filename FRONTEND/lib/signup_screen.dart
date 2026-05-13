@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'closet_provider.dart';
 import 'widgets/app_back_button.dart';
 
 class SignupScreen extends StatefulWidget {
@@ -92,13 +90,11 @@ class _SignupScreenState extends State<SignupScreen> {
     final isValid = _formKey.currentState?.validate() ?? false;
     if (!isValid) return;
 
+    final email = _emailController.text.trim();
+
     setState(() {
       _isLoading = true;
     });
-
-    await context.read<ClosetProvider>().setUserName(
-      _nicknameController.text.trim(),
-    );
 
     await Future.delayed(const Duration(milliseconds: 500));
 
@@ -108,10 +104,16 @@ class _SignupScreenState extends State<SignupScreen> {
       _isLoading = false;
     });
 
-    Navigator.pushNamedAndRemoveUntil(
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('회원가입이 완료되었습니다. 로그인해 주세요.'),
+      ),
+    );
+
+    Navigator.pushReplacementNamed(
       context,
-      '/main',
-          (route) => false,
+      '/email-login',
+      arguments: email,
     );
   }
 
@@ -120,8 +122,10 @@ class _SignupScreenState extends State<SignupScreen> {
     Widget? suffixIcon,
   }) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final fillColor = isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF1F1F4);
-    final hintColor = isDark ? const Color(0xFF9A9A9A) : const Color(0xFF9E9E9E);
+    final fillColor =
+    isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF1F1F4);
+    final hintColor =
+    isDark ? const Color(0xFF9A9A9A) : const Color(0xFF9E9E9E);
     final enabledBorderColor =
     isDark ? const Color(0xFF2C2C2E) : Colors.transparent;
 
@@ -181,7 +185,8 @@ class _SignupScreenState extends State<SignupScreen> {
     final primaryText = isDark ? Colors.white : const Color(0xFF111111);
     final secondaryText =
     isDark ? const Color(0xFFD1D1D6) : const Color(0xFF8C8C8C);
-    final iconColor = isDark ? const Color(0xFFB8B8BE) : const Color(0xFF8C8C8C);
+    final iconColor =
+    isDark ? const Color(0xFFB8B8BE) : const Color(0xFF8C8C8C);
 
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -240,7 +245,6 @@ class _SignupScreenState extends State<SignupScreen> {
                           ),
                         ),
                         const SizedBox(height: 36),
-
                         TextFormField(
                           controller: _nicknameController,
                           validator: _validateNickname,
@@ -251,7 +255,6 @@ class _SignupScreenState extends State<SignupScreen> {
                           ),
                         ),
                         const SizedBox(height: 16),
-
                         TextFormField(
                           controller: _emailController,
                           keyboardType: TextInputType.emailAddress,
@@ -263,7 +266,6 @@ class _SignupScreenState extends State<SignupScreen> {
                           ),
                         ),
                         const SizedBox(height: 16),
-
                         TextFormField(
                           controller: _passwordController,
                           obscureText: _obscurePassword,
@@ -288,7 +290,6 @@ class _SignupScreenState extends State<SignupScreen> {
                           ),
                         ),
                         const SizedBox(height: 16),
-
                         TextFormField(
                           controller: _confirmPasswordController,
                           obscureText: _obscureConfirmPassword,
@@ -313,9 +314,7 @@ class _SignupScreenState extends State<SignupScreen> {
                             ),
                           ),
                         ),
-
                         const SizedBox(height: 32),
-
                         SizedBox(
                           width: double.infinity,
                           height: 60,
@@ -325,7 +324,7 @@ class _SignupScreenState extends State<SignupScreen> {
                               elevation: 0,
                               backgroundColor: const Color(0xFF4A4EFE),
                               disabledBackgroundColor:
-                              const Color(0xFF4A4EFE).withValues(alpha: 0.55),
+                              const Color(0x8C4A4EFE),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(30),
                               ),
@@ -349,9 +348,7 @@ class _SignupScreenState extends State<SignupScreen> {
                             ),
                           ),
                         ),
-
                         const SizedBox(height: 18),
-
                         TextButton(
                           onPressed: () {
                             Navigator.pushReplacementNamed(
@@ -370,7 +367,6 @@ class _SignupScreenState extends State<SignupScreen> {
                             ),
                           ),
                         ),
-
                         const Spacer(),
                         const SizedBox(height: 24),
                       ],
