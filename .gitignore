@@ -378,3 +378,7 @@ BACKEND/*.db-wal
 BACKEND/*.db-shm
 BACKEND/__pycache__/
 venv/
+
+# backend-analyze branch keeps only backend-owned sources tracked.
+AI/
+FRONTEND/
