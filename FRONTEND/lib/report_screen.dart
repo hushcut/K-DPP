@@ -124,7 +124,7 @@ class ReportScreen extends StatelessWidget {
                 Expanded(
                   child: _buildSummaryCard(
                     title: '총 탄소발자국',
-                    value: '${item.carbonFootprint.toStringAsFixed(1)} kg',
+                    value: item.carbonFootprintRangeText,
                     subtitle: 'CO2eq 기준 추정값',
                     icon: Icons.eco_outlined,
                     color: const Color(0xFF4A4EFE),
@@ -158,7 +158,7 @@ class ReportScreen extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              '총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 소재와 카테고리 기반 추정',
+              '탄소배출량 ${item.carbonFootprintRangeText} · 소재와 카테고리 기반 추정',
               style: TextStyle(color: secondaryText, fontSize: 13),
             ),
             const SizedBox(height: 16),
@@ -911,7 +911,7 @@ class ReportScreen extends StatelessWidget {
           Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              '${item.category} · 총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq',
+              '${item.category} · 총 ${item.carbonFootprintRangeText}',
               style: TextStyle(
                 color: secondaryText,
                 fontSize: 12,

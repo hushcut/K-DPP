@@ -309,46 +309,52 @@ class _ScanScreenState extends State<ScanScreen> {
   double _findMaterialEmissionFactor(String material) {
     final m = material.toLowerCase();
 
-    if (m.contains('organic cotton')) return 5.0;
-    if (m.contains('cotton')) return 8.0;
-    if (m.contains('linen')) return 6.0;
-    if (m.contains('recycled polyester')) return 7.0;
-    if (m.contains('polyester')) return 12.0;
-    if (m.contains('nylon')) return 14.0;
-    if (m.contains('wool')) return 25.0;
-    if (m.contains('silk')) return 20.0;
-    if (m.contains('viscose') || m.contains('rayon')) return 10.0;
-    if (m.contains('polyurethane') || m.contains('spandex')) return 15.0;
+    if (m.contains('cotton') || m.contains('면') || m.contains('코튼')) {
+      return 8.3;
+    }
+    if (m.contains('polyester') ||
+        m.contains('폴리에스터') ||
+        m.contains('poly')) {
+      return 9.5;
+    }
+    if (m.contains('nylon') || m.contains('나일론')) return 11.0;
+    if (m.contains('wool') || m.contains('울') || m.contains('모')) return 13.9;
+    if (m.contains('linen') || m.contains('린넨') || m.contains('리넨')) {
+      return 4.5;
+    }
 
     return 10.0;
   }
 
-  double _estimateCarbonFootprint(
-      Map<String, double> materials,
-      _ClothingTypeOption clothingType,
-      ) {
-    final weightKg = clothingType.estimatedWeightGram / 1000;
-
-    if (materials.isEmpty) {
-      return double.parse((weightKg * 10.0).toStringAsFixed(1));
-    }
+  double _estimateMixedEmissionFactor(Map<String, double> materials) {
+    if (materials.isEmpty) return 10.0;
 
     double totalPercent =
     materials.values.fold(0.0, (sum, value) => sum + value);
     if (totalPercent <= 0) totalPercent = 100.0;
 
-    double emission = 0.0;
+    double mixedFactor = 0.0;
 
     materials.forEach((material, percent) {
       final factor = _findMaterialEmissionFactor(material);
-      emission += (percent / totalPercent) * weightKg * factor;
+      mixedFactor += (percent / totalPercent) * factor;
     });
 
-    if (emission < 0.1) {
-      emission = 0.1;
-    }
+    return mixedFactor;
+  }
 
-    return double.parse(emission.toStringAsFixed(1));
+  _CarbonFootprintRange _estimateCarbonFootprintRange(
+      Map<String, double> materials,
+      _ClothingTypeOption clothingType,
+      ) {
+    final mixedFactor = _estimateMixedEmissionFactor(materials);
+    final minEmission = mixedFactor * (clothingType.minWeightGram / 1000);
+    final maxEmission = mixedFactor * (clothingType.maxWeightGram / 1000);
+
+    return _CarbonFootprintRange(
+      min: minEmission < 0.1 ? 0.1 : minEmission,
+      max: maxEmission < 0.1 ? 0.1 : maxEmission,
+    );
   }
 
   int _estimateInitialHealth(Map<String, double> materials) {
@@ -433,7 +439,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
     final title = _titleController.text.trim();
     final estimatedHealth = _estimateInitialHealth(editedMaterials);
-    final estimatedCarbon = _estimateCarbonFootprint(
+    final estimatedCarbonRange = _estimateCarbonFootprintRange(
       editedMaterials,
       _selectedClothingType,
     );
@@ -444,7 +450,9 @@ class _ScanScreenState extends State<ScanScreen> {
       health: estimatedHealth,
       materials: editedMaterials,
       careInstruction: _scannedCare,
-      carbonFootprint: estimatedCarbon,
+      carbonFootprint: estimatedCarbonRange.midpoint,
+      carbonFootprintMin: estimatedCarbonRange.min,
+      carbonFootprintMax: estimatedCarbonRange.max,
     );
 
     await Provider.of<ClosetProvider>(
@@ -606,7 +614,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Widget _buildResultView() {
     final previewHealth = _estimateInitialHealth(_scannedMaterials);
-    final previewCarbon = _estimateCarbonFootprint(
+    final previewCarbonRange = _estimateCarbonFootprintRange(
       _scannedMaterials,
       _selectedClothingType,
     );
@@ -753,7 +761,7 @@ class _ScanScreenState extends State<ScanScreen> {
                       child: Text(
                         '무게 기준: ${_selectedClothingType.label} · ${_selectedClothingType.weightDisplayText}\n'
                             '예상 건강도: $previewHealth%\n'
-                            '예상 탄소발자국: ${previewCarbon.toStringAsFixed(1)} kg CO2eq',
+                            '예상 탄소발자국: ${previewCarbonRange.displayText}',
                         style: TextStyle(
                           fontSize: 14,
                           color: primaryText,
@@ -918,6 +926,26 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 }
 
+
+class _CarbonFootprintRange {
+  const _CarbonFootprintRange({
+    required this.min,
+    required this.max,
+  });
+
+  final double min;
+  final double max;
+
+  double get midpoint => (min + max) / 2;
+
+  String get displayText {
+    if ((min - max).abs() < 0.05) {
+      return '${midpoint.toStringAsFixed(1)} kg CO2eq';
+    }
+
+    return '${min.toStringAsFixed(1)}~${max.toStringAsFixed(1)} kg CO2eq';
+  }
+}
 class _ClothingTypePickerSheet extends StatefulWidget {
   const _ClothingTypePickerSheet({
     required this.options,
@@ -1476,6 +1504,28 @@ class _ClothingTypeOption {
   final IconData icon;
   final bool isDirectWeightPlaceholder;
   final bool isDirectWeight;
+
+  double get minWeightGram {
+    if (isDirectWeight || isDirectWeightPlaceholder) return estimatedWeightGram;
+
+    final match = RegExp(r'(\d+(?:\.\d+)?)\s*~\s*(\d+(?:\.\d+)?)').firstMatch(
+      weightRangeLabel,
+    );
+
+    if (match == null) return estimatedWeightGram;
+    return double.tryParse(match.group(1) ?? '') ?? estimatedWeightGram;
+  }
+
+  double get maxWeightGram {
+    if (isDirectWeight || isDirectWeightPlaceholder) return estimatedWeightGram;
+
+    final match = RegExp(r'(\d+(?:\.\d+)?)\s*~\s*(\d+(?:\.\d+)?)').firstMatch(
+      weightRangeLabel,
+    );
+
+    if (match == null) return estimatedWeightGram;
+    return double.tryParse(match.group(2) ?? '') ?? estimatedWeightGram;
+  }
 
   String get defaultTitle {
     if (isDirectWeightPlaceholder) return '홍길동 기타 의류';
