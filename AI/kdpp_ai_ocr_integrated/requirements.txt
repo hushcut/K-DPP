@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+google-cloud-vision
+pandas
+Pillow
+torch
+torchvision
+tqdm
+
