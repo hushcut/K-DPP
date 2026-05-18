@@ -35,24 +35,52 @@ def find_material_korean(word: str) -> str | None:
 
 def parse_materials(text: str) -> dict[str, float]:
     text_n = normalize_text(text)
+
+    material_percent = collect_material_matches(
+        text_n,
+        r"([a-zA-Z가-힣À-ÿА-Яа-я]+)\s*(\d{1,3})\s*%",
+        material_group=1,
+        percent_group=2,
+    )
+    if is_plausible_blend(material_percent):
+        return material_percent
+
+    percent_material = collect_material_matches(
+        text_n,
+        r"(\d{1,3})\s*%\s*([a-zA-Z가-힣À-ÿА-Яа-я]+)",
+        material_group=2,
+        percent_group=1,
+    )
+    if is_plausible_blend(percent_material):
+        return percent_material
+
+    return material_percent or percent_material
+
+
+def is_plausible_blend(materials: dict[str, float]) -> bool:
+    if not materials:
+        return False
+
+    total = sum(materials.values())
+    return 99.5 <= total <= 100.5
+
+
+def collect_material_matches(
+    text: str,
+    pattern: str,
+    material_group: int,
+    percent_group: int,
+) -> dict[str, float]:
     results = defaultdict(float)
 
-    patterns = [
-        r"(\d{1,3})\s*%\s*([a-zA-Z가-힣À-ÿА-Яа-я]+)",
-        r"([a-zA-Z가-힣À-ÿА-Яа-я]+)\s*(\d{1,3})\s*%",
-    ]
+    for match in re.finditer(pattern, text):
+        material = match.group(material_group)
+        percent = float(match.group(percent_group))
 
-    for pattern in patterns:
-        for left, right in re.findall(pattern, text_n):
-            if left.isdigit():
-                percent, material = float(left), right
-            else:
-                material, percent = left, float(right)
-
-            if 0 <= percent <= 100:
-                korean = find_material_korean(material)
-                if korean:
-                    results[korean] += percent
+        if 0 <= percent <= 100:
+            korean = find_material_korean(material)
+            if korean:
+                results[korean] += percent
 
     return dict(results)
 

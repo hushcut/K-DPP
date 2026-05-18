@@ -17,7 +17,7 @@ class ScanApiService {
 
   const ScanApiService({
     this.endpoint =
-    'https://nonmimetically-unplacid-zachery.ngrok-free.dev/api/scan',
+    'http://10.0.2.2:8000/api/scan',
   });
 
   Future<ScanResult> scanLabel({required File imageFile}) async {

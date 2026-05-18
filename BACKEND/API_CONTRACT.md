@@ -22,6 +22,44 @@ http://10.0.2.2:8000
 
 ## Official v1 Endpoint
 
+프론트엔드 카메라 스캔 흐름:
+
+```http
+POST /api/scan
+```
+
+`multipart/form-data`로 라벨 이미지 파일을 `image` 필드에 담아 전송합니다. 백엔드는 이미지를 AI OCR로 분석하고, 추출된 소재 혼용률을 탄소배출량 계산 로직에 연결해 결과를 반환합니다.
+
+테스트 목적으로 OCR을 건너뛰고 싶을 때는 `raw_ocr_text` 폼 필드를 함께 보낼 수 있습니다.
+
+### Scan Request
+
+```text
+image: care-label.jpg
+raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
+```
+
+### Scan Success Response
+
+```json
+{
+  "status": "success",
+  "message": "분석 완료",
+  "materials": {
+    "면": 80,
+    "폴리에스터": 20
+  },
+  "carbon_footprint": 8.54,
+  "unit": "kg CO2eq",
+  "care_instruction": "찬물 기계세탁 가능",
+  "saved_result_id": 13,
+  "title": "스캔한 의류",
+  "category": "상의"
+}
+```
+
+탄소 계산만 직접 호출하는 흐름:
+
 ```http
 POST /analyze
 ```
