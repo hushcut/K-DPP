@@ -1,9 +1,0 @@
-__pycache__/
-*.pyc
-.venv/
-venv/
-key.json
-outputs/
-models/**/*.pt
-data/
-
