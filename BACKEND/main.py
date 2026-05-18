@@ -10,6 +10,7 @@ import sys
 import tempfile
 from pathlib import Path
 import database
+import init_data
 
 AI_MODULE_PATH = Path(__file__).resolve().parents[1] / "AI" / "kdpp_ai_ocr_integrated"
 if AI_MODULE_PATH.exists() and str(AI_MODULE_PATH) not in sys.path:
@@ -31,6 +32,10 @@ app = FastAPI(
     description="K-DPP v1 탄소배출량 계산 API",
     version="0.1.0",
 )
+
+@app.on_event("startup")
+def seed_material_data():
+    init_data.seed_materials()
 
 app.add_middleware(
     CORSMiddleware,
