@@ -146,3 +146,32 @@ final response = await http.post(
   }),
 );
 ```
+
+## Auth Endpoints
+
+```http
+POST /auth/signup
+```
+
+회원가입 요청입니다. 이메일은 중복 가입을 막고, 비밀번호는 백엔드에서 해시로 저장합니다.
+
+```json
+{
+  "email": "user@example.com",
+  "password": "password123",
+  "nickname": "홍길동"
+}
+```
+
+```http
+POST /auth/login
+```
+
+로그인 요청입니다. 성공하면 사용자 정보와 임시 access token을 반환합니다.
+
+```json
+{
+  "email": "user@example.com",
+  "password": "password123"
+}
+```

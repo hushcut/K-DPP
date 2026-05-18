@@ -9,6 +9,8 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+import hashlib
+import secrets
 import database
 import init_data
 
@@ -85,11 +87,59 @@ def get_db():
         db.close()
 
 # 3. 데이터 규격 정의 (Pydantic: 프런트엔드와 주고받을 형식)
+class SignupRequest(BaseModel):
+    email: str
+    password: str
+    nickname: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 class AnalyzeRequest(BaseModel):
     materials: dict[str, float]
     raw_ocr_text: str | None = None
 
 # 4. 소재명 매칭 및 탄소발자국 계산 함수
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        120000,
+    ).hex()
+    return f"pbkdf2_sha256$120000${salt}${digest}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        algorithm, iterations_text, salt, expected = stored_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        iterations = int(iterations_text)
+    except ValueError:
+        return False
+
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        iterations,
+    ).hex()
+    return secrets.compare_digest(digest, expected)
+
+
+def auth_user_response(user: database.User) -> dict:
+    return {
+        "id": user.id,
+        "email": user.email,
+        "nickname": user.nickname,
+    }
 def load_aliases(material: database.Material) -> list[str]:
     try:
         aliases = json.loads(material.aliases or "[]")
@@ -261,6 +311,54 @@ def parse_label_materials(label_text: str) -> tuple[dict[str, float], str]:
 
 # --- API 엔드포인트 시작 ---
 
+@app.post("/auth/signup", tags=["auth"])
+def signup(request: SignupRequest, db: Session = Depends(get_db)):
+    email = normalize_email(request.email)
+    nickname = request.nickname.strip()
+    password = request.password.strip()
+
+    if not email or "@" not in email or "." not in email:
+        raise HTTPException(status_code=400, detail="올바른 이메일을 입력해 주세요.")
+    if len(nickname) < 2:
+        raise HTTPException(status_code=400, detail="닉네임은 2자 이상 입력해 주세요.")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="비밀번호는 8자 이상 입력해 주세요.")
+
+    existing_user = db.query(database.User).filter(database.User.email == email).first()
+    if existing_user is not None:
+        raise HTTPException(status_code=409, detail="이미 가입된 이메일입니다.")
+
+    user = database.User(
+        email=email,
+        nickname=nickname,
+        password_hash=hash_password(password),
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "status": "success",
+        "message": "회원가입이 완료되었습니다.",
+        "user": auth_user_response(user),
+    }
+
+
+@app.post("/auth/login", tags=["auth"])
+def login(request: LoginRequest, db: Session = Depends(get_db)):
+    email = normalize_email(request.email)
+    user = db.query(database.User).filter(database.User.email == email).first()
+
+    if user is None or not verify_password(request.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다.")
+
+    return {
+        "status": "success",
+        "message": "로그인되었습니다.",
+        "user": auth_user_response(user),
+        "access_token": secrets.token_urlsafe(32),
+        "token_type": "bearer",
+    }
 @app.get("/", tags=["system"])
 def read_root():
     return {"status": "success", "message": "K-DPP 백엔드 서버가 가동 중입니다!"}

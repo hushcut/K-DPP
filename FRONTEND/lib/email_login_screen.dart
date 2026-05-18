@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'closet_provider.dart';
+import 'services/auth_api_service.dart';
 import 'widgets/app_back_button.dart';
 
 class EmailLoginScreen extends StatefulWidget {
@@ -13,6 +16,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
 
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  final AuthApiService _authApi = const AuthApiService();
 
   bool _isLoading = false;
   bool _obscurePassword = true;
@@ -74,19 +78,40 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
       _isLoading = true;
     });
 
-    await Future.delayed(const Duration(milliseconds: 300));
+    try {
+      final result = await _authApi.login(
+        email: _emailController.text.trim(),
+        password: _passwordController.text.trim(),
+      );
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    setState(() {
-      _isLoading = false;
-    });
+      await context.read<ClosetProvider>().setUserName(result.user.nickname);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('로그인 기능은 다음 단계에서 연결할 예정입니다.'),
-      ),
-    );
+      if (!mounted) return;
+
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/main',
+        (route) => false,
+      );
+    } on AuthApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('로그인 중 오류가 발생했습니다.')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   InputDecoration _inputDecoration({
