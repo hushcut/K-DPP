@@ -1,9 +1,7 @@
 import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
-
 import 'closet_provider.dart';
 import 'models/clothes.dart';
 import 'models/scan_result.dart';
@@ -118,13 +116,13 @@ class _ScanScreenState extends State<ScanScreen> {
     super.dispose();
   }
 
-  Future<void> _takePicture() async {
-    final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
+  Future<void> _pickImageAndScan(ImageSource source) async {
+    final XFile? image = await _picker.pickImage(source: source);
 
-    if (photo == null) return;
+    if (image == null) return;
 
     setState(() {
-      _selectedImage = File(photo.path);
+      _selectedImage = File(image.path);
       _isScanning = true;
       _isScanComplete = false;
       _hasTriedSubmit = false;
@@ -170,6 +168,14 @@ class _ScanScreenState extends State<ScanScreen> {
       debugPrint('서버 통신 실패: $e');
       _showErrorFallback('서버 연결이 불안정해 임시 결과를 표시합니다.');
     }
+  }
+
+  Future<void> _takePicture() async {
+    await _pickImageAndScan(ImageSource.camera);
+  }
+
+  Future<void> _pickFromGallery() async {
+    await _pickImageAndScan(ImageSource.gallery);
   }
 
   _ClothingTypeOption _inferTypeFromCategory(String? category) {
@@ -534,7 +540,7 @@ class _ScanScreenState extends State<ScanScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           const Text(
-            '옷의 케어 라벨을 촬영해 주세요',
+            '옷의 케어 라벨을 촬영하거나 사진을 선택해 주세요',
             style: TextStyle(color: Colors.white, fontSize: 16),
           ),
           const SizedBox(height: 30),
@@ -585,18 +591,77 @@ class _ScanScreenState extends State<ScanScreen> {
               ],
             ),
           ),
-          const SizedBox(height: 50),
-          GestureDetector(
-            onTap: _isScanning ? null : _takePicture,
-            child: Container(
-              width: 70,
-              height: 70,
-              decoration: BoxDecoration(
-                color: _isScanning ? Colors.grey : const Color(0xFF4A4EFE),
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 4),
-              ),
-              child: const Icon(Icons.camera_alt, color: Colors.white, size: 30),
+          const SizedBox(height: 46),
+          SizedBox(
+            width: double.infinity,
+            height: 150,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Positioned(
+                  left: 26,
+                  bottom: 0,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: _isScanning ? null : _pickFromGallery,
+                    child: SizedBox(
+                      width: 74,
+                      height: 74,
+                      child: Align(
+                        alignment: Alignment.bottomCenter,
+                        child: Container(
+                          width: 54,
+                          height: 54,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.45),
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.photo_library_outlined,
+                            color: Colors.white,
+                            size: 25,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 15,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onTap: _isScanning ? null : _takePicture,
+                      child: Container(
+                        width: 74,
+                        height: 74,
+                        decoration: BoxDecoration(
+                          color: _isScanning ? Colors.grey : const Color(0xFF4A4EFE),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 4),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF4A4EFE).withValues(alpha: 0.35),
+                              blurRadius: 18,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.camera_alt,
+                          color: Colors.white,
+                          size: 30,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -911,6 +976,65 @@ class _ScanScreenState extends State<ScanScreen> {
                     double.tryParse(controller.text.trim()) ?? 0.0;
               });
             },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ScanActionButton extends StatelessWidget {
+  const _ScanActionButton({
+    required this.label,
+    required this.icon,
+    required this.size,
+    required this.backgroundColor,
+    required this.borderColor,
+    required this.onTap,
+    this.iconSize = 26,
+    this.borderWidth = 1,
+  });
+
+  final String label;
+  final IconData icon;
+  final double size;
+  final double iconSize;
+  final Color backgroundColor;
+  final Color borderColor;
+  final double borderWidth;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: borderColor,
+                width: borderWidth,
+              ),
+            ),
+            child: Icon(
+              icon,
+              color: Colors.white,
+              size: iconSize,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ],
