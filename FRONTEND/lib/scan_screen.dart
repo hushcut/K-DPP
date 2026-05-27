@@ -305,6 +305,36 @@ class _ScanScreenState extends State<ScanScreen> {
     return updated;
   }
 
+  String _materialDisplayName(String key) {
+    const names = {
+      'cotton': '\uBA74',
+      'polyester': '\uD3F4\uB9AC\uC5D0\uC2A4\uD130',
+      'rayon': '\uB808\uC774\uC628',
+      'nylon': '\uB098\uC77C\uB860',
+      'wool': '\uC6B8',
+      'acrylic': '\uC544\uD06C\uB9B4',
+      'spandex': '\uC2A4\uD310\uB371\uC2A4',
+      'linen': '\uB9B0\uB128',
+      'viscose': '\uBE44\uC2A4\uCF54\uC2A4',
+      'silk': '\uC2E4\uD06C',
+      'modal': '\uBAA8\uB2EC',
+      'cashmere': '\uCE90\uC2DC\uBBF8\uC5B4',
+      'polyurethane': '\uD3F4\uB9AC\uC6B0\uB808\uD0C4',
+      'leather': '\uAC00\uC8FD',
+      'ramie': '\uB77C\uBBF8',
+      'lyocell': '\uB9AC\uC624\uC140',
+      'down': '\uB2E4\uC6B4',
+      'feather': '\uAE43\uD138',
+      'yak': '\uC57C\uD06C',
+      'mohair': '\uBAA8\uD5E4\uC5B4',
+      'bamboo': '\uB300\uB098\uBB34',
+      'cupro': '\uD050\uD504\uB85C',
+    };
+
+    final normalized = key.toLowerCase().trim();
+    return names[normalized] ?? key.toUpperCase();
+  }
+
   double _calculateMaterialsTotal(Map<String, double> materials) {
     return materials.values.fold(0.0, (sum, value) => sum + value);
   }
@@ -874,7 +904,7 @@ class _ScanScreenState extends State<ScanScreen> {
                       padding: const EdgeInsets.only(bottom: 12.0),
                       child: _buildMaterialRow(
                         entry.key,
-                        entry.key.toUpperCase(),
+                        _materialDisplayName(entry.key),
                         primaryText: primaryText,
                         secondaryText: secondaryText,
                         inputFillColor: inputFillColor,

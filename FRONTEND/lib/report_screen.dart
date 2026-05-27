@@ -39,7 +39,7 @@ class ReportScreen extends StatelessWidget {
     }
 
     final materialsText = item.materials.entries
-        .map((e) => '${e.key.toUpperCase()} ${_formatMaterialValue(e.value)}%')
+        .map((e) => '${_materialDisplayName(e.key)} ${_formatMaterialValue(e.value)}%')
         .join(', ');
 
     final lcaStages = _buildLcaBreakdown(item);
@@ -396,6 +396,36 @@ class ReportScreen extends StatelessWidget {
     return value.toStringAsFixed(1);
   }
 
+  static String _materialDisplayName(String key) {
+    const names = {
+      'cotton': '\uBA74',
+      'polyester': '\uD3F4\uB9AC\uC5D0\uC2A4\uD130',
+      'rayon': '\uB808\uC774\uC628',
+      'nylon': '\uB098\uC77C\uB860',
+      'wool': '\uC6B8',
+      'acrylic': '\uC544\uD06C\uB9B4',
+      'spandex': '\uC2A4\uD310\uB371\uC2A4',
+      'linen': '\uB9B0\uB128',
+      'viscose': '\uBE44\uC2A4\uCF54\uC2A4',
+      'silk': '\uC2E4\uD06C',
+      'modal': '\uBAA8\uB2EC',
+      'cashmere': '\uCE90\uC2DC\uBBF8\uC5B4',
+      'polyurethane': '\uD3F4\uB9AC\uC6B0\uB808\uD0C4',
+      'leather': '\uAC00\uC8FD',
+      'ramie': '\uB77C\uBBF8',
+      'lyocell': '\uB9AC\uC624\uC140',
+      'down': '\uB2E4\uC6B4',
+      'feather': '\uAE43\uD138',
+      'yak': '\uC57C\uD06C',
+      'mohair': '\uBAA8\uD5E4\uC5B4',
+      'bamboo': '\uB300\uB098\uBB34',
+      'cupro': '\uD050\uD504\uB85C',
+    };
+
+    final normalized = key.toLowerCase().trim();
+    return names[normalized] ?? key.toUpperCase();
+  }
+
   static String _healthLabel(int health) {
     if (health <= 20) return '수명 만료 주의';
     if (health <= 40) return '관리 주의';
@@ -409,7 +439,7 @@ class ReportScreen extends StatelessWidget {
     final sorted = item.materials.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
 
-    return '${sorted.first.key.toUpperCase()} ${_formatMaterialValue(sorted.first.value)}%';
+    return '${_materialDisplayName(sorted.first.key)} ${_formatMaterialValue(sorted.first.value)}%';
   }
 
   static bool _hasMaterial(Clothes item, List<String> keywords) {
