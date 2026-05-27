@@ -21,8 +21,15 @@ def load_model(model_path: str = DEFAULT_MODEL_PATH):
     class_names = checkpoint["class_names"]
 
     model = models.resnet18(weights=None)
-    model.fc = nn.Linear(model.fc.in_features, len(class_names))
-    model.load_state_dict(checkpoint["model_state_dict"])
+    state_dict = checkpoint["model_state_dict"]
+    if "fc.1.weight" in state_dict:
+        model.fc = nn.Sequential(
+            nn.Dropout(p=0.3),
+            nn.Linear(model.fc.in_features, len(class_names)),
+        )
+    else:
+        model.fc = nn.Linear(model.fc.in_features, len(class_names))
+    model.load_state_dict(state_dict)
     model = model.to(DEVICE)
     model.eval()
     return model, class_names

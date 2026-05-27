@@ -1,5 +1,6 @@
 import argparse
 import csv
+import json
 import os
 
 from tqdm import tqdm
@@ -50,9 +51,14 @@ def main():
             parsed = parse_label(raw_text)
         except Exception as exc:
             parsed = {
+                "status": "failed",
+                "message": str(exc),
+                "materials": {},
                 "materials_korean": "",
-                "care_text": "",
                 "raw_ocr_preview": "",
+                "confidence": {"ocr": "low"},
+                "care_text": "",
+                "expected_life_months": "",
                 "ocr_error": str(exc),
             }
 
@@ -62,9 +68,14 @@ def main():
             "symbol_korean": symbol.get("symbol_korean", ""),
             "symbol_confidence": symbol.get("symbol_confidence", 0),
             "symbol_error": symbol.get("symbol_error", ""),
+            "status": parsed.get("status", ""),
+            "message": parsed.get("message", ""),
+            "materials": json.dumps(parsed.get("materials", {}), ensure_ascii=False),
             "materials_korean": parsed.get("materials_korean", ""),
-            "care_text": parsed.get("care_text", ""),
             "raw_ocr_preview": parsed.get("raw_ocr_preview", ""),
+            "ocr_confidence": parsed.get("confidence", {}).get("ocr", ""),
+            "care_text": parsed.get("care_text", ""),
+            "expected_life_months": parsed.get("expected_life_months", ""),
             "ocr_error": parsed.get("ocr_error", ""),
         })
 
@@ -75,9 +86,14 @@ def main():
             "symbol_korean",
             "symbol_confidence",
             "symbol_error",
+            "status",
+            "message",
+            "materials",
             "materials_korean",
-            "care_text",
             "raw_ocr_preview",
+            "ocr_confidence",
+            "care_text",
+            "expected_life_months",
             "ocr_error",
         ]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -89,4 +105,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
