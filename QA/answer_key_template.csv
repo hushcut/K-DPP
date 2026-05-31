@@ -1,0 +1,4 @@
+id,file_name,answer_materials,answer_ratios,shooting_pose,lighting,resolution,label_language,label_condition,notation_type,memo
+QA001,QA001.jpg,cotton;polyester,80;20,손에 들고,자연광,고해상도,한글,정상,% 있음,
+QA002,QA002.jpg,cotton,100,바닥에 두고,실내 조명,중간 해상도,한글,그림자,% 있음,
+QA003,QA003.jpg,polyester;polyurethane,95;5,손에 들고,실내 조명,고해상도,한글,작은 글씨,% 있음,
