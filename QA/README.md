@@ -38,6 +38,10 @@ id
 file_name
 answer_materials
 answer_ratios
+case_type
+include_in_accuracy
+normalized_materials
+normalized_ratios
 shooting_pose
 lighting
 resolution
@@ -51,8 +55,40 @@ notation_type
 예시:
 
 ```csv
-QA001,QA001.jpg,cotton;polyester,80;20,손에 들고,자연광,고해상도,한글,정상,% 있음
-QA002,QA002.jpg,cotton,100,바닥에 두고,실내 조명,중간 해상도,한글,그림자,% 있음
+QA001,QA001.jpg,cotton;polyester,80;20,일반 라벨,TRUE,,,손에 들고,자연광,고해상도,한글,정상,% 있음
+QA002,QA002.jpg,cotton,100,일반 라벨,TRUE,,,바닥에 두고,실내 조명,중간 해상도,한글,그림자,% 있음
+```
+
+## 일반 라벨과 복합 라벨 기준
+
+현재 K-DPP 계산 모델은 한 벌 기준 혼용률 합계가 약 100%인 일반 라벨을 우선 처리한다.
+
+따라서 정답표는 아래 기준으로 나눈다.
+
+```text
+일반 라벨:
+- 소재/혼용률 합계가 95~105% 범위
+- 일반 정확도 계산에 포함
+
+복합/부위별 라벨:
+- 겉감, 안감, 충전재, 배색, 퍼 등 부위별 표기가 섞여 합계가 100%를 크게 초과
+- 일반 정확도 계산에서 제외하거나 대표 소재 기준으로 단순화
+```
+
+복합/부위별 라벨 처리 방식:
+
+```text
+1. 대표 소재가 명확하지 않으면 include_in_accuracy를 FALSE로 둔다.
+2. 대표 소재가 명확하면 include_in_accuracy를 TRUE로 두고 normalized_materials / normalized_ratios에 1차 테스트용 정답을 적는다.
+3. 원문 소재/비율은 answer_materials / answer_ratios에 그대로 남긴다.
+4. memo에는 겉감/안감/충전재 등 원문 구조를 적는다.
+```
+
+예시:
+
+```csv
+QA007,QA007.jpg,nylon;polyester;down;feather,100;100;90;10,복합/부위별 라벨,FALSE,,,바닥에 두고,실내 조명,고해상도,일본어,정상,% 있음,겉감/안감/충전재가 섞인 확장 케이스
+QA008,QA008.jpg,polyester;acrylic,100;60,복합/부위별 라벨,TRUE,polyester,100,손에 들고,실내 조명,중간 해상도,일본어,정상,% 있음,대표 소재 polyester 기준으로 1차 정확도 계산
 ```
 
 ## 백엔드 실행
@@ -107,6 +143,7 @@ python QA\run_qa_batch.py --api-url http://127.0.0.1:8000/api/scan --answers C:\
 소재 성공/비율 실패: 소재명은 맞지만 비율이 크게 다름
 소재 실패: 소재 누락 또는 잘못된 소재 인식
 서버/API 실패: 백엔드 요청 실패 또는 오류 응답
+정확도 제외: 복합/부위별 라벨 등 현재 일반 정확도 계산 대상이 아닌 케이스
 ```
 
 허용 오차를 바꾸려면:

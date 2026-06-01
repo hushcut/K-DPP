@@ -31,7 +31,10 @@ class AnswerCase:
     row: dict[str, str]
     case_id: str
     file_name: str
-    answer_materials: dict[str, float]
+    original_materials: dict[str, float]
+    normalized_materials: dict[str, float]
+    case_type: str
+    include_in_accuracy: bool
 
 
 def parse_args() -> argparse.Namespace:
@@ -148,6 +151,13 @@ def parse_materials(materials_text: str, ratios_text: str) -> dict[str, float]:
     return parsed
 
 
+def parse_bool(value: str, default: bool = True) -> bool:
+    text = value.strip().lower()
+    if not text:
+        return default
+    return text in {"true", "yes", "y", "1", "include", "포함", "예"}
+
+
 def format_materials(materials: dict[str, float]) -> str:
     if not materials:
         return ""
@@ -175,14 +185,26 @@ def read_answer_cases(path: Path) -> list[AnswerCase]:
             if not case_id or not file_name:
                 raise ValueError(f"row {row_number}: id and file_name are required")
 
+            original_materials = parse_materials(
+                row.get("answer_materials", ""),
+                row.get("answer_ratios", ""),
+            )
+            normalized_materials = parse_materials(
+                row.get("normalized_materials", ""),
+                row.get("normalized_ratios", ""),
+            )
+
             cases.append(
                 AnswerCase(
                     row=row,
                     case_id=case_id,
                     file_name=file_name,
-                    answer_materials=parse_materials(
-                        row.get("answer_materials", ""),
-                        row.get("answer_ratios", ""),
+                    original_materials=original_materials,
+                    normalized_materials=normalized_materials or original_materials,
+                    case_type=(row.get("case_type") or "일반 라벨").strip(),
+                    include_in_accuracy=parse_bool(
+                        row.get("include_in_accuracy", ""),
+                        default=True,
                     ),
                 )
             )
@@ -332,24 +354,31 @@ def build_result_row(
     elapsed = time.perf_counter() - started_at
     ai_materials = parse_api_materials(payload)
     error_message = exception_text or extract_error_message(payload, raw_response)
-    judgment, failure_reason = classify_result(
-        answer=case.answer_materials,
-        actual=ai_materials,
-        status_code=status_code,
-        error_message=error_message,
-        tolerance=tolerance,
-    )
+    if case.include_in_accuracy:
+        judgment, failure_reason = classify_result(
+            answer=case.normalized_materials,
+            actual=ai_materials,
+            status_code=status_code,
+            error_message=error_message,
+            tolerance=tolerance,
+        )
+    else:
+        judgment = "정확도 제외"
+        failure_reason = "복합/부위별 라벨 또는 현재 일반 정확도 계산 대상 제외"
 
     row = {
         "id": case.case_id,
         "file_name": case.file_name,
+        "case_type": case.case_type,
+        "include_in_accuracy": "TRUE" if case.include_in_accuracy else "FALSE",
         "shooting_pose": case.row.get("shooting_pose", ""),
         "lighting": case.row.get("lighting", ""),
         "resolution": case.row.get("resolution", ""),
         "label_language": case.row.get("label_language", ""),
         "label_condition": case.row.get("label_condition", ""),
         "notation_type": case.row.get("notation_type", ""),
-        "answer_materials": format_materials(case.answer_materials),
+        "answer_materials": format_materials(case.original_materials),
+        "normalized_answer_materials": format_materials(case.normalized_materials),
         "ai_materials": format_materials(ai_materials),
         "judgment": judgment,
         "http_status": status_code if status_code is not None else "",
@@ -369,6 +398,8 @@ def write_results(path: Path, rows: list[dict[str, Any]]) -> None:
     fieldnames = [
         "id",
         "file_name",
+        "case_type",
+        "include_in_accuracy",
         "shooting_pose",
         "lighting",
         "resolution",
@@ -376,6 +407,7 @@ def write_results(path: Path, rows: list[dict[str, Any]]) -> None:
         "label_condition",
         "notation_type",
         "answer_materials",
+        "normalized_answer_materials",
         "ai_materials",
         "judgment",
         "http_status",
@@ -396,15 +428,21 @@ def write_results(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def print_summary(rows: list[dict[str, Any]]) -> None:
     total = len(rows)
+    included_rows = [
+        row for row in rows if str(row.get("include_in_accuracy", "")).upper() == "TRUE"
+    ]
     counts: dict[str, int] = {}
-    for row in rows:
+    for row in included_rows:
         judgment = str(row["judgment"])
         counts[judgment] = counts.get(judgment, 0) + 1
+    excluded = total - len(included_rows)
 
     print("\n=== QA batch summary ===")
     print(f"Total: {total}")
+    print(f"Included in accuracy: {len(included_rows)}")
+    print(f"Excluded from accuracy: {excluded}")
     for judgment, count in sorted(counts.items()):
-        ratio = (count / total * 100) if total else 0.0
+        ratio = (count / len(included_rows) * 100) if included_rows else 0.0
         print(f"- {judgment}: {count} ({ratio:.1f}%)")
 
 
@@ -432,13 +470,16 @@ def main() -> int:
                 {
                     "id": case.case_id,
                     "file_name": case.file_name,
+                    "case_type": case.case_type,
+                    "include_in_accuracy": "TRUE" if case.include_in_accuracy else "FALSE",
                     "shooting_pose": case.row.get("shooting_pose", ""),
                     "lighting": case.row.get("lighting", ""),
                     "resolution": case.row.get("resolution", ""),
                     "label_language": case.row.get("label_language", ""),
                     "label_condition": case.row.get("label_condition", ""),
                     "notation_type": case.row.get("notation_type", ""),
-                    "answer_materials": format_materials(case.answer_materials),
+                    "answer_materials": format_materials(case.original_materials),
+                    "normalized_answer_materials": format_materials(case.normalized_materials),
                     "ai_materials": "",
                     "judgment": "서버/API 실패",
                     "http_status": "",
