@@ -112,12 +112,15 @@ def normalize_material_name(value: str) -> str:
         "modal": "modal",
         "아크릴": "acrylic",
         "acrylic": "acrylic",
+        "arylic": "acrylic",
         "캐시미어": "cashmere",
         "cashmere": "cashmere",
         "리오셀": "lyocell",
         "lyocell": "lyocell",
         "큐프로": "cupro",
         "cupro": "cupro",
+        "elastane": "spandex",
+        "span": "spandex",
     }
 
     key = value.strip().lower().replace("%", "")
