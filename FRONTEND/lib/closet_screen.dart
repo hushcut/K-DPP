@@ -3,18 +3,10 @@ import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'models/clothes.dart';
 
-enum ClosetSortOption {
-  eco,
-  health,
-  latest,
-  custom,
-}
+enum ClosetSortOption { eco, health, latest, custom }
 
 class ClosetScreen extends StatefulWidget {
-  const ClosetScreen({
-    super.key,
-    this.onOpenReport,
-  });
+  const ClosetScreen({super.key, this.onOpenReport});
 
   final ValueChanged<Clothes>? onOpenReport;
 
@@ -42,9 +34,9 @@ class _ClosetScreenState extends State<ClosetScreen> {
   }
 
   List<Clothes> _sortClothes(
-      List<Clothes> source,
-      List<Clothes> originalOrder,
-      ) {
+    List<Clothes> source,
+    List<Clothes> originalOrder,
+  ) {
     final sorted = List<Clothes>.from(source);
 
     switch (_sortOption) {
@@ -113,8 +105,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
         final isDark = Theme.of(dialogContext).brightness == Brightness.dark;
 
         return AlertDialog(
-          backgroundColor:
-          isDark ? const Color(0xFF1C1C1E) : Colors.white,
+          backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
           title: Text(
             '선택한 의류 삭제',
             style: TextStyle(
@@ -125,9 +116,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
             '${_selectedItems.length}개의 의류를 삭제할까요?\n이 작업은 되돌릴 수 없습니다.',
             style: TextStyle(
               height: 1.5,
-              color: isDark
-                  ? const Color(0xFFD1D1D6)
-                  : const Color(0xFF444444),
+              color: isDark ? const Color(0xFFD1D1D6) : const Color(0xFF444444),
             ),
           ),
           actions: [
@@ -140,10 +129,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.redAccent,
               ),
-              child: const Text(
-                '삭제',
-                style: TextStyle(color: Colors.white),
-              ),
+              child: const Text('삭제', style: TextStyle(color: Colors.white)),
             ),
           ],
         );
@@ -152,10 +138,12 @@ class _ClosetScreenState extends State<ClosetScreen> {
 
     if (confirmed != true) return;
 
+    if (!mounted) return;
+
     final deleteCount = _selectedItems.length;
-    await context
-        .read<ClosetProvider>()
-        .removeClothesBatch(_selectedItems.toList());
+    await context.read<ClosetProvider>().removeClothesBatch(
+      _selectedItems.toList(),
+    );
 
     if (!mounted) return;
 
@@ -164,9 +152,9 @@ class _ClosetScreenState extends State<ClosetScreen> {
       _selectedItems.clear();
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$deleteCount개의 의류가 삭제되었습니다.')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$deleteCount개의 의류가 삭제되었습니다.')));
   }
 
   void _toggleReorderMode() {
@@ -217,8 +205,9 @@ class _ClosetScreenState extends State<ClosetScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryText = isDark ? Colors.white : const Color(0xFF111111);
     final sheetColor = isDark ? const Color(0xFF121212) : Colors.white;
-    final secondaryText =
-    isDark ? const Color(0xFFD1D1D6) : const Color(0xFF8C8C8C);
+    final secondaryText = isDark
+        ? const Color(0xFFD1D1D6)
+        : const Color(0xFF8C8C8C);
 
     final selected = await showModalBottomSheet<ClosetSortOption>(
       context: context,
@@ -310,18 +299,14 @@ class _ClosetScreenState extends State<ClosetScreen> {
                 label,
                 style: TextStyle(
                   fontSize: 18,
-                  color: isSelected
-                      ? const Color(0xFF4A4EFE)
-                      : primaryText,
+                  color: isSelected ? const Color(0xFF4A4EFE) : primaryText,
                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                 ),
               ),
             ),
             Icon(
               isSelected ? Icons.check : Icons.radio_button_unchecked,
-              color: isSelected
-                  ? const Color(0xFF4A4EFE)
-                  : secondaryText,
+              color: isSelected ? const Color(0xFF4A4EFE) : secondaryText,
             ),
           ],
         ),
@@ -351,18 +336,18 @@ class _ClosetScreenState extends State<ClosetScreen> {
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryText = isDark ? Colors.white : const Color(0xFF1A1A1A);
-    final secondaryText =
-    isDark ? const Color(0xFFD1D1D6) : Colors.grey;
-    final baseCardColor =
-    isDark ? const Color(0xFF1C1C1E) : Colors.white;
-    final borderColor =
-    isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade200;
-    final selectedBgColor =
-    isDark ? const Color(0xFF232A45) : const Color(0xFFEEF1FF);
-    final warningBgColor =
-    isDark ? const Color(0xFF2A1E1E) : Colors.red.shade50;
-    final leadingBgColor =
-    isDark ? const Color(0xFF2A2A2E) : Colors.grey.shade100;
+    final secondaryText = isDark ? const Color(0xFFD1D1D6) : Colors.grey;
+    final baseCardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final borderColor = isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade200;
+    final selectedBgColor = isDark
+        ? const Color(0xFF232A45)
+        : const Color(0xFFEEF1FF);
+    final warningBgColor = isDark
+        ? const Color(0xFF2A1E1E)
+        : Colors.red.shade50;
+    final leadingBgColor = isDark
+        ? const Color(0xFF2A2A2E)
+        : Colors.grey.shade100;
     final shadowColor = isDark
         ? Colors.black.withValues(alpha: 0.16)
         : Colors.black.withValues(alpha: 0.03);
@@ -456,10 +441,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
                   const SizedBox(height: 10),
                   Text(
                     '현재 정렬: $_sortLabel',
-                    style: TextStyle(
-                      color: secondaryText,
-                      fontSize: 13,
-                    ),
+                    style: TextStyle(color: secondaryText, fontSize: 13),
                   ),
                   const SizedBox(height: 6),
                   SizedBox(
@@ -467,13 +449,10 @@ class _ClosetScreenState extends State<ClosetScreen> {
                     child: Text(
                       _sortOption == ClosetSortOption.custom
                           ? (_reorderMode
-                          ? '드래그해서 순서를 바꿔 보세요.'
-                          : '내설정순으로 정렬되어 있어요.')
+                                ? '드래그해서 순서를 바꿔 보세요.'
+                                : '내설정순으로 정렬되어 있어요.')
                           : '원하는 방식으로 옷장을 정리해 보세요.',
-                      style: TextStyle(
-                        color: secondaryText,
-                        fontSize: 12,
-                      ),
+                      style: TextStyle(color: secondaryText, fontSize: 12),
                     ),
                   ),
                 ],
@@ -495,94 +474,94 @@ class _ClosetScreenState extends State<ClosetScreen> {
               children: [
                 _sortOption == ClosetSortOption.custom && _reorderMode
                     ? _buildReorderableClothesList(
-                  context,
-                  allItems,
-                  originalOrder,
-                  emptyMessage: '옷장에 등록된 의류가 없습니다.',
-                  primaryText: primaryText,
-                  secondaryText: secondaryText,
-                  cardColor: baseCardColor,
-                  borderColor: borderColor,
-                  selectedBgColor: selectedBgColor,
-                  warningBgColor: warningBgColor,
-                  leadingBgColor: leadingBgColor,
-                  shadowColor: shadowColor,
-                  isDark: isDark,
-                )
+                        context,
+                        allItems,
+                        originalOrder,
+                        emptyMessage: '옷장에 등록된 의류가 없습니다.',
+                        primaryText: primaryText,
+                        secondaryText: secondaryText,
+                        cardColor: baseCardColor,
+                        borderColor: borderColor,
+                        selectedBgColor: selectedBgColor,
+                        warningBgColor: warningBgColor,
+                        leadingBgColor: leadingBgColor,
+                        shadowColor: shadowColor,
+                        isDark: isDark,
+                      )
                     : _buildClothesList(
-                  context,
-                  allItems,
-                  emptyMessage: '옷장에 등록된 의류가 없습니다.',
-                  primaryText: primaryText,
-                  secondaryText: secondaryText,
-                  cardColor: baseCardColor,
-                  borderColor: borderColor,
-                  selectedBgColor: selectedBgColor,
-                  warningBgColor: warningBgColor,
-                  leadingBgColor: leadingBgColor,
-                  shadowColor: shadowColor,
-                  isDark: isDark,
-                ),
+                        context,
+                        allItems,
+                        emptyMessage: '옷장에 등록된 의류가 없습니다.',
+                        primaryText: primaryText,
+                        secondaryText: secondaryText,
+                        cardColor: baseCardColor,
+                        borderColor: borderColor,
+                        selectedBgColor: selectedBgColor,
+                        warningBgColor: warningBgColor,
+                        leadingBgColor: leadingBgColor,
+                        shadowColor: shadowColor,
+                        isDark: isDark,
+                      ),
                 _sortOption == ClosetSortOption.custom && _reorderMode
                     ? _buildReorderableClothesList(
-                  context,
-                  topItems,
-                  originalOrder,
-                  emptyMessage: '상의 의류가 없습니다.',
-                  primaryText: primaryText,
-                  secondaryText: secondaryText,
-                  cardColor: baseCardColor,
-                  borderColor: borderColor,
-                  selectedBgColor: selectedBgColor,
-                  warningBgColor: warningBgColor,
-                  leadingBgColor: leadingBgColor,
-                  shadowColor: shadowColor,
-                  isDark: isDark,
-                )
+                        context,
+                        topItems,
+                        originalOrder,
+                        emptyMessage: '상의 의류가 없습니다.',
+                        primaryText: primaryText,
+                        secondaryText: secondaryText,
+                        cardColor: baseCardColor,
+                        borderColor: borderColor,
+                        selectedBgColor: selectedBgColor,
+                        warningBgColor: warningBgColor,
+                        leadingBgColor: leadingBgColor,
+                        shadowColor: shadowColor,
+                        isDark: isDark,
+                      )
                     : _buildClothesList(
-                  context,
-                  topItems,
-                  emptyMessage: '상의 의류가 없습니다.',
-                  primaryText: primaryText,
-                  secondaryText: secondaryText,
-                  cardColor: baseCardColor,
-                  borderColor: borderColor,
-                  selectedBgColor: selectedBgColor,
-                  warningBgColor: warningBgColor,
-                  leadingBgColor: leadingBgColor,
-                  shadowColor: shadowColor,
-                  isDark: isDark,
-                ),
+                        context,
+                        topItems,
+                        emptyMessage: '상의 의류가 없습니다.',
+                        primaryText: primaryText,
+                        secondaryText: secondaryText,
+                        cardColor: baseCardColor,
+                        borderColor: borderColor,
+                        selectedBgColor: selectedBgColor,
+                        warningBgColor: warningBgColor,
+                        leadingBgColor: leadingBgColor,
+                        shadowColor: shadowColor,
+                        isDark: isDark,
+                      ),
                 _sortOption == ClosetSortOption.custom && _reorderMode
                     ? _buildReorderableClothesList(
-                  context,
-                  bottomItems,
-                  originalOrder,
-                  emptyMessage: '하의 의류가 없습니다.',
-                  primaryText: primaryText,
-                  secondaryText: secondaryText,
-                  cardColor: baseCardColor,
-                  borderColor: borderColor,
-                  selectedBgColor: selectedBgColor,
-                  warningBgColor: warningBgColor,
-                  leadingBgColor: leadingBgColor,
-                  shadowColor: shadowColor,
-                  isDark: isDark,
-                )
+                        context,
+                        bottomItems,
+                        originalOrder,
+                        emptyMessage: '하의 의류가 없습니다.',
+                        primaryText: primaryText,
+                        secondaryText: secondaryText,
+                        cardColor: baseCardColor,
+                        borderColor: borderColor,
+                        selectedBgColor: selectedBgColor,
+                        warningBgColor: warningBgColor,
+                        leadingBgColor: leadingBgColor,
+                        shadowColor: shadowColor,
+                        isDark: isDark,
+                      )
                     : _buildClothesList(
-                  context,
-                  bottomItems,
-                  emptyMessage: '하의 의류가 없습니다.',
-                  primaryText: primaryText,
-                  secondaryText: secondaryText,
-                  cardColor: baseCardColor,
-                  borderColor: borderColor,
-                  selectedBgColor: selectedBgColor,
-                  warningBgColor: warningBgColor,
-                  leadingBgColor: leadingBgColor,
-                  shadowColor: shadowColor,
-                  isDark: isDark,
-                ),
+                        context,
+                        bottomItems,
+                        emptyMessage: '하의 의류가 없습니다.',
+                        primaryText: primaryText,
+                        secondaryText: secondaryText,
+                        cardColor: baseCardColor,
+                        borderColor: borderColor,
+                        selectedBgColor: selectedBgColor,
+                        warningBgColor: warningBgColor,
+                        leadingBgColor: leadingBgColor,
+                        shadowColor: shadowColor,
+                        isDark: isDark,
+                      ),
               ],
             ),
           ),
@@ -592,26 +571,23 @@ class _ClosetScreenState extends State<ClosetScreen> {
   }
 
   Widget _buildReorderableClothesList(
-      BuildContext context,
-      List<Clothes> clothes,
-      List<Clothes> originalOrder, {
-        required String emptyMessage,
-        required Color primaryText,
-        required Color secondaryText,
-        required Color cardColor,
-        required Color borderColor,
-        required Color selectedBgColor,
-        required Color warningBgColor,
-        required Color leadingBgColor,
-        required Color shadowColor,
-        required bool isDark,
-      }) {
+    BuildContext context,
+    List<Clothes> clothes,
+    List<Clothes> originalOrder, {
+    required String emptyMessage,
+    required Color primaryText,
+    required Color secondaryText,
+    required Color cardColor,
+    required Color borderColor,
+    required Color selectedBgColor,
+    required Color warningBgColor,
+    required Color leadingBgColor,
+    required Color shadowColor,
+    required bool isDark,
+  }) {
     if (clothes.isEmpty) {
       return Center(
-        child: Text(
-          emptyMessage,
-          style: TextStyle(color: secondaryText),
-        ),
+        child: Text(emptyMessage, style: TextStyle(color: secondaryText)),
       );
     }
 
@@ -662,25 +638,22 @@ class _ClosetScreenState extends State<ClosetScreen> {
   }
 
   Widget _buildClothesList(
-      BuildContext context,
-      List<Clothes> clothes, {
-        required String emptyMessage,
-        required Color primaryText,
-        required Color secondaryText,
-        required Color cardColor,
-        required Color borderColor,
-        required Color selectedBgColor,
-        required Color warningBgColor,
-        required Color leadingBgColor,
-        required Color shadowColor,
-        required bool isDark,
-      }) {
+    BuildContext context,
+    List<Clothes> clothes, {
+    required String emptyMessage,
+    required Color primaryText,
+    required Color secondaryText,
+    required Color cardColor,
+    required Color borderColor,
+    required Color selectedBgColor,
+    required Color warningBgColor,
+    required Color leadingBgColor,
+    required Color shadowColor,
+    required bool isDark,
+  }) {
     if (clothes.isEmpty) {
       return Center(
-        child: Text(
-          emptyMessage,
-          style: TextStyle(color: secondaryText),
-        ),
+        child: Text(emptyMessage, style: TextStyle(color: secondaryText)),
       );
     }
 
@@ -721,26 +694,26 @@ class _ClosetScreenState extends State<ClosetScreen> {
   }
 
   Widget _buildClosetItem(
-      BuildContext context, {
-        required Clothes item,
-        required String title,
-        required String category,
-        required String status,
-        required Color statusColor,
-        required IconData statusIcon,
-        required Color primaryText,
-        required Color secondaryText,
-        required Color cardColor,
-        required Color borderColor,
-        required Color selectedBgColor,
-        required Color warningBgColor,
-        required Color leadingBgColor,
-        required Color shadowColor,
-        required bool isDark,
-        bool isWarning = false,
-        bool showDragHandle = false,
-        bool disableTap = false,
-      }) {
+    BuildContext context, {
+    required Clothes item,
+    required String title,
+    required String category,
+    required String status,
+    required Color statusColor,
+    required IconData statusIcon,
+    required Color primaryText,
+    required Color secondaryText,
+    required Color cardColor,
+    required Color borderColor,
+    required Color selectedBgColor,
+    required Color warningBgColor,
+    required Color leadingBgColor,
+    required Color shadowColor,
+    required bool isDark,
+    bool isWarning = false,
+    bool showDragHandle = false,
+    bool disableTap = false,
+  }) {
     final isSelected = _selectedItems.contains(item);
 
     return Container(
@@ -772,8 +745,8 @@ class _ClosetScreenState extends State<ClosetScreen> {
             color: isSelected
                 ? (isDark ? const Color(0xFF1C1C1E) : Colors.white)
                 : (isWarning
-                ? (isDark ? const Color(0xFF1C1C1E) : Colors.white)
-                : leadingBgColor),
+                      ? (isDark ? const Color(0xFF1C1C1E) : Colors.white)
+                      : leadingBgColor),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Icon(
@@ -799,10 +772,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
             children: [
               Text(
                 category,
-                style: TextStyle(
-                  color: secondaryText,
-                  fontSize: 12,
-                ),
+                style: TextStyle(color: secondaryText, fontSize: 12),
               ),
               const SizedBox(height: 4),
               Row(
@@ -814,8 +784,9 @@ class _ClosetScreenState extends State<ClosetScreen> {
                       status,
                       style: TextStyle(
                         color: statusColor,
-                        fontWeight:
-                        isWarning ? FontWeight.bold : FontWeight.normal,
+                        fontWeight: isWarning
+                            ? FontWeight.bold
+                            : FontWeight.normal,
                         fontSize: 13,
                       ),
                       overflow: TextOverflow.ellipsis,
@@ -829,41 +800,41 @@ class _ClosetScreenState extends State<ClosetScreen> {
         trailing: showDragHandle
             ? Icon(Icons.drag_handle, color: secondaryText)
             : (_selectionMode
-            ? Icon(
-          isSelected
-              ? Icons.check_circle
-              : Icons.radio_button_unchecked,
-          color: isSelected
-              ? const Color(0xFF4A4EFE)
-              : secondaryText,
-        )
-            : Icon(Icons.chevron_right, color: secondaryText)),
+                  ? Icon(
+                      isSelected
+                          ? Icons.check_circle
+                          : Icons.radio_button_unchecked,
+                      color: isSelected
+                          ? const Color(0xFF4A4EFE)
+                          : secondaryText,
+                    )
+                  : Icon(Icons.chevron_right, color: secondaryText)),
         onTap: disableTap
             ? null
             : () {
-          if (_selectionMode) {
-            _toggleSelection(item);
-            return;
-          }
+                if (_selectionMode) {
+                  _toggleSelection(item);
+                  return;
+                }
 
-          context.read<ClosetProvider>().selectClothes(item);
+                context.read<ClosetProvider>().selectClothes(item);
 
-          if (widget.onOpenReport != null) {
-            widget.onOpenReport!(item);
-            return;
-          }
+                if (widget.onOpenReport != null) {
+                  widget.onOpenReport!(item);
+                  return;
+                }
 
-          Navigator.pushNamed(context, '/report', arguments: item);
-        },
+                Navigator.pushNamed(context, '/report', arguments: item);
+              },
         onLongPress: disableTap
             ? null
             : () {
-          if (_selectionMode) {
-            _toggleSelection(item);
-            return;
-          }
-          _enterSelectionMode(item);
-        },
+                if (_selectionMode) {
+                  _toggleSelection(item);
+                  return;
+                }
+                _enterSelectionMode(item);
+              },
       ),
     );
   }

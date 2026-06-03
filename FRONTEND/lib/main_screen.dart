@@ -16,20 +16,14 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
+  static const int _tabCount = 3;
+
   int _selectedIndex = 0;
   bool _didReadInitialArgs = false;
   bool _isShowingReport = false;
 
-  late final List<Widget> _screens = [
-    const HomeScreen(),
-    const ScanScreen(),
-    ClosetScreen(
-      onOpenReport: _openReport,
-    ),
-  ];
-
   void _selectTab(int index) {
-    if (index < 0 || index >= _screens.length) return;
+    if (index < 0 || index >= _tabCount) return;
 
     setState(() {
       _selectedIndex = index;
@@ -55,11 +49,19 @@ class _MainScreenState extends State<MainScreen> {
     if (args is! int) return 0;
     if (args == 3) return 2;
 
-    if (args >= 0 && args < _screens.length) {
+    if (args >= 0 && args < _tabCount) {
       return args;
     }
 
     return 0;
+  }
+
+  List<Widget> _buildTabScreens() {
+    return [
+      const HomeScreen(),
+      ScanScreen(isActive: _selectedIndex == 1 && !_isShowingReport),
+      ClosetScreen(onOpenReport: _openReport),
+    ];
   }
 
   Widget _buildBody() {
@@ -75,21 +77,16 @@ class _MainScreenState extends State<MainScreen> {
 
         return FadeTransition(
           opacity: animation,
-          child: SlideTransition(
-            position: slideAnimation,
-            child: child,
-          ),
+          child: SlideTransition(position: slideAnimation, child: child),
         );
       },
       child: _isShowingReport
-          ? const ReportScreen(
-        key: ValueKey('report'),
-      )
+          ? const ReportScreen(key: ValueKey('report'))
           : IndexedStack(
-        key: const ValueKey('main-tabs'),
-        index: _selectedIndex,
-        children: _screens,
-      ),
+              key: const ValueKey('main-tabs'),
+              index: _selectedIndex,
+              children: _buildTabScreens(),
+            ),
     );
   }
 
@@ -105,10 +102,7 @@ class _MainScreenState extends State<MainScreen> {
         scrolledUnderElevation: 0,
         leading: IconButton(
           onPressed: _closeReport,
-          icon: Icon(
-            Icons.arrow_back,
-            color: appBarIconColor,
-          ),
+          icon: Icon(Icons.arrow_back, color: appBarIconColor),
         ),
         title: Text(
           '상세 리포트',
@@ -134,10 +128,7 @@ class _MainScreenState extends State<MainScreen> {
           onPressed: () {
             Navigator.pushNamed(context, '/settings');
           },
-          icon: Icon(
-            Icons.settings_outlined,
-            color: appBarIconColor,
-          ),
+          icon: Icon(Icons.settings_outlined, color: appBarIconColor),
         ),
         const SizedBox(width: 8),
       ],
@@ -153,8 +144,9 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final scaffoldBg =
-    isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FC);
+    final scaffoldBg = isDark
+        ? const Color(0xFF121212)
+        : const Color(0xFFF8F9FC);
 
     return Scaffold(
       backgroundColor: scaffoldBg,
@@ -181,11 +173,7 @@ class _KDppSplashLogoMark extends StatelessWidget {
         color: const Color(0xFF4A4EFE),
         borderRadius: BorderRadius.circular(10),
       ),
-      child: const Icon(
-        Icons.eco_outlined,
-        color: Colors.white,
-        size: 21,
-      ),
+      child: const Icon(Icons.eco_outlined, color: Colors.white, size: 21),
     );
   }
 }
@@ -205,8 +193,9 @@ class _KDppBottomNavigationBar extends StatelessWidget {
 
     final pageBg = isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FC);
     final barColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
-    final borderColor =
-    isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE8E8EE);
+    final borderColor = isDark
+        ? const Color(0xFF2C2C2E)
+        : const Color(0xFFE8E8EE);
     final shadowColor = isDark
         ? Colors.black.withValues(alpha: 0.30)
         : Colors.black.withValues(alpha: 0.10);
@@ -295,8 +284,9 @@ class _CenterScanButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     const activeColor = Color(0xFF4A4EFE);
-    final labelColor =
-    selected ? activeColor : (isDark ? const Color(0xFFD1D1D6) : Colors.grey);
+    final labelColor = selected
+        ? activeColor
+        : (isDark ? const Color(0xFFD1D1D6) : Colors.grey);
 
     return GestureDetector(
       onTap: onTap,
@@ -311,10 +301,7 @@ class _CenterScanButton extends StatelessWidget {
               width: 66,
               height: 66,
               padding: const EdgeInsets.all(5),
-              decoration: BoxDecoration(
-                color: pageBg,
-                shape: BoxShape.circle,
-              ),
+              decoration: BoxDecoration(color: pageBg, shape: BoxShape.circle),
               child: Container(
                 decoration: BoxDecoration(
                   color: selected ? const Color(0xFF383CDB) : activeColor,
@@ -387,11 +374,7 @@ class _BottomTabItem extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              selected ? activeIcon : icon,
-              color: color,
-              size: 25,
-            ),
+            Icon(selected ? activeIcon : icon, color: color, size: 25),
             const SizedBox(height: 4),
             Text(
               label,

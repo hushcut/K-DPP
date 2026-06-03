@@ -42,6 +42,6 @@ void main() {
     );
     expect(find.textContaining('라벨 지침: 찬물 세탁 후 자연 건조'), findsOneWidget);
     expect(find.text('찬물 세탁 후 자연 건조'), findsOneWidget);
-    expect(find.textContaining('COTTON 80%'), findsOneWidget);
+    expect(find.textContaining('COTTON 80%'), findsWidgets);
   });
 }

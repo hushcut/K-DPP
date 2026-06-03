@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'login_screen.dart';
 import 'main_screen.dart';
-import 'report_screen.dart';
 import 'splash_screen.dart';
 import 'email_login_screen.dart';
 import 'signup_screen.dart';
