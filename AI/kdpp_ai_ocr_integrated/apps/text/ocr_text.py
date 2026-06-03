@@ -20,7 +20,7 @@ class OcrCandidate:
     source: str
     text: str
     materials: dict[str, float | int]
-    score: tuple[int, int, int, int, int, int]
+    score: tuple[int, float, int, int, int, int, int]
 
 
 def read_image_bytes(image_path: str) -> bytes:
@@ -87,27 +87,29 @@ def score_ocr_candidate(
     text: str,
     materials: dict[str, float | int],
     source: str,
-) -> tuple[int, int, int, int, int, int]:
+) -> tuple[int, float, int, int, int, int, int]:
     if not text:
-        return (0, 0, 0, 0, 0, 0)
+        return (0, -100.0, 0, 0, 0, 0, 0)
 
     total = sum(float(value) for value in materials.values()) if materials else 0.0
     valid_total = 1 if materials and 95 <= total <= 105 else 0
+    total_closeness = -abs(100.0 - total) if materials else -100.0
     source_priority = 1 if source == "original" else 0
     explicit_percent_count = len(re.findall(r"\d{1,3}(?:\.\d+)?\s*[%％]", text))
     percent_count = len(re.findall(r"\d{1,3}(?:\.\d+)?\s*%?", text))
 
     return (
         valid_total,
-        len(materials),
+        total_closeness,
         source_priority,
+        len(materials),
         explicit_percent_count,
         percent_count,
         len(text),
     )
 
 
-def score_ocr_text(text: str, source: str = "original") -> tuple[int, int, int, int, int, int]:
+def score_ocr_text(text: str, source: str = "original") -> tuple[int, float, int, int, int, int, int]:
     return score_ocr_candidate(text, parse_ocr_materials(text), source)
 
 

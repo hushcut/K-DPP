@@ -9,6 +9,13 @@ NEARBY_TOKEN_WINDOW = 4
 MIN_VALID_TOTAL = 95.0
 MAX_VALID_TOTAL = 105.0
 TEXT_LETTER_PATTERN = r"A-Za-z\uac00-\ud7a3\u3040-\u30ff\u3400-\u9fff"
+MEASUREMENT_UNITS = {"cm", "mm", "m", "em", "호", "사이즈", "size", "free"}
+EMBEDDED_SINGLE_CHAR_MATERIALS = {
+    "면": "cotton",
+    "綿": "cotton",
+    "棉": "cotton",
+    "毛": "wool",
+}
 
 
 def strip_latin_accents(text: str) -> str:
@@ -33,6 +40,9 @@ def repair_ocr_noise(text: str) -> str:
 
     normalized = re.sub(r"\bcotonao0?9\b", "cotton 100", normalized, flags=re.IGNORECASE)
     normalized = re.sub(r"\bcoton[a-z]*0?9\b", "cotton 100", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bcotton\s+2000\b", "cotton 100", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"아크\s*[럴렐릴]", "아크릴", normalized)
+    normalized = re.sub(r"스\s*판(?:\s*덱스)?", "스판덱스", normalized)
 
     # Google Vision sometimes reads a percent sign as "96" on dotted fabric labels.
     normalized = re.sub(r"\b([1-9]\d?)96\b", r"\1%", normalized)
@@ -83,6 +93,11 @@ def find_material_key(word: str) -> str | None:
                 return material_key
             if len(alias) >= 4 and alias in token:
                 return material_key
+
+    for alias, material_key in EMBEDDED_SINGLE_CHAR_MATERIALS.items():
+        if alias in token and (token.endswith(alias.lower()) or len(token) <= 4):
+            return material_key
+
     return None
 
 
@@ -96,6 +111,20 @@ def is_percent_token(token: str) -> bool:
     except ValueError:
         return False
     return 0 < value <= 100
+
+
+def is_measurement_number(tokens: list[str], index: int) -> bool:
+    if index + 1 >= len(tokens):
+        return False
+    return tokens[index + 1].lower() in MEASUREMENT_UNITS
+
+
+def is_likely_stray_number(tokens: list[str], index: int) -> bool:
+    if index + 1 >= len(tokens):
+        return False
+    if not (is_percent_token(tokens[index]) and is_percent_token(tokens[index + 1])):
+        return False
+    return float(tokens[index + 1]) >= 20
 
 
 def add_candidate(
@@ -123,6 +152,8 @@ def find_forward_candidates(tokens: list[str]) -> list[tuple[int, str, float]]:
             next_token = tokens[next_index]
             if find_material_key(next_token):
                 break
+            if is_measurement_number(tokens, next_index) or is_likely_stray_number(tokens, next_index):
+                continue
             if is_percent_token(next_token):
                 add_candidate(candidates, index, next_index, material, next_token)
                 break
@@ -134,6 +165,8 @@ def find_reverse_candidates(tokens: list[str]) -> list[tuple[int, str, float]]:
     candidates: list[tuple[int, str, float]] = []
 
     for index, token in enumerate(tokens):
+        if is_measurement_number(tokens, index) or is_likely_stray_number(tokens, index):
+            continue
         if not is_percent_token(token):
             continue
         for next_index in range(index + 1, min(len(tokens), index + NEARBY_TOKEN_WINDOW + 1)):
@@ -150,6 +183,71 @@ def collapse_candidates(candidates: list[tuple[int, str, float]]) -> dict[str, f
     for _, material, percent in candidates:
         results[material] += percent
     return dict(results)
+
+
+def compact_material_mentions(tokens: list[str]) -> list[tuple[int, str]]:
+    mentions: list[tuple[int, str]] = []
+    for index, token in enumerate(tokens):
+        material = find_material_key(token)
+        if not material:
+            continue
+        if mentions and mentions[-1][1] == material and index - mentions[-1][0] <= 3:
+            continue
+        mentions.append((index, material))
+    return mentions
+
+
+def find_parallel_list_candidates(tokens: list[str]) -> list[tuple[int, str, float]]:
+    mentions = compact_material_mentions(tokens)
+    number_mentions = [
+        (index, float(token))
+        for index, token in enumerate(tokens)
+        if is_percent_token(token) and not is_measurement_number(tokens, index)
+    ]
+
+    best_candidates: list[tuple[int, str, float]] = []
+    best_score: tuple[int, int, float] | None = None
+
+    for start in range(len(mentions)):
+        material_sequence: list[tuple[int, str]] = []
+        seen_materials: set[str] = set()
+
+        for end in range(start, min(len(mentions), start + 5)):
+            material_index, material = mentions[end]
+            if material in seen_materials:
+                break
+
+            material_sequence.append((material_index, material))
+            seen_materials.add(material)
+
+            if len(material_sequence) < 2:
+                continue
+
+            numbers_after = [
+                item for item in number_mentions if item[0] > material_sequence[-1][0]
+            ]
+            sequence_length = len(material_sequence)
+
+            for number_start in range(0, len(numbers_after) - sequence_length + 1):
+                number_sequence = numbers_after[number_start:number_start + sequence_length]
+                total = sum(value for _, value in number_sequence)
+                if not (MIN_VALID_TOTAL <= total <= MAX_VALID_TOTAL):
+                    continue
+
+                distance = number_sequence[0][0] - material_sequence[-1][0]
+                score = (sequence_length, -distance, -material_sequence[0][0])
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best_candidates = [
+                        (
+                            min(material_item[0], number_item[0]),
+                            material_item[1],
+                            number_item[1],
+                        )
+                        for material_item, number_item in zip(material_sequence, number_sequence)
+                    ]
+
+    return best_candidates
 
 
 def split_candidate_groups(candidates: list[tuple[int, str, float]]) -> list[list[tuple[int, str, float]]]:
@@ -174,52 +272,111 @@ def split_candidate_groups(candidates: list[tuple[int, str, float]]) -> list[lis
     return groups
 
 
-def choose_best_group(candidates: list[tuple[int, str, float]]) -> dict[str, float]:
-    best_materials: dict[str, float] = {}
-    best_score: tuple[int, float, int] | None = None
+def choose_best_candidate_group(
+    candidates: list[tuple[int, str, float]],
+) -> list[tuple[int, str, float]]:
+    best_group: list[tuple[int, str, float]] = []
+    best_score: tuple[int, float, int, int] | None = None
 
     for group in split_candidate_groups(candidates):
-        materials = collapse_candidates(group)
+        materials = recover_low_total_group(group)
         total = sum(materials.values())
         is_valid_total = MIN_VALID_TOTAL <= total <= MAX_VALID_TOTAL
-        score = (1 if is_valid_total else 0, -abs(100.0 - total), -group[0][0])
+        score = (1 if is_valid_total else 0, -abs(100.0 - total), -group[0][0], len(materials))
 
         if best_score is None or score > best_score:
             best_score = score
-            best_materials = materials
+            best_group = group
 
-    return best_materials
+    return best_group
 
 
-def group_score(materials: dict[str, float], first_index: int) -> tuple[int, float, int]:
+def choose_best_group(candidates: list[tuple[int, str, float]]) -> dict[str, float]:
+    return collapse_candidates(choose_best_candidate_group(candidates))
+
+
+def group_score(materials: dict[str, float], first_index: int) -> tuple[int, float, int, int]:
     total = sum(materials.values())
     is_valid_total = MIN_VALID_TOTAL <= total <= MAX_VALID_TOTAL
-    return (1 if is_valid_total else 0, -abs(100.0 - total), -first_index)
+    return (1 if is_valid_total else 0, -abs(100.0 - total), -first_index, len(materials))
 
 
 def find_material_candidates(tokens: list[str]) -> list[tuple[int, str, float]]:
-    forward = find_forward_candidates(tokens)
-    reverse = find_reverse_candidates(tokens)
+    def score_candidates(candidates: list[tuple[int, str, float]]) -> tuple[int, float, int, int]:
+        group = choose_best_candidate_group(candidates)
+        materials = recover_low_total_group(group) if group else {}
+        return group_score(materials, candidates[0][0]) if materials else (0, -100.0, 0, 0)
 
-    if not forward:
-        return reverse
-    if not reverse:
-        return forward
+    direct_sets = [
+        candidates
+        for candidates in [find_forward_candidates(tokens), find_reverse_candidates(tokens)]
+        if candidates
+    ]
+    if direct_sets:
+        direct_best = max(direct_sets, key=score_candidates)
+        direct_score = score_candidates(direct_best)
+        if direct_score[0] == 1:
+            return direct_best
 
-    forward_group = choose_best_group(forward)
-    reverse_group = choose_best_group(reverse)
-    forward_score = group_score(forward_group, forward[0][0]) if forward_group else (0, -100.0, 0)
-    reverse_score = group_score(reverse_group, reverse[0][0]) if reverse_group else (0, -100.0, 0)
+    parallel = find_parallel_list_candidates(tokens)
+    candidate_sets = direct_sets + ([parallel] if parallel else [])
+    if not candidate_sets:
+        return []
 
-    return forward if forward_score >= reverse_score else reverse
+    return max(candidate_sets, key=score_candidates)
+
+
+def recover_low_total_group(group: list[tuple[int, str, float]]) -> dict[str, float]:
+    materials = collapse_candidates(group)
+    total = sum(materials.values())
+    if total >= MIN_VALID_TOTAL:
+        return materials
+
+    ordered_materials: list[str] = []
+    for _, material, _ in group:
+        if material not in ordered_materials:
+            ordered_materials.append(material)
+
+    if len(ordered_materials) < 2:
+        return materials
+
+    first_material = ordered_materials[0]
+    first_percent = materials.get(first_material, 0.0)
+    other_total = total - first_percent
+
+    # Common OCR miss: "94%" loses the leading digit and becomes "2%" or similar.
+    if first_percent <= 15 and 0 < other_total <= 25:
+        materials[first_material] = 100.0 - other_total
+
+    return materials
+
+
+def infer_single_material(tokens: list[str]) -> dict[str, float]:
+    mentions = compact_material_mentions(tokens)
+    unique_materials = []
+    for _, material in mentions:
+        if material not in unique_materials:
+            unique_materials.append(material)
+
+    if len(unique_materials) == 1:
+        return {unique_materials[0]: 100.0}
+    return {}
 
 
 def parse_materials(text: str) -> dict[str, float | int]:
-    candidates = find_material_candidates(tokenize_material_text(text))
+    tokens = tokenize_material_text(text)
+    candidates = find_material_candidates(tokens)
     if not candidates:
-        return {}
+        return normalize_percentages(infer_single_material(tokens))
 
-    return normalize_percentages(choose_best_group(candidates))
+    best_group = choose_best_candidate_group(candidates)
+    materials = recover_low_total_group(best_group)
+    if sum(materials.values()) < MIN_VALID_TOTAL:
+        single_material = infer_single_material(tokens)
+        if single_material:
+            return normalize_percentages(single_material)
+
+    return normalize_percentages(materials)
 
 
 def normalize_percentages(materials: dict[str, float]) -> dict[str, float | int]:

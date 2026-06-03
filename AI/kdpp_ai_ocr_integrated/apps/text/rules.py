@@ -3,7 +3,7 @@ MATERIAL_ALIASES = {
         "cotton", "coton", "cot", "baumwolle", "algodon", "algodao",
         "katoen", "pamuk", "bumbac", "bavlna", "cotone", "cottone",
         "puuvilla", "pamut", "medvilne", "kokvilna", "kapas", "bawe",
-        "cotonao", "cottor", "cottoh",
+        "cotonao", "cottor", "cottoh", "\uace0\ubb38",
         "\uba74", "\ucf54\ud2bc", "\u7dbf", "\u68c9", "\u30b3\u30c3\u30c8\u30f3",
     ],
     "polyester": [
@@ -27,7 +27,7 @@ MATERIAL_ALIASES = {
     ],
     "spandex": [
         "spandex", "elastane", "elastan", "elasthan", "elastano", "lycra",
-        "\uc2a4\ud310\ub371\uc2a4", "\uc5d8\ub77c\uc2a4\ud14c\uc778", "\u6c28\u7eb6",
+        "\uc2a4\ud310", "\uc2a4\ud310\ub371\uc2a4", "\uc5d8\ub77c\uc2a4\ud14c\uc778", "\u6c28\u7eb6",
     ],
     "linen": ["linen", "lin", "leinen", "lino", "\ub9b0\ub128", "\ub9c8", "\u9ebb", "\u30ea\u30cd\u30f3"],
     "viscose": ["viscose", "viskose", "viscon", "viskon", "viskoz", "viscosa", "\ube44\uc2a4\ucf54\uc2a4", "\u30d3\u30b9\u30b3\u30fc\u30b9"],
@@ -84,6 +84,7 @@ OCR_CORRECTIONS = {
     "cotion": "cotton",
     "cotonao": "cotton",
     "cottoh": "cotton",
+    "\uace0\ubb38": "\uba74",
     "elastanc": "elastane",
     "elastan": "elastane",
     "viscoe": "viscose",
