@@ -80,3 +80,53 @@ Requires Google Vision credentials:
 python scripts/run_combined_batch.py --split valid --credentials key.json
 ```
 
+
+
+## Accuracy Improvement Version
+
+This copy adds a more robust material parser for real QA images.
+
+### What changed
+
+- Parses material composition by line instead of only adjacent tokens.
+- Detects garment sections such as outer fabric, lining, filling, rib, sleeve, and pocket.
+- Uses outer/generic material as the representative `materials` result while preserving detailed `parts`.
+- Avoids blindly normalizing unrelated sections into one 100% total.
+- Adds Japanese/Chinese/Korean material aliases and common OCR corrections.
+- Adds a QA batch script for comparing OCR results against an answer key CSV.
+
+### Expected response shape
+
+```json
+{
+  "status": "success",
+  "materials": {
+    "cotton": 80,
+    "polyester": 20
+  },
+  "materials_korean": "? 80%, ????? 20%",
+  "raw_ocr_preview": "COTTON 80% POLYESTER 20%",
+  "confidence": {
+    "ocr": "high"
+  },
+  "selected_part": "outer",
+  "parts": {
+    "outer": {
+      "cotton": 80,
+      "polyester": 20
+    }
+  }
+}
+```
+
+### QA batch test
+
+```bash
+python scripts/run_qa_batch.py --image-dir "C:\Users\hany0\OneDrive\?? ??\kdpp-dataset" --answer-key "C:\K-DPP QA\K-DPP\QA\answer_key_template.csv" --credentials key.json
+```
+
+Output:
+
+```text
+outputs/qa_batch_results.csv
+```
