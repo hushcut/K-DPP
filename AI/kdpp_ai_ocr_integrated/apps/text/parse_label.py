@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from collections import defaultdict
 
 from apps.text.rules import CARE_RULES, MATERIAL_ALIASES, MATERIAL_KOREAN, OCR_CORRECTIONS
@@ -7,17 +8,57 @@ TOKEN_PATTERN = r"[a-zA-Z\uac00-\ud7a3\u3040-\u30ff\u3400-\u9fff]+|\d{1,3}(?:\.\
 NEARBY_TOKEN_WINDOW = 4
 MIN_VALID_TOTAL = 95.0
 MAX_VALID_TOTAL = 105.0
+TEXT_LETTER_PATTERN = r"A-Za-z\uac00-\ud7a3\u3040-\u30ff\u3400-\u9fff"
+
+
+def strip_latin_accents(text: str) -> str:
+    chars: list[str] = []
+    for char in text:
+        if "LATIN" not in unicodedata.name(char, ""):
+            chars.append(char)
+            continue
+
+        chars.extend(
+            decomposed
+            for decomposed in unicodedata.normalize("NFKD", char)
+            if not unicodedata.combining(decomposed)
+        )
+    return "".join(chars)
+
+
+def repair_ocr_noise(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text)
+    normalized = normalized.replace("\uff1a", ":")
+    normalized = normalized.replace("\uff05", "%")
+
+    normalized = re.sub(r"\bcotonao0?9\b", "cotton 100", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bcoton[a-z]*0?9\b", "cotton 100", normalized, flags=re.IGNORECASE)
+
+    # Google Vision sometimes reads a percent sign as "96" on dotted fabric labels.
+    normalized = re.sub(r"\b([1-9]\d?)96\b", r"\1%", normalized)
+    normalized = re.sub(r"\b1000\b", "100%", normalized)
+    normalized = re.sub(r"\b[il]00\b", "100", normalized, flags=re.IGNORECASE)
+
+    # Split glued OCR tokens such as "폴리에스터2%" or "D100%".
+    normalized = re.sub(rf"([{TEXT_LETTER_PATTERN}])(\d{{1,3}})", r"\1 \2", normalized)
+    normalized = re.sub(rf"(\d{{1,3}})([{TEXT_LETTER_PATTERN}])", r"\1 \2", normalized)
+    normalized = re.sub(r"(\d{1,3}(?:\.\d+)?)\s*%", r"\1 ", normalized)
+
+    return normalized
 
 
 def normalize_text(text: str) -> str:
     if not text:
         return ""
-    normalized = text.lower().replace("\n", " ")
-    normalized = normalized.replace("\uff1a", ":")
-    normalized = normalized.replace("\uff05", "%")
+    normalized = repair_ocr_noise(text).lower().replace("\n", " ")
+    normalized = strip_latin_accents(normalized)
     normalized = re.sub(r"\s+", " ", normalized).strip()
     for wrong, correct in OCR_CORRECTIONS.items():
-        normalized = re.sub(rf"\b{re.escape(wrong)}\b", correct, normalized)
+        normalized = re.sub(
+            rf"(?<![{TEXT_LETTER_PATTERN}]){re.escape(wrong.lower())}(?![{TEXT_LETTER_PATTERN}])",
+            correct.lower(),
+            normalized,
+        )
     return normalized
 
 
@@ -29,7 +70,7 @@ def clean_ocr_preview(text: str, max_len: int = 160) -> str:
 
 
 def find_material_key(word: str) -> str | None:
-    token = word.lower().strip(" .,:;/()[]{}%")
+    token = strip_latin_accents(word.lower()).strip(" .,:;/()[]{}%")
     token = OCR_CORRECTIONS.get(token, token)
 
     if len(token) < 2 and token.isascii():
@@ -37,7 +78,7 @@ def find_material_key(word: str) -> str | None:
 
     for material_key, aliases in MATERIAL_ALIASES.items():
         for alias in aliases:
-            alias = alias.lower().strip()
+            alias = strip_latin_accents(alias.lower().strip())
             if token == alias:
                 return material_key
             if len(alias) >= 4 and alias in token:
@@ -118,11 +159,6 @@ def split_candidate_groups(candidates: list[tuple[int, str, float]]) -> list[lis
 
     for candidate in candidates:
         percent = candidate[2]
-
-        if current and current_total >= MIN_VALID_TOTAL:
-            groups.append(current)
-            current = []
-            current_total = 0.0
 
         if current and current_total + percent > MAX_VALID_TOTAL:
             groups.append(current)
