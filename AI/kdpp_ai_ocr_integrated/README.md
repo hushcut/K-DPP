@@ -80,3 +80,9 @@ Requires Google Vision credentials:
 python scripts/run_combined_batch.py --split valid --credentials key.json
 ```
 
+## Tests
+
+```bash
+python -m unittest discover -s tests
+```
+
