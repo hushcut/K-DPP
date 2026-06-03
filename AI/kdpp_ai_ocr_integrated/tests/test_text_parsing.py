@@ -47,6 +47,37 @@ class ParseMaterialsRegressionTest(unittest.TestCase):
 
         self.assertEqual(parse_materials(text), {"cotton": 100})
 
+    def test_combines_forward_pairs_with_trailing_reverse_pair(self):
+        text = "Cotton 51% Polyester 46% 3% Polyurethane"
+
+        self.assertEqual(
+            parse_materials(text),
+            {"cotton": 51, "polyester": 46, "polyurethane": 3},
+        )
+
+    def test_keeps_standard_reverse_pairs(self):
+        text = "95% polyester 5% elastane"
+
+        self.assertEqual(
+            parse_materials(text),
+            {"polyester": 95, "spandex": 5},
+        )
+
+    def test_prefers_wool_total_over_cashmere_contained_note(self):
+        text = "\uac89\uac10 \ubaa8 100% (\uce90\uc2dc\ubbf8\uc5b4 10%\ud568\uc720) \uc548\uac10 \ud3f4\ub9ac\uc5d0\uc2a4\ud130 100%"
+
+        self.assertEqual(parse_materials(text), {"wool": 100})
+
+    def test_repairs_japanese_cotton_ocr_as_knit_character(self):
+        text = "\ubcf8\uccb4 \ub9ac\ube0c\ubd80\ubd84 \u7de8 100%"
+
+        self.assertEqual(parse_materials(text), {"cotton": 100})
+
+    def test_repairs_korean_cotton_ocr_as_man(self):
+        text = "\ub9cc 100% 100 \uc911\uc131 \ubd84\ub9ac\uc138\ud0c1"
+
+        self.assertEqual(parse_materials(text), {"cotton": 100})
+
     def test_parse_label_success_shape(self):
         result = parse_label("\uba74 100%")
 

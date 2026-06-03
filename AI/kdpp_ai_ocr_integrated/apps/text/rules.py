@@ -4,7 +4,7 @@ MATERIAL_ALIASES = {
         "katoen", "pamuk", "bumbac", "bavlna", "cotone", "cottone",
         "puuvilla", "pamut", "medvilne", "kokvilna", "kapas", "bawe",
         "cotonao", "cottor", "cottoh", "\uace0\ubb38",
-        "\uba74", "\ucf54\ud2bc", "\u7dbf", "\u68c9", "\u30b3\u30c3\u30c8\u30f3",
+        "\uba74", "\ucf54\ud2bc", "\u7dbf", "\u7de8", "\u68c9", "\u30b3\u30c3\u30c8\u30f3",
     ],
     "polyester": [
         "polyester", "poliester", "polyestere", "polyestera", "polyster",

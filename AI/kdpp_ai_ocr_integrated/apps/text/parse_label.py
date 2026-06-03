@@ -44,6 +44,12 @@ def repair_ocr_noise(text: str) -> str:
     normalized = re.sub(r"아크\s*[럴렐릴]", "아크릴", normalized)
     normalized = re.sub(r"스\s*판(?:\s*덱스)?", "스판덱스", normalized)
 
+    normalized = re.sub(
+        rf"(?<![{TEXT_LETTER_PATTERN}])\ub9cc\s+(100)(?!\d)",
+        "\uba74 \\1",
+        normalized,
+    )
+
     # Google Vision sometimes reads a percent sign as "96" on dotted fabric labels.
     normalized = re.sub(r"\b([1-9]\d?)96\b", r"\1%", normalized)
     normalized = re.sub(r"\b1000\b", "100%", normalized)
@@ -127,6 +133,25 @@ def is_likely_stray_number(tokens: list[str], index: int) -> bool:
     return float(tokens[index + 1]) >= 20
 
 
+def is_likely_forward_ratio(tokens: list[str], index: int) -> bool:
+    for previous_index in range(index - 1, max(index - NEARBY_TOKEN_WINDOW - 1, -1), -1):
+        if is_percent_token(tokens[previous_index]):
+            return False
+
+        if not find_material_key(tokens[previous_index]):
+            continue
+
+        number_before_material = previous_index - 1
+        if number_before_material >= 0 and is_percent_token(tokens[number_before_material]):
+            material_before_number = number_before_material - 1
+            if material_before_number < 0 or not find_material_key(tokens[material_before_number]):
+                return False
+
+        return True
+
+    return False
+
+
 def add_candidate(
     candidates: list[tuple[int, str, float]],
     material_index: int,
@@ -165,7 +190,11 @@ def find_reverse_candidates(tokens: list[str]) -> list[tuple[int, str, float]]:
     candidates: list[tuple[int, str, float]] = []
 
     for index, token in enumerate(tokens):
-        if is_measurement_number(tokens, index) or is_likely_stray_number(tokens, index):
+        if (
+            is_measurement_number(tokens, index)
+            or is_likely_stray_number(tokens, index)
+            or is_likely_forward_ratio(tokens, index)
+        ):
             continue
         if not is_percent_token(token):
             continue
@@ -301,6 +330,28 @@ def group_score(materials: dict[str, float], first_index: int) -> tuple[int, flo
     return (1 if is_valid_total else 0, -abs(100.0 - total), -first_index, len(materials))
 
 
+def extend_candidate_group(
+    base_group: list[tuple[int, str, float]],
+    extra_candidates: list[tuple[int, str, float]],
+) -> list[tuple[int, str, float]]:
+    materials = collapse_candidates(base_group)
+    total = sum(materials.values())
+    extended = list(base_group)
+
+    for candidate in sorted(extra_candidates, key=lambda item: item[0]):
+        _, material, percent = candidate
+        if material in materials:
+            continue
+        if total + percent > MAX_VALID_TOTAL:
+            continue
+
+        extended.append(candidate)
+        materials[material] = percent
+        total += percent
+
+    return sorted(extended, key=lambda item: item[0])
+
+
 def find_material_candidates(tokens: list[str]) -> list[tuple[int, str, float]]:
     def score_candidates(candidates: list[tuple[int, str, float]]) -> tuple[int, float, int, int]:
         group = choose_best_candidate_group(candidates)
@@ -316,6 +367,16 @@ def find_material_candidates(tokens: list[str]) -> list[tuple[int, str, float]]:
         direct_best = max(direct_sets, key=score_candidates)
         direct_score = score_candidates(direct_best)
         if direct_score[0] == 1:
+            direct_group = choose_best_candidate_group(direct_best)
+            reverse_candidates = find_reverse_candidates(tokens)
+            extended_group = extend_candidate_group(direct_group, reverse_candidates)
+
+            direct_materials = recover_low_total_group(direct_group)
+            extended_materials = recover_low_total_group(extended_group)
+            if abs(100.0 - sum(extended_materials.values())) < abs(
+                100.0 - sum(direct_materials.values())
+            ):
+                return extended_group
             return direct_best
 
     parallel = find_parallel_list_candidates(tokens)
