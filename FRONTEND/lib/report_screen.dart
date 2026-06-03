@@ -25,9 +25,6 @@ class ReportScreen extends StatelessWidget {
     isDark ? const Color(0xFFD1D1D6) : Colors.grey;
     final softCardColor =
     isDark ? const Color(0xFF2A2A2E) : const Color(0xFFF8F9FC);
-    final accentSoftColor =
-    isDark ? const Color(0xFF232A45) : const Color(0xFFEEF1FF);
-
     if (item == null) {
       return Center(
         child: Text(
@@ -373,6 +370,8 @@ class ReportScreen extends StatelessWidget {
     );
 
     if (confirmed != true) return;
+
+    if (!context.mounted) return;
 
     await context.read<ClosetProvider>().removeClothes(item);
 

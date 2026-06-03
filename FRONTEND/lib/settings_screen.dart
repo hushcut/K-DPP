@@ -32,14 +32,20 @@ class SettingsScreen extends StatelessWidget {
           content: TextField(
             controller: controller,
             autofocus: true,
-            style: TextStyle(color: isDark ? Colors.white : const Color(0xFF111111)),
+            style: TextStyle(
+              color: isDark ? Colors.white : const Color(0xFF111111),
+            ),
             decoration: InputDecoration(
               hintText: '예: 홍길동',
               hintStyle: TextStyle(
-                color: isDark ? const Color(0xFF9A9A9A) : const Color(0xFF8C8C8C),
+                color: isDark
+                    ? const Color(0xFF9A9A9A)
+                    : const Color(0xFF8C8C8C),
               ),
               filled: true,
-              fillColor: isDark ? const Color(0xFF2A2A2E) : const Color(0xFFF1F1F4),
+              fillColor: isDark
+                  ? const Color(0xFF2A2A2E)
+                  : const Color(0xFFF1F1F4),
               contentPadding: const EdgeInsets.symmetric(
                 horizontal: 18,
                 vertical: 16,
@@ -62,10 +68,7 @@ class SettingsScreen extends StatelessWidget {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF4A4EFE),
               ),
-              child: const Text(
-                '저장',
-                style: TextStyle(color: Colors.white),
-              ),
+              child: const Text('저장', style: TextStyle(color: Colors.white)),
             ),
           ],
         );
@@ -74,15 +77,15 @@ class SettingsScreen extends StatelessWidget {
 
     if (result == null || result.trim().isEmpty) return;
 
+    if (!context.mounted) return;
+
     await context.read<ClosetProvider>().setUserName(result);
 
     if (!context.mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('닉네임이 변경되었습니다.'),
-      ),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('닉네임이 변경되었습니다.')));
   }
 
   Future<void> _confirmLogout(BuildContext context) async {
@@ -91,10 +94,7 @@ class SettingsScreen extends StatelessWidget {
       builder: (dialogContext) {
         return AlertDialog(
           title: const Text('로그아웃'),
-          content: const Text(
-            '로그아웃 하시겠어요?',
-            style: TextStyle(height: 1.5),
-          ),
+          content: const Text('로그아웃 하시겠어요?', style: TextStyle(height: 1.5)),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
@@ -105,10 +105,7 @@ class SettingsScreen extends StatelessWidget {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF4A4EFE),
               ),
-              child: const Text(
-                '로그아웃',
-                style: TextStyle(color: Colors.white),
-              ),
+              child: const Text('로그아웃', style: TextStyle(color: Colors.white)),
             ),
           ],
         );
@@ -117,15 +114,13 @@ class SettingsScreen extends StatelessWidget {
 
     if (confirmed != true) return;
 
+    if (!context.mounted) return;
+
     await context.read<ClosetProvider>().logout();
 
     if (!context.mounted) return;
 
-    Navigator.pushNamedAndRemoveUntil(
-      context,
-      '/login',
-          (route) => false,
-    );
+    Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
   }
 
   void _showComingSoon(BuildContext context, String title) {
@@ -188,21 +183,18 @@ class SettingsScreen extends StatelessWidget {
       subtitle: subtitle == null
           ? null
           : Padding(
-        padding: const EdgeInsets.only(top: 4),
-        child: Text(
-          subtitle,
-          style: TextStyle(
-            fontSize: 13,
-            color: subtitleColor,
-            height: 1.4,
-          ),
-        ),
-      ),
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: subtitleColor,
+                  height: 1.4,
+                ),
+              ),
+            ),
       trailing: showChevron
-          ? Icon(
-        Icons.chevron_right,
-        color: subtitleColor,
-      )
+          ? Icon(Icons.chevron_right, color: subtitleColor)
           : null,
       onTap: onTap,
     );
@@ -225,18 +217,23 @@ class SettingsScreen extends StatelessWidget {
     final themeMode = context.watch<ThemeProvider>().themeMode;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final backgroundColor =
-    isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FC);
+    final backgroundColor = isDark
+        ? const Color(0xFF121212)
+        : const Color(0xFFF8F9FC);
     final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
-    final borderColor =
-    isDark ? const Color(0xFF2C2C2E) : const Color(0xFFEAEAEA);
+    final borderColor = isDark
+        ? const Color(0xFF2C2C2E)
+        : const Color(0xFFEAEAEA);
     final primaryText = isDark ? Colors.white : const Color(0xFF111111);
-    final secondaryText =
-    isDark ? const Color(0xFFD1D1D6) : const Color(0xFF8C8C8C);
-    final sectionText =
-    isDark ? const Color(0xFF9A9A9A) : const Color(0xFF8E8E93);
-    final profileBoxColor =
-    isDark ? const Color(0xFF2A2A2E) : const Color(0xFFEEF1FF);
+    final secondaryText = isDark
+        ? const Color(0xFFD1D1D6)
+        : const Color(0xFF8C8C8C);
+    final sectionText = isDark
+        ? const Color(0xFF9A9A9A)
+        : const Color(0xFF8E8E93);
+    final profileBoxColor = isDark
+        ? const Color(0xFF2A2A2E)
+        : const Color(0xFFEEF1FF);
 
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -301,10 +298,7 @@ class SettingsScreen extends StatelessWidget {
                       const SizedBox(height: 6),
                       Text(
                         _devEmail,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: secondaryText,
-                        ),
+                        style: TextStyle(fontSize: 14, color: secondaryText),
                       ),
                     ],
                   ),
@@ -315,72 +309,84 @@ class SettingsScreen extends StatelessWidget {
           const SizedBox(height: 28),
 
           _buildSectionTitle('내 정보', sectionText),
-          _buildCard([
-            _buildMenuTile(
-              icon: Icons.person_outline,
-              title: '닉네임',
-              subtitle: userName,
-              textColor: primaryText,
-              subtitleColor: secondaryText,
-              onTap: () => _editNickname(context, userName),
-            ),
-            Divider(height: 1, color: borderColor),
-            _buildMenuTile(
-              icon: Icons.mail_outline,
-              title: '이메일',
-              subtitle: _devEmail,
-              textColor: primaryText,
-              subtitleColor: secondaryText,
-              showChevron: false,
-            ),
-          ], cardColor, borderColor),
+          _buildCard(
+            [
+              _buildMenuTile(
+                icon: Icons.person_outline,
+                title: '닉네임',
+                subtitle: userName,
+                textColor: primaryText,
+                subtitleColor: secondaryText,
+                onTap: () => _editNickname(context, userName),
+              ),
+              Divider(height: 1, color: borderColor),
+              _buildMenuTile(
+                icon: Icons.mail_outline,
+                title: '이메일',
+                subtitle: _devEmail,
+                textColor: primaryText,
+                subtitleColor: secondaryText,
+                showChevron: false,
+              ),
+            ],
+            cardColor,
+            borderColor,
+          ),
           const SizedBox(height: 24),
 
           _buildSectionTitle('앱 설정', sectionText),
-          _buildCard([
-            _buildMenuTile(
-              icon: Icons.dark_mode_outlined,
-              title: '화면 설정',
-              subtitle: _themeModeLabel(themeMode),
-              textColor: primaryText,
-              subtitleColor: secondaryText,
-              onTap: () {
-                Navigator.pushNamed(context, '/display-settings');
-              },
-            ),
-          ], cardColor, borderColor),
+          _buildCard(
+            [
+              _buildMenuTile(
+                icon: Icons.dark_mode_outlined,
+                title: '화면 설정',
+                subtitle: _themeModeLabel(themeMode),
+                textColor: primaryText,
+                subtitleColor: secondaryText,
+                onTap: () {
+                  Navigator.pushNamed(context, '/display-settings');
+                },
+              ),
+            ],
+            cardColor,
+            borderColor,
+          ),
           const SizedBox(height: 24),
 
           _buildSectionTitle('계정 관리', sectionText),
-          _buildCard([
-            _buildMenuTile(
-              icon: Icons.lock_outline,
-              title: '비밀번호 변경',
-              subtitle: '비밀번호를 다시 설정합니다.',
-              textColor: primaryText,
-              subtitleColor: secondaryText,
-              onTap: () => _showComingSoon(context, '비밀번호 변경'),
-            ),
-            Divider(height: 1, color: borderColor),
-            _buildMenuTile(
-              icon: Icons.logout,
-              title: '로그아웃',
-              subtitle: '현재 계정에서 로그아웃합니다.',
-              textColor: primaryText,
-              subtitleColor: secondaryText,
-              onTap: () => _confirmLogout(context),
-            ),
-            Divider(height: 1, color: borderColor),
-            _buildMenuTile(
-              icon: Icons.person_remove_outlined,
-              title: '회원 탈퇴',
-              subtitle: '계정을 삭제합니다.',
-              iconColor: Colors.redAccent,
-              textColor: Colors.redAccent,
-              subtitleColor: secondaryText,
-              onTap: () => _showComingSoon(context, '회원 탈퇴'),
-            ),
-          ], cardColor, borderColor),
+          _buildCard(
+            [
+              _buildMenuTile(
+                icon: Icons.lock_outline,
+                title: '비밀번호 변경',
+                subtitle: '비밀번호를 다시 설정합니다.',
+                textColor: primaryText,
+                subtitleColor: secondaryText,
+                onTap: () => _showComingSoon(context, '비밀번호 변경'),
+              ),
+              Divider(height: 1, color: borderColor),
+              _buildMenuTile(
+                icon: Icons.logout,
+                title: '로그아웃',
+                subtitle: '현재 계정에서 로그아웃합니다.',
+                textColor: primaryText,
+                subtitleColor: secondaryText,
+                onTap: () => _confirmLogout(context),
+              ),
+              Divider(height: 1, color: borderColor),
+              _buildMenuTile(
+                icon: Icons.person_remove_outlined,
+                title: '회원 탈퇴',
+                subtitle: '계정을 삭제합니다.',
+                iconColor: Colors.redAccent,
+                textColor: Colors.redAccent,
+                subtitleColor: secondaryText,
+                onTap: () => _showComingSoon(context, '회원 탈퇴'),
+              ),
+            ],
+            cardColor,
+            borderColor,
+          ),
         ],
       ),
     );
