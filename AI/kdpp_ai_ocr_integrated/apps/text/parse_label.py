@@ -483,14 +483,3 @@ def parse_label(text: str) -> dict:
         "selected_part": selected_part,
         "parts": parts,
     }
-
-
-
-
-
-
-
-
-
-
-

@@ -122,8 +122,3 @@ CARE_RULES = {
     "\ub4dc\ub77c\uc774\ud074\ub9ac\ub2dd \uae08\uc9c0": ["do not dry clean"],
     "\ub4dc\ub77c\uc774\ud074\ub9ac\ub2dd \uac00\ub2a5": ["dry clean"],
 }
-
-
-
-
-
