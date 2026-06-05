@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
+import 'services/auth_api_service.dart';
 import 'theme_provider.dart';
 import 'widgets/app_back_button.dart';
 
@@ -113,6 +114,14 @@ class SettingsScreen extends StatelessWidget {
     );
 
     if (confirmed != true) return;
+
+    if (!context.mounted) return;
+
+    try {
+      await const AuthApiService().logout();
+    } catch (_) {
+      // 로컬 로그아웃은 서버 연결 여부와 관계없이 계속 진행합니다.
+    }
 
     if (!context.mounted) return;
 

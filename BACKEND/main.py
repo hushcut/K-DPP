@@ -1,4 +1,7 @@
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -28,16 +31,26 @@ try:
 except Exception:
     parse_label = None
 
+ACCESS_TOKEN_EXPIRE_DAYS = 30
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    init_data.seed_materials()
+    yield
+
+
 # 1. 앱 객체 생성
 app = FastAPI(
     title="K-DPP Backend",
     description="K-DPP v1 탄소배출량 계산 API",
     version="0.1.0",
+    lifespan=lifespan,
 )
-
-@app.on_event("startup")
-def seed_material_data():
-    init_data.seed_materials()
 
 app.add_middleware(
     CORSMiddleware,
@@ -140,6 +153,90 @@ def auth_user_response(user: database.User) -> dict:
         "email": user.email,
         "nickname": user.nickname,
     }
+
+
+def create_access_token(user: database.User, db: Session) -> database.AccessToken:
+    token = secrets.token_urlsafe(32)
+    access_token = database.AccessToken(
+        token=token,
+        user_id=user.id,
+        expires_at=utc_now() + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS),
+    )
+    db.add(access_token)
+    db.commit()
+    return access_token
+
+
+def read_bearer_token(authorization: str | None) -> str | None:
+    if not authorization:
+        return None
+
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+
+    return token.strip()
+
+
+def get_optional_current_user(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> database.User | None:
+    token = read_bearer_token(authorization)
+    if token is None:
+        return None
+
+    access_token = (
+        db.query(database.AccessToken)
+        .filter(database.AccessToken.token == token)
+        .first()
+    )
+    if access_token is None:
+        return None
+
+    if access_token.expires_at is None or access_token.expires_at <= utc_now():
+        db.delete(access_token)
+        db.commit()
+        return None
+
+    return db.query(database.User).filter(database.User.id == access_token.user_id).first()
+
+
+def get_current_user(
+    current_user: database.User | None = Depends(get_optional_current_user),
+) -> database.User:
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
+
+    return current_user
+
+
+def get_current_access_token(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> database.AccessToken:
+    token = read_bearer_token(authorization)
+    if token is None:
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
+
+    access_token = (
+        db.query(database.AccessToken)
+        .filter(database.AccessToken.token == token)
+        .first()
+    )
+    if (
+        access_token is None
+        or access_token.expires_at is None
+        or access_token.expires_at <= utc_now()
+    ):
+        if access_token is not None:
+            db.delete(access_token)
+            db.commit()
+        raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
+
+    return access_token
+
+
 def load_aliases(material: database.Material) -> list[str]:
     try:
         aliases = json.loads(material.aliases or "[]")
@@ -187,6 +284,7 @@ def calculate_carbon(materials: dict[str, float], db: Session) -> tuple[float, l
 def build_analysis_response(
     materials: dict[str, float],
     db: Session,
+    user: database.User | None = None,
     raw_ocr_text: str | None = None,
     care_instruction: str | None = None,
     title: str | None = None,
@@ -215,6 +313,7 @@ def build_analysis_response(
         )
 
     new_result = database.AnalysisResult(
+        user_id=user.id if user is not None else None,
         materials=json.dumps(materials, ensure_ascii=False),
         carbon_footprint=total_carbon,
         unit="kg CO2eq",
@@ -241,6 +340,18 @@ def build_analysis_response(
         response["category"] = category
 
     return response
+
+
+def serialize_analysis_result(result: database.AnalysisResult) -> dict:
+    return {
+        "id": result.id,
+        "user_id": result.user_id,
+        "materials": json.loads(result.materials),
+        "carbon_footprint": result.carbon_footprint,
+        "unit": result.unit or "kg CO2eq",
+        "unknown_materials": json.loads(result.unknown_materials or "[]"),
+        "created_at": result.created_at,
+    }
 
 
 def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
@@ -352,13 +463,28 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
     if user is None or not verify_password(request.password, user.password_hash):
         raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다.")
 
+    access_token = create_access_token(user, db)
+
     return {
         "status": "success",
         "message": "로그인되었습니다.",
         "user": auth_user_response(user),
-        "access_token": secrets.token_urlsafe(32),
+        "access_token": access_token.token,
         "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
     }
+
+
+@app.post("/auth/logout", tags=["auth"])
+def logout(
+    access_token: database.AccessToken = Depends(get_current_access_token),
+    db: Session = Depends(get_db),
+):
+    db.delete(access_token)
+    db.commit()
+    return {"status": "success", "message": "로그아웃되었습니다."}
+
+
 @app.get("/", tags=["system"])
 def read_root():
     return {"status": "success", "message": "K-DPP 백엔드 서버가 가동 중입니다!"}
@@ -369,10 +495,15 @@ def read_root():
     summary="의류 혼용률 기반 탄소배출량 계산",
     description="AI/OCR 또는 프론트에서 전달한 소재 혼용률을 DB의 소재별 탄소배출계수와 매칭해 예상 탄소배출량을 계산합니다.",
 )
-def analyze_clothes(request: AnalyzeRequest, db: Session = Depends(get_db)):
+def analyze_clothes(
+    request: AnalyzeRequest,
+    db: Session = Depends(get_db),
+    current_user: database.User | None = Depends(get_optional_current_user),
+):
     return build_analysis_response(
         materials=request.materials,
         db=db,
+        user=current_user,
         raw_ocr_text=request.raw_ocr_text,
     )
 
@@ -382,6 +513,7 @@ def scan_label(
     image: UploadFile = File(...),
     raw_ocr_text: str | None = Form(default=None),
     db: Session = Depends(get_db),
+    current_user: database.User | None = Depends(get_optional_current_user),
 ):
     label_text = extract_label_text(image, raw_ocr_text)
     materials, care_instruction = parse_label_materials(label_text)
@@ -389,6 +521,7 @@ def scan_label(
     return build_analysis_response(
         materials=materials,
         db=db,
+        user=current_user,
         raw_ocr_text=label_text,
         care_instruction=care_instruction,
         title="스캔한 의류",
@@ -396,25 +529,36 @@ def scan_label(
     )
 
 @app.get("/history", tags=["v1-carbon"])
-def get_history(db: Session = Depends(get_db)):
-    # DB에 저장된 분석 결과 목록을 가져오는 API
-    results = db.query(database.AnalysisResult).order_by(database.AnalysisResult.id.desc()).all()
+def get_history(
+    current_user: database.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return get_user_history_response(current_user, db)
 
 
-    history = []
-    for result in results:
-        history.append({
-            "id": result.id,
-            "materials": json.loads(result.materials),
-            "carbon_footprint": result.carbon_footprint,
-            "unit": result.unit or "kg CO2eq",
-            "unknown_materials": json.loads(result.unknown_materials or "[]"),
-            "created_at": result.created_at
-        })
+@app.get("/me/history", tags=["v1-carbon"])
+def get_my_history(
+    current_user: database.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return get_user_history_response(current_user, db)
+
+
+def get_user_history_response(
+    current_user: database.User,
+    db: Session,
+) -> dict:
+    results = (
+        db.query(database.AnalysisResult)
+        .filter(database.AnalysisResult.user_id == current_user.id)
+        .order_by(database.AnalysisResult.id.desc())
+        .all()
+    )
 
     return {
         "status": "success",
-        "history": history
+        "user": auth_user_response(current_user),
+        "history": [serialize_analysis_result(result) for result in results],
     }
 
 @app.get("/materials", tags=["v1-carbon"])

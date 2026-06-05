@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'services/auth_api_service.dart';
+import 'services/auth_session_service.dart';
 import 'widgets/app_back_button.dart';
 
 class EmailLoginScreen extends StatefulWidget {
@@ -17,6 +18,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final AuthApiService _authApi = const AuthApiService();
+  final AuthSessionService _authSession = const AuthSessionService();
 
   bool _isLoading = false;
   bool _obscurePassword = true;
@@ -84,27 +86,29 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
         password: _passwordController.text.trim(),
       );
 
+      final accessToken = result.accessToken;
+      if (accessToken == null || accessToken.isEmpty) {
+        throw const AuthApiException('로그인 토큰을 받지 못했습니다.');
+      }
+      await _authSession.saveAccessToken(accessToken);
+
       if (!mounted) return;
 
       await context.read<ClosetProvider>().setUserName(result.user.nickname);
 
       if (!mounted) return;
 
-      Navigator.pushNamedAndRemoveUntil(
-        context,
-        '/main',
-        (route) => false,
-      );
+      Navigator.pushNamedAndRemoveUntil(context, '/main', (route) => false);
     } on AuthApiException catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('로그인 중 오류가 발생했습니다.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('로그인 중 오류가 발생했습니다.')));
     } finally {
       if (mounted) {
         setState(() {
@@ -119,25 +123,22 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     Widget? suffixIcon,
   }) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final fillColor =
-    isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF1F1F4);
-    final hintColor =
-    isDark ? const Color(0xFF9A9A9A) : const Color(0xFF9E9E9E);
-    final enabledBorderColor =
-    isDark ? const Color(0xFF2C2C2E) : Colors.transparent;
+    final fillColor = isDark
+        ? const Color(0xFF1C1C1E)
+        : const Color(0xFFF1F1F4);
+    final hintColor = isDark
+        ? const Color(0xFF9A9A9A)
+        : const Color(0xFF9E9E9E);
+    final enabledBorderColor = isDark
+        ? const Color(0xFF2C2C2E)
+        : Colors.transparent;
 
     return InputDecoration(
       hintText: hintText,
-      hintStyle: TextStyle(
-        color: hintColor,
-        fontSize: 16,
-      ),
+      hintStyle: TextStyle(color: hintColor, fontSize: 16),
       filled: true,
       fillColor: fillColor,
-      contentPadding: const EdgeInsets.symmetric(
-        horizontal: 22,
-        vertical: 22,
-      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 22),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
         borderSide: BorderSide.none,
@@ -151,24 +152,15 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
-        borderSide: const BorderSide(
-          color: Color(0xFF4A4EFE),
-          width: 1.5,
-        ),
+        borderSide: const BorderSide(color: Color(0xFF4A4EFE), width: 1.5),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
-        borderSide: const BorderSide(
-          color: Colors.redAccent,
-          width: 1.2,
-        ),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1.2),
       ),
       focusedErrorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
-        borderSide: const BorderSide(
-          color: Colors.redAccent,
-          width: 1.5,
-        ),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1.5),
       ),
       suffixIcon: suffixIcon,
     );
@@ -177,13 +169,16 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor =
-    isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FC);
+    final backgroundColor = isDark
+        ? const Color(0xFF121212)
+        : const Color(0xFFF8F9FC);
     final primaryText = isDark ? Colors.white : const Color(0xFF111111);
-    final secondaryText =
-    isDark ? const Color(0xFFD1D1D6) : const Color(0xFF8C8C8C);
-    final iconColor =
-    isDark ? const Color(0xFFB8B8BE) : const Color(0xFF8C8C8C);
+    final secondaryText = isDark
+        ? const Color(0xFFD1D1D6)
+        : const Color(0xFF8C8C8C);
+    final iconColor = isDark
+        ? const Color(0xFFB8B8BE)
+        : const Color(0xFF8C8C8C);
 
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -248,9 +243,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                           validator: _validateEmail,
                           style: TextStyle(color: primaryText),
                           cursorColor: const Color(0xFF4A4EFE),
-                          decoration: _inputDecoration(
-                            hintText: '이메일',
-                          ),
+                          decoration: _inputDecoration(hintText: '이메일'),
                         ),
                         const SizedBox(height: 16),
                         TextFormField(
@@ -285,29 +278,28 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                             style: ElevatedButton.styleFrom(
                               elevation: 0,
                               backgroundColor: const Color(0xFF4A4EFE),
-                              disabledBackgroundColor:
-                              const Color(0x8C4A4EFE),
+                              disabledBackgroundColor: const Color(0x8C4A4EFE),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(30),
                               ),
                             ),
                             child: _isLoading
                                 ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.4,
-                                color: Colors.white,
-                              ),
-                            )
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.4,
+                                      color: Colors.white,
+                                    ),
+                                  )
                                 : const Text(
-                              '로그인',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
-                              ),
-                            ),
+                                    '로그인',
+                                    style: TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                    ),
+                                  ),
                           ),
                         ),
                         const SizedBox(height: 18),

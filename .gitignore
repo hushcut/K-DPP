@@ -14,7 +14,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/
 lib64/
 parts/
 sdist/
@@ -373,9 +373,12 @@ app.*.symbols
 .gclient_previous_sync_commits
 
 BACKEND/k_dpp.db
+BACKEND/.pytest_k_dpp.db
 BACKEND/*.db-journal
 BACKEND/*.db-wal
 BACKEND/*.db-shm
 BACKEND/__pycache__/
+AI/**/key.json
+**/key.json
 venv/
 

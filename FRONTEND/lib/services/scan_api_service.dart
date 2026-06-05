@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import '../models/scan_result.dart';
+import 'auth_session_service.dart';
 
 enum ScanApiErrorType {
   badRequest,
@@ -124,7 +125,8 @@ class ScanApiException implements Exception {
       final decoded = jsonDecode(responseBody);
 
       if (decoded is Map<String, dynamic>) {
-        final message = decoded['message'] ??
+        final message =
+            decoded['message'] ??
             decoded['detail'] ??
             decoded['error'] ??
             decoded['reason'];
@@ -147,19 +149,22 @@ class ScanApiService {
       'SCAN_API_ENDPOINT',
       defaultValue: 'http://10.0.2.2:8000/api/scan',
     ),
+    this.sessionService = const AuthSessionService(),
   });
 
   final String endpoint;
+  final AuthSessionService sessionService;
 
   Future<ScanResult> scanLabel({required File imageFile}) async {
     try {
+      final accessToken = await sessionService.readAccessToken();
       final request = http.MultipartRequest('POST', Uri.parse(endpoint))
         ..headers.addAll({
           'ngrok-skip-browser-warning': 'true',
+          if (accessToken != null && accessToken.isNotEmpty)
+            'Authorization': 'Bearer $accessToken',
         })
-        ..files.add(
-          await http.MultipartFile.fromPath('image', imageFile.path),
-        );
+        ..files.add(await http.MultipartFile.fromPath('image', imageFile.path));
 
       final streamedResponse = await request.send().timeout(
         const Duration(seconds: 35),
@@ -239,11 +244,12 @@ class ScanApiService {
       title: _readOptionalString(payload, ['title', 'name', 'clothingName']),
       category: _readOptionalString(payload, ['category', 'type']),
       materials: materials,
-      careInstruction: _readString(
-        payload,
-        ['care_instruction', 'careInstruction', 'care', 'washingInstruction'],
-        fallback: '라벨의 세탁 지침을 확인해 주세요.',
-      ),
+      careInstruction: _readString(payload, [
+        'care_instruction',
+        'careInstruction',
+        'care',
+        'washingInstruction',
+      ], fallback: '라벨의 세탁 지침을 확인해 주세요.'),
       health: _parseNullableInt(payload['health']),
       carbonFootprint: _parseNullableDouble(
         payload['carbon_footprint'] ?? payload['carbonFootprint'],
@@ -281,12 +287,13 @@ class ScanApiService {
     if (rawMaterials is List) {
       for (final item in rawMaterials) {
         if (item is Map) {
-          final name = (item['name'] ??
-                  item['material'] ??
-                  item['label'] ??
-                  item['type'])
-              ?.toString()
-              .trim();
+          final name =
+              (item['name'] ??
+                      item['material'] ??
+                      item['label'] ??
+                      item['type'])
+                  ?.toString()
+                  .trim();
 
           final percent = _parsePercent(
             item['percent'] ??

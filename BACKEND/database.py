@@ -1,13 +1,19 @@
-from datetime import datetime
+from datetime import datetime, timezone
+import os
 from pathlib import Path
 
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine
+from dotenv import load_dotenv
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 # 1. DB 파일 경로 설정
 # 서버를 어느 폴더에서 실행하더라도 BACKEND/k_dpp.db를 사용합니다.
 DB_PATH = Path(__file__).resolve().parent / "k_dpp.db"
-SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH.as_posix()}"
+load_dotenv(DB_PATH.parent / ".env")
+SQLALCHEMY_DATABASE_URL = os.getenv(
+    "K_DPP_DATABASE_URL",
+    f"sqlite:///{DB_PATH.as_posix()}",
+)
 
 # 2. 엔진 및 세션 설정
 engine = create_engine(
@@ -18,6 +24,10 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 # 3. 소재별 평균 탄소배출량 표준 테이블
 
 class User(Base):
@@ -27,7 +37,16 @@ class User(Base):
     email = Column(String, unique=True, nullable=False, index=True)
     nickname = Column(String, nullable=False)
     password_hash = Column(String, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+
+
+class AccessToken(Base):
+    __tablename__ = "access_tokens"
+
+    token = Column(String, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+    expires_at = Column(DateTime, nullable=True)
 
 
 class Material(Base):
@@ -45,12 +64,13 @@ class AnalysisResult(Base):
     __tablename__ = "analysis_results"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     materials = Column(Text, nullable=False)
     carbon_footprint = Column(Float, nullable=False)
     unit = Column(String, nullable=False, default="kg CO2eq")
     raw_ocr_text = Column(Text)
     unknown_materials = Column(Text, nullable=False, default="[]")
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
 
 
 def ensure_schema():
@@ -102,6 +122,7 @@ def ensure_schema():
         existing_columns = {row[1] for row in rows}
 
         missing_columns = {
+            "user_id": "INTEGER",
             "unit": "VARCHAR DEFAULT 'kg CO2eq' NOT NULL",
             "raw_ocr_text": "TEXT",
             "unknown_materials": "TEXT DEFAULT '[]' NOT NULL",
@@ -113,6 +134,15 @@ def ensure_schema():
                 connection.exec_driver_sql(
                     f"ALTER TABLE analysis_results ADD COLUMN {column_name} {column_sql}"
                 )
+
+        token_rows = connection.exec_driver_sql(
+            "PRAGMA table_info(access_tokens)"
+        ).fetchall()
+        token_columns = {row[1] for row in token_rows}
+        if "expires_at" not in token_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE access_tokens ADD COLUMN expires_at DATETIME"
+            )
 
 
 # 5. 서버 실행 시 필요한 테이블과 컬럼을 준비합니다.

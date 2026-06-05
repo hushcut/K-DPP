@@ -12,6 +12,9 @@ idna==3.11
 pydantic==2.12.5
 pydantic_core==2.41.5
 python-multipart==0.0.20
+python-dotenv==1.2.1
+pytest==9.0.2
+httpx==0.28.1
 SQLAlchemy==2.0.48
 starlette==1.0.0
 typing-inspection==0.4.2
