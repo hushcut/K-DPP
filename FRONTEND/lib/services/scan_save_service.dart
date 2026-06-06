@@ -1,5 +1,4 @@
 import '../models/clothes.dart';
-import '../models/clothing_type_option.dart';
 import '../utils/clothing_estimator.dart';
 
 sealed class ScanSaveResult {
@@ -26,7 +25,9 @@ class ScanSaveService {
     required String category,
     required Map<String, double> materials,
     required String careInstruction,
-    required ClothingTypeOption clothingType,
+    required double carbonFootprint,
+    required double carbonFootprintMin,
+    required double carbonFootprintMax,
   }) {
     if (materials.isEmpty) {
       return const ScanSaveFailure('소재를 1개 이상 추가해 주세요.');
@@ -41,10 +42,6 @@ class ScanSaveService {
     }
 
     final estimatedHealth = ClothingEstimator.estimateInitialHealth(materials);
-    final estimatedCarbon = ClothingEstimator.estimateCarbonFootprintRange(
-      materials,
-      clothingType,
-    );
 
     return ScanSaveSuccess(
       Clothes(
@@ -53,9 +50,9 @@ class ScanSaveService {
         health: estimatedHealth,
         materials: materials,
         careInstruction: careInstruction,
-        carbonFootprint: estimatedCarbon.midpoint,
-        carbonFootprintMin: estimatedCarbon.min,
-        carbonFootprintMax: estimatedCarbon.max,
+        carbonFootprint: carbonFootprint,
+        carbonFootprintMin: carbonFootprintMin,
+        carbonFootprintMax: carbonFootprintMax,
       ),
     );
   }

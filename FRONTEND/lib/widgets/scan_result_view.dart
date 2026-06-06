@@ -9,6 +9,7 @@ class ScanResultView extends StatelessWidget {
     super.key,
     required this.formKey,
     required this.hasTriedSubmit,
+    required this.isSaving,
     required this.isManualMaterialMode,
     required this.titleController,
     required this.selectedClothingType,
@@ -27,6 +28,7 @@ class ScanResultView extends StatelessWidget {
 
   final GlobalKey<FormState> formKey;
   final bool hasTriedSubmit;
+  final bool isSaving;
   final bool isManualMaterialMode;
   final TextEditingController titleController;
   final ClothingTypeOption selectedClothingType;
@@ -47,10 +49,6 @@ class ScanResultView extends StatelessWidget {
     final editedMaterials = materialInputs.collectEditedMaterials();
     final previewHealth = ClothingEstimator.estimateInitialHealth(
       editedMaterials,
-    );
-    final previewCarbon = ClothingEstimator.estimateCarbonFootprintRange(
-      editedMaterials,
-      selectedClothingType,
     );
     final totalMaterials = ClothingEstimator.calculateMaterialsTotal(
       editedMaterials,
@@ -200,7 +198,7 @@ class ScanResultView extends StatelessWidget {
                       child: Text(
                         '무게 기준: ${selectedClothingType.label} · ${selectedClothingType.weightDisplayText}\n'
                         '예상 건강도: $previewHealth%\n'
-                        '예상 탄소발자국: ${previewCarbon.displayText}',
+                        '예상 탄소발자국: 저장 시 서버 기준으로 계산',
                         softWrap: true,
                         style: TextStyle(
                           fontSize: 14,
@@ -314,21 +312,29 @@ class ScanResultView extends StatelessWidget {
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  onPressed: onSubmit,
+                  onPressed: isSaving ? null : onSubmit,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF4A4EFE),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
-                  child: const Text(
-                    '옷장에 저장하기',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  child: isSaving
+                      ? const SizedBox.square(
+                          dimension: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text(
+                          '옷장에 저장하기',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                 ),
               ),
               const SizedBox(height: 12),

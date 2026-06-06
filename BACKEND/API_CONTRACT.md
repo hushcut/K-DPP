@@ -145,7 +145,7 @@ category
 
 ## POST /analyze
 
-프론트엔드 또는 AI/OCR 파트가 이미 추출한 소재 혼용률을 전달하면, 백엔드가 소재별 탄소배출계수를 기준으로 예상 탄소배출량을 계산합니다.
+기존 연동 호환을 위한 소재 계수 확인 API입니다. 최종 의류 탄소배출량은 무게가 포함된 `POST /api/carbon/calculate`를 사용합니다.
 
 현재 성공한 분석 결과는 `analysis_results` 테이블에 저장됩니다.
 
@@ -213,7 +213,7 @@ category
 
 ## POST /api/scan
 
-의류 라벨 이미지를 업로드하면 백엔드가 OCR과 라벨 파싱을 수행한 뒤 탄소배출량을 계산합니다.
+의류 라벨 이미지를 업로드하면 백엔드가 OCR과 라벨 파싱을 수행해 소재 혼용률을 반환합니다. 이 단계에서는 의류 무게가 정해지지 않았으므로 탄소배출량을 계산하거나 저장하지 않습니다.
 
 테스트 목적으로 OCR을 건너뛰고 싶을 때는 `raw_ocr_text` form field를 함께 보낼 수 있습니다.
 
@@ -231,17 +231,65 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
 ```json
 {
   "status": "success",
-  "message": "분석 완료",
+  "message": "라벨 인식 완료",
   "materials": {
     "cotton": 80,
     "polyester": 20
   },
-  "carbon_footprint": 8.54,
-  "unit": "kg CO2eq",
   "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
-  "saved_result_id": 13,
   "title": "스캔한 의류",
   "category": "상의"
+}
+```
+
+## POST /api/carbon/calculate
+
+사용자가 의류 종류 또는 실제 무게를 선택한 뒤 호출하는 최종 탄소배출량 계산 API입니다. 소재별 계수는 백엔드 DB만 사용하며, 계산 결과는 로그인 사용자 분석 이력에 저장됩니다.
+
+`Authorization: Bearer <token>` 헤더가 필요합니다.
+
+### Request
+
+```json
+{
+  "materials": {
+    "cotton": 80,
+    "polyester": 20
+  },
+  "min_weight_grams": 100,
+  "max_weight_grams": 250
+}
+```
+
+직접 입력한 실제 무게는 최소·최대 무게에 같은 값을 전달합니다.
+
+### Calculation
+
+```text
+혼합 소재 계수 = Σ(소재별 탄소계수 × 혼용률)
+최소 탄소배출량 = 혼합 소재 계수 × 최소 무게(kg)
+최대 탄소배출량 = 혼합 소재 계수 × 최대 무게(kg)
+대표 탄소배출량 = (최소 + 최대) / 2
+```
+
+### Success Response
+
+```json
+{
+  "status": "success",
+  "message": "탄소배출량 계산 완료",
+  "materials": {
+    "cotton": 80,
+    "polyester": 20
+  },
+  "carbon_factor": 8.54,
+  "carbon_footprint": 1.49,
+  "carbon_footprint_min": 0.85,
+  "carbon_footprint_max": 2.13,
+  "min_weight_grams": 100,
+  "max_weight_grams": 250,
+  "unit": "kg CO2eq",
+  "saved_result_id": 13
 }
 ```
 

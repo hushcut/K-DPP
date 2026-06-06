@@ -113,3 +113,73 @@ def test_history_requires_login(client):
 
     assert response.status_code == 401
     assert response.json()["status"] == "error"
+
+
+def test_carbon_range_uses_db_factor_and_weight_range(client):
+    client.post(
+        "/auth/signup",
+        json={
+            "email": "carbon@example.com",
+            "password": "password123",
+            "nickname": "carbon-user",
+        },
+    )
+    login = client.post(
+        "/auth/login",
+        json={
+            "email": "carbon@example.com",
+            "password": "password123",
+        },
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    response = client.post(
+        "/api/carbon/calculate",
+        json={
+            "materials": {"cotton": 100},
+            "min_weight_grams": 100,
+            "max_weight_grams": 250,
+        },
+        headers=headers,
+    )
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["carbon_factor"] == 8.3
+    assert body["carbon_footprint_min"] == 0.83
+    assert body["carbon_footprint_max"] == 2.08
+    assert body["carbon_footprint"] == 1.46
+    assert body["saved_result_id"] is not None
+
+    history = client.get("/me/history", headers=headers).json()["history"]
+    assert history[0]["carbon_footprint_min"] == 0.83
+    assert history[0]["carbon_footprint_max"] == 2.08
+    assert history[0]["min_weight_grams"] == 100
+    assert history[0]["max_weight_grams"] == 250
+
+
+def test_carbon_range_requires_login(client):
+    response = client.post(
+        "/api/carbon/calculate",
+        json={
+            "materials": {"cotton": 100},
+            "min_weight_grams": 100,
+            "max_weight_grams": 250,
+        },
+    )
+
+    assert response.status_code == 401
+
+
+def test_scan_returns_materials_without_saving_carbon_result(client):
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": "COTTON 80% POLYESTER 20%"},
+    )
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["materials"] == {"cotton": 80, "polyester": 20}
+    assert "carbon_footprint" not in body
+    assert "saved_result_id" not in body

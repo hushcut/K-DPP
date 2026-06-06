@@ -1,22 +1,3 @@
-import '../models/clothing_type_option.dart';
-
-class CarbonFootprintEstimate {
-  const CarbonFootprintEstimate({required this.min, required this.max});
-
-  final double min;
-  final double max;
-
-  double get midpoint => double.parse(((min + max) / 2).toStringAsFixed(1));
-
-  String get displayText {
-    if ((min - max).abs() < 0.05) {
-      return '${min.toStringAsFixed(1)} kg CO2eq';
-    }
-
-    return '${min.toStringAsFixed(1)}~${max.toStringAsFixed(1)} kg CO2eq';
-  }
-}
-
 class ClothingEstimator {
   const ClothingEstimator._();
 
@@ -27,56 +8,6 @@ class ClothingEstimator {
   static bool isMaterialsTotalValid(Map<String, double> materials) {
     final total = calculateMaterialsTotal(materials);
     return total >= 99.5 && total <= 100.5;
-  }
-
-  static double estimateCarbonFootprint(
-    Map<String, double> materials,
-    ClothingTypeOption clothingType,
-  ) {
-    return estimateCarbonFootprintRange(materials, clothingType).midpoint;
-  }
-
-  static CarbonFootprintEstimate estimateCarbonFootprintRange(
-    Map<String, double> materials,
-    ClothingTypeOption clothingType,
-  ) {
-    final min = _estimateCarbonFootprintForWeight(
-      materials,
-      clothingType.minWeightGram,
-    );
-    final max = _estimateCarbonFootprintForWeight(
-      materials,
-      clothingType.maxWeightGram,
-    );
-
-    return CarbonFootprintEstimate(min: min, max: max);
-  }
-
-  static double _estimateCarbonFootprintForWeight(
-    Map<String, double> materials,
-    double weightGram,
-  ) {
-    final weightKg = weightGram / 1000;
-
-    if (materials.isEmpty) {
-      return double.parse((weightKg * 10.0).toStringAsFixed(1));
-    }
-
-    double totalPercent = calculateMaterialsTotal(materials);
-    if (totalPercent <= 0) totalPercent = 100.0;
-
-    double emission = 0.0;
-
-    materials.forEach((material, percent) {
-      final factor = _findMaterialEmissionFactor(material);
-      emission += (percent / totalPercent) * weightKg * factor;
-    });
-
-    if (emission < 0.1) {
-      emission = 0.1;
-    }
-
-    return double.parse(emission.toStringAsFixed(1));
   }
 
   static int estimateInitialHealth(Map<String, double> materials) {
@@ -102,22 +33,5 @@ class ClothingEstimator {
 
     final clamped = score.round().clamp(60, 95);
     return clamped.toInt();
-  }
-
-  static double _findMaterialEmissionFactor(String material) {
-    final m = material.toLowerCase();
-
-    if (m.contains('organic cotton')) return 5.0;
-    if (m.contains('cotton')) return 8.0;
-    if (m.contains('linen')) return 6.0;
-    if (m.contains('recycled polyester')) return 7.0;
-    if (m.contains('polyester')) return 12.0;
-    if (m.contains('nylon')) return 14.0;
-    if (m.contains('wool')) return 25.0;
-    if (m.contains('silk')) return 20.0;
-    if (m.contains('viscose') || m.contains('rayon')) return 10.0;
-    if (m.contains('polyurethane') || m.contains('spandex')) return 15.0;
-
-    return 10.0;
   }
 }

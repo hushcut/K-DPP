@@ -113,6 +113,13 @@ class AnalyzeRequest(BaseModel):
     materials: dict[str, float]
     raw_ocr_text: str | None = None
 
+
+class CarbonRangeRequest(BaseModel):
+    materials: dict[str, float]
+    min_weight_grams: float
+    max_weight_grams: float
+    raw_ocr_text: str | None = None
+
 # 4. 소재명 매칭 및 탄소발자국 계산 함수
 def normalize_email(email: str) -> str:
     return email.strip().lower()
@@ -265,31 +272,13 @@ def find_material(db: Session, name: str):
     return None
 
 
-def calculate_carbon(materials: dict[str, float], db: Session) -> tuple[float, list[str]]:
-    total = 0.0
-    unknown_materials = []
-
-    for name, ratio in materials.items():
-        material = find_material(db, name)
-
-        if material is None:
-            unknown_materials.append(name)
-            continue
-
-        total += material.carbon_factor * (ratio / 100)
-
-    return round(total, 2), unknown_materials
-
-
-def build_analysis_response(
+def validate_materials(
     materials: dict[str, float],
     db: Session,
-    user: database.User | None = None,
-    raw_ocr_text: str | None = None,
-    care_instruction: str | None = None,
-    title: str | None = None,
-    category: str | None = None,
-):
+) -> tuple[float, list[str]]:
+    if not materials:
+        raise HTTPException(status_code=400, detail="소재를 1개 이상 입력해 주세요.")
+
     for name, ratio in materials.items():
         if ratio < 0:
             raise HTTPException(status_code=400, detail=f"{name} 비율이 음수입니다.")
@@ -301,6 +290,35 @@ def build_analysis_response(
             detail=f"전체 비율의 합이 100이 아닙니다. 현재 합계: {round(total_ratio, 2)}",
         )
 
+    mixed_factor = 0.0
+    unknown_materials = []
+
+    for name, ratio in materials.items():
+        material = find_material(db, name)
+
+        if material is None:
+            unknown_materials.append(name)
+            continue
+
+        mixed_factor += material.carbon_factor * (ratio / total_ratio)
+
+    return mixed_factor, unknown_materials
+
+
+def calculate_carbon(materials: dict[str, float], db: Session) -> tuple[float, list[str]]:
+    mixed_factor, unknown_materials = validate_materials(materials, db)
+    return round(mixed_factor, 2), unknown_materials
+
+
+def build_analysis_response(
+    materials: dict[str, float],
+    db: Session,
+    user: database.User | None = None,
+    raw_ocr_text: str | None = None,
+    care_instruction: str | None = None,
+    title: str | None = None,
+    category: str | None = None,
+):
     total_carbon, unknown_materials = calculate_carbon(materials, db)
 
     if unknown_materials:
@@ -348,6 +366,10 @@ def serialize_analysis_result(result: database.AnalysisResult) -> dict:
         "user_id": result.user_id,
         "materials": json.loads(result.materials),
         "carbon_footprint": result.carbon_footprint,
+        "carbon_footprint_min": result.carbon_footprint_min,
+        "carbon_footprint_max": result.carbon_footprint_max,
+        "min_weight_grams": result.min_weight_grams,
+        "max_weight_grams": result.max_weight_grams,
         "unit": result.unit or "kg CO2eq",
         "unknown_materials": json.loads(result.unknown_materials or "[]"),
         "created_at": result.created_at,
@@ -512,21 +534,77 @@ def analyze_clothes(
 def scan_label(
     image: UploadFile = File(...),
     raw_ocr_text: str | None = Form(default=None),
-    db: Session = Depends(get_db),
-    current_user: database.User | None = Depends(get_optional_current_user),
 ):
     label_text = extract_label_text(image, raw_ocr_text)
     materials, care_instruction = parse_label_materials(label_text)
 
-    return build_analysis_response(
-        materials=materials,
-        db=db,
-        user=current_user,
-        raw_ocr_text=label_text,
-        care_instruction=care_instruction,
-        title="스캔한 의류",
-        category="상의",
+    return {
+        "status": "success",
+        "message": "라벨 인식 완료",
+        "materials": materials,
+        "care_instruction": care_instruction,
+        "title": "스캔한 의류",
+        "category": "상의",
+    }
+
+
+@app.post("/api/carbon/calculate", tags=["v1-carbon"])
+def calculate_carbon_range(
+    request: CarbonRangeRequest,
+    db: Session = Depends(get_db),
+    current_user: database.User = Depends(get_current_user),
+):
+    if request.min_weight_grams <= 0 or request.max_weight_grams <= 0:
+        raise HTTPException(status_code=400, detail="의류 무게는 0g보다 커야 합니다.")
+    if request.min_weight_grams > request.max_weight_grams:
+        raise HTTPException(
+            status_code=400,
+            detail="최소 무게는 최대 무게보다 클 수 없습니다.",
+        )
+
+    mixed_factor, unknown_materials = validate_materials(request.materials, db)
+    if unknown_materials:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "DB에 등록되지 않은 소재가 있습니다.",
+                "unknown_materials": unknown_materials,
+            },
+        )
+
+    carbon_min = round(mixed_factor * request.min_weight_grams / 1000, 2)
+    carbon_max = round(mixed_factor * request.max_weight_grams / 1000, 2)
+    carbon_midpoint = round((carbon_min + carbon_max) / 2, 2)
+
+    result = database.AnalysisResult(
+        user_id=current_user.id,
+        materials=json.dumps(request.materials, ensure_ascii=False),
+        carbon_footprint=carbon_midpoint,
+        carbon_footprint_min=carbon_min,
+        carbon_footprint_max=carbon_max,
+        min_weight_grams=request.min_weight_grams,
+        max_weight_grams=request.max_weight_grams,
+        unit="kg CO2eq",
+        raw_ocr_text=request.raw_ocr_text,
+        unknown_materials="[]",
     )
+    db.add(result)
+    db.commit()
+    db.refresh(result)
+
+    return {
+        "status": "success",
+        "message": "탄소배출량 계산 완료",
+        "materials": request.materials,
+        "carbon_factor": round(mixed_factor, 2),
+        "carbon_footprint": carbon_midpoint,
+        "carbon_footprint_min": carbon_min,
+        "carbon_footprint_max": carbon_max,
+        "min_weight_grams": request.min_weight_grams,
+        "max_weight_grams": request.max_weight_grams,
+        "unit": "kg CO2eq",
+        "saved_result_id": result.id,
+    }
 
 @app.get("/history", tags=["v1-carbon"])
 def get_history(

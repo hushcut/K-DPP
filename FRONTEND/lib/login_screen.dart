@@ -1,33 +1,18 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'closet_provider.dart';
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
-
-  Future<void> _goHomeForDemo(BuildContext context) async {
-    await context.read<ClosetProvider>().setUserName('홍길동');
-
-    if (!context.mounted) return;
-
-    Navigator.pushNamedAndRemoveUntil(
-      context,
-      '/main',
-          (route) => false,
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final backgroundColor =
-    isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FC);
+    final backgroundColor = isDark
+        ? const Color(0xFF121212)
+        : const Color(0xFFF8F9FC);
     final primaryText = isDark ? Colors.white : const Color(0xFF1A1A1A);
-    final secondaryText =
-    isDark ? const Color(0xFFD1D1D6) : Colors.grey;
-    final subText =
-    isDark ? const Color(0xFFB8B8BE) : const Color(0xFF9A9A9A);
+    final secondaryText = isDark ? const Color(0xFFD1D1D6) : Colors.grey;
+    final subText = isDark ? const Color(0xFFB8B8BE) : const Color(0xFF9A9A9A);
 
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -137,19 +122,6 @@ class LoginScreen extends StatelessWidget {
                     ),
                   ),
                 ],
-              ),
-            ),
-
-            Positioned(
-              top: 0,
-              right: 0,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => _goHomeForDemo(context),
-                child: const SizedBox(
-                  width: 64,
-                  height: 64,
-                ),
               ),
             ),
           ],

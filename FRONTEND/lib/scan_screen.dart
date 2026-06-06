@@ -4,11 +4,13 @@ import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'models/clothing_type_option.dart';
 import 'services/scan_analysis_service.dart';
+import 'services/carbon_api_service.dart';
 import 'services/scan_camera_lifecycle_service.dart';
 import 'services/scan_camera_session.dart';
 import 'services/scan_capture_service.dart';
 import 'services/scan_draft_service.dart';
 import 'services/scan_save_service.dart';
+import 'utils/clothing_estimator.dart';
 import 'utils/clothing_type_catalog.dart';
 import 'utils/scan_form_validator.dart';
 import 'widgets/clothing_type_picker_sheet.dart';
@@ -30,10 +32,12 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   bool _isScanComplete = false;
   bool _hasTriedSubmit = false;
   bool _isManualMaterialMode = false;
+  bool _isSaving = false;
 
   File? _selectedImage;
 
   final ScanAnalysisService _scanAnalysisService = const ScanAnalysisService();
+  final CarbonApiService _carbonApiService = const CarbonApiService();
   final ScanCaptureService _scanCaptureService = ScanCaptureService();
   final ScanDraftService _scanDraftService = const ScanDraftService();
   final ScanSaveService _scanSaveService = const ScanSaveService();
@@ -369,6 +373,8 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _submitClothes() async {
+    if (_isSaving) return;
+
     setState(() {
       _hasTriedSubmit = true;
     });
@@ -379,12 +385,64 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
 
     final editedMaterials = _materialInputs.collectEditedMaterials();
 
+    final total = ClothingEstimator.calculateMaterialsTotal(editedMaterials);
+    if (editedMaterials.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('소재를 1개 이상 추가해 주세요.')));
+      return;
+    }
+    if (!ClothingEstimator.isMaterialsTotalValid(editedMaterials)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '소재 비율 합계가 100%가 되도록 맞춰 주세요. (현재 ${total.toStringAsFixed(1)}%)',
+          ),
+        ),
+      );
+      return;
+    }
+
+    late final CarbonCalculation carbon;
+    setState(() {
+      _isSaving = true;
+    });
+    try {
+      carbon = await _carbonApiService.calculate(
+        materials: editedMaterials,
+        minWeightGrams: _selectedClothingType.minWeightGram,
+        maxWeightGrams: _selectedClothingType.maxWeightGram,
+      );
+    } on CarbonApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+      return;
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('탄소배출량 계산 서버에 연결할 수 없습니다.')));
+      return;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
+    }
+
+    if (!mounted) return;
+
     final saveResult = _scanSaveService.buildClothes(
       title: _titleController.text,
       category: _selectedCategory,
       materials: editedMaterials,
       careInstruction: _scannedCare,
-      clothingType: _selectedClothingType,
+      carbonFootprint: carbon.midpoint,
+      carbonFootprintMin: carbon.min,
+      carbonFootprintMax: carbon.max,
     );
 
     switch (saveResult) {
@@ -455,6 +513,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
     return ScanResultView(
       formKey: _formKey,
       hasTriedSubmit: _hasTriedSubmit,
+      isSaving: _isSaving,
       isManualMaterialMode: _isManualMaterialMode,
       titleController: _titleController,
       selectedClothingType: _selectedClothingType,

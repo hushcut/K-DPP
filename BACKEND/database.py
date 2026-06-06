@@ -67,6 +67,10 @@ class AnalysisResult(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     materials = Column(Text, nullable=False)
     carbon_footprint = Column(Float, nullable=False)
+    carbon_footprint_min = Column(Float, nullable=True)
+    carbon_footprint_max = Column(Float, nullable=True)
+    min_weight_grams = Column(Float, nullable=True)
+    max_weight_grams = Column(Float, nullable=True)
     unit = Column(String, nullable=False, default="kg CO2eq")
     raw_ocr_text = Column(Text)
     unknown_materials = Column(Text, nullable=False, default="[]")
@@ -123,6 +127,10 @@ def ensure_schema():
 
         missing_columns = {
             "user_id": "INTEGER",
+            "carbon_footprint_min": "FLOAT",
+            "carbon_footprint_max": "FLOAT",
+            "min_weight_grams": "FLOAT",
+            "max_weight_grams": "FLOAT",
             "unit": "VARCHAR DEFAULT 'kg CO2eq' NOT NULL",
             "raw_ocr_text": "TEXT",
             "unknown_materials": "TEXT DEFAULT '[]' NOT NULL",
