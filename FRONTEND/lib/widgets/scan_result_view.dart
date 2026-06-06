@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/clothing_type_option.dart';
 import '../utils/clothing_estimator.dart';
+import '../utils/scan_calculation_resolver.dart';
 import 'material_input_collection.dart';
 
 class ScanResultView extends StatelessWidget {
@@ -9,11 +10,17 @@ class ScanResultView extends StatelessWidget {
     super.key,
     required this.formKey,
     required this.hasTriedSubmit,
+    required this.isSaving,
     required this.isManualMaterialMode,
     required this.titleController,
     required this.selectedClothingType,
     required this.materialInputs,
     required this.scannedCare,
+    required this.originalMaterials,
+    this.serverHealth,
+    this.serverCarbonFootprint,
+    this.serverWeightGram,
+    this.serverCalculationMethod,
     required this.validateTitle,
     required this.validateMaterialName,
     required this.validateMaterialValue,
@@ -27,11 +34,17 @@ class ScanResultView extends StatelessWidget {
 
   final GlobalKey<FormState> formKey;
   final bool hasTriedSubmit;
+  final bool isSaving;
   final bool isManualMaterialMode;
   final TextEditingController titleController;
   final ClothingTypeOption selectedClothingType;
   final MaterialInputCollection materialInputs;
   final String scannedCare;
+  final Map<String, double> originalMaterials;
+  final int? serverHealth;
+  final double? serverCarbonFootprint;
+  final double? serverWeightGram;
+  final String? serverCalculationMethod;
   final FormFieldValidator<String> validateTitle;
   final FormFieldValidator<String> validateMaterialName;
   final FormFieldValidator<String> validateMaterialValue;
@@ -45,12 +58,14 @@ class ScanResultView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final editedMaterials = materialInputs.collectEditedMaterials();
-    final previewHealth = ClothingEstimator.estimateInitialHealth(
-      editedMaterials,
-    );
-    final previewCarbon = ClothingEstimator.estimateCarbonFootprint(
-      editedMaterials,
-      selectedClothingType,
+    final calculation = ScanCalculationResolver.resolve(
+      materials: editedMaterials,
+      clothingType: selectedClothingType,
+      originalMaterials: originalMaterials,
+      serverHealth: serverHealth,
+      serverCarbonFootprint: serverCarbonFootprint,
+      serverWeightGram: serverWeightGram,
+      serverCalculationMethod: serverCalculationMethod,
     );
     final totalMaterials = ClothingEstimator.calculateMaterialsTotal(
       editedMaterials,
@@ -199,8 +214,8 @@ class ScanResultView extends StatelessWidget {
                     Expanded(
                       child: Text(
                         '무게 기준: ${selectedClothingType.label} · ${selectedClothingType.weightDisplayText}\n'
-                        '예상 건강도: $previewHealth%\n'
-                        '예상 탄소발자국: ${previewCarbon.toStringAsFixed(1)} kg CO2eq',
+                        '${calculation.usesServerHealth ? '건강도' : '예상 건강도'}: ${calculation.health}%\n'
+                        '${calculation.usesServerCarbon ? '최종 탄소발자국' : '임시 예상 탄소발자국'}: ${calculation.carbonFootprint.toStringAsFixed(1)} kg CO2eq',
                         softWrap: true,
                         style: TextStyle(
                           fontSize: 14,
@@ -314,21 +329,30 @@ class ScanResultView extends StatelessWidget {
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  onPressed: onSubmit,
+                  onPressed: isSaving ? null : onSubmit,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF4A4EFE),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
-                  child: const Text(
-                    '옷장에 저장하기',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  child: isSaving
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.4,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text(
+                          '옷장에 저장하기',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                 ),
               ),
               const SizedBox(height: 12),

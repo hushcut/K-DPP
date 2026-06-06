@@ -1,0 +1,8 @@
+{
+  "status": "error",
+  "message": "라벨에서 소재 혼용률을 찾지 못했습니다.",
+  "detail": {
+    "message": "라벨에서 소재 혼용률을 찾지 못했습니다.",
+    "raw_ocr_preview": "CARE LABEL TEXT"
+  }
+}

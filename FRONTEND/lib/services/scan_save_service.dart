@@ -1,6 +1,7 @@
 import '../models/clothes.dart';
 import '../models/clothing_type_option.dart';
 import '../utils/clothing_estimator.dart';
+import '../utils/scan_calculation_resolver.dart';
 
 sealed class ScanSaveResult {
   const ScanSaveResult();
@@ -27,6 +28,11 @@ class ScanSaveService {
     required Map<String, double> materials,
     required String careInstruction,
     required ClothingTypeOption clothingType,
+    Map<String, double> originalMaterials = const {},
+    int? serverHealth,
+    double? serverCarbonFootprint,
+    double? serverWeightGram,
+    String? serverCalculationMethod,
   }) {
     if (materials.isEmpty) {
       return const ScanSaveFailure('소재를 1개 이상 추가해 주세요.');
@@ -40,20 +46,27 @@ class ScanSaveService {
       );
     }
 
-    final estimatedHealth = ClothingEstimator.estimateInitialHealth(materials);
-    final estimatedCarbon = ClothingEstimator.estimateCarbonFootprint(
-      materials,
-      clothingType,
+    final calculation = ScanCalculationResolver.resolve(
+      materials: materials,
+      clothingType: clothingType,
+      originalMaterials: originalMaterials,
+      serverHealth: serverHealth,
+      serverCarbonFootprint: serverCarbonFootprint,
+      serverWeightGram: serverWeightGram,
+      serverCalculationMethod: serverCalculationMethod,
     );
 
     return ScanSaveSuccess(
       Clothes(
         title: title.trim(),
         category: category,
-        health: estimatedHealth,
+        health: calculation.health,
         materials: materials,
         careInstruction: careInstruction,
-        carbonFootprint: estimatedCarbon,
+        carbonFootprint: calculation.carbonFootprint,
+        carbonFootprintSource: calculation.usesServerCarbon
+            ? CarbonFootprintSource.server
+            : CarbonFootprintSource.localEstimate,
       ),
     );
   }

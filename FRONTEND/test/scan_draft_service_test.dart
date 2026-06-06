@@ -24,6 +24,10 @@ void main() {
         title: ' 홍길동 코튼 셔츠 ',
         materials: {'cotton': 100},
         careInstruction: '찬물 세탁',
+        health: 90,
+        carbonFootprint: 4.2,
+        weightGram: 180,
+        calculationMethod: 'weight_based_v1',
       );
 
       final draft = service.buildFromResult(
@@ -34,6 +38,10 @@ void main() {
       expect(draft.title, '홍길동 코튼 셔츠');
       expect(draft.materials, {'cotton': 100});
       expect(draft.careInstruction, '찬물 세탁');
+      expect(draft.serverHealth, 90);
+      expect(draft.serverCarbonFootprint, 4.2);
+      expect(draft.serverWeightGram, 180);
+      expect(draft.serverCalculationMethod, 'weight_based_v1');
       expect(draft.isManualMaterialMode, isFalse);
     });
 

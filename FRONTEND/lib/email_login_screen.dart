@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import 'closet_provider.dart';
+import 'services/auth_api_service.dart';
 import 'widgets/app_back_button.dart';
 
 class EmailLoginScreen extends StatefulWidget {
-  const EmailLoginScreen({super.key});
+  const EmailLoginScreen({super.key, this.authApiService});
+
+  final AuthApiService? authApiService;
 
   @override
   State<EmailLoginScreen> createState() => _EmailLoginScreenState();
@@ -13,10 +19,17 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
 
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  late final AuthApiService _authApiService;
 
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _didLoadInitialEmail = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _authApiService = widget.authApiService ?? const AuthApiService();
+  }
 
   @override
   void didChangeDependencies() {
@@ -74,19 +87,46 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
       _isLoading = true;
     });
 
-    await Future.delayed(const Duration(milliseconds: 300));
+    try {
+      final result = await _authApiService.login(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      );
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    setState(() {
-      _isLoading = false;
-    });
+      await context.read<ClosetProvider>().setAuthenticatedUser(
+        nickname: result.user.nickname,
+        email: result.user.email,
+        accessToken: result.accessToken!,
+        expiresInSeconds: result.expiresInSeconds!,
+      );
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('로그인 기능은 다음 단계에서 연결할 예정입니다.'),
-      ),
-    );
+      if (!mounted) return;
+
+      Navigator.pushNamedAndRemoveUntil(context, '/main', (route) => false);
+    } on AuthApiException catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.userMessage)));
+    } catch (error, stackTrace) {
+      debugPrint('로그인 세션 저장 중 오류가 발생했습니다: $error');
+      debugPrintStack(stackTrace: stackTrace);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('로그인 정보를 안전하게 저장하지 못했습니다. 다시 시도해 주세요.')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   InputDecoration _inputDecoration({
@@ -94,25 +134,22 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     Widget? suffixIcon,
   }) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final fillColor =
-    isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF1F1F4);
-    final hintColor =
-    isDark ? const Color(0xFF9A9A9A) : const Color(0xFF9E9E9E);
-    final enabledBorderColor =
-    isDark ? const Color(0xFF2C2C2E) : Colors.transparent;
+    final fillColor = isDark
+        ? const Color(0xFF1C1C1E)
+        : const Color(0xFFF1F1F4);
+    final hintColor = isDark
+        ? const Color(0xFF9A9A9A)
+        : const Color(0xFF9E9E9E);
+    final enabledBorderColor = isDark
+        ? const Color(0xFF2C2C2E)
+        : Colors.transparent;
 
     return InputDecoration(
       hintText: hintText,
-      hintStyle: TextStyle(
-        color: hintColor,
-        fontSize: 16,
-      ),
+      hintStyle: TextStyle(color: hintColor, fontSize: 16),
       filled: true,
       fillColor: fillColor,
-      contentPadding: const EdgeInsets.symmetric(
-        horizontal: 22,
-        vertical: 22,
-      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 22),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
         borderSide: BorderSide.none,
@@ -126,24 +163,15 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
-        borderSide: const BorderSide(
-          color: Color(0xFF4A4EFE),
-          width: 1.5,
-        ),
+        borderSide: const BorderSide(color: Color(0xFF4A4EFE), width: 1.5),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
-        borderSide: const BorderSide(
-          color: Colors.redAccent,
-          width: 1.2,
-        ),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1.2),
       ),
       focusedErrorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
-        borderSide: const BorderSide(
-          color: Colors.redAccent,
-          width: 1.5,
-        ),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1.5),
       ),
       suffixIcon: suffixIcon,
     );
@@ -152,13 +180,16 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor =
-    isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FC);
+    final backgroundColor = isDark
+        ? const Color(0xFF121212)
+        : const Color(0xFFF8F9FC);
     final primaryText = isDark ? Colors.white : const Color(0xFF111111);
-    final secondaryText =
-    isDark ? const Color(0xFFD1D1D6) : const Color(0xFF8C8C8C);
-    final iconColor =
-    isDark ? const Color(0xFFB8B8BE) : const Color(0xFF8C8C8C);
+    final secondaryText = isDark
+        ? const Color(0xFFD1D1D6)
+        : const Color(0xFF8C8C8C);
+    final iconColor = isDark
+        ? const Color(0xFFB8B8BE)
+        : const Color(0xFF8C8C8C);
 
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -223,9 +254,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                           validator: _validateEmail,
                           style: TextStyle(color: primaryText),
                           cursorColor: const Color(0xFF4A4EFE),
-                          decoration: _inputDecoration(
-                            hintText: '이메일',
-                          ),
+                          decoration: _inputDecoration(hintText: '이메일'),
                         ),
                         const SizedBox(height: 16),
                         TextFormField(
@@ -260,29 +289,28 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                             style: ElevatedButton.styleFrom(
                               elevation: 0,
                               backgroundColor: const Color(0xFF4A4EFE),
-                              disabledBackgroundColor:
-                              const Color(0x8C4A4EFE),
+                              disabledBackgroundColor: const Color(0x8C4A4EFE),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(30),
                               ),
                             ),
                             child: _isLoading
                                 ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.4,
-                                color: Colors.white,
-                              ),
-                            )
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.4,
+                                      color: Colors.white,
+                                    ),
+                                  )
                                 : const Text(
-                              '로그인',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
-                              ),
-                            ),
+                                    '로그인',
+                                    style: TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                    ),
+                                  ),
                           ),
                         ),
                         const SizedBox(height: 18),

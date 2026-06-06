@@ -2,8 +2,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
+import 'models/clothes.dart';
 import 'models/clothing_type_option.dart';
 import 'services/scan_analysis_service.dart';
+import 'services/carbon_api_service.dart';
 import 'services/scan_camera_lifecycle_service.dart';
 import 'services/scan_camera_session.dart';
 import 'services/scan_capture_service.dart';
@@ -11,6 +13,7 @@ import 'services/scan_draft_service.dart';
 import 'services/scan_save_service.dart';
 import 'utils/clothing_type_catalog.dart';
 import 'utils/scan_form_validator.dart';
+import 'utils/session_expiry_handler.dart';
 import 'widgets/clothing_type_picker_sheet.dart';
 import 'widgets/material_input_collection.dart';
 import 'widgets/scan_camera_view.dart';
@@ -30,10 +33,12 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   bool _isScanComplete = false;
   bool _hasTriedSubmit = false;
   bool _isManualMaterialMode = false;
+  bool _isSaving = false;
 
   File? _selectedImage;
 
   final ScanAnalysisService _scanAnalysisService = const ScanAnalysisService();
+  final CarbonApiService _carbonApiService = const CarbonApiService();
   final ScanCaptureService _scanCaptureService = ScanCaptureService();
   final ScanDraftService _scanDraftService = const ScanDraftService();
   final ScanSaveService _scanSaveService = const ScanSaveService();
@@ -43,6 +48,11 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
 
   String _scannedCare = '';
+  Map<String, double> _originalScannedMaterials = const {};
+  int? _serverHealth;
+  double? _serverCarbonFootprint;
+  double? _serverWeightGram;
+  String? _serverCalculationMethod;
 
   final MaterialInputCollection _materialInputs = MaterialInputCollection();
   final TextEditingController _titleController = TextEditingController();
@@ -108,6 +118,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       _isScanning = true;
       _isScanComplete = false;
       _hasTriedSubmit = false;
+      _isSaving = false;
       _isManualMaterialMode = false;
     });
 
@@ -188,6 +199,11 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       _isScanComplete = false;
       _isManualMaterialMode = false;
       _scannedCare = '';
+      _originalScannedMaterials = const {};
+      _serverHealth = null;
+      _serverCarbonFootprint = null;
+      _serverWeightGram = null;
+      _serverCalculationMethod = null;
       _titleController.text = '새로 스캔한 의류';
       _hasTriedSubmit = false;
     });
@@ -284,6 +300,11 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       _isScanComplete = true;
       _isManualMaterialMode = draft.isManualMaterialMode;
       _scannedCare = draft.careInstruction;
+      _originalScannedMaterials = Map.unmodifiable(draft.materials);
+      _serverHealth = draft.serverHealth;
+      _serverCarbonFootprint = draft.serverCarbonFootprint;
+      _serverWeightGram = draft.serverWeightGram;
+      _serverCalculationMethod = draft.serverCalculationMethod;
       _titleController.text = draft.title;
       _hasTriedSubmit = false;
     });
@@ -368,7 +389,27 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
     setState(() {});
   }
 
+  Future<void> _saveLocallyAfterSessionExpiry({
+    required ClosetProvider provider,
+    required Clothes clothes,
+  }) async {
+    await provider.addClothes(clothes);
+
+    if (!mounted) return;
+
+    setState(() {
+      _isSaving = false;
+    });
+
+    await SessionExpiryHandler.handle(
+      context,
+      message: '로그인 세션이 만료되어 의류는 기기에 저장했어요. 다시 로그인해 주세요.',
+    );
+  }
+
   Future<void> _submitClothes() async {
+    if (_isSaving) return;
+
     setState(() {
       _hasTriedSubmit = true;
     });
@@ -385,6 +426,11 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       materials: editedMaterials,
       careInstruction: _scannedCare,
       clothingType: _selectedClothingType,
+      originalMaterials: _originalScannedMaterials,
+      serverHealth: _serverHealth,
+      serverCarbonFootprint: _serverCarbonFootprint,
+      serverWeightGram: _serverWeightGram,
+      serverCalculationMethod: _serverCalculationMethod,
     );
 
     switch (saveResult) {
@@ -394,14 +440,77 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
         ).showSnackBar(SnackBar(content: Text(message)));
         return;
       case ScanSaveSuccess(:final clothes):
-        await Provider.of<ClosetProvider>(
-          context,
-          listen: false,
-        ).addClothes(clothes);
+        setState(() {
+          _isSaving = true;
+        });
+
+        final provider = Provider.of<ClosetProvider>(context, listen: false);
+        var clothesToSave = clothes;
+        String? fallbackMessage;
+        final accessToken = provider.accessToken;
+
+        if (accessToken != null && !provider.isAuthenticated) {
+          await _saveLocallyAfterSessionExpiry(
+            provider: provider,
+            clothes: clothesToSave,
+          );
+          return;
+        }
+
+        if (accessToken != null) {
+          try {
+            final calculation = await _carbonApiService.calculate(
+              materials: editedMaterials,
+              minWeightGram: _selectedClothingType.minWeightGram,
+              maxWeightGram: _selectedClothingType.maxWeightGram,
+              accessToken: accessToken,
+            );
+
+            clothesToSave = clothes.copyWith(
+              carbonFootprint: calculation.carbonFootprint,
+              carbonFootprintSource: CarbonFootprintSource.server,
+              carbonFootprintMin: calculation.carbonFootprintMin,
+              carbonFootprintMax: calculation.carbonFootprintMax,
+              minWeightGram: calculation.minWeightGram,
+              maxWeightGram: calculation.maxWeightGram,
+              savedResultId: calculation.savedResultId,
+            );
+          } on CarbonApiException catch (error) {
+            if (error.type == CarbonApiErrorType.unauthorized) {
+              await _saveLocallyAfterSessionExpiry(
+                provider: provider,
+                clothes: clothesToSave,
+              );
+              return;
+            }
+
+            fallbackMessage = error.userMessage;
+          }
+        }
+
+        try {
+          await provider.addClothes(clothesToSave);
+        } finally {
+          if (mounted) {
+            setState(() {
+              _isSaving = false;
+            });
+          }
+        }
 
         if (!mounted) return;
 
-        Navigator.pushReplacementNamed(context, '/report', arguments: clothes);
+        if (fallbackMessage != null) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(fallbackMessage)));
+        }
+
+        Navigator.pushReplacementNamed(
+          context,
+          '/report',
+          arguments: clothesToSave,
+        );
     }
   }
 
@@ -414,10 +523,16 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       _isScanComplete = false;
       _isManualMaterialMode = false;
       _scannedCare = '';
+      _originalScannedMaterials = const {};
+      _serverHealth = null;
+      _serverCarbonFootprint = null;
+      _serverWeightGram = null;
+      _serverCalculationMethod = null;
       _selectedClothingType = ClothingTypeCatalog.defaultOption;
       _selectedCategory = _selectedClothingType.category;
       _titleController.text = '새로 스캔한 의류';
       _hasTriedSubmit = false;
+      _isSaving = false;
     });
 
     _cameraLifecycle.startIfNeeded();
@@ -455,11 +570,17 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
     return ScanResultView(
       formKey: _formKey,
       hasTriedSubmit: _hasTriedSubmit,
+      isSaving: _isSaving,
       isManualMaterialMode: _isManualMaterialMode,
       titleController: _titleController,
       selectedClothingType: _selectedClothingType,
       materialInputs: _materialInputs,
       scannedCare: _scannedCare,
+      originalMaterials: _originalScannedMaterials,
+      serverHealth: _serverHealth,
+      serverCarbonFootprint: _serverCarbonFootprint,
+      serverWeightGram: _serverWeightGram,
+      serverCalculationMethod: _serverCalculationMethod,
       validateTitle: ScanFormValidator.validateTitle,
       validateMaterialName: ScanFormValidator.validateMaterialName,
       validateMaterialValue: ScanFormValidator.validateMaterialValue,

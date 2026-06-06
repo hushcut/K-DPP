@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'login_screen.dart';
@@ -13,6 +14,7 @@ import 'report_detail_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
   final closetProvider = ClosetProvider();
   final themeProvider = ThemeProvider();

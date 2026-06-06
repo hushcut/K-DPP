@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
+import 'services/auth_api_service.dart';
 import 'theme_provider.dart';
 import 'widgets/app_back_button.dart';
 
 class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({
+    super.key,
+    this.authApiService = const AuthApiService(),
+  });
 
-  static const String _devEmail = 'honggildong@kdpp.com';
+  final AuthApiService authApiService;
 
   String _themeModeLabel(ThemeMode mode) {
     switch (mode) {
@@ -116,11 +120,40 @@ class SettingsScreen extends StatelessWidget {
 
     if (!context.mounted) return;
 
-    await context.read<ClosetProvider>().logout();
+    final provider = context.read<ClosetProvider>();
+    final accessToken = provider.accessToken;
+    String? serverLogoutError;
+    bool localLogoutStorageFailed = false;
+
+    if (accessToken != null) {
+      try {
+        await authApiService.logout(accessToken: accessToken);
+      } on AuthApiException catch (error) {
+        serverLogoutError = error.userMessage;
+      }
+    }
+
+    try {
+      await provider.logout();
+    } catch (error, stackTrace) {
+      localLogoutStorageFailed = true;
+      debugPrint('로그아웃 정보 정리 중 오류가 발생했습니다: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
 
     if (!context.mounted) return;
 
     Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+
+    if (serverLogoutError != null || localLogoutStorageFailed) {
+      final message = localLogoutStorageFailed
+          ? '기기에서는 로그아웃되었지만 저장된 로그인 정보 정리를 완료하지 못했습니다.'
+          : '기기에서는 로그아웃되었지만 서버 연결에 실패했습니다. $serverLogoutError';
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    }
   }
 
   void _showComingSoon(BuildContext context, String title) {
@@ -214,6 +247,7 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final userName = context.watch<ClosetProvider>().userName;
+    final userEmail = context.watch<ClosetProvider>().userEmail;
     final themeMode = context.watch<ThemeProvider>().themeMode;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -297,7 +331,7 @@ class SettingsScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        _devEmail,
+                        userEmail,
                         style: TextStyle(fontSize: 14, color: secondaryText),
                       ),
                     ],
@@ -323,7 +357,7 @@ class SettingsScreen extends StatelessWidget {
               _buildMenuTile(
                 icon: Icons.mail_outline,
                 title: '이메일',
-                subtitle: _devEmail,
+                subtitle: userEmail,
                 textColor: primaryText,
                 subtitleColor: secondaryText,
                 showChevron: false,

@@ -119,7 +119,14 @@ class ReportScreen extends StatelessWidget {
                   child: _buildSummaryCard(
                     title: '총 탄소발자국',
                     value: '${item.carbonFootprint.toStringAsFixed(1)} kg',
-                    subtitle: 'CO2eq 기준 추정값',
+                    subtitle:
+                        item.carbonFootprintSource ==
+                            CarbonFootprintSource.server
+                        ? item.carbonFootprintMin != null &&
+                                  item.carbonFootprintMax != null
+                              ? '${item.carbonFootprintMin!.toStringAsFixed(1)}~${item.carbonFootprintMax!.toStringAsFixed(1)} kg CO2eq'
+                              : 'CO2eq 기준 백엔드 계산값'
+                        : 'CO2eq 기준 임시 추정값',
                     icon: Icons.eco_outlined,
                     color: const Color(0xFF4A4EFE),
                     primaryText: primaryText,
@@ -158,7 +165,12 @@ class ReportScreen extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              '총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 소재와 카테고리 기반 추정',
+              item.carbonFootprintSource == CarbonFootprintSource.server
+                  ? item.carbonFootprintMin != null &&
+                            item.carbonFootprintMax != null
+                        ? '평균 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 범위 ${item.carbonFootprintMin!.toStringAsFixed(1)}~${item.carbonFootprintMax!.toStringAsFixed(1)} kg'
+                        : '총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 무게 기반 백엔드 계산'
+                  : '총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 소재와 무게 기반 임시 추정',
               style: TextStyle(color: secondaryText, fontSize: 13),
             ),
             const SizedBox(height: 16),

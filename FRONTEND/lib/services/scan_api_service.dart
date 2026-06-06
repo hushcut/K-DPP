@@ -122,7 +122,8 @@ class ScanApiException implements Exception {
       final decoded = jsonDecode(responseBody);
 
       if (decoded is Map<String, dynamic>) {
-        final message = decoded['message'] ??
+        final message =
+            decoded['message'] ??
             decoded['detail'] ??
             decoded['error'] ??
             decoded['reason'];
@@ -141,30 +142,28 @@ class ScanApiException implements Exception {
 
 class ScanApiService {
   const ScanApiService({
-    this.baseUrl = 'http://10.0.2.2:8000',
+    this.endpoint = const String.fromEnvironment(
+      'SCAN_API_ENDPOINT',
+      defaultValue: 'http://10.0.2.2:8000/api/scan',
+    ),
+    this.requestHeaders = const {'ngrok-skip-browser-warning': 'true'},
+    this.client,
   });
 
-  final String baseUrl;
+  final String endpoint;
+  final Map<String, String> requestHeaders;
+  final http.Client? client;
 
-  static const String _scanPath = '/scan';
-
-  Future<ScanResult> scanLabel({
-    required File imageFile,
-  }) async {
-    final uri = Uri.parse('$baseUrl$_scanPath');
+  Future<ScanResult> scanLabel({required File imageFile}) async {
+    final uri = Uri.parse(endpoint);
 
     try {
       final request = http.MultipartRequest('POST', uri)
-        ..files.add(
-          await http.MultipartFile.fromPath(
-            'image',
-            imageFile.path,
-          ),
-        );
+        ..headers.addAll(requestHeaders)
+        ..files.add(await http.MultipartFile.fromPath('image', imageFile.path));
 
-      final streamedResponse = await request.send().timeout(
-        const Duration(seconds: 35),
-      );
+      final streamedResponse = await (client?.send(request) ?? request.send())
+          .timeout(const Duration(seconds: 35));
 
       final responseBody = await streamedResponse.stream.bytesToString();
 
@@ -212,7 +211,7 @@ class ScanApiService {
       );
     }
 
-    if (decoded['success'] == false) {
+    if (decoded['success'] == false || decoded['status'] == 'error') {
       throw ScanApiException(
         type: ScanApiErrorType.aiRecognitionFailed,
         message: decoded['message']?.toString() ?? 'AI 분석 실패',
@@ -220,25 +219,16 @@ class ScanApiService {
     }
 
     final payload = _extractPayload(decoded);
-    final materials = _parseMaterials(payload);
+    final result = ScanResult.fromJson(payload);
 
-    if (materials.isEmpty) {
+    if (result.materials.isEmpty) {
       throw const ScanApiException(
         type: ScanApiErrorType.aiRecognitionFailed,
         message: '소재 정보를 인식하지 못했습니다.',
       );
     }
 
-    return ScanResult(
-      title: _readOptionalString(payload, ['title', 'name', 'clothingName']),
-      category: _readOptionalString(payload, ['category', 'type']),
-      materials: materials,
-      careInstruction: _readString(
-        payload,
-        ['careInstruction', 'care_instruction', 'care', 'washingInstruction'],
-        fallback: '라벨의 세탁 지침을 확인해 주세요.',
-      ),
-    );
+    return result;
   }
 
   Map<String, dynamic> _extractPayload(Map<String, dynamic> decoded) {
@@ -249,83 +239,5 @@ class ScanApiService {
     if (result is Map<String, dynamic>) return result;
 
     return decoded;
-  }
-
-  Map<String, double> _parseMaterials(Map<String, dynamic> payload) {
-    final rawMaterials =
-        payload['materials'] ?? payload['material'] ?? payload['composition'];
-
-    final materials = <String, double>{};
-
-    if (rawMaterials is Map) {
-      rawMaterials.forEach((key, value) {
-        final name = key.toString().trim();
-        final percent = _parsePercent(value);
-
-        if (name.isNotEmpty && percent != null) {
-          materials[name] = percent;
-        }
-      });
-    }
-
-    if (rawMaterials is List) {
-      for (final item in rawMaterials) {
-        if (item is Map) {
-          final name = (item['name'] ??
-              item['material'] ??
-              item['label'] ??
-              item['type'])
-              ?.toString()
-              .trim();
-
-          final percent = _parsePercent(
-            item['percent'] ??
-                item['percentage'] ??
-                item['ratio'] ??
-                item['value'],
-          );
-
-          if (name != null && name.isNotEmpty && percent != null) {
-            materials[name] = percent;
-          }
-        }
-      }
-    }
-
-    return materials;
-  }
-
-  double? _parsePercent(dynamic value) {
-    if (value == null) return null;
-
-    if (value is num) {
-      return value.toDouble();
-    }
-
-    final text = value.toString().replaceAll('%', '').trim();
-    return double.tryParse(text);
-  }
-
-  String? _readOptionalString(
-      Map<String, dynamic> payload,
-      List<String> keys,
-      ) {
-    for (final key in keys) {
-      final value = payload[key];
-
-      if (value != null && value.toString().trim().isNotEmpty) {
-        return value.toString().trim();
-      }
-    }
-
-    return null;
-  }
-
-  String _readString(
-      Map<String, dynamic> payload,
-      List<String> keys, {
-        required String fallback,
-      }) {
-    return _readOptionalString(payload, keys) ?? fallback;
   }
 }

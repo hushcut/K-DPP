@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+
+import 'services/auth_api_service.dart';
 import 'widgets/app_back_button.dart';
 
 class SignupScreen extends StatefulWidget {
-  const SignupScreen({super.key});
+  const SignupScreen({super.key, this.authApiService});
+
+  final AuthApiService? authApiService;
 
   @override
   State<SignupScreen> createState() => _SignupScreenState();
@@ -15,11 +19,18 @@ class _SignupScreenState extends State<SignupScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
-  TextEditingController();
+      TextEditingController();
+  late final AuthApiService _authApiService;
 
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _authApiService = widget.authApiService ?? const AuthApiService();
+  }
 
   @override
   void dispose() {
@@ -96,25 +107,33 @@ class _SignupScreenState extends State<SignupScreen> {
       _isLoading = true;
     });
 
-    await Future.delayed(const Duration(milliseconds: 500));
+    try {
+      await _authApiService.signup(
+        nickname: _nicknameController.text.trim(),
+        email: email,
+        password: _passwordController.text,
+      );
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    setState(() {
-      _isLoading = false;
-    });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('회원가입이 완료되었습니다. 로그인해 주세요.')));
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('회원가입이 완료되었습니다. 로그인해 주세요.'),
-      ),
-    );
+      Navigator.pushReplacementNamed(context, '/email-login', arguments: email);
+    } on AuthApiException catch (error) {
+      if (!mounted) return;
 
-    Navigator.pushReplacementNamed(
-      context,
-      '/email-login',
-      arguments: email,
-    );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.userMessage)));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   InputDecoration _inputDecoration({
@@ -122,25 +141,22 @@ class _SignupScreenState extends State<SignupScreen> {
     Widget? suffixIcon,
   }) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final fillColor =
-    isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF1F1F4);
-    final hintColor =
-    isDark ? const Color(0xFF9A9A9A) : const Color(0xFF9E9E9E);
-    final enabledBorderColor =
-    isDark ? const Color(0xFF2C2C2E) : Colors.transparent;
+    final fillColor = isDark
+        ? const Color(0xFF1C1C1E)
+        : const Color(0xFFF1F1F4);
+    final hintColor = isDark
+        ? const Color(0xFF9A9A9A)
+        : const Color(0xFF9E9E9E);
+    final enabledBorderColor = isDark
+        ? const Color(0xFF2C2C2E)
+        : Colors.transparent;
 
     return InputDecoration(
       hintText: hintText,
-      hintStyle: TextStyle(
-        color: hintColor,
-        fontSize: 16,
-      ),
+      hintStyle: TextStyle(color: hintColor, fontSize: 16),
       filled: true,
       fillColor: fillColor,
-      contentPadding: const EdgeInsets.symmetric(
-        horizontal: 22,
-        vertical: 22,
-      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 22),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
         borderSide: BorderSide.none,
@@ -154,24 +170,15 @@ class _SignupScreenState extends State<SignupScreen> {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
-        borderSide: const BorderSide(
-          color: Color(0xFF4A4EFE),
-          width: 1.5,
-        ),
+        borderSide: const BorderSide(color: Color(0xFF4A4EFE), width: 1.5),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
-        borderSide: const BorderSide(
-          color: Colors.redAccent,
-          width: 1.2,
-        ),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1.2),
       ),
       focusedErrorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
-        borderSide: const BorderSide(
-          color: Colors.redAccent,
-          width: 1.5,
-        ),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1.5),
       ),
       suffixIcon: suffixIcon,
     );
@@ -180,13 +187,16 @@ class _SignupScreenState extends State<SignupScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor =
-    isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FC);
+    final backgroundColor = isDark
+        ? const Color(0xFF121212)
+        : const Color(0xFFF8F9FC);
     final primaryText = isDark ? Colors.white : const Color(0xFF111111);
-    final secondaryText =
-    isDark ? const Color(0xFFD1D1D6) : const Color(0xFF8C8C8C);
-    final iconColor =
-    isDark ? const Color(0xFFB8B8BE) : const Color(0xFF8C8C8C);
+    final secondaryText = isDark
+        ? const Color(0xFFD1D1D6)
+        : const Color(0xFF8C8C8C);
+    final iconColor = isDark
+        ? const Color(0xFFB8B8BE)
+        : const Color(0xFF8C8C8C);
 
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -261,9 +271,7 @@ class _SignupScreenState extends State<SignupScreen> {
                           validator: _validateEmail,
                           style: TextStyle(color: primaryText),
                           cursorColor: const Color(0xFF4A4EFE),
-                          decoration: _inputDecoration(
-                            hintText: '이메일',
-                          ),
+                          decoration: _inputDecoration(hintText: '이메일'),
                         ),
                         const SizedBox(height: 16),
                         TextFormField(
@@ -302,7 +310,7 @@ class _SignupScreenState extends State<SignupScreen> {
                               onPressed: () {
                                 setState(() {
                                   _obscureConfirmPassword =
-                                  !_obscureConfirmPassword;
+                                      !_obscureConfirmPassword;
                                 });
                               },
                               icon: Icon(
@@ -323,29 +331,28 @@ class _SignupScreenState extends State<SignupScreen> {
                             style: ElevatedButton.styleFrom(
                               elevation: 0,
                               backgroundColor: const Color(0xFF4A4EFE),
-                              disabledBackgroundColor:
-                              const Color(0x8C4A4EFE),
+                              disabledBackgroundColor: const Color(0x8C4A4EFE),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(30),
                               ),
                             ),
                             child: _isLoading
                                 ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.4,
-                                color: Colors.white,
-                              ),
-                            )
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.4,
+                                      color: Colors.white,
+                                    ),
+                                  )
                                 : const Text(
-                              '회원가입',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
-                              ),
-                            ),
+                                    '회원가입',
+                                    style: TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                    ),
+                                  ),
                           ),
                         ),
                         const SizedBox(height: 18),
