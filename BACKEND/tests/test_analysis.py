@@ -34,6 +34,7 @@ def test_analyze_returns_400_for_unknown_material(client):
 
     assert response.status_code == 400
     assert body["status"] == "error"
+    assert body["error_code"] == "MATERIAL_NOT_FOUND"
     assert body["detail"]["unknown_materials"] == ["unknown_fiber"]
 
 
@@ -52,6 +53,7 @@ def test_analyze_returns_400_when_ratio_total_is_not_100(client):
 
     assert response.status_code == 400
     assert body["status"] == "error"
+    assert body["error_code"] == "MATERIAL_RATIO_INVALID"
     assert "90" in body["message"]
 
 
@@ -183,3 +185,40 @@ def test_scan_returns_materials_without_saving_carbon_result(client):
     assert body["materials"] == {"cotton": 80, "polyester": 20}
     assert "carbon_footprint" not in body
     assert "saved_result_id" not in body
+
+
+def test_scan_requires_image_error_code(client):
+    response = client.post("/api/scan")
+    body = response.json()
+
+    assert response.status_code == 422
+    assert body["status"] == "error"
+    assert body["error_code"] == "IMAGE_MISSING"
+
+
+def test_scan_rejects_unsupported_image_type(client):
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.txt", b"not-image", "text/plain")},
+    )
+    body = response.json()
+
+    assert response.status_code == 415
+    assert body["status"] == "error"
+    assert body["error_code"] == "UNSUPPORTED_IMAGE_FORMAT"
+
+
+def test_scan_material_failure_returns_partial_context(client):
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": "wash cold do not bleach dry flat"},
+    )
+    body = response.json()
+
+    assert response.status_code == 422
+    assert body["status"] == "error"
+    assert body["error_code"] == "MATERIAL_EXTRACTION_FAILED"
+    assert body["detail"]["error_code"] == "MATERIAL_EXTRACTION_FAILED"
+    assert body["detail"]["partial_materials"] == {}
+    assert "raw_ocr_preview" in body["detail"]

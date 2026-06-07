@@ -32,10 +32,37 @@ except Exception:
     parse_label = None
 
 ACCESS_TOKEN_EXPIRE_DAYS = 30
+DEFAULT_ERROR_CODES = {
+    400: "BAD_REQUEST",
+    401: "AUTH_REQUIRED",
+    403: "AUTH_REQUIRED",
+    409: "CONFLICT",
+    413: "PAYLOAD_TOO_LARGE",
+    415: "UNSUPPORTED_IMAGE_FORMAT",
+    422: "VALIDATION_ERROR",
+    502: "OCR_FAILED",
+    503: "AI_MODULE_FAILED",
+}
+SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def build_error_detail(message: str, error_code: str, **extra) -> dict:
+    detail = {
+        "message": message,
+        "error_code": error_code,
+    }
+    detail.update(extra)
+    return detail
+
+
+def infer_error_code(status_code: int) -> str:
+    if status_code >= 500:
+        return DEFAULT_ERROR_CODES.get(status_code, "INTERNAL_SERVER_ERROR")
+    return DEFAULT_ERROR_CODES.get(status_code, "UNKNOWN_ERROR")
 
 
 @asynccontextmanager
@@ -70,10 +97,19 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     else:
         message = str(detail)
 
+    error_code = infer_error_code(exc.status_code)
+    if isinstance(detail, dict):
+        error_code = detail.get("error_code") or error_code
+        if error_code == "BAD_REQUEST" and detail.get("unknown_materials"):
+            error_code = "MATERIAL_NOT_FOUND"
+        if error_code == "BAD_REQUEST" and detail.get("partial_materials"):
+            error_code = "MATERIAL_RATIO_INVALID"
+
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "status": "error",
+            "error_code": error_code,
             "message": message,
             "detail": detail,
         },
@@ -81,15 +117,29 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
+async def request_validation_error_code_handler(
+    request: Request,
+    exc: RequestValidationError,
+):
+    error_code = "VALIDATION_ERROR"
+    message = "요청 형식이 올바르지 않습니다."
+
+    for error in exc.errors():
+        if "image" in error.get("loc", ()):
+            error_code = "IMAGE_MISSING"
+            message = "이미지 파일을 첨부해 주세요."
+            break
+
     return JSONResponse(
         status_code=422,
         content={
             "status": "error",
-            "message": "요청 형식이 올바르지 않습니다.",
+            "error_code": error_code,
+            "message": message,
             "detail": exc.errors(),
         },
     )
+
 
 # 2. DB 세션 가져오기 함수 (DB 연결용)
 def get_db():
@@ -277,17 +327,37 @@ def validate_materials(
     db: Session,
 ) -> tuple[float, list[str]]:
     if not materials:
-        raise HTTPException(status_code=400, detail="소재를 1개 이상 입력해 주세요.")
+        raise HTTPException(
+            status_code=400,
+            detail=build_error_detail(
+                "소재를 1개 이상 입력해 주세요.",
+                "MATERIAL_MISSING",
+            ),
+        )
 
     for name, ratio in materials.items():
         if ratio < 0:
-            raise HTTPException(status_code=400, detail=f"{name} 비율이 음수입니다.")
+            raise HTTPException(
+                status_code=400,
+                detail=build_error_detail(
+                    f"{name} 비율이 음수입니다.",
+                    "MATERIAL_RATIO_INVALID",
+                    materials=materials,
+                    partial_materials=materials,
+                ),
+            )
 
     total_ratio = sum(materials.values())
     if total_ratio < 99.5 or total_ratio > 100.5:
         raise HTTPException(
             status_code=400,
-            detail=f"전체 비율의 합이 100이 아닙니다. 현재 합계: {round(total_ratio, 2)}",
+            detail=build_error_detail(
+                f"전체 비율의 합이 100이 아닙니다. 현재 합계: {round(total_ratio, 2)}",
+                "MATERIAL_RATIO_INVALID",
+                materials=materials,
+                partial_materials=materials,
+                total_ratio=round(total_ratio, 2),
+            ),
         )
 
     mixed_factor = 0.0
@@ -380,6 +450,16 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
     if raw_ocr_text and raw_ocr_text.strip():
         return raw_ocr_text.strip()
 
+    if image.content_type and image.content_type not in SUPPORTED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=build_error_detail(
+                "JPG, PNG, WEBP 이미지 파일만 지원합니다.",
+                "UNSUPPORTED_IMAGE_FORMAT",
+                content_type=image.content_type,
+            ),
+        )
+
     if run_ocr is None:
         raise HTTPException(
             status_code=503,
@@ -429,17 +509,23 @@ def parse_label_materials(label_text: str) -> tuple[dict[str, float], str]:
 
     parsed = parse_label(label_text)
     materials = parsed.get("materials") or {}
+    raw_ocr_preview = parsed.get("raw_ocr_preview", "")
+    care_instruction = parsed.get("care_text") or "라벨 표기법에 맞춰 관리하세요."
 
     if not materials:
         raise HTTPException(
             status_code=422,
             detail={
                 "message": "라벨에서 소재 혼용률을 찾지 못했습니다.",
-                "raw_ocr_preview": parsed.get("raw_ocr_preview", ""),
+                "error_code": "MATERIAL_EXTRACTION_FAILED",
+                "materials": materials,
+                "partial_materials": materials,
+                "care_instruction": care_instruction,
+                "raw_ocr_preview": raw_ocr_preview,
+                "ai_success": False,
             },
         )
 
-    care_instruction = parsed.get("care_text") or "라벨 표기법에 맞춰 관리하세요."
     return materials, care_instruction
 
 # --- API 엔드포인트 시작 ---
@@ -568,6 +654,7 @@ def calculate_carbon_range(
             status_code=400,
             detail={
                 "message": "DB에 등록되지 않은 소재가 있습니다.",
+                "error_code": "MATERIAL_NOT_FOUND",
                 "unknown_materials": unknown_materials,
             },
         )
