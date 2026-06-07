@@ -257,9 +257,14 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
     "polyester": 20
   },
   "min_weight_grams": 100,
-  "max_weight_grams": 250
+  "max_weight_grams": 250,
+  "weight_grams": null,
+  "clothing_type": "short_sleeve",
+  "category": "top"
 }
 ```
+
+`weight_grams`가 있으면 직접 입력 무게로 보고 `min_weight_grams`, `max_weight_grams`보다 우선합니다.
 
 직접 입력한 실제 무게는 최소·최대 무게에 같은 값을 전달합니다.
 
@@ -284,11 +289,37 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
   },
   "carbon_factor": 8.54,
   "carbon_footprint": 1.49,
+  "average_carbon_footprint": 1.49,
   "carbon_footprint_min": 0.85,
   "carbon_footprint_max": 2.13,
   "min_weight_grams": 100,
   "max_weight_grams": 250,
+  "weight_grams": null,
+  "weight_source": "range",
+  "clothing_type": "short_sleeve",
+  "category": "top",
   "unit": "kg CO2eq",
+  "source": "backend",
+  "calculation_basis": "소재별 탄소배출계수(kg CO2eq/kg)와 의류 무게(g)를 곱해 계산했습니다.",
+  "emission_factors": [
+    {
+      "input_name": "cotton",
+      "standard_name": "cotton",
+      "display_name": "면",
+      "ratio": 80.0,
+      "carbon_factor": 8.3,
+      "unit": "kg CO2eq/kg textile"
+    },
+    {
+      "input_name": "polyester",
+      "standard_name": "polyester",
+      "display_name": "폴리에스터",
+      "ratio": 20.0,
+      "carbon_factor": 9.5,
+      "unit": "kg CO2eq/kg textile"
+    }
+  ],
+  "calculation_source": "K-DPP backend material carbon factor table",
   "saved_result_id": 13
 }
 ```

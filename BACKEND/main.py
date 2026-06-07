@@ -166,8 +166,11 @@ class AnalyzeRequest(BaseModel):
 
 class CarbonRangeRequest(BaseModel):
     materials: dict[str, float]
-    min_weight_grams: float
-    max_weight_grams: float
+    min_weight_grams: float | None = None
+    max_weight_grams: float | None = None
+    weight_grams: float | None = None
+    clothing_type: str | None = None
+    category: str | None = None
     raw_ocr_text: str | None = None
 
 # 4. 소재명 매칭 및 탄소발자국 계산 함수
@@ -378,6 +381,33 @@ def validate_materials(
 def calculate_carbon(materials: dict[str, float], db: Session) -> tuple[float, list[str]]:
     mixed_factor, unknown_materials = validate_materials(materials, db)
     return round(mixed_factor, 2), unknown_materials
+
+
+def build_emission_factors(materials: dict[str, float], db: Session) -> list[dict]:
+    emission_factors = []
+    total_ratio = sum(materials.values())
+
+    if total_ratio <= 0:
+        return emission_factors
+
+    for name, ratio in materials.items():
+        material = find_material(db, name)
+        if material is None:
+            continue
+
+        normalized_ratio = ratio / total_ratio * 100
+        emission_factors.append(
+            {
+                "input_name": name,
+                "standard_name": material.name_en,
+                "display_name": material.name_ko,
+                "ratio": round(normalized_ratio, 2),
+                "carbon_factor": material.carbon_factor,
+                "unit": material.unit,
+            }
+        )
+
+    return emission_factors
 
 
 def build_analysis_response(
@@ -640,12 +670,51 @@ def calculate_carbon_range(
     db: Session = Depends(get_db),
     current_user: database.User = Depends(get_current_user),
 ):
-    if request.min_weight_grams <= 0 or request.max_weight_grams <= 0:
-        raise HTTPException(status_code=400, detail="의류 무게는 0g보다 커야 합니다.")
-    if request.min_weight_grams > request.max_weight_grams:
+    if request.weight_grams is not None:
+        if request.weight_grams <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=build_error_detail(
+                    "의류 무게는 0g보다 커야 합니다.",
+                    "WEIGHT_INVALID",
+                    weight_grams=request.weight_grams,
+                ),
+            )
+        min_weight_grams = request.weight_grams
+        max_weight_grams = request.weight_grams
+        weight_source = "direct"
+    else:
+        if request.min_weight_grams is None or request.max_weight_grams is None:
+            raise HTTPException(
+                status_code=400,
+                detail=build_error_detail(
+                    "무게 범위 또는 직접 입력 무게를 입력해 주세요.",
+                    "WEIGHT_MISSING",
+                ),
+            )
+        min_weight_grams = request.min_weight_grams
+        max_weight_grams = request.max_weight_grams
+        weight_source = "range"
+
+    if min_weight_grams <= 0 or max_weight_grams <= 0:
         raise HTTPException(
             status_code=400,
-            detail="최소 무게는 최대 무게보다 클 수 없습니다.",
+            detail=build_error_detail(
+                "의류 무게는 0g보다 커야 합니다.",
+                "WEIGHT_INVALID",
+                min_weight_grams=min_weight_grams,
+                max_weight_grams=max_weight_grams,
+            ),
+        )
+    if min_weight_grams > max_weight_grams:
+        raise HTTPException(
+            status_code=400,
+            detail=build_error_detail(
+                "최소 무게는 최대 무게보다 클 수 없습니다.",
+                "WEIGHT_RANGE_INVALID",
+                min_weight_grams=min_weight_grams,
+                max_weight_grams=max_weight_grams,
+            ),
         )
 
     mixed_factor, unknown_materials = validate_materials(request.materials, db)
@@ -659,8 +728,9 @@ def calculate_carbon_range(
             },
         )
 
-    carbon_min = round(mixed_factor * request.min_weight_grams / 1000, 2)
-    carbon_max = round(mixed_factor * request.max_weight_grams / 1000, 2)
+    emission_factors = build_emission_factors(request.materials, db)
+    carbon_min = round(mixed_factor * min_weight_grams / 1000, 2)
+    carbon_max = round(mixed_factor * max_weight_grams / 1000, 2)
     carbon_midpoint = round((carbon_min + carbon_max) / 2, 2)
 
     result = database.AnalysisResult(
@@ -669,8 +739,8 @@ def calculate_carbon_range(
         carbon_footprint=carbon_midpoint,
         carbon_footprint_min=carbon_min,
         carbon_footprint_max=carbon_max,
-        min_weight_grams=request.min_weight_grams,
-        max_weight_grams=request.max_weight_grams,
+        min_weight_grams=min_weight_grams,
+        max_weight_grams=max_weight_grams,
         unit="kg CO2eq",
         raw_ocr_text=request.raw_ocr_text,
         unknown_materials="[]",
@@ -685,11 +755,20 @@ def calculate_carbon_range(
         "materials": request.materials,
         "carbon_factor": round(mixed_factor, 2),
         "carbon_footprint": carbon_midpoint,
+        "average_carbon_footprint": carbon_midpoint,
         "carbon_footprint_min": carbon_min,
         "carbon_footprint_max": carbon_max,
-        "min_weight_grams": request.min_weight_grams,
-        "max_weight_grams": request.max_weight_grams,
+        "min_weight_grams": min_weight_grams,
+        "max_weight_grams": max_weight_grams,
+        "weight_grams": request.weight_grams,
+        "weight_source": weight_source,
+        "clothing_type": request.clothing_type,
+        "category": request.category,
         "unit": "kg CO2eq",
+        "source": "backend",
+        "calculation_basis": "소재별 탄소배출계수(kg CO2eq/kg)와 의류 무게(g)를 곱해 계산했습니다.",
+        "emission_factors": emission_factors,
+        "calculation_source": "K-DPP backend material carbon factor table",
         "saved_result_id": result.id,
     }
 

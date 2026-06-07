@@ -151,6 +151,19 @@ def test_carbon_range_uses_db_factor_and_weight_range(client):
     assert body["carbon_footprint_min"] == 0.83
     assert body["carbon_footprint_max"] == 2.08
     assert body["carbon_footprint"] == 1.46
+    assert body["average_carbon_footprint"] == 1.46
+    assert body["source"] == "backend"
+    assert body["weight_source"] == "range"
+    assert body["emission_factors"] == [
+        {
+            "input_name": "cotton",
+            "standard_name": "cotton",
+            "display_name": "면",
+            "ratio": 100.0,
+            "carbon_factor": 8.3,
+            "unit": "kg CO2eq/kg textile",
+        }
+    ]
     assert body["saved_result_id"] is not None
 
     history = client.get("/me/history", headers=headers).json()["history"]
@@ -158,6 +171,79 @@ def test_carbon_range_uses_db_factor_and_weight_range(client):
     assert history[0]["carbon_footprint_max"] == 2.08
     assert history[0]["min_weight_grams"] == 100
     assert history[0]["max_weight_grams"] == 250
+
+
+def test_carbon_range_prefers_direct_weight(client):
+    client.post(
+        "/auth/signup",
+        json={
+            "email": "direct-weight@example.com",
+            "password": "password123",
+            "nickname": "direct-weight-user",
+        },
+    )
+    login = client.post(
+        "/auth/login",
+        json={
+            "email": "direct-weight@example.com",
+            "password": "password123",
+        },
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    response = client.post(
+        "/api/carbon/calculate",
+        json={
+            "materials": {"cotton": 100},
+            "min_weight_grams": 100,
+            "max_weight_grams": 250,
+            "weight_grams": 300,
+            "clothing_type": "반팔",
+            "category": "상의",
+        },
+        headers=headers,
+    )
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["weight_source"] == "direct"
+    assert body["min_weight_grams"] == 300
+    assert body["max_weight_grams"] == 300
+    assert body["weight_grams"] == 300
+    assert body["carbon_footprint_min"] == 2.49
+    assert body["carbon_footprint_max"] == 2.49
+    assert body["carbon_footprint"] == 2.49
+    assert body["clothing_type"] == "반팔"
+    assert body["category"] == "상의"
+
+
+def test_carbon_range_requires_weight_input(client):
+    client.post(
+        "/auth/signup",
+        json={
+            "email": "missing-weight@example.com",
+            "password": "password123",
+            "nickname": "missing-weight-user",
+        },
+    )
+    login = client.post(
+        "/auth/login",
+        json={
+            "email": "missing-weight@example.com",
+            "password": "password123",
+        },
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    response = client.post(
+        "/api/carbon/calculate",
+        json={"materials": {"cotton": 100}},
+        headers=headers,
+    )
+    body = response.json()
+
+    assert response.status_code == 400
+    assert body["error_code"] == "WEIGHT_MISSING"
 
 
 def test_carbon_range_requires_login(client):
