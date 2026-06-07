@@ -120,7 +120,16 @@ class ClothingTypeCatalog {
   }
 
   static bool hasDefaultTitle(String title) {
-    return options.any((option) => option.defaultTitle == title);
+    final normalizedTitle = title.trim();
+
+    return options.any((option) {
+      final legacyTitle = option.isDirectWeightPlaceholder
+          ? '홍길동 기타 의류'
+          : '홍길동 ${option.label}';
+
+      return option.defaultTitle == normalizedTitle ||
+          legacyTitle == normalizedTitle;
+    });
   }
 
   static ClothingTypeOption _findByLabel(String label) {

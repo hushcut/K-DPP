@@ -69,7 +69,7 @@ void main() {
 }
 
 class _FakeAuthApiService extends AuthApiService {
-  const _FakeAuthApiService({this.user, this.history = const [], this.error});
+  _FakeAuthApiService({this.user, this.history = const [], this.error});
 
   final AuthUser? user;
   final List<AnalysisHistoryRecord> history;

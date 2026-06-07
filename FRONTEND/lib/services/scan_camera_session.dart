@@ -62,9 +62,22 @@ class ScanCameraSession extends ChangeNotifier {
       if (!canUseCamera() || requestId != _requestId) return;
 
       _isInitializing = false;
-      _errorMessage = '카메라를 불러올 수 없어요.\n카메라 권한을 확인해 주세요.';
+      _errorMessage = _buildCameraErrorMessage(e);
       notifyListeners();
     }
+  }
+
+  String _buildCameraErrorMessage(Object error) {
+    if (error is CameraException) {
+      switch (error.code) {
+        case 'CameraAccessDenied':
+        case 'CameraAccessDeniedWithoutPrompt':
+        case 'CameraAccessRestricted':
+          return '카메라 권한이 꺼져 있어요.\n기기 설정에서 K-DPP의 카메라 권한을 허용해 주세요.';
+      }
+    }
+
+    return '카메라를 시작하지 못했어요.\n잠시 후 다시 시도해 주세요.';
   }
 
   Future<void> disposeCamera() async {

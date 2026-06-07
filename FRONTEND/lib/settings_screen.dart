@@ -6,12 +6,9 @@ import 'theme_provider.dart';
 import 'widgets/app_back_button.dart';
 
 class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({
-    super.key,
-    this.authApiService = const AuthApiService(),
-  });
+  const SettingsScreen({super.key, this.authApiService});
 
-  final AuthApiService authApiService;
+  final AuthApiService? authApiService;
 
   String _themeModeLabel(ThemeMode mode) {
     switch (mode) {
@@ -25,71 +22,26 @@ class SettingsScreen extends StatelessWidget {
   }
 
   Future<void> _editNickname(BuildContext context, String currentName) async {
-    final controller = TextEditingController(text: currentName);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
     final result = await showDialog<String>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('닉네임 수정'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            style: TextStyle(
-              color: isDark ? Colors.white : const Color(0xFF111111),
-            ),
-            decoration: InputDecoration(
-              hintText: '예: 홍길동',
-              hintStyle: TextStyle(
-                color: isDark
-                    ? const Color(0xFF9A9A9A)
-                    : const Color(0xFF8C8C8C),
-              ),
-              filled: true,
-              fillColor: isDark
-                  ? const Color(0xFF2A2A2E)
-                  : const Color(0xFFF1F1F4),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 18,
-                vertical: 16,
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(18),
-                borderSide: BorderSide.none,
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('취소'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(dialogContext, controller.text.trim());
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF4A4EFE),
-              ),
-              child: const Text('저장', style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        );
-      },
+      builder: (dialogContext) => _NicknameEditDialog(currentName: currentName),
     );
 
-    if (result == null || result.trim().isEmpty) return;
+    if (result == null) return;
 
     if (!context.mounted) return;
 
-    await context.read<ClosetProvider>().setUserName(result);
+    final normalizedName = result.trim();
+
+    if (normalizedName == currentName.trim()) return;
+
+    await context.read<ClosetProvider>().setUserName(normalizedName);
 
     if (!context.mounted) return;
 
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(const SnackBar(content: Text('닉네임이 변경되었습니다.')));
+    ).showSnackBar(const SnackBar(content: Text('이 기기에 표시되는 닉네임이 변경되었습니다.')));
   }
 
   Future<void> _confirmLogout(BuildContext context) async {
@@ -127,7 +79,9 @@ class SettingsScreen extends StatelessWidget {
 
     if (accessToken != null) {
       try {
-        await authApiService.logout(accessToken: accessToken);
+        await (authApiService ?? AuthApiService()).logout(
+          accessToken: accessToken,
+        );
       } on AuthApiException catch (error) {
         serverLogoutError = error.userMessage;
       }
@@ -163,7 +117,7 @@ class SettingsScreen extends StatelessWidget {
         return AlertDialog(
           title: Text(title),
           content: const Text(
-            '이 기능은 다음 단계에서 추가할 예정입니다.',
+            '아직 준비 중인 기능이에요. 업데이트 후 사용할 수 있어요.',
             style: TextStyle(height: 1.5),
           ),
           actions: [
@@ -261,7 +215,7 @@ class SettingsScreen extends StatelessWidget {
     final primaryText = isDark ? Colors.white : const Color(0xFF111111);
     final secondaryText = isDark
         ? const Color(0xFFD1D1D6)
-        : const Color(0xFF8C8C8C);
+        : const Color(0xFF5F6368);
     final sectionText = isDark
         ? const Color(0xFF9A9A9A)
         : const Color(0xFF8E8E93);
@@ -332,7 +286,13 @@ class SettingsScreen extends StatelessWidget {
                       const SizedBox(height: 6),
                       Text(
                         userEmail,
-                        style: TextStyle(fontSize: 14, color: secondaryText),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: secondaryText,
+                          height: 1.4,
+                        ),
                       ),
                     ],
                   ),
@@ -423,6 +383,101 @@ class SettingsScreen extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _NicknameEditDialog extends StatefulWidget {
+  const _NicknameEditDialog({required this.currentName});
+
+  final String currentName;
+
+  @override
+  State<_NicknameEditDialog> createState() => _NicknameEditDialogState();
+}
+
+class _NicknameEditDialogState extends State<_NicknameEditDialog> {
+  late final TextEditingController _controller;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.currentName);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final normalizedName = _controller.text.trim();
+
+    if (normalizedName.length < 2) {
+      setState(() {
+        _errorText = '닉네임은 2자 이상 입력해 주세요.';
+      });
+      return;
+    }
+
+    Navigator.pop(context, normalizedName);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return AlertDialog(
+      title: const Text('닉네임 수정'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        textInputAction: TextInputAction.done,
+        autofillHints: const [AutofillHints.nickname],
+        style: TextStyle(
+          color: isDark ? Colors.white : const Color(0xFF111111),
+        ),
+        decoration: InputDecoration(
+          labelText: '닉네임',
+          hintText: '예: 홍길동',
+          errorText: _errorText,
+          hintStyle: TextStyle(
+            color: isDark ? const Color(0xFF9A9A9A) : const Color(0xFF5F6368),
+          ),
+          filled: true,
+          fillColor: isDark ? const Color(0xFF2A2A2E) : const Color(0xFFF1F1F4),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 18,
+            vertical: 16,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(18),
+            borderSide: BorderSide.none,
+          ),
+        ),
+        onChanged: (_) {
+          if (_errorText == null) return;
+          setState(() {
+            _errorText = null;
+          });
+        },
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('취소'),
+        ),
+        ElevatedButton(
+          onPressed: _submit,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF4A4EFE),
+          ),
+          child: const Text('저장', style: TextStyle(color: Colors.white)),
+        ),
+      ],
     );
   }
 }

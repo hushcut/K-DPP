@@ -6,9 +6,9 @@ import 'models/clothes.dart';
 enum ClosetSortOption { eco, health, latest, custom }
 
 class ClosetScreen extends StatefulWidget {
-  const ClosetScreen({super.key, this.onOpenReport});
+  const ClosetScreen({super.key, required this.onOpenReport});
 
-  final ValueChanged<Clothes>? onOpenReport;
+  final ValueChanged<Clothes> onOpenReport;
 
   @override
   State<ClosetScreen> createState() => _ClosetScreenState();
@@ -336,7 +336,9 @@ class _ClosetScreenState extends State<ClosetScreen> {
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryText = isDark ? Colors.white : const Color(0xFF1A1A1A);
-    final secondaryText = isDark ? const Color(0xFFD1D1D6) : Colors.grey;
+    final secondaryText = isDark
+        ? const Color(0xFFD1D1D6)
+        : const Color(0xFF5F6368);
     final baseCardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
     final borderColor = isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade200;
     final selectedBgColor = isDark
@@ -428,6 +430,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
                               ),
                             IconButton(
                               onPressed: _showSortBottomSheet,
+                              tooltip: '옷장 정렬',
                               icon: const Icon(
                                 Icons.sort,
                                 color: Color(0xFF4A4EFE),
@@ -444,15 +447,17 @@ class _ClosetScreenState extends State<ClosetScreen> {
                     style: TextStyle(color: secondaryText, fontSize: 13),
                   ),
                   const SizedBox(height: 6),
-                  SizedBox(
-                    height: 18,
-                    child: Text(
-                      _sortOption == ClosetSortOption.custom
-                          ? (_reorderMode
-                                ? '드래그해서 순서를 바꿔 보세요.'
-                                : '내설정순으로 정렬되어 있어요.')
-                          : '원하는 방식으로 옷장을 정리해 보세요.',
-                      style: TextStyle(color: secondaryText, fontSize: 12),
+                  Text(
+                    _sortOption == ClosetSortOption.custom
+                        ? (_reorderMode
+                              ? '드래그해서 순서를 바꿔 보세요.'
+                              : '내설정순으로 정렬되어 있어요.')
+                        : '원하는 방식으로 옷장을 정리해 보세요.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: secondaryText,
+                      fontSize: 12,
+                      height: 1.4,
                     ),
                   ),
                 ],
@@ -587,7 +592,14 @@ class _ClosetScreenState extends State<ClosetScreen> {
   }) {
     if (clothes.isEmpty) {
       return Center(
-        child: Text(emptyMessage, style: TextStyle(color: secondaryText)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            emptyMessage,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: secondaryText, height: 1.5),
+          ),
+        ),
       );
     }
 
@@ -653,7 +665,14 @@ class _ClosetScreenState extends State<ClosetScreen> {
   }) {
     if (clothes.isEmpty) {
       return Center(
-        child: Text(emptyMessage, style: TextStyle(color: secondaryText)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            emptyMessage,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: secondaryText, height: 1.5),
+          ),
+        ),
       );
     }
 
@@ -716,125 +735,127 @@ class _ClosetScreenState extends State<ClosetScreen> {
   }) {
     final isSelected = _selectedItems.contains(item);
 
-    return Container(
-      decoration: BoxDecoration(
-        color: isSelected
-            ? selectedBgColor
-            : (isWarning ? warningBgColor : cardColor),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
+    return Semantics(
+      selected: isSelected,
+      child: Container(
+        decoration: BoxDecoration(
           color: isSelected
-              ? const Color(0xFF4A4EFE)
-              : (isWarning ? Colors.redAccent.shade200 : borderColor),
-          width: isSelected ? 2 : (isWarning ? 2 : 1),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: shadowColor,
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        leading: Container(
-          width: 60,
-          height: 60,
-          decoration: BoxDecoration(
-            color: isSelected
-                ? (isDark ? const Color(0xFF1C1C1E) : Colors.white)
-                : (isWarning
-                      ? (isDark ? const Color(0xFF1C1C1E) : Colors.white)
-                      : leadingBgColor),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(
-            Icons.checkroom,
+              ? selectedBgColor
+              : (isWarning ? warningBgColor : cardColor),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
             color: isSelected
                 ? const Color(0xFF4A4EFE)
-                : (isWarning ? Colors.redAccent : secondaryText),
-            size: 30,
+                : (isWarning ? Colors.redAccent.shade200 : borderColor),
+            width: isSelected ? 2 : (isWarning ? 2 : 1),
           ),
+          boxShadow: [
+            BoxShadow(
+              color: shadowColor,
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
-        title: Text(
-          title,
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
-            color: primaryText,
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 8,
           ),
-        ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 8.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                category,
-                style: TextStyle(color: secondaryText, fontSize: 12),
-              ),
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  Icon(statusIcon, color: statusColor, size: 16),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      status,
-                      style: TextStyle(
-                        color: statusColor,
-                        fontWeight: isWarning
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                        fontSize: 13,
+          leading: Container(
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? (isDark ? const Color(0xFF1C1C1E) : Colors.white)
+                  : (isWarning
+                        ? (isDark ? const Color(0xFF1C1C1E) : Colors.white)
+                        : leadingBgColor),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              Icons.checkroom,
+              color: isSelected
+                  ? const Color(0xFF4A4EFE)
+                  : (isWarning ? Colors.redAccent : secondaryText),
+              size: 30,
+            ),
+          ),
+          title: Text(
+            title,
+            maxLines: 2,
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+              color: primaryText,
+            ),
+          ),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 8.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  category,
+                  style: TextStyle(color: secondaryText, fontSize: 12),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(statusIcon, color: statusColor, size: 16),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        status,
+                        maxLines: 2,
+                        style: TextStyle(
+                          color: statusColor,
+                          fontWeight: isWarning
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          fontSize: 13,
+                        ),
                       ),
-                      overflow: TextOverflow.ellipsis,
                     ),
-                  ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+              ],
+            ),
           ),
+          trailing: showDragHandle
+              ? Icon(Icons.drag_handle, color: secondaryText)
+              : (_selectionMode
+                    ? Icon(
+                        isSelected
+                            ? Icons.check_circle
+                            : Icons.radio_button_unchecked,
+                        color: isSelected
+                            ? const Color(0xFF4A4EFE)
+                            : secondaryText,
+                      )
+                    : Icon(Icons.chevron_right, color: secondaryText)),
+          onTap: disableTap
+              ? null
+              : () {
+                  if (_selectionMode) {
+                    _toggleSelection(item);
+                    return;
+                  }
+
+                  context.read<ClosetProvider>().selectClothes(item);
+
+                  widget.onOpenReport(item);
+                },
+          onLongPress: disableTap
+              ? null
+              : () {
+                  if (_selectionMode) {
+                    _toggleSelection(item);
+                    return;
+                  }
+                  _enterSelectionMode(item);
+                },
         ),
-        trailing: showDragHandle
-            ? Icon(Icons.drag_handle, color: secondaryText)
-            : (_selectionMode
-                  ? Icon(
-                      isSelected
-                          ? Icons.check_circle
-                          : Icons.radio_button_unchecked,
-                      color: isSelected
-                          ? const Color(0xFF4A4EFE)
-                          : secondaryText,
-                    )
-                  : Icon(Icons.chevron_right, color: secondaryText)),
-        onTap: disableTap
-            ? null
-            : () {
-                if (_selectionMode) {
-                  _toggleSelection(item);
-                  return;
-                }
-
-                context.read<ClosetProvider>().selectClothes(item);
-
-                if (widget.onOpenReport != null) {
-                  widget.onOpenReport!(item);
-                  return;
-                }
-
-                Navigator.pushNamed(context, '/report', arguments: item);
-              },
-        onLongPress: disableTap
-            ? null
-            : () {
-                if (_selectionMode) {
-                  _toggleSelection(item);
-                  return;
-                }
-                _enterSelectionMode(item);
-              },
       ),
     );
   }

@@ -29,7 +29,7 @@ class _SignupScreenState extends State<SignupScreen> {
   @override
   void initState() {
     super.initState();
-    _authApiService = widget.authApiService ?? const AuthApiService();
+    _authApiService = widget.authApiService ?? AuthApiService();
   }
 
   @override
@@ -137,6 +137,7 @@ class _SignupScreenState extends State<SignupScreen> {
   }
 
   InputDecoration _inputDecoration({
+    required String labelText,
     required String hintText,
     Widget? suffixIcon,
   }) {
@@ -152,8 +153,10 @@ class _SignupScreenState extends State<SignupScreen> {
         : Colors.transparent;
 
     return InputDecoration(
+      labelText: labelText,
       hintText: hintText,
-      hintStyle: TextStyle(color: hintColor, fontSize: 16),
+      labelStyle: TextStyle(color: hintColor, fontSize: 15),
+      hintStyle: TextStyle(color: hintColor, fontSize: 15),
       filled: true,
       fillColor: fillColor,
       contentPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 22),
@@ -257,37 +260,54 @@ class _SignupScreenState extends State<SignupScreen> {
                         const SizedBox(height: 36),
                         TextFormField(
                           controller: _nicknameController,
+                          textInputAction: TextInputAction.next,
+                          autofillHints: const [AutofillHints.nickname],
                           validator: _validateNickname,
                           style: TextStyle(color: primaryText),
                           cursorColor: const Color(0xFF4A4EFE),
                           decoration: _inputDecoration(
-                            hintText: '닉네임 (예: 홍길동)',
+                            labelText: '닉네임',
+                            hintText: '예: 홍길동',
                           ),
                         ),
                         const SizedBox(height: 16),
                         TextFormField(
                           controller: _emailController,
                           keyboardType: TextInputType.emailAddress,
+                          textInputAction: TextInputAction.next,
+                          autofillHints: const [AutofillHints.email],
+                          autocorrect: false,
                           validator: _validateEmail,
                           style: TextStyle(color: primaryText),
                           cursorColor: const Color(0xFF4A4EFE),
-                          decoration: _inputDecoration(hintText: '이메일'),
+                          decoration: _inputDecoration(
+                            labelText: '이메일',
+                            hintText: 'honggildong@example.com',
+                          ),
                         ),
                         const SizedBox(height: 16),
                         TextFormField(
                           controller: _passwordController,
                           obscureText: _obscurePassword,
+                          textInputAction: TextInputAction.next,
+                          autofillHints: const [AutofillHints.newPassword],
+                          enableSuggestions: false,
+                          autocorrect: false,
                           validator: _validatePassword,
                           style: TextStyle(color: primaryText),
                           cursorColor: const Color(0xFF4A4EFE),
                           decoration: _inputDecoration(
-                            hintText: '비밀번호',
+                            labelText: '비밀번호',
+                            hintText: '8자 이상 입력',
                             suffixIcon: IconButton(
                               onPressed: () {
                                 setState(() {
                                   _obscurePassword = !_obscurePassword;
                                 });
                               },
+                              tooltip: _obscurePassword
+                                  ? '비밀번호 표시'
+                                  : '비밀번호 숨기기',
                               icon: Icon(
                                 _obscurePassword
                                     ? Icons.visibility_off_outlined
@@ -301,11 +321,16 @@ class _SignupScreenState extends State<SignupScreen> {
                         TextFormField(
                           controller: _confirmPasswordController,
                           obscureText: _obscureConfirmPassword,
+                          textInputAction: TextInputAction.done,
+                          autofillHints: const [AutofillHints.newPassword],
+                          enableSuggestions: false,
+                          autocorrect: false,
                           validator: _validateConfirmPassword,
                           style: TextStyle(color: primaryText),
                           cursorColor: const Color(0xFF4A4EFE),
                           decoration: _inputDecoration(
-                            hintText: '비밀번호 확인',
+                            labelText: '비밀번호 확인',
+                            hintText: '비밀번호 다시 입력',
                             suffixIcon: IconButton(
                               onPressed: () {
                                 setState(() {
@@ -313,6 +338,9 @@ class _SignupScreenState extends State<SignupScreen> {
                                       !_obscureConfirmPassword;
                                 });
                               },
+                              tooltip: _obscureConfirmPassword
+                                  ? '비밀번호 확인 표시'
+                                  : '비밀번호 확인 숨기기',
                               icon: Icon(
                                 _obscureConfirmPassword
                                     ? Icons.visibility_off_outlined
@@ -321,6 +349,11 @@ class _SignupScreenState extends State<SignupScreen> {
                               ),
                             ),
                           ),
+                          onFieldSubmitted: (_) {
+                            if (!_isLoading) {
+                              _handleSignup();
+                            }
+                          },
                         ),
                         const SizedBox(height: 32),
                         SizedBox(
@@ -337,12 +370,16 @@ class _SignupScreenState extends State<SignupScreen> {
                               ),
                             ),
                             child: _isLoading
-                                ? const SizedBox(
-                                    width: 22,
-                                    height: 22,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.4,
-                                      color: Colors.white,
+                                ? Semantics(
+                                    label: '회원가입 처리 중',
+                                    liveRegion: true,
+                                    child: const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.4,
+                                        color: Colors.white,
+                                      ),
                                     ),
                                   )
                                 : const Text(
@@ -363,12 +400,15 @@ class _SignupScreenState extends State<SignupScreen> {
                               '/email-login',
                             );
                           },
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                          ),
                           child: Text(
                             '이미 계정이 있으신가요? 로그인',
                             style: TextStyle(
                               color: isDark
                                   ? const Color(0xFFB8B8BE)
-                                  : const Color(0xFF9A9A9A),
+                                  : const Color(0xFF5F6368),
                               fontSize: 14,
                               decoration: TextDecoration.underline,
                             ),

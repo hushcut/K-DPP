@@ -6,11 +6,11 @@ import 'services/auth_session_validation_service.dart';
 class SplashScreen extends StatefulWidget {
   const SplashScreen({
     super.key,
-    this.authSessionValidationService = const AuthSessionValidationService(),
+    this.authSessionValidationService,
     this.minimumDisplayDuration = const Duration(milliseconds: 1200),
   });
 
-  final AuthSessionValidationService authSessionValidationService;
+  final AuthSessionValidationService? authSessionValidationService;
   final Duration minimumDisplayDuration;
 
   @override
@@ -22,10 +22,14 @@ class _SplashScreenState extends State<SplashScreen>
   late final AnimationController _controller;
   late final Animation<double> _fadeAnimation;
   late final Animation<double> _scaleAnimation;
+  late final AuthSessionValidationService _authSessionValidationService;
 
   @override
   void initState() {
     super.initState();
+
+    _authSessionValidationService =
+        widget.authSessionValidationService ?? AuthSessionValidationService();
 
     _controller = AnimationController(
       vsync: this,
@@ -56,7 +60,7 @@ class _SplashScreenState extends State<SplashScreen>
       final accessToken = provider.accessToken;
 
       if (provider.isAuthenticated && accessToken != null) {
-        final validation = await widget.authSessionValidationService.validate(
+        final validation = await _authSessionValidationService.validate(
           accessToken: accessToken,
         );
 

@@ -4,8 +4,10 @@ import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'models/clothes.dart';
 import 'models/clothing_type_option.dart';
+import 'models/main_screen_arguments.dart';
 import 'services/scan_analysis_service.dart';
 import 'services/carbon_api_service.dart';
+import 'services/material_catalog_api_service.dart';
 import 'services/scan_camera_lifecycle_service.dart';
 import 'services/scan_camera_session.dart';
 import 'services/scan_capture_service.dart';
@@ -37,8 +39,10 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
 
   File? _selectedImage;
 
-  final ScanAnalysisService _scanAnalysisService = const ScanAnalysisService();
-  final CarbonApiService _carbonApiService = const CarbonApiService();
+  final ScanAnalysisService _scanAnalysisService = ScanAnalysisService();
+  final CarbonApiService _carbonApiService = CarbonApiService();
+  final MaterialCatalogApiService _materialCatalogApiService =
+      MaterialCatalogApiService();
   final ScanCaptureService _scanCaptureService = ScanCaptureService();
   final ScanDraftService _scanDraftService = const ScanDraftService();
   final ScanSaveService _scanSaveService = const ScanSaveService();
@@ -53,6 +57,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   double? _serverCarbonFootprint;
   double? _serverWeightGram;
   String? _serverCalculationMethod;
+  List<MaterialCatalogItem> _materialCatalog = const [];
 
   final MaterialInputCollection _materialInputs = MaterialInputCollection();
   final TextEditingController _titleController = TextEditingController();
@@ -76,6 +81,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
     if (widget.isActive) {
       _cameraLifecycle.initialize();
     }
+    _loadMaterialCatalog();
   }
 
   @override
@@ -110,6 +116,20 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
 
   bool _canUseCamera() {
     return mounted && widget.isActive && !_isScanComplete && !_isScanning;
+  }
+
+  Future<void> _loadMaterialCatalog() async {
+    try {
+      final catalog = await _materialCatalogApiService.fetchMaterials();
+
+      if (!mounted) return;
+
+      setState(() {
+        _materialCatalog = catalog;
+      });
+    } catch (error) {
+      debugPrint('소재 자동완성 목록을 불러오지 못했습니다: $error');
+    }
   }
 
   Future<void> _scanImageFile(File imageFile) async {
@@ -508,8 +528,8 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
 
         Navigator.pushReplacementNamed(
           context,
-          '/report',
-          arguments: clothesToSave,
+          '/main',
+          arguments: MainScreenArguments(initialIndex: 1, showReport: true),
         );
     }
   }
@@ -575,6 +595,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       titleController: _titleController,
       selectedClothingType: _selectedClothingType,
       materialInputs: _materialInputs,
+      materialCatalog: _materialCatalog,
       scannedCare: _scannedCare,
       originalMaterials: _originalScannedMaterials,
       serverHealth: _serverHealth,

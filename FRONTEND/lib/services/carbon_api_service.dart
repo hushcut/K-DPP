@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import '../config/api_environment.dart';
+
 enum CarbonApiErrorType {
   badRequest,
   unauthorized,
@@ -31,22 +33,22 @@ class CarbonApiException implements Exception {
     switch (type) {
       case CarbonApiErrorType.badRequest:
         if (unknownMaterials.isNotEmpty) {
-          return '서버에 등록되지 않은 소재가 있어요: ${unknownMaterials.join(', ')}. '
-              '로컬 추정값으로 저장했어요.';
+          return '탄소 기준 정보가 없는 소재가 있어요: ${unknownMaterials.join(', ')}. '
+              '임시 추정값으로 저장했어요.';
         }
-        return '$message 로컬 추정값으로 저장했어요.';
+        return '입력한 소재 정보로 정확한 탄소량을 계산하지 못해 임시 추정값으로 저장했어요.';
       case CarbonApiErrorType.unauthorized:
-        return '로그인 세션이 만료되어 서버 계산을 사용할 수 없어요. 로컬 추정값으로 저장했어요.';
+        return '로그인 정보가 만료되어 임시 추정값으로 저장했어요. 다시 로그인해 주세요.';
       case CarbonApiErrorType.server:
-        return '탄소 계산 서버에 문제가 발생했어요. 로컬 추정값으로 저장했어요.';
+        return '탄소 계산 서비스에 일시적인 문제가 생겨 임시 추정값으로 저장했어요.';
       case CarbonApiErrorType.network:
-        return '서버에 연결할 수 없어 로컬 추정값으로 저장했어요.';
+        return '인터넷에 연결할 수 없어 임시 추정값으로 저장했어요.';
       case CarbonApiErrorType.timeout:
-        return '서버 계산 시간이 초과되어 로컬 추정값으로 저장했어요.';
+        return '탄소 계산이 오래 걸려 임시 추정값으로 저장했어요.';
       case CarbonApiErrorType.invalidResponse:
-        return '서버 계산 결과를 읽지 못해 로컬 추정값으로 저장했어요.';
+        return '탄소 계산 결과를 확인하지 못해 임시 추정값으로 저장했어요.';
       case CarbonApiErrorType.unknown:
-        return '서버 계산 중 오류가 발생해 로컬 추정값으로 저장했어요.';
+        return '정확한 탄소량을 계산하지 못해 임시 추정값으로 저장했어요.';
     }
   }
 
@@ -197,11 +199,8 @@ class CarbonCalculationResult {
 }
 
 class CarbonApiService {
-  const CarbonApiService({
-    this.endpoint = const String.fromEnvironment(
-      'CARBON_API_ENDPOINT',
-      defaultValue: 'http://10.0.2.2:8000/api/carbon/calculate',
-    ),
+  CarbonApiService({
+    String? endpoint,
     this.requestHeaders = const {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
@@ -209,7 +208,7 @@ class CarbonApiService {
     },
     this.requestTimeout = const Duration(seconds: 20),
     this.client,
-  });
+  }) : endpoint = endpoint ?? ApiEnvironment.carbonEndpoint;
 
   final String endpoint;
   final Map<String, String> requestHeaders;

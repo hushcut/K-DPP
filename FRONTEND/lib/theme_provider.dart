@@ -4,7 +4,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 class ThemeProvider extends ChangeNotifier {
   static const String _themeModeKey = 'theme_mode';
 
-  final SharedPreferencesAsync _prefs = SharedPreferencesAsync();
+  ThemeProvider({SharedPreferencesAsync? preferences})
+    : _preferences = preferences;
+
+  SharedPreferencesAsync? _preferences;
+
+  SharedPreferencesAsync get _prefs =>
+      _preferences ??= SharedPreferencesAsync();
 
   ThemeMode _themeMode = ThemeMode.system;
 

@@ -4,7 +4,9 @@ import 'closet_provider.dart';
 import 'models/clothes.dart';
 
 class ReportScreen extends StatelessWidget {
-  const ReportScreen({super.key});
+  const ReportScreen({super.key, this.onDeleted});
+
+  final VoidCallback? onDeleted;
 
   @override
   Widget build(BuildContext context) {
@@ -21,7 +23,9 @@ class ReportScreen extends StatelessWidget {
     final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
     final borderColor = isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade200;
     final primaryText = isDark ? Colors.white : const Color(0xFF1A1A1A);
-    final secondaryText = isDark ? const Color(0xFFD1D1D6) : Colors.grey;
+    final secondaryText = isDark
+        ? const Color(0xFFD1D1D6)
+        : const Color(0xFF5F6368);
     final softCardColor = isDark
         ? const Color(0xFF2A2A2E)
         : const Color(0xFFF8F9FC);
@@ -61,12 +65,14 @@ class ReportScreen extends StatelessWidget {
                   size: 28,
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  '디지털 제품 여권 (DPP)',
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: primaryText,
+                Expanded(
+                  child: Text(
+                    '디지털 제품 여권 (DPP)',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: primaryText,
+                    ),
                   ),
                 ),
               ],
@@ -113,45 +119,59 @@ class ReportScreen extends StatelessWidget {
             _buildHealthStatusCard(item.health, isDark: isDark),
             const SizedBox(height: 24),
 
-            Row(
-              children: [
-                Expanded(
-                  child: _buildSummaryCard(
-                    title: '총 탄소발자국',
-                    value: '${item.carbonFootprint.toStringAsFixed(1)} kg',
-                    subtitle:
-                        item.carbonFootprintSource ==
-                            CarbonFootprintSource.server
-                        ? item.carbonFootprintMin != null &&
-                                  item.carbonFootprintMax != null
-                              ? '${item.carbonFootprintMin!.toStringAsFixed(1)}~${item.carbonFootprintMax!.toStringAsFixed(1)} kg CO2eq'
-                              : 'CO2eq 기준 백엔드 계산값'
-                        : 'CO2eq 기준 임시 추정값',
-                    icon: Icons.eco_outlined,
-                    color: const Color(0xFF4A4EFE),
-                    primaryText: primaryText,
-                    secondaryText: secondaryText,
-                    cardColor: cardColor,
-                    borderColor: borderColor,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildSummaryCard(
-                    title: '주요 소재',
-                    value: mainMaterial,
-                    subtitle: materialsText.isEmpty
-                        ? '소재 정보 없음'
-                        : materialsText,
-                    icon: Icons.checkroom_outlined,
-                    color: Colors.green,
-                    primaryText: primaryText,
-                    secondaryText: secondaryText,
-                    cardColor: cardColor,
-                    borderColor: borderColor,
-                  ),
-                ),
-              ],
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final textScale = MediaQuery.textScalerOf(context).scale(1);
+                final useVerticalLayout =
+                    constraints.maxWidth < 380 || textScale > 1.25;
+                final carbonCard = _buildSummaryCard(
+                  title: '총 탄소발자국',
+                  value: '${item.carbonFootprint.toStringAsFixed(1)} kg',
+                  subtitle:
+                      item.carbonFootprintSource == CarbonFootprintSource.server
+                      ? item.carbonFootprintMin != null &&
+                                item.carbonFootprintMax != null
+                            ? '${item.carbonFootprintMin!.toStringAsFixed(1)}~${item.carbonFootprintMax!.toStringAsFixed(1)} kg CO2eq'
+                            : 'CO2eq 기준 서버 계산값'
+                      : 'CO2eq 기준 임시 추정값',
+                  icon: Icons.eco_outlined,
+                  color: const Color(0xFF4A4EFE),
+                  primaryText: primaryText,
+                  secondaryText: secondaryText,
+                  cardColor: cardColor,
+                  borderColor: borderColor,
+                );
+                final materialCard = _buildSummaryCard(
+                  title: '주요 소재',
+                  value: mainMaterial,
+                  subtitle: materialsText.isEmpty ? '소재 정보 없음' : materialsText,
+                  icon: Icons.checkroom_outlined,
+                  color: Colors.green,
+                  primaryText: primaryText,
+                  secondaryText: secondaryText,
+                  cardColor: cardColor,
+                  borderColor: borderColor,
+                );
+
+                if (useVerticalLayout) {
+                  return Column(
+                    children: [
+                      carbonCard,
+                      const SizedBox(height: 12),
+                      materialCard,
+                    ],
+                  );
+                }
+
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: carbonCard),
+                    const SizedBox(width: 12),
+                    Expanded(child: materialCard),
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 24),
 
@@ -169,7 +189,7 @@ class ReportScreen extends StatelessWidget {
                   ? item.carbonFootprintMin != null &&
                             item.carbonFootprintMax != null
                         ? '평균 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 범위 ${item.carbonFootprintMin!.toStringAsFixed(1)}~${item.carbonFootprintMax!.toStringAsFixed(1)} kg'
-                        : '총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 무게 기반 백엔드 계산'
+                        : '총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 무게 기반 서버 계산'
                   : '총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 소재와 무게 기반 임시 추정',
               style: TextStyle(color: secondaryText, fontSize: 13),
             ),
@@ -275,48 +295,37 @@ class ReportScreen extends StatelessWidget {
 
             SizedBox(
               width: double.infinity,
-              height: 54,
-              child: OutlinedButton.icon(
-                onPressed: () => _showCertificateDialog(context, item),
-                icon: const Icon(Icons.qr_code, color: Color(0xFF4A4EFE)),
-                label: const Text(
-                  '중고 거래용 DPP 인증서 발급',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF4A4EFE),
-                  ),
-                ),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Color(0xFF4A4EFE), width: 2),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            SizedBox(
-              width: double.infinity,
-              height: 54,
-              child: ElevatedButton.icon(
+              child: ElevatedButton(
                 onPressed: () =>
                     _showDisposalBottomSheet(context, item, disposalGuide),
-                icon: const Icon(Icons.recycling, color: Colors.white),
-                label: const Text(
-                  '올바른 폐기 방법 보기',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green,
+                  minimumSize: const Size.fromHeight(54),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.recycling, color: Colors.white),
+                    SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        '올바른 폐기 방법 보기',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -324,23 +333,37 @@ class ReportScreen extends StatelessWidget {
 
             SizedBox(
               width: double.infinity,
-              height: 52,
-              child: OutlinedButton.icon(
-                onPressed: () => _confirmDelete(context, item),
-                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                label: const Text(
-                  '이 의류 삭제하기',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.redAccent,
-                  ),
-                ),
+              child: OutlinedButton(
+                onPressed: () =>
+                    _confirmDelete(context, item, onDeleted: onDeleted),
                 style: OutlinedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(52),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
                   side: const BorderSide(color: Colors.redAccent, width: 1.5),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.delete_outline, color: Colors.redAccent),
+                    SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        '이 의류 삭제하기',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.redAccent,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -350,7 +373,11 @@ class ReportScreen extends StatelessWidget {
     );
   }
 
-  static Future<void> _confirmDelete(BuildContext context, Clothes item) async {
+  static Future<void> _confirmDelete(
+    BuildContext context,
+    Clothes item, {
+    VoidCallback? onDeleted,
+  }) async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     final confirmed = await showDialog<bool>(
@@ -399,6 +426,11 @@ class ReportScreen extends StatelessWidget {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('"${item.title}"이(가) 삭제되었습니다.')));
+
+    if (onDeleted != null) {
+      onDeleted();
+      return;
+    }
 
     Navigator.pushReplacementNamed(context, '/main', arguments: 2);
   }
@@ -610,62 +642,6 @@ class ReportScreen extends StatelessWidget {
     return total;
   }
 
-  static void _showCertificateDialog(BuildContext context, Clothes item) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-          title: Text(
-            'DPP 인증서 발급',
-            style: TextStyle(
-              color: isDark ? Colors.white : const Color(0xFF111111),
-            ),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.verified, color: Color(0xFF4A4EFE), size: 52),
-              const SizedBox(height: 16),
-              Text(
-                '${item.title}의 DPP 요약 인증서를 발급할 수 있습니다.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  height: 1.5,
-                  color: isDark ? Colors.white : const Color(0xFF111111),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                '현재는 시연용 안내 단계이며, 이후 QR 기반 인증서 공유 기능과 연결할 예정입니다.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: isDark
-                      ? const Color(0xFFD1D1D6)
-                      : Colors.grey.shade700,
-                  fontSize: 13,
-                  height: 1.5,
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('닫기'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('확인'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   static void _showDisposalBottomSheet(
     BuildContext context,
     Clothes item,
@@ -789,15 +765,17 @@ class ReportScreen extends StatelessWidget {
           ),
         ],
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Column(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final textScale = MediaQuery.textScalerOf(context).scale(1);
+          final useVerticalLayout =
+              constraints.maxWidth < 290 || textScale > 1.35;
+          final healthValue = Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
                 '현재 건강 상태',
-                style: TextStyle(color: Colors.white70, fontSize: 14),
+                style: TextStyle(color: Colors.white, fontSize: 14),
               ),
               const SizedBox(height: 4),
               Text(
@@ -809,8 +787,8 @@ class ReportScreen extends StatelessWidget {
                 ),
               ),
             ],
-          ),
-          Container(
+          );
+          final statusBadge = Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.20),
@@ -835,8 +813,20 @@ class ReportScreen extends StatelessWidget {
                 ),
               ],
             ),
-          ),
-        ],
+          );
+
+          if (useVerticalLayout) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [healthValue, const SizedBox(height: 12), statusBadge],
+            );
+          }
+
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [healthValue, const SizedBox(width: 12), statusBadge],
+          );
+        },
       ),
     );
   }
@@ -877,8 +867,6 @@ class ReportScreen extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             subtitle,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
             style: TextStyle(fontSize: 12, color: secondaryText, height: 1.4),
           ),
         ],
@@ -936,59 +924,71 @@ class ReportScreen extends StatelessWidget {
   }) {
     final percent = (stage.ratio * 100).round();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
+        final useVerticalHeader =
+            constraints.maxWidth < 250 || textScale > 1.35;
+
+        final labelWidget = Text(
+          stage.label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: primaryText,
+          ),
+        );
+        final valueWidget = Text(
+          '${stage.carbonKg.toStringAsFixed(1)} kg · $percent%',
+          style: TextStyle(
+            fontSize: 12,
+            color: primaryText,
+            fontWeight: FontWeight.w600,
+          ),
+          textAlign: useVerticalHeader ? TextAlign.left : TextAlign.right,
+        );
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Text(
-                stage.label,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: primaryText,
+            if (useVerticalHeader) ...[
+              labelWidget,
+              const SizedBox(height: 4),
+              valueWidget,
+            ] else
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: labelWidget),
+                  const SizedBox(width: 8),
+                  Flexible(child: valueWidget),
+                ],
+              ),
+            const SizedBox(height: 8),
+            Stack(
+              children: [
+                Container(
+                  height: 16,
+                  decoration: BoxDecoration(
+                    color: softCardColor,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
-              ),
-            ),
-            Text(
-              '${stage.carbonKg.toStringAsFixed(1)} kg',
-              style: TextStyle(
-                fontSize: 12,
-                color: primaryText,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              '$percent%',
-              style: TextStyle(fontSize: 12, color: secondaryText),
+                FractionallySizedBox(
+                  widthFactor: stage.ratio,
+                  child: Container(
+                    height: 16,
+                    decoration: BoxDecoration(
+                      color: stage.color,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
-        ),
-        const SizedBox(height: 8),
-        Stack(
-          children: [
-            Container(
-              height: 16,
-              decoration: BoxDecoration(
-                color: softCardColor,
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            FractionallySizedBox(
-              widthFactor: stage.ratio,
-              child: Container(
-                height: 16,
-                decoration: BoxDecoration(
-                  color: stage.color,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
+        );
+      },
     );
   }
 
@@ -1017,12 +1017,14 @@ class ReportScreen extends StatelessWidget {
             children: [
               Icon(icon, color: color),
               const SizedBox(width: 8),
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                  color: primaryText,
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: primaryText,
+                  ),
                 ),
               ),
             ],
@@ -1068,32 +1070,46 @@ class ReportScreen extends StatelessWidget {
     required Color primaryText,
     required Color secondaryText,
   }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 100,
-            child: Text(
-              title,
-              style: TextStyle(color: secondaryText, fontSize: 15),
-            ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
+        final useVerticalLayout =
+            constraints.maxWidth < 320 || textScale > 1.35;
+        final titleWidget = Text(
+          title,
+          style: TextStyle(color: secondaryText, fontSize: 15),
+        );
+        final valueWidget = Text(
+          value,
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 15,
+            height: 1.5,
+            color: primaryText,
           ),
-          Expanded(
-            child: Text(
-              value,
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 15,
-                height: 1.5,
-                color: primaryText,
-              ),
-              textAlign: TextAlign.right,
-            ),
-          ),
-        ],
-      ),
+          textAlign: useVerticalLayout ? TextAlign.left : TextAlign.right,
+        );
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10.0),
+          child: useVerticalLayout
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    titleWidget,
+                    const SizedBox(height: 4),
+                    valueWidget,
+                  ],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(width: 100, child: titleWidget),
+                    Expanded(child: valueWidget),
+                  ],
+                ),
+        );
+      },
     );
   }
 
@@ -1104,26 +1120,32 @@ class ReportScreen extends StatelessWidget {
   }) {
     final bgColor = isDark ? const Color(0xFF232A45) : const Color(0xFFEEF1FF);
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: const Color(0xFF4A4EFE)),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(
-              color: Color(0xFF4A4EFE),
-              fontWeight: FontWeight.w600,
-              fontSize: 12,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 220),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: const Color(0xFF4A4EFE)),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                label,
+                softWrap: true,
+                style: const TextStyle(
+                  color: Color(0xFF4A4EFE),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

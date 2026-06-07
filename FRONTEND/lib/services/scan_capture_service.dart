@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'scan_camera_session.dart';
@@ -85,6 +86,17 @@ class ScanCaptureService {
         imageFile: File(image.path),
         shouldDeleteAfterAnalysis: false,
       );
+    } on PlatformException catch (e) {
+      debugPrint('앨범 접근 실패: ${e.code} ${e.message}');
+
+      final code = e.code.toLowerCase();
+      if (code.contains('permission') || code.contains('access')) {
+        return const ScanCaptureFailure(
+          '사진 접근 권한이 꺼져 있어요. 기기 설정에서 K-DPP의 사진 권한을 허용해 주세요.',
+        );
+      }
+
+      return const ScanCaptureFailure('앨범에서 사진을 불러오지 못했어요. 다시 시도해 주세요.');
     } catch (e) {
       debugPrint('앨범 이미지 선택 실패: $e');
 

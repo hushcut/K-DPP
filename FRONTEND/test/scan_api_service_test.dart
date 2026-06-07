@@ -26,7 +26,7 @@ void main() {
 
   group('ScanApiService configuration', () {
     test('uses the Android emulator endpoint by default', () {
-      const service = ScanApiService();
+      final service = ScanApiService();
 
       expect(service.endpoint, 'http://10.0.2.2:8000/api/scan');
     });

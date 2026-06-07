@@ -19,7 +19,9 @@ class HomeScreen extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     final primaryText = isDark ? Colors.white : const Color(0xFF1A1A1A);
-    final secondaryText = isDark ? const Color(0xFFD1D1D6) : Colors.grey;
+    final secondaryText = isDark
+        ? const Color(0xFFD1D1D6)
+        : const Color(0xFF5F6368);
     final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
     final cardBorderColor = isDark
         ? const Color(0xFF2C2C2E)
@@ -30,7 +32,7 @@ class HomeScreen extends StatelessWidget {
     final tipShadowColor = isDark
         ? Colors.black.withValues(alpha: 0.18)
         : Colors.black.withValues(alpha: 0.02);
-    final bottomContentPadding = MediaQuery.paddingOf(context).bottom + 190;
+    final bottomContentPadding = MediaQuery.paddingOf(context).bottom + 48;
 
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(20, 20, 20, bottomContentPadding),
@@ -95,13 +97,15 @@ class HomeScreen extends StatelessWidget {
               secondaryText: secondaryText,
             )
           else
-            ...recentItems.map(
-              (item) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
+            ...recentItems.indexed.map(
+              (entry) => Padding(
+                padding: EdgeInsets.only(
+                  bottom: entry.$1 == recentItems.length - 1 ? 0 : 12,
+                ),
                 child: _buildLifeExpectancyCard(
-                  title: item.title,
-                  percentage: item.health,
-                  subtitle: _buildHealthSubtitle(item),
+                  title: entry.$2.title,
+                  percentage: entry.$2.health,
+                  subtitle: _buildHealthSubtitle(entry.$2),
                   cardColor: cardColor,
                   cardBorderColor: cardBorderColor,
                   primaryText: primaryText,
@@ -145,11 +149,13 @@ class HomeScreen extends StatelessWidget {
         children: [
           const Text(
             '내 옷장 탄소 현황',
-            style: TextStyle(color: Colors.white70, fontSize: 14),
+            style: TextStyle(color: Colors.white, fontSize: 14),
           ),
           const SizedBox(height: 8),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.end,
+            spacing: 6,
+            runSpacing: 2,
             children: [
               Text(
                 totalCarbon.toStringAsFixed(1),
@@ -159,7 +165,6 @@ class HomeScreen extends StatelessWidget {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(width: 6),
               const Padding(
                 padding: EdgeInsets.only(bottom: 4),
                 child: Text(
@@ -175,28 +180,30 @@ class HomeScreen extends StatelessWidget {
                 ? '등록된 의류 $clothesCount벌 기준으로 집계된 값입니다.'
                 : '의류를 등록하면 탄소 현황이 자동으로 집계됩니다.',
             style: const TextStyle(
-              color: Colors.white70,
+              color: Colors.white,
               fontSize: 13,
               height: 1.5,
             ),
           ),
           const SizedBox(height: 16),
           Container(
+            width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.20),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
-              mainAxisSize: MainAxisSize.min,
               children: [
                 const Icon(Icons.park, color: Colors.white, size: 18),
                 const SizedBox(width: 8),
-                Text(
-                  savedTrees > 0
-                      ? '소나무 약 $savedTrees그루 규모와 비슷해요'
-                      : '의류를 등록해 탄소 정보를 확인해 보세요',
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                Expanded(
+                  child: Text(
+                    savedTrees > 0
+                        ? '소나무 약 $savedTrees그루 규모와 비슷해요'
+                        : '의류를 등록해 탄소 정보를 확인해 보세요',
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  ),
                 ),
               ],
             ),
@@ -375,7 +382,7 @@ class HomeScreen extends StatelessWidget {
                     fontSize: 15,
                     color: primaryText,
                   ),
-                  overflow: TextOverflow.ellipsis,
+                  maxLines: 2,
                 ),
               ),
               const SizedBox(width: 8),
@@ -389,13 +396,19 @@ class HomeScreen extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: percentage / 100,
-              backgroundColor: progressBackgroundColor,
-              color: statusColor,
-              minHeight: 8,
+          Semantics(
+            label: '건강 상태 $percentage퍼센트',
+            value: '$percentage%',
+            child: ExcludeSemantics(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: percentage / 100,
+                  backgroundColor: progressBackgroundColor,
+                  color: statusColor,
+                  minHeight: 8,
+                ),
+              ),
             ),
           ),
           const SizedBox(height: 12),

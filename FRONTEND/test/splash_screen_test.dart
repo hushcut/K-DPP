@@ -86,7 +86,7 @@ void main() {
 }
 
 class _FakeValidationService extends AuthSessionValidationService {
-  const _FakeValidationService(this.result);
+  _FakeValidationService(this.result);
 
   final AuthSessionValidationResult result;
 

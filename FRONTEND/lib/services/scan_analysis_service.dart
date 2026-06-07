@@ -24,7 +24,8 @@ class ScanAnalysisFailure extends ScanAnalysisOutcome {
 }
 
 class ScanAnalysisService {
-  const ScanAnalysisService({this.scanApiService = const ScanApiService()});
+  ScanAnalysisService({ScanApiService? scanApiService})
+    : scanApiService = scanApiService ?? ScanApiService();
 
   final ScanApiService scanApiService;
 

@@ -17,8 +17,9 @@ void main() {
     expect(ClothingTypeCatalog.inferFromCategory('pants').label, '바지');
   });
 
-  test('hasDefaultTitle recognizes generated 홍길동 clothing titles', () {
+  test('hasDefaultTitle recognizes current and legacy generated titles', () {
+    expect(ClothingTypeCatalog.hasDefaultTitle('니트'), isTrue);
     expect(ClothingTypeCatalog.hasDefaultTitle('홍길동 니트'), isTrue);
-    expect(ClothingTypeCatalog.hasDefaultTitle('홍길동 새 옷'), isFalse);
+    expect(ClothingTypeCatalog.hasDefaultTitle('새 옷'), isFalse);
   });
 }

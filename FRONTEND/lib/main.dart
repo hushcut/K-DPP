@@ -10,7 +10,6 @@ import 'signup_screen.dart';
 import 'settings_screen.dart';
 import 'theme_provider.dart';
 import 'display_settings_screen.dart';
-import 'report_detail_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -102,7 +101,7 @@ class MyApp extends StatelessWidget {
     return Consumer<ThemeProvider>(
       builder: (context, themeProvider, child) {
         return MaterialApp(
-          title: 'EcoLabel',
+          title: 'K-DPP',
           debugShowCheckedModeBanner: false,
           theme: _lightTheme(),
           darkTheme: _darkTheme(),
@@ -116,7 +115,6 @@ class MyApp extends StatelessWidget {
             '/settings': (context) => const SettingsScreen(),
             '/display-settings': (context) => const DisplaySettingsScreen(),
             '/main': (context) => const MainScreen(),
-            '/report': (context) => const ReportDetailScreen(),
           },
         );
       },

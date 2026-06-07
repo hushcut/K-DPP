@@ -23,14 +23,17 @@ class DisplaySettingsScreen extends StatelessWidget {
     final currentMode = themeProvider.themeMode;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final backgroundColor =
-    isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FC);
+    final backgroundColor = isDark
+        ? const Color(0xFF121212)
+        : const Color(0xFFF8F9FC);
     final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
-    final borderColor =
-    isDark ? const Color(0xFF2C2C2E) : const Color(0xFFEAEAEA);
+    final borderColor = isDark
+        ? const Color(0xFF2C2C2E)
+        : const Color(0xFFEAEAEA);
     final primaryText = isDark ? Colors.white : const Color(0xFF111111);
-    final secondaryText =
-    isDark ? const Color(0xFFD1D1D6) : const Color(0xFF8C8C8C);
+    final secondaryText = isDark
+        ? const Color(0xFFD1D1D6)
+        : const Color(0xFF5F6368);
 
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -87,11 +90,7 @@ class DisplaySettingsScreen extends StatelessWidget {
             ),
             child: Text(
               '현재 선택: ${_modeLabel(currentMode)}\n시스템 설정을 선택하면 기기 테마에 따라 자동으로 전환됩니다.',
-              style: TextStyle(
-                color: secondaryText,
-                fontSize: 14,
-                height: 1.6,
-              ),
+              style: TextStyle(color: secondaryText, fontSize: 14, height: 1.6),
             ),
           ),
         ],
@@ -123,37 +122,46 @@ class _ThemeModeTile extends StatelessWidget {
         : (isDark ? const Color(0xFF2C2C2E) : const Color(0xFFEAEAEA));
     final primaryText = isDark ? Colors.white : const Color(0xFF111111);
 
-    return InkWell(
-      borderRadius: BorderRadius.circular(24),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: cardColor,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: borderColor, width: selected ? 1.6 : 1),
-        ),
-        child: Row(
-          children: [
-            preview,
-            const SizedBox(width: 16),
-            Expanded(
-              child: Text(
-                title,
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: primaryText,
+    return Semantics(
+      label: '$title 테마',
+      button: true,
+      selected: selected,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: ExcludeSemantics(
+          child: Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: borderColor, width: selected ? 1.6 : 1),
+            ),
+            child: Row(
+              children: [
+                preview,
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: primaryText,
+                    ),
+                  ),
                 ),
-              ),
+                Icon(
+                  selected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
+                  color: selected
+                      ? const Color(0xFF4A4EFE)
+                      : const Color(0xFF5F6368),
+                ),
+              ],
             ),
-            Icon(
-              selected ? Icons.radio_button_checked : Icons.radio_button_off,
-              color: selected
-                  ? const Color(0xFF4A4EFE)
-                  : const Color(0xFF8C8C8C),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -188,17 +196,11 @@ class _DarkPreview extends StatelessWidget {
             Row(
               children: [
                 Expanded(
-                  child: Container(
-                    height: 18,
-                    color: const Color(0xFF444444),
-                  ),
+                  child: Container(height: 18, color: const Color(0xFF444444)),
                 ),
                 const SizedBox(width: 4),
                 Expanded(
-                  child: Container(
-                    height: 18,
-                    color: const Color(0xFF444444),
-                  ),
+                  child: Container(height: 18, color: const Color(0xFF444444)),
                 ),
               ],
             ),
@@ -237,17 +239,11 @@ class _LightPreview extends StatelessWidget {
             Row(
               children: [
                 Expanded(
-                  child: Container(
-                    height: 18,
-                    color: const Color(0xFFE7E7E7),
-                  ),
+                  child: Container(height: 18, color: const Color(0xFFE7E7E7)),
                 ),
                 const SizedBox(width: 4),
                 Expanded(
-                  child: Container(
-                    height: 18,
-                    color: const Color(0xFFE7E7E7),
-                  ),
+                  child: Container(height: 18, color: const Color(0xFFE7E7E7)),
                 ),
               ],
             ),
@@ -278,8 +274,7 @@ class _SystemPreview extends StatelessWidget {
               child: Container(
                 color: Colors.white,
                 child: const Center(
-                  child:
-                  Icon(Icons.light_mode_outlined, color: Colors.black54),
+                  child: Icon(Icons.light_mode_outlined, color: Colors.black54),
                 ),
               ),
             ),
@@ -287,8 +282,7 @@ class _SystemPreview extends StatelessWidget {
               child: Container(
                 color: const Color(0xFF25262B),
                 child: const Center(
-                  child:
-                  Icon(Icons.dark_mode_outlined, color: Colors.white70),
+                  child: Icon(Icons.dark_mode_outlined, color: Colors.white70),
                 ),
               ),
             ),

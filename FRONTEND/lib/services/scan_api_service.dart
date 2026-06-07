@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import '../config/api_environment.dart';
 import '../models/scan_result.dart';
 
 enum ScanApiErrorType {
@@ -31,25 +32,25 @@ class ScanApiException implements Exception {
   String get userMessage {
     switch (type) {
       case ScanApiErrorType.badRequest:
-        return '이미지 요청 형식이 올바르지 않아요. 다른 사진으로 다시 시도해 주세요.';
+        return '사진을 처리하지 못했어요. 다른 사진을 선택해 다시 시도해 주세요.';
       case ScanApiErrorType.unauthorized:
-        return '서버 인증이 필요해요. 백엔드 설정을 확인해 주세요.';
+        return '로그인 정보가 만료되었어요. 다시 로그인한 뒤 스캔해 주세요.';
       case ScanApiErrorType.payloadTooLarge:
-        return '사진 용량이 너무 커요. 더 작은 이미지로 다시 시도해 주세요.';
+        return '사진 용량이 너무 커요. 사진을 줄이거나 다른 사진을 선택해 주세요.';
       case ScanApiErrorType.unsupportedMediaType:
-        return '지원하지 않는 이미지 형식이에요. JPG 또는 PNG 사진을 사용해 주세요.';
+        return '이 사진 형식은 분석할 수 없어요. JPG 또는 PNG 사진을 사용해 주세요.';
       case ScanApiErrorType.aiRecognitionFailed:
         return 'AI가 라벨 정보를 정확히 인식하지 못했어요. 소재와 혼용률을 직접 입력해 주세요.';
       case ScanApiErrorType.server:
-        return '서버에서 문제가 발생했어요. 잠시 후 다시 시도하거나 직접 입력해 주세요.';
+        return '분석 서비스에 일시적인 문제가 생겼어요. 다시 시도하거나 직접 입력해 주세요.';
       case ScanApiErrorType.network:
-        return '서버에 연결할 수 없어요. 네트워크 상태를 확인하거나 직접 입력해 주세요.';
+        return '인터넷에 연결할 수 없어요. 연결을 확인하거나 직접 입력해 주세요.';
       case ScanApiErrorType.timeout:
-        return '분석 시간이 너무 오래 걸렸어요. 다시 시도하거나 직접 입력해 주세요.';
+        return '분석이 예상보다 오래 걸렸어요. 다시 시도하거나 직접 입력해 주세요.';
       case ScanApiErrorType.invalidResponse:
-        return '서버 응답 형식이 올바르지 않아요. 직접 입력으로 계속 진행해 주세요.';
+        return '분석 결과를 불러오지 못했어요. 소재와 혼용률을 직접 입력해 주세요.';
       case ScanApiErrorType.unknown:
-        return '알 수 없는 오류가 발생했어요. 직접 입력으로 계속 진행해 주세요.';
+        return '사진 분석을 완료하지 못했어요. 소재와 혼용률을 직접 입력해 주세요.';
     }
   }
 
@@ -141,14 +142,11 @@ class ScanApiException implements Exception {
 }
 
 class ScanApiService {
-  const ScanApiService({
-    this.endpoint = const String.fromEnvironment(
-      'SCAN_API_ENDPOINT',
-      defaultValue: 'http://10.0.2.2:8000/api/scan',
-    ),
+  ScanApiService({
+    String? endpoint,
     this.requestHeaders = const {'ngrok-skip-browser-warning': 'true'},
     this.client,
-  });
+  }) : endpoint = endpoint ?? ApiEnvironment.scanEndpoint;
 
   final String endpoint;
   final Map<String, String> requestHeaders;

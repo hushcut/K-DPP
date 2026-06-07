@@ -5,11 +5,14 @@ import 'closet_provider.dart';
 import 'closet_screen.dart';
 import 'home_screen.dart';
 import 'models/clothes.dart';
+import 'models/main_screen_arguments.dart';
 import 'report_screen.dart';
 import 'scan_screen.dart';
 
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key});
+  const MainScreen({super.key, this.initialArguments});
+
+  final MainScreenArguments? initialArguments;
 
   @override
   State<MainScreen> createState() => _MainScreenState();
@@ -45,15 +48,33 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
-  int _normalizeInitialIndex(Object? args) {
-    if (args is! int) return 0;
-    if (args == 3) return 2;
+  void _handleReportDeleted() {
+    setState(() {
+      _selectedIndex = 2;
+      _isShowingReport = false;
+    });
+  }
 
-    if (args >= 0 && args < _tabCount) {
-      return args;
+  int _normalizeInitialIndex(int index) {
+    if (index == 3) return 2;
+
+    if (index >= 0 && index < _tabCount) {
+      return index;
     }
 
     return 0;
+  }
+
+  void _applyInitialArguments(Object? args) {
+    if (args is MainScreenArguments) {
+      _selectedIndex = _normalizeInitialIndex(args.initialIndex);
+      _isShowingReport =
+          args.showReport &&
+          context.read<ClosetProvider>().currentReportItem != null;
+      return;
+    }
+
+    _selectedIndex = _normalizeInitialIndex(args is int ? args : 0);
   }
 
   List<Widget> _buildTabScreens() {
@@ -81,7 +102,10 @@ class _MainScreenState extends State<MainScreen> {
         );
       },
       child: _isShowingReport
-          ? const ReportScreen(key: ValueKey('report'))
+          ? ReportScreen(
+              key: const ValueKey('report'),
+              onDeleted: _handleReportDeleted,
+            )
           : IndexedStack(
               key: const ValueKey('main-tabs'),
               index: _selectedIndex,
@@ -102,6 +126,7 @@ class _MainScreenState extends State<MainScreen> {
         scrolledUnderElevation: 0,
         leading: IconButton(
           onPressed: _closeReport,
+          tooltip: '리포트 닫기',
           icon: Icon(Icons.arrow_back, color: appBarIconColor),
         ),
         title: Text(
@@ -128,6 +153,7 @@ class _MainScreenState extends State<MainScreen> {
           onPressed: () {
             Navigator.pushNamed(context, '/settings');
           },
+          tooltip: '설정',
           icon: Icon(Icons.settings_outlined, color: appBarIconColor),
         ),
         const SizedBox(width: 8),
@@ -138,8 +164,9 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     if (!_didReadInitialArgs) {
-      final args = ModalRoute.of(context)?.settings.arguments;
-      _selectedIndex = _normalizeInitialIndex(args);
+      final args =
+          widget.initialArguments ?? ModalRoute.of(context)?.settings.arguments;
+      _applyInitialArguments(args);
       _didReadInitialArgs = true;
     }
 
@@ -166,14 +193,20 @@ class _KDppSplashLogoMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 34,
-      height: 34,
-      decoration: BoxDecoration(
-        color: const Color(0xFF4A4EFE),
-        borderRadius: BorderRadius.circular(10),
+    return Semantics(
+      label: 'K-DPP',
+      image: true,
+      child: ExcludeSemantics(
+        child: Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            color: const Color(0xFF4A4EFE),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: const Icon(Icons.eco_outlined, color: Colors.white, size: 21),
+        ),
       ),
-      child: const Icon(Icons.eco_outlined, color: Colors.white, size: 21),
     );
   }
 }
@@ -286,57 +319,69 @@ class _CenterScanButton extends StatelessWidget {
     const activeColor = Color(0xFF4A4EFE);
     final labelColor = selected
         ? activeColor
-        : (isDark ? const Color(0xFFD1D1D6) : Colors.grey);
+        : (isDark ? const Color(0xFFD1D1D6) : const Color(0xFF5F6368));
 
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: SizedBox(
-        width: 88,
-        height: 90,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 66,
-              height: 66,
-              padding: const EdgeInsets.all(5),
-              decoration: BoxDecoration(color: pageBg, shape: BoxShape.circle),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: selected ? const Color(0xFF383CDB) : activeColor,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: activeColor.withValues(alpha: 0.34),
-                      blurRadius: 18,
-                      offset: const Offset(0, 8),
+    return Semantics(
+      label: '스캔',
+      button: true,
+      selected: selected,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: SizedBox(
+          width: 88,
+          height: 90,
+          child: ExcludeSemantics(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 66,
+                  height: 66,
+                  padding: const EdgeInsets.all(5),
+                  decoration: BoxDecoration(
+                    color: pageBg,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: selected ? const Color(0xFF383CDB) : activeColor,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: activeColor.withValues(alpha: 0.34),
+                          blurRadius: 18,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                child: const Icon(
-                  Icons.camera_alt,
-                  color: Colors.white,
-                  size: 30,
-                ),
-              ),
-            ),
-            const SizedBox(height: 1),
-            SizedBox(
-              height: 18,
-              child: Center(
-                child: Text(
-                  '스캔',
-                  style: TextStyle(
-                    color: labelColor,
-                    fontSize: 12,
-                    height: 1.1,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    child: const Icon(
+                      Icons.camera_alt,
+                      color: Colors.white,
+                      size: 30,
+                    ),
                   ),
                 ),
-              ),
+                const SizedBox(height: 1),
+                SizedBox(
+                  height: 18,
+                  child: Center(
+                    child: Text(
+                      '스캔',
+                      style: TextStyle(
+                        color: labelColor,
+                        fontSize: 12,
+                        height: 1.1,
+                        fontWeight: selected
+                            ? FontWeight.w700
+                            : FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -363,29 +408,38 @@ class _BottomTabItem extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     const activeColor = Color(0xFF4A4EFE);
-    final inactiveColor = isDark ? const Color(0xFFD1D1D6) : Colors.grey;
+    final inactiveColor = isDark
+        ? const Color(0xFFD1D1D6)
+        : const Color(0xFF5F6368);
     final color = selected ? activeColor : inactiveColor;
 
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(22),
-      child: SizedBox(
-        height: 70,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(selected ? activeIcon : icon, color: color, size: 25),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
-                height: 1.1,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-              ),
+    return Semantics(
+      label: label,
+      button: true,
+      selected: selected,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: SizedBox(
+          height: 70,
+          child: ExcludeSemantics(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(selected ? activeIcon : icon, color: color, size: 25),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 12,
+                    height: 1.1,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );

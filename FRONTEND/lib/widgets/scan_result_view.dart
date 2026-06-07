@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/clothing_type_option.dart';
+import '../services/material_catalog_api_service.dart';
 import '../utils/clothing_estimator.dart';
 import '../utils/scan_calculation_resolver.dart';
 import 'material_input_collection.dart';
@@ -15,6 +16,7 @@ class ScanResultView extends StatelessWidget {
     required this.titleController,
     required this.selectedClothingType,
     required this.materialInputs,
+    this.materialCatalog = const [],
     required this.scannedCare,
     required this.originalMaterials,
     this.serverHealth,
@@ -39,6 +41,7 @@ class ScanResultView extends StatelessWidget {
   final TextEditingController titleController;
   final ClothingTypeOption selectedClothingType;
   final MaterialInputCollection materialInputs;
+  final List<MaterialCatalogItem> materialCatalog;
   final String scannedCare;
   final Map<String, double> originalMaterials;
   final int? serverHealth;
@@ -81,7 +84,9 @@ class ScanResultView extends StatelessWidget {
     final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
     final borderColor = isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade300;
     final primaryText = isDark ? Colors.white : const Color(0xFF111111);
-    final secondaryText = isDark ? const Color(0xFFD1D1D6) : Colors.grey;
+    final secondaryText = isDark
+        ? const Color(0xFFD1D1D6)
+        : const Color(0xFF5F6368);
     final inputFillColor = isDark ? const Color(0xFF2A2A2E) : Colors.white;
     final previewBoxColor = isDark
         ? const Color(0xFF1F2A3D)
@@ -156,7 +161,7 @@ class ScanResultView extends StatelessWidget {
                         fillColor: inputFillColor,
                         labelText: '의류 이름',
                         labelStyle: TextStyle(color: secondaryText),
-                        hintText: '예: 홍길동 코튼 맨투맨',
+                        hintText: '예: 코튼 맨투맨',
                         hintStyle: TextStyle(color: secondaryText),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
@@ -165,32 +170,38 @@ class ScanResultView extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    InkWell(
-                      onTap: onSelectClothingType,
-                      borderRadius: BorderRadius.circular(10),
-                      child: InputDecorator(
-                        decoration: InputDecoration(
-                          filled: true,
-                          fillColor: inputFillColor,
-                          labelText: '무게 기준',
-                          labelStyle: TextStyle(color: secondaryText),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
+                    Semantics(
+                      label:
+                          '무게 기준, ${selectedClothingType.label}, ${selectedClothingType.weightDisplayText}',
+                      button: true,
+                      child: InkWell(
+                        onTap: onSelectClothingType,
+                        borderRadius: BorderRadius.circular(10),
+                        child: InputDecorator(
+                          decoration: InputDecoration(
+                            filled: true,
+                            fillColor: inputFillColor,
+                            labelText: '무게 기준',
+                            labelStyle: TextStyle(color: secondaryText),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            prefixIcon: const Icon(Icons.scale_outlined),
+                            suffixIcon: Icon(
+                              Icons.keyboard_arrow_down,
+                              color: secondaryText,
+                            ),
                           ),
-                          prefixIcon: const Icon(Icons.scale_outlined),
-                          suffixIcon: Icon(
-                            Icons.keyboard_arrow_down,
-                            color: secondaryText,
-                          ),
-                        ),
-                        child: Text(
-                          '${selectedClothingType.label} · ${selectedClothingType.weightDisplayText}',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: primaryText,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
+                          child: ExcludeSemantics(
+                            child: Text(
+                              '${selectedClothingType.label} · ${selectedClothingType.weightDisplayText}',
+                              softWrap: true,
+                              style: TextStyle(
+                                color: primaryText,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -245,18 +256,21 @@ class ScanResultView extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              Text(
-                materialInputs.isEmpty
-                    ? '소재를 직접 추가해 주세요.'
-                    : '현재 소재 합계: ${totalMaterials.toStringAsFixed(1)}%',
-                style: TextStyle(
-                  color: materialInputs.isEmpty
-                      ? secondaryText
-                      : isTotalValid
-                      ? Colors.green
-                      : Colors.redAccent,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
+              Semantics(
+                liveRegion: hasTriedSubmit && !isTotalValid,
+                child: Text(
+                  materialInputs.isEmpty
+                      ? '소재를 직접 추가해 주세요.'
+                      : '현재 소재 합계: ${totalMaterials.toStringAsFixed(1)}%',
+                  style: TextStyle(
+                    color: materialInputs.isEmpty
+                        ? secondaryText
+                        : isTotalValid
+                        ? Colors.green
+                        : Colors.redAccent,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
@@ -337,12 +351,16 @@ class ScanResultView extends StatelessWidget {
                     ),
                   ),
                   child: isSaving
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.4,
-                            color: Colors.white,
+                      ? Semantics(
+                          label: '의류 저장 중',
+                          liveRegion: true,
+                          child: const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.4,
+                              color: Colors.white,
+                            ),
                           ),
                         )
                       : const Text(
@@ -427,24 +445,97 @@ class ScanResultView extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
-          child: TextFormField(
-            controller: item.nameController,
-            validator: validateMaterialName,
-            style: TextStyle(color: primaryText, fontSize: 14),
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: inputFillColor,
-              labelText: '소재명',
-              hintText: '예: cotton',
-              labelStyle: TextStyle(color: secondaryText),
-              hintStyle: TextStyle(color: secondaryText),
-              isDense: true,
-              contentPadding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            onChanged: (_) => onSyncMaterialInputs(),
+          child: RawAutocomplete<MaterialCatalogItem>(
+            textEditingController: item.nameController,
+            focusNode: item.nameFocusNode,
+            displayStringForOption: (option) => option.nameEn,
+            optionsBuilder: (textEditingValue) {
+              if (materialCatalog.isEmpty) {
+                return const Iterable<MaterialCatalogItem>.empty();
+              }
+
+              return materialCatalog
+                  .where((option) => option.matches(textEditingValue.text))
+                  .take(8);
+            },
+            onSelected: (option) {
+              item.nameController.text = option.nameEn;
+              onSyncMaterialInputs();
+            },
+            fieldViewBuilder:
+                (context, controller, focusNode, onFieldSubmitted) {
+                  return TextFormField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    validator: validateMaterialName,
+                    style: TextStyle(color: primaryText, fontSize: 14),
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: inputFillColor,
+                      labelText: '소재명',
+                      hintText: '예: cotton',
+                      labelStyle: TextStyle(color: secondaryText),
+                      hintStyle: TextStyle(color: secondaryText),
+                      isDense: true,
+                      contentPadding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    onChanged: (_) => onSyncMaterialInputs(),
+                    onFieldSubmitted: (_) => onFieldSubmitted(),
+                  );
+                },
+            optionsViewBuilder: (context, onSelected, options) {
+              final optionList = options.toList(growable: false);
+
+              return Align(
+                alignment: Alignment.topLeft,
+                child: Material(
+                  elevation: 8,
+                  color: inputFillColor,
+                  borderRadius: BorderRadius.circular(10),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      minWidth: 190,
+                      maxWidth: 260,
+                      maxHeight: 260,
+                    ),
+                    child: ListView.separated(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      shrinkWrap: true,
+                      itemCount: optionList.length,
+                      separatorBuilder: (context, index) => Divider(
+                        height: 1,
+                        color: secondaryText.withValues(alpha: 0.16),
+                      ),
+                      itemBuilder: (context, optionIndex) {
+                        final option = optionList[optionIndex];
+
+                        return InkWell(
+                          onTap: () => onSelected(option),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            child: Text(
+                              option.label,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: primaryText,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
         ),
         const SizedBox(width: 8),
@@ -472,12 +563,14 @@ class ScanResultView extends StatelessWidget {
         ),
         const SizedBox(width: 4),
         SizedBox(
-          width: 36,
+          width: 48,
           child: IconButton(
             onPressed: () => onRemoveMaterial(index),
+            tooltip:
+                '${item.nameController.text.trim().isEmpty ? '소재' : item.nameController.text.trim()} 삭제',
             icon: Icon(Icons.close, color: secondaryText, size: 20),
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 36, minHeight: 48),
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           ),
         ),
       ],

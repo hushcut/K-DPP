@@ -8,7 +8,7 @@ import 'package:k_dpp/services/auth_api_service.dart';
 void main() {
   group('AuthApiService configuration', () {
     test('uses the Android emulator backend URL by default', () {
-      const service = AuthApiService();
+      final service = AuthApiService();
 
       expect(service.baseUrl, 'http://10.0.2.2:8000');
     });

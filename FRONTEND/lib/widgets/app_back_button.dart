@@ -10,6 +10,7 @@ class AppBackButton extends StatelessWidget {
 
     return IconButton(
       onPressed: () => Navigator.pop(context),
+      tooltip: '뒤로 가기',
       padding: EdgeInsets.zero,
       splashRadius: 22,
       alignment: Alignment.centerLeft,

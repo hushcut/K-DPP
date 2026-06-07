@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import '../config/api_environment.dart';
 import '../models/analysis_history_record.dart';
 
 enum AuthApiErrorType {
@@ -35,15 +36,15 @@ class AuthApiException implements Exception {
       case AuthApiErrorType.conflict:
         return message;
       case AuthApiErrorType.server:
-        return '서버에서 문제가 발생했어요. 잠시 후 다시 시도해 주세요.';
+        return '서비스에 일시적인 문제가 생겼어요. 잠시 후 다시 시도해 주세요.';
       case AuthApiErrorType.network:
-        return '서버에 연결할 수 없어요. 네트워크 상태를 확인해 주세요.';
+        return '인터넷에 연결할 수 없어요. Wi-Fi나 모바일 데이터를 확인해 주세요.';
       case AuthApiErrorType.timeout:
-        return '요청 시간이 너무 오래 걸렸어요. 잠시 후 다시 시도해 주세요.';
+        return '응답이 늦어지고 있어요. 네트워크를 확인한 뒤 다시 시도해 주세요.';
       case AuthApiErrorType.invalidResponse:
-        return '서버 응답 형식이 올바르지 않아요. 백엔드 상태를 확인해 주세요.';
+        return '로그인 정보를 확인하지 못했어요. 앱을 다시 시작한 뒤 시도해 주세요.';
       case AuthApiErrorType.unknown:
-        return '요청 처리 중 알 수 없는 오류가 발생했어요.';
+        return '요청을 완료하지 못했어요. 잠시 후 다시 시도해 주세요.';
     }
   }
 
@@ -176,11 +177,8 @@ class AuthSessionSnapshot {
 }
 
 class AuthApiService {
-  const AuthApiService({
-    this.baseUrl = const String.fromEnvironment(
-      'AUTH_API_BASE_URL',
-      defaultValue: 'http://10.0.2.2:8000',
-    ),
+  AuthApiService({
+    String? baseUrl,
     this.requestHeaders = const {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
@@ -188,7 +186,7 @@ class AuthApiService {
     },
     this.requestTimeout = const Duration(seconds: 15),
     this.client,
-  });
+  }) : baseUrl = baseUrl ?? ApiEnvironment.authBaseUrl;
 
   final String baseUrl;
   final Map<String, String> requestHeaders;

@@ -23,9 +23,8 @@ class AuthSessionUnavailable extends AuthSessionValidationResult {
 }
 
 class AuthSessionValidationService {
-  const AuthSessionValidationService({
-    this.authApiService = const AuthApiService(),
-  });
+  AuthSessionValidationService({AuthApiService? authApiService})
+    : authApiService = authApiService ?? AuthApiService();
 
   final AuthApiService authApiService;
 

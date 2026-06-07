@@ -35,8 +35,8 @@ class ClothingTypeOption {
   final bool isDirectWeight;
 
   String get defaultTitle {
-    if (isDirectWeightPlaceholder) return '홍길동 기타 의류';
-    return '홍길동 $label';
+    if (isDirectWeightPlaceholder) return '기타 의류';
+    return label;
   }
 
   String get weightDisplayText {

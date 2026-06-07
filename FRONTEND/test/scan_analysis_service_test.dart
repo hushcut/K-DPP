@@ -69,7 +69,7 @@ class _SuccessfulScanApiService extends ScanApiService {
 }
 
 class _FailingScanApiService extends ScanApiService {
-  const _FailingScanApiService(this.error);
+  _FailingScanApiService(this.error);
 
   final Object error;
 

@@ -107,11 +107,12 @@ Content-Type: multipart/form-data
 라벨 인식 후 사용자가 의류 종류 또는 실제 무게를 선택한 다음 호출하는 API입니다.
 
 ```http
-POST /analyze
+POST /api/carbon/calculate
 Content-Type: application/json
+Authorization: Bearer <access_token>
 ```
 
-### Target Request
+### Request
 
 ```json
 {
@@ -119,47 +120,46 @@ Content-Type: application/json
     "cotton": 80.0,
     "polyester": 20.0
   },
-  "weight_gram": 520.0,
-  "category": "상의",
-  "clothing_type": "긴팔 / 맨투맨"
+  "min_weight_grams": 350.0,
+  "max_weight_grams": 750.0
 }
 ```
 
-### Target Success Response
+사용자가 실제 무게를 직접 입력한 경우 최소·최대 무게에 같은 값을 전달합니다.
+
+### Success Response
 
 ```json
 {
   "status": "success",
-  "message": "분석 완료",
+  "message": "탄소배출량 계산 완료",
   "materials": {
     "cotton": 80.0,
     "polyester": 20.0
   },
-  "weight_gram": 520.0,
-  "carbon_footprint": 4.78,
-  "calculation_method": "weight_based_v1",
+  "carbon_factor": 8.8,
+  "carbon_footprint": 4.84,
+  "carbon_footprint_min": 3.08,
+  "carbon_footprint_max": 6.6,
+  "min_weight_grams": 350.0,
+  "max_weight_grams": 750.0,
   "unit": "kg CO2eq",
-  "health": 85,
-  "care_instruction": "30도 이하 물에서 중성세제로 세탁하세요.",
   "saved_result_id": 13
 }
 ```
 
-현재 백엔드 `/analyze`는 `weight_gram`을 받지 않습니다. 실제 의류 탄소발자국을 계산하려면 백엔드가 다음 식처럼 의류 무게를 반영하도록 확장해야 합니다.
+백엔드는 다음 방식으로 소재별 배출계수와 의류 무게 범위를 반영합니다.
 
 ```text
 탄소발자국 = 합계((소재 비율 / 100) x 소재별 배출계수 x 의류 무게 kg)
 ```
 
-프론트엔드는 백엔드 확장이 끝날 때까지 로컬 추정값을 미리보기로 사용합니다. 백엔드가 무게를 반영한 값을 반환하기 시작하면 서버 값을 최종값으로 우선 사용합니다.
+로그인 세션이 유효하고 서버 계산에 성공하면 서버 응답을 최종 탄소발자국으로
+저장합니다. 네트워크 오류나 서버 계산 실패 시에는 앱 사용이 중단되지 않도록
+프론트엔드 로컬 추정값으로 저장하고 리포트에서 계산 출처를 구분합니다.
 
-서버값 우선순위는 다음 조건을 모두 만족할 때 적용합니다.
-
-- 건강도: 서버의 `health`가 `0 ~ 100`이고 사용자가 소재와 혼용률을 수정하지 않은 경우
-- 탄소발자국: 서버의 `carbon_footprint`와 `weight_gram`이 유효하고, `calculation_method`가 `weight_based_v1`이며, 사용자가 소재를 수정하지 않았고 현재 선택 무게와 서버 계산 무게가 일치하는 경우
-- 위 조건을 만족하지 않으면 프론트엔드의 로컬 추정값을 미리보기와 저장값으로 사용
-
-`calculation_method`가 없거나 다른 값이면 프론트엔드는 서버 탄소값을 최종값으로 신뢰하지 않습니다. 저장 시 계산 출처도 함께 기록하여 리포트에서 `백엔드 계산값`과 `임시 추정값`을 구분합니다.
+계산 성공 결과는 로그인 사용자의 분석 이력에 저장되며 `/me/history`에서
+다시 불러올 수 있습니다.
 
 ## 3. 역할 구분
 

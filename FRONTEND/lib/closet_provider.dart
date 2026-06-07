@@ -9,40 +9,20 @@ class ClosetProvider with ChangeNotifier {
   final ClosetStorage _storageService;
   final AuthSessionStorage _authSessionStorage;
 
-  final List<Clothes> _items = [
-    Clothes(
-      title: '오가닉 코튼 맨투맨',
-      category: '상의',
-      health: 65,
-      materials: {'cotton': 100},
-      careInstruction: '30도 이하 물에서 세탁하세요.',
-      carbonFootprint: 15.5,
-    ),
-    Clothes(
-      title: '오래된 데님 팬츠',
-      category: '하의',
-      health: 10,
-      materials: {'cotton': 98, 'polyurethane': 2},
-      careInstruction: '단독 세탁 권장',
-      carbonFootprint: 25.0,
-    ),
-  ];
+  final List<Clothes> _items = [];
 
   Clothes? _selectedClothes;
   bool _isLoaded = false;
   String _userName = '홍길동';
   String _userEmail = 'honggildong@kdpp.com';
+  String? _closetOwnerEmail;
   AuthSession? _authSession;
 
   ClosetProvider({
     ClosetStorage? storage,
     AuthSessionStorage? authSessionStorage,
   }) : _storageService = storage ?? ClosetStorageService(),
-       _authSessionStorage = authSessionStorage ?? AuthSessionStorageService() {
-    if (_items.isNotEmpty) {
-      _selectedClothes = _items.last;
-    }
-  }
+       _authSessionStorage = authSessionStorage ?? AuthSessionStorageService();
 
   UnmodifiableListView<Clothes> get items => UnmodifiableListView(_items);
 
@@ -77,6 +57,17 @@ class ClosetProvider with ChangeNotifier {
   }) async {
     final trimmedNickname = nickname.trim();
     final trimmedEmail = email.trim();
+    final normalizedEmail = _normalizeEmail(trimmedEmail);
+
+    if (_authSession != null &&
+        normalizedEmail.isNotEmpty &&
+        _closetOwnerEmail != normalizedEmail) {
+      final previousEmail = _normalizeEmail(_userEmail);
+      await _loadClosetForOwner(
+        normalizedEmail,
+        migrateLegacyData: previousEmail == normalizedEmail,
+      );
+    }
 
     _userName = trimmedNickname.isEmpty ? '홍길동' : trimmedNickname;
     _userEmail = trimmedEmail.isEmpty ? 'honggildong@kdpp.com' : trimmedEmail;
@@ -107,6 +98,9 @@ class ClosetProvider with ChangeNotifier {
   }
 
   Future<void> logout() async {
+    _items.clear();
+    _selectedClothes = null;
+    _closetOwnerEmail = null;
     _userName = '홍길동';
     _userEmail = 'honggildong@kdpp.com';
     _authSession = null;
@@ -129,8 +123,6 @@ class ClosetProvider with ChangeNotifier {
   }
 
   Future<void> loadFromStorage() async {
-    final hasSavedData = await _storageService.hasSavedClothesList();
-    final savedItems = await _storageService.loadClothesList();
     final savedUserName = await _storageService.loadUserName();
     final savedUserEmail = await _storageService.loadUserEmail();
     AuthSession? savedAuthSession;
@@ -140,12 +132,6 @@ class ClosetProvider with ChangeNotifier {
     } catch (error, stackTrace) {
       debugPrint('인증 세션을 불러오지 못했습니다: $error');
       debugPrintStack(stackTrace: stackTrace);
-    }
-
-    if (hasSavedData) {
-      _items
-        ..clear()
-        ..addAll(savedItems);
     }
 
     if (savedUserName != null && savedUserName.trim().isNotEmpty) {
@@ -158,21 +144,35 @@ class ClosetProvider with ChangeNotifier {
 
     if (savedAuthSession != null && !savedAuthSession.isExpired) {
       _authSession = savedAuthSession;
+      final normalizedEmail = _normalizeEmail(savedUserEmail ?? '');
+
+      if (normalizedEmail.isNotEmpty) {
+        await _loadClosetForOwner(normalizedEmail, migrateLegacyData: true);
+      } else {
+        _clearClosetMemory();
+      }
     } else {
       _authSession = null;
+      _clearClosetMemory();
 
       if (savedAuthSession != null) {
         await _authSessionStorage.clearSession();
       }
     }
 
-    _selectedClothes = _items.isNotEmpty ? _items.last : null;
     _isLoaded = true;
     notifyListeners();
   }
 
   Future<void> _persist() async {
-    await _storageService.saveClothesList(_items);
+    final ownerEmail = _closetOwnerEmail;
+
+    if (ownerEmail == null) {
+      await _storageService.saveClothesList(_items);
+      return;
+    }
+
+    await _storageService.saveClothesListFor(ownerEmail, _items);
   }
 
   Future<void> addClothes(Clothes newClothes) async {
@@ -243,6 +243,85 @@ class ClosetProvider with ChangeNotifier {
         clothes.maxWeightGram == record.maxWeightGram;
   }
 
+  Future<void> _loadClosetForOwner(
+    String ownerEmail, {
+    required bool migrateLegacyData,
+  }) async {
+    final normalizedEmail = _normalizeEmail(ownerEmail);
+
+    if (normalizedEmail.isEmpty) {
+      _clearClosetMemory();
+      return;
+    }
+
+    final hasAccountData = await _storageService.hasSavedClothesListFor(
+      normalizedEmail,
+    );
+    List<Clothes> savedItems;
+
+    if (hasAccountData) {
+      savedItems = await _storageService.loadClothesListFor(normalizedEmail);
+    } else if (migrateLegacyData &&
+        await _storageService.hasSavedClothesList()) {
+      savedItems = await _storageService.loadClothesList();
+    } else {
+      savedItems = const [];
+    }
+
+    final migratedItems = savedItems
+        .where((item) => !_isLegacySampleClothes(item))
+        .toList();
+
+    _closetOwnerEmail = normalizedEmail;
+    _items
+      ..clear()
+      ..addAll(migratedItems);
+    _selectedClothes = _items.isNotEmpty ? _items.last : null;
+
+    if (!hasAccountData || migratedItems.length != savedItems.length) {
+      await _storageService.saveClothesListFor(normalizedEmail, _items);
+    }
+
+    if (migrateLegacyData && await _storageService.hasSavedClothesList()) {
+      await _storageService.clearClothesList();
+    }
+  }
+
+  void _clearClosetMemory() {
+    _items.clear();
+    _selectedClothes = null;
+    _closetOwnerEmail = null;
+  }
+
+  String _normalizeEmail(String value) {
+    return value.trim().toLowerCase();
+  }
+
+  bool _isLegacySampleClothes(Clothes clothes) {
+    final isOrganicCottonSample =
+        clothes.title == '오가닉 코튼 맨투맨' &&
+        clothes.category == '상의' &&
+        clothes.health == 65 &&
+        mapEquals(clothes.materials, const {'cotton': 100.0}) &&
+        clothes.careInstruction == '30도 이하 물에서 세탁하세요.' &&
+        clothes.carbonFootprint == 15.5 &&
+        clothes.savedResultId == null;
+
+    final isDenimSample =
+        clothes.title == '오래된 데님 팬츠' &&
+        clothes.category == '하의' &&
+        clothes.health == 10 &&
+        mapEquals(clothes.materials, const {
+          'cotton': 98.0,
+          'polyurethane': 2.0,
+        }) &&
+        clothes.careInstruction == '단독 세탁 권장' &&
+        clothes.carbonFootprint == 25.0 &&
+        clothes.savedResultId == null;
+
+    return isOrganicCottonSample || isDenimSample;
+  }
+
   void selectClothes(Clothes clothes) {
     _selectedClothes = clothes;
     notifyListeners();
@@ -295,6 +374,13 @@ class ClosetProvider with ChangeNotifier {
     _items.clear();
     _selectedClothes = null;
     notifyListeners();
-    await _storageService.clearClothesList();
+
+    final ownerEmail = _closetOwnerEmail;
+    if (ownerEmail == null) {
+      await _storageService.clearClothesList();
+      return;
+    }
+
+    await _storageService.clearClothesListFor(ownerEmail);
   }
 }
