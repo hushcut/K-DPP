@@ -11,11 +11,16 @@ abstract class ClosetStorage {
   Future<void> saveUserName(String userName);
   Future<String?> loadUserName();
   Future<void> clearUserName();
+
+  Future<void> saveUserEmail(String userEmail);
+  Future<String?> loadUserEmail();
+  Future<void> clearUserEmail();
 }
 
 class ClosetStorageService implements ClosetStorage {
   static const String _closetItemsKey = 'closet_items';
   static const String _userNameKey = 'user_name';
+  static const String _userEmailKey = 'user_email';
 
   final SharedPreferencesAsync _prefs = SharedPreferencesAsync();
 
@@ -27,9 +32,7 @@ class ClosetStorageService implements ClosetStorage {
 
   @override
   Future<void> saveClothesList(List<Clothes> items) async {
-    final encoded = jsonEncode(
-      items.map((item) => item.toJson()).toList(),
-    );
+    final encoded = jsonEncode(items.map((item) => item.toJson()).toList());
 
     await _prefs.setString(_closetItemsKey, encoded);
   }
@@ -76,5 +79,20 @@ class ClosetStorageService implements ClosetStorage {
   @override
   Future<void> clearUserName() async {
     await _prefs.remove(_userNameKey);
+  }
+
+  @override
+  Future<void> saveUserEmail(String userEmail) async {
+    await _prefs.setString(_userEmailKey, userEmail);
+  }
+
+  @override
+  Future<String?> loadUserEmail() async {
+    return _prefs.getString(_userEmailKey);
+  }
+
+  @override
+  Future<void> clearUserEmail() async {
+    await _prefs.remove(_userEmailKey);
   }
 }

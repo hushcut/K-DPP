@@ -443,6 +443,9 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       carbonFootprint: carbon.midpoint,
       carbonFootprintMin: carbon.min,
       carbonFootprintMax: carbon.max,
+      minWeightGram: carbon.minWeightGrams,
+      maxWeightGram: carbon.maxWeightGrams,
+      savedResultId: carbon.savedResultId,
     );
 
     switch (saveResult) {

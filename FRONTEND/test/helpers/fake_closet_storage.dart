@@ -4,6 +4,7 @@ import 'package:k_dpp/services/closet_storage_service.dart';
 class FakeClosetStorage implements ClosetStorage {
   List<Clothes>? _savedItems;
   String? _savedUserName;
+  String? _savedUserEmail;
 
   @override
   Future<void> clearClothesList() async {
@@ -13,6 +14,11 @@ class FakeClosetStorage implements ClosetStorage {
   @override
   Future<void> clearUserName() async {
     _savedUserName = null;
+  }
+
+  @override
+  Future<void> clearUserEmail() async {
+    _savedUserEmail = null;
   }
 
   @override
@@ -31,6 +37,11 @@ class FakeClosetStorage implements ClosetStorage {
   }
 
   @override
+  Future<String?> loadUserEmail() async {
+    return _savedUserEmail;
+  }
+
+  @override
   Future<void> saveClothesList(List<Clothes> items) async {
     _savedItems = List<Clothes>.from(items);
   }
@@ -38,5 +49,10 @@ class FakeClosetStorage implements ClosetStorage {
   @override
   Future<void> saveUserName(String userName) async {
     _savedUserName = userName;
+  }
+
+  @override
+  Future<void> saveUserEmail(String userEmail) async {
+    _savedUserEmail = userEmail;
   }
 }

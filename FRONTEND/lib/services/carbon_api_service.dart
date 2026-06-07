@@ -9,11 +9,17 @@ class CarbonCalculation {
     required this.midpoint,
     required this.min,
     required this.max,
+    required this.minWeightGrams,
+    required this.maxWeightGrams,
+    this.savedResultId,
   });
 
   final double midpoint;
   final double min;
   final double max;
+  final double minWeightGrams;
+  final double maxWeightGrams;
+  final int? savedResultId;
 }
 
 class CarbonApiException implements Exception {
@@ -78,16 +84,36 @@ class CarbonApiService {
     final midpoint = _parseDouble(decoded['carbon_footprint']);
     final min = _parseDouble(decoded['carbon_footprint_min']);
     final max = _parseDouble(decoded['carbon_footprint_max']);
+    final responseMinWeight = _parseDouble(decoded['min_weight_grams']);
+    final responseMaxWeight = _parseDouble(decoded['max_weight_grams']);
+    final savedResultId = _parseInt(decoded['saved_result_id']);
 
-    if (midpoint == null || min == null || max == null) {
+    if (midpoint == null ||
+        min == null ||
+        max == null ||
+        responseMinWeight == null ||
+        responseMaxWeight == null) {
       throw const CarbonApiException('탄소배출량 계산 결과 형식이 올바르지 않습니다.');
     }
 
-    return CarbonCalculation(midpoint: midpoint, min: min, max: max);
+    return CarbonCalculation(
+      midpoint: midpoint,
+      min: min,
+      max: max,
+      minWeightGrams: responseMinWeight,
+      maxWeightGrams: responseMaxWeight,
+      savedResultId: savedResultId,
+    );
   }
 
   static double? _parseDouble(dynamic value) {
     if (value is num) return value.toDouble();
     return double.tryParse(value?.toString() ?? '');
+  }
+
+  static int? _parseInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
   }
 }

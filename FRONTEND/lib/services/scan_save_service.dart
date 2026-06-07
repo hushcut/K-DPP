@@ -28,6 +28,9 @@ class ScanSaveService {
     required double carbonFootprint,
     required double carbonFootprintMin,
     required double carbonFootprintMax,
+    double? minWeightGram,
+    double? maxWeightGram,
+    int? savedResultId,
   }) {
     if (materials.isEmpty) {
       return const ScanSaveFailure('소재를 1개 이상 추가해 주세요.');
@@ -51,8 +54,12 @@ class ScanSaveService {
         materials: materials,
         careInstruction: careInstruction,
         carbonFootprint: carbonFootprint,
+        carbonFootprintSource: CarbonFootprintSource.server,
         carbonFootprintMin: carbonFootprintMin,
         carbonFootprintMax: carbonFootprintMax,
+        minWeightGram: minWeightGram,
+        maxWeightGram: maxWeightGram,
+        savedResultId: savedResultId,
       ),
     );
   }

@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import 'closet_provider.dart';
 import 'services/auth_api_service.dart';
-import 'services/auth_session_service.dart';
 import 'widgets/app_back_button.dart';
 
 class EmailLoginScreen extends StatefulWidget {
-  const EmailLoginScreen({super.key});
+  const EmailLoginScreen({super.key, this.authApiService});
+
+  final AuthApiService? authApiService;
 
   @override
   State<EmailLoginScreen> createState() => _EmailLoginScreenState();
@@ -17,12 +19,17 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
 
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  final AuthApiService _authApi = const AuthApiService();
-  final AuthSessionService _authSession = const AuthSessionService();
+  late final AuthApiService _authApiService;
 
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _didLoadInitialEmail = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _authApiService = widget.authApiService ?? const AuthApiService();
+  }
 
   @override
   void didChangeDependencies() {
@@ -81,34 +88,38 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     });
 
     try {
-      final result = await _authApi.login(
+      final result = await _authApiService.login(
         email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
+        password: _passwordController.text,
       );
-
-      final accessToken = result.accessToken;
-      if (accessToken == null || accessToken.isEmpty) {
-        throw const AuthApiException('로그인 토큰을 받지 못했습니다.');
-      }
-      await _authSession.saveAccessToken(accessToken);
 
       if (!mounted) return;
 
-      await context.read<ClosetProvider>().setUserName(result.user.nickname);
+      await context.read<ClosetProvider>().setAuthenticatedUser(
+        nickname: result.user.nickname,
+        email: result.user.email,
+        accessToken: result.accessToken!,
+        expiresInSeconds: result.expiresInSeconds!,
+      );
 
       if (!mounted) return;
 
       Navigator.pushNamedAndRemoveUntil(context, '/main', (route) => false);
     } on AuthApiException catch (error) {
       if (!mounted) return;
+
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(error.message)));
-    } catch (_) {
+      ).showSnackBar(SnackBar(content: Text(error.userMessage)));
+    } catch (error, stackTrace) {
+      debugPrint('로그인 세션 저장 중 오류가 발생했습니다: $error');
+      debugPrintStack(stackTrace: stackTrace);
+
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('로그인 중 오류가 발생했습니다.')));
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('로그인 정보를 안전하게 저장하지 못했습니다. 다시 시도해 주세요.')),
+      );
     } finally {
       if (mounted) {
         setState(() {

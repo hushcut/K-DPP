@@ -1,22 +1,33 @@
-import 'package:shared_preferences/shared_preferences.dart';
+import 'auth_session_storage_service.dart';
 
 class AuthSessionService {
-  const AuthSessionService();
+  const AuthSessionService({this.storage});
 
-  static const _accessTokenKey = 'auth_access_token';
+  final AuthSessionStorage? storage;
+
+  AuthSessionStorage get _storage => storage ?? AuthSessionStorageService();
 
   Future<void> saveAccessToken(String token) async {
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setString(_accessTokenKey, token);
+    await _storage.saveSession(
+      AuthSession(
+        accessToken: token,
+        expiresAt: DateTime.now().add(const Duration(days: 30)),
+      ),
+    );
   }
 
   Future<String?> readAccessToken() async {
-    final preferences = await SharedPreferences.getInstance();
-    return preferences.getString(_accessTokenKey);
+    final session = await _storage.loadSession();
+    if (session == null || session.isExpired) {
+      if (session != null) {
+        await _storage.clearSession();
+      }
+      return null;
+    }
+    return session.accessToken;
   }
 
   Future<void> clear() async {
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.remove(_accessTokenKey);
+    await _storage.clearSession();
   }
 }
