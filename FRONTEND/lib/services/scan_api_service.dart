@@ -12,6 +12,7 @@ enum ScanApiErrorType {
   unauthorized,
   payloadTooLarge,
   unsupportedMediaType,
+  ocrFailed,
   aiRecognitionFailed,
   server,
   network,
@@ -41,6 +42,8 @@ class ScanApiException implements Exception {
         return '사진 용량이 너무 커요. 더 작은 이미지로 다시 시도해 주세요.';
       case ScanApiErrorType.unsupportedMediaType:
         return '지원하지 않는 이미지 형식이에요. JPG 또는 PNG 사진을 사용해 주세요.';
+      case ScanApiErrorType.ocrFailed:
+        return '사진에서 라벨 글자를 읽지 못했어요. 라벨이 선명하게 보이도록 다시 촬영하거나 직접 입력해 주세요.';
       case ScanApiErrorType.aiRecognitionFailed:
         return 'AI가 라벨 정보를 정확히 인식하지 못했어요. 소재와 혼용률을 직접 입력해 주세요.';
       case ScanApiErrorType.server:
@@ -87,6 +90,12 @@ class ScanApiException implements Exception {
           type: ScanApiErrorType.unsupportedMediaType,
           statusCode: statusCode,
           message: serverMessage ?? '지원하지 않는 이미지 형식입니다.',
+        );
+      case 502:
+        return ScanApiException(
+          type: ScanApiErrorType.ocrFailed,
+          statusCode: statusCode,
+          message: serverMessage ?? 'AI OCR 처리에 실패했습니다.',
         );
       case 422:
         return ScanApiException(
