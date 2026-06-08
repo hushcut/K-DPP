@@ -16,6 +16,11 @@ void main() {
       minWeightGram: 300,
       maxWeightGram: 500,
       savedResultId: 17,
+      weightSource: 'range',
+      calculationScope: 'material_production_estimate',
+      calculationBasis: '소재 배출계수와 의류 무게 기준',
+      calculationSource: 'team-approved-source',
+      calculationNote: '개발용 추정값',
     );
 
     final restored = Clothes.fromJson(clothes.toJson());
@@ -27,6 +32,11 @@ void main() {
     expect(restored.minWeightGram, 300);
     expect(restored.maxWeightGram, 500);
     expect(restored.savedResultId, 17);
+    expect(restored.weightSource, 'range');
+    expect(restored.calculationScope, 'material_production_estimate');
+    expect(restored.calculationBasis, '소재 배출계수와 의류 무게 기준');
+    expect(restored.calculationSource, 'team-approved-source');
+    expect(restored.calculationNote, '개발용 추정값');
   });
 
   test('treats legacy stored clothes as a local estimate', () {

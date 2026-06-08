@@ -43,7 +43,7 @@ class ScanDraftService {
 
     return ScanDraft(
       clothingType: clothingType,
-      materials: result.materials,
+      materials: result.displayMaterials,
       careInstruction: result.careInstruction,
       title: scannedTitle?.isNotEmpty == true
           ? scannedTitle!

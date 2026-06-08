@@ -31,6 +31,12 @@ void main() {
             'max_weight_grams': 250,
             'unit': 'kg CO2eq',
             'saved_result_id': 21,
+            'average_carbon_footprint': 1.46,
+            'weight_source': 'range',
+            'calculation_scope': 'material_production_estimate',
+            'calculation_basis': '소재 배출계수와 의류 무게 기준',
+            'calculation_source': 'team-approved-source',
+            'calculation_note': '개발용 추정값',
           }),
           200,
           headers: {'content-type': 'application/json; charset=utf-8'},
@@ -65,6 +71,12 @@ void main() {
         expect(result.carbonFootprintMin, 0.83);
         expect(result.carbonFootprintMax, 2.08);
         expect(result.savedResultId, 21);
+        expect(result.averageCarbonFootprint, 1.46);
+        expect(result.weightSource, 'range');
+        expect(result.calculationScope, 'material_production_estimate');
+        expect(result.calculationBasis, '소재 배출계수와 의류 무게 기준');
+        expect(result.calculationSource, 'team-approved-source');
+        expect(result.calculationNote, '개발용 추정값');
       } finally {
         client.close();
       }

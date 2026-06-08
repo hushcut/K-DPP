@@ -139,6 +139,12 @@ class CarbonCalculationResult {
     required this.maxWeightGram,
     required this.unit,
     required this.savedResultId,
+    this.averageCarbonFootprint,
+    this.weightSource,
+    this.calculationScope,
+    this.calculationBasis,
+    this.calculationSource,
+    this.calculationNote,
   });
 
   final double carbonFactor;
@@ -149,6 +155,12 @@ class CarbonCalculationResult {
   final double maxWeightGram;
   final String unit;
   final int savedResultId;
+  final double? averageCarbonFootprint;
+  final String? weightSource;
+  final String? calculationScope;
+  final String? calculationBasis;
+  final String? calculationSource;
+  final String? calculationNote;
 
   factory CarbonCalculationResult.fromJson(Map<String, dynamic> json) {
     final carbonFactor = _parseDouble(json['carbon_factor']);
@@ -180,6 +192,12 @@ class CarbonCalculationResult {
       maxWeightGram: maxWeightGram,
       unit: unit,
       savedResultId: savedResultId,
+      averageCarbonFootprint: _parseDouble(json['average_carbon_footprint']),
+      weightSource: _parseString(json['weight_source']),
+      calculationScope: _parseString(json['calculation_scope']),
+      calculationBasis: _parseString(json['calculation_basis']),
+      calculationSource: _parseString(json['calculation_source']),
+      calculationNote: _parseString(json['calculation_note']),
     );
   }
 
@@ -193,6 +211,11 @@ class CarbonCalculationResult {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '');
+  }
+
+  static String? _parseString(dynamic value) {
+    final text = value?.toString().trim();
+    return text?.isNotEmpty == true ? text : null;
   }
 }
 

@@ -19,10 +19,19 @@ void main() {
       expect(inferredType.estimatedWeightGram, 680);
     });
 
-    test('buildFromResult keeps scanned title when it exists', () {
+    test('buildFromResult keeps scanned title and display material name', () {
       final result = ScanResult(
-        title: ' 홍길동 코튼 셔츠 ',
+        title: ' 친환경 코튼 셔츠 ',
         materials: {'cotton': 100},
+        materialDetails: const [
+          ScanMaterialDetail(
+            originalName: 'cotton',
+            standardName: 'cotton',
+            displayName: '면',
+            ratio: 100,
+            isSupported: true,
+          ),
+        ],
         careInstruction: '찬물 세탁',
         health: 90,
         carbonFootprint: 4.2,
@@ -35,8 +44,8 @@ void main() {
         clothingType: ClothingTypeCatalog.defaultOption,
       );
 
-      expect(draft.title, '홍길동 코튼 셔츠');
-      expect(draft.materials, {'cotton': 100});
+      expect(draft.title, '친환경 코튼 셔츠');
+      expect(draft.materials, {'면': 100});
       expect(draft.careInstruction, '찬물 세탁');
       expect(draft.serverHealth, 90);
       expect(draft.serverCarbonFootprint, 4.2);

@@ -176,6 +176,55 @@ class ReportScreen extends StatelessWidget {
                   : '총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 소재와 무게 기반 임시 추정',
               style: TextStyle(color: secondaryText, fontSize: 13),
             ),
+            if (item.carbonFootprintSource == CarbonFootprintSource.server &&
+                (item.calculationScope != null ||
+                    item.calculationSource != null ||
+                    item.calculationNote != null)) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: softCardColor,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: borderColor),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '계산 기준',
+                      style: TextStyle(
+                        color: primaryText,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    if (item.calculationScope != null)
+                      Text(
+                        _calculationScopeLabel(item.calculationScope!),
+                        style: TextStyle(color: secondaryText, fontSize: 12),
+                      ),
+                    if (item.calculationBasis != null)
+                      Text(
+                        item.calculationBasis!,
+                        style: TextStyle(color: secondaryText, fontSize: 12),
+                      ),
+                    if (item.calculationSource != null)
+                      Text(
+                        '출처: ${item.calculationSource!}',
+                        style: TextStyle(color: secondaryText, fontSize: 12),
+                      ),
+                    if (item.calculationNote != null)
+                      Text(
+                        item.calculationNote!,
+                        style: TextStyle(color: secondaryText, fontSize: 12),
+                      ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
 
             _buildLcaChart(
@@ -427,6 +476,13 @@ class ReportScreen extends StatelessWidget {
       ..sort((a, b) => b.value.compareTo(a.value));
 
     return '${_materialDisplayName(sorted.first.key)} ${_formatMaterialValue(sorted.first.value)}%';
+  }
+
+  static String _calculationScopeLabel(String scope) {
+    if (scope == 'material_production_estimate') {
+      return '범위: 원료 및 소재 생산 단계 추정';
+    }
+    return '범위: $scope';
   }
 
   static String _materialDisplayName(String name) {

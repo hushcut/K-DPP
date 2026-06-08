@@ -6,6 +6,22 @@ void main() {
     test('parses the canonical scan success payload', () {
       final result = ScanResult.fromJson({
         'materials': {'cotton': 80.0, 'polyester': 20.0},
+        'material_details': [
+          {
+            'original_name': 'cotton',
+            'standard_name': 'cotton',
+            'display_name': '면',
+            'ratio': 80,
+            'is_supported': true,
+          },
+          {
+            'original_name': 'polyester',
+            'standard_name': 'polyester',
+            'display_name': '폴리에스터',
+            'ratio': 20,
+            'is_supported': true,
+          },
+        ],
         'care_instruction': '30도 이하 물에서 중성세제로 세탁하세요.',
         'title': '홍길동 코튼 셔츠',
         'category': '상의',
@@ -18,6 +34,9 @@ void main() {
       });
 
       expect(result.materials, {'cotton': 80.0, 'polyester': 20.0});
+      expect(result.displayMaterials, {'면': 80.0, '폴리에스터': 20.0});
+      expect(result.materialDetails, hasLength(2));
+      expect(result.materialDetails.first.standardName, 'cotton');
       expect(result.careInstruction, '30도 이하 물에서 중성세제로 세탁하세요.');
       expect(result.title, '홍길동 코튼 셔츠');
       expect(result.category, '상의');

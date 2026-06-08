@@ -6,6 +6,7 @@ import 'models/clothes.dart';
 import 'models/clothing_type_option.dart';
 import 'services/scan_analysis_service.dart';
 import 'services/carbon_api_service.dart';
+import 'services/clothing_type_api_service.dart';
 import 'services/scan_camera_lifecycle_service.dart';
 import 'services/scan_camera_session.dart';
 import 'services/scan_capture_service.dart';
@@ -39,6 +40,8 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
 
   final ScanAnalysisService _scanAnalysisService = const ScanAnalysisService();
   final CarbonApiService _carbonApiService = const CarbonApiService();
+  final ClothingTypeApiService _clothingTypeApiService =
+      const ClothingTypeApiService();
   final ScanCaptureService _scanCaptureService = ScanCaptureService();
   final ScanDraftService _scanDraftService = const ScanDraftService();
   final ScanSaveService _scanSaveService = const ScanSaveService();
@@ -58,6 +61,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   final TextEditingController _titleController = TextEditingController();
 
   ClothingTypeOption _selectedClothingType = ClothingTypeCatalog.defaultOption;
+  List<ClothingTypeOption> _clothingTypeOptions = ClothingTypeCatalog.options;
   String _selectedCategory = ClothingTypeCatalog.defaultOption.category;
 
   @override
@@ -75,6 +79,20 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
 
     if (widget.isActive) {
       _cameraLifecycle.initialize();
+    }
+    _loadClothingTypeOptions();
+  }
+
+  Future<void> _loadClothingTypeOptions() async {
+    try {
+      final options = await _clothingTypeApiService.fetchOptions();
+      if (!mounted) return;
+
+      setState(() {
+        _clothingTypeOptions = options;
+      });
+    } catch (_) {
+      // Keep the bundled catalog available when the backend is offline.
     }
   }
 
@@ -359,7 +377,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       clipBehavior: Clip.antiAlias,
       builder: (sheetContext) {
         return ClothingTypePickerSheet(
-          options: ClothingTypeCatalog.options,
+          options: _clothingTypeOptions,
           initialSelection: initialSelection,
           onSelected: (option) {
             Navigator.pop(sheetContext, option);
@@ -479,6 +497,11 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
               minWeightGram: calculation.minWeightGram,
               maxWeightGram: calculation.maxWeightGram,
               savedResultId: calculation.savedResultId,
+              weightSource: calculation.weightSource,
+              calculationScope: calculation.calculationScope,
+              calculationBasis: calculation.calculationBasis,
+              calculationSource: calculation.calculationSource,
+              calculationNote: calculation.calculationNote,
             );
           } on CarbonApiException catch (error) {
             if (error.type == CarbonApiErrorType.unauthorized) {

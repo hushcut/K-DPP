@@ -20,6 +20,11 @@ class Clothes {
   final double? minWeightGram;
   final double? maxWeightGram;
   final int? savedResultId;
+  final String? weightSource;
+  final String? calculationScope;
+  final String? calculationBasis;
+  final String? calculationSource;
+  final String? calculationNote;
 
   Clothes({
     required this.title,
@@ -34,6 +39,11 @@ class Clothes {
     this.minWeightGram,
     this.maxWeightGram,
     this.savedResultId,
+    this.weightSource,
+    this.calculationScope,
+    this.calculationBasis,
+    this.calculationSource,
+    this.calculationNote,
   });
 
   Clothes copyWith({
@@ -49,6 +59,11 @@ class Clothes {
     double? minWeightGram,
     double? maxWeightGram,
     int? savedResultId,
+    String? weightSource,
+    String? calculationScope,
+    String? calculationBasis,
+    String? calculationSource,
+    String? calculationNote,
   }) {
     return Clothes(
       title: title ?? this.title,
@@ -64,6 +79,11 @@ class Clothes {
       minWeightGram: minWeightGram ?? this.minWeightGram,
       maxWeightGram: maxWeightGram ?? this.maxWeightGram,
       savedResultId: savedResultId ?? this.savedResultId,
+      weightSource: weightSource ?? this.weightSource,
+      calculationScope: calculationScope ?? this.calculationScope,
+      calculationBasis: calculationBasis ?? this.calculationBasis,
+      calculationSource: calculationSource ?? this.calculationSource,
+      calculationNote: calculationNote ?? this.calculationNote,
     );
   }
 
@@ -108,6 +128,21 @@ class Clothes {
       savedResultId: _parseNullableInt(
         json['savedResultId'] ?? json['saved_result_id'],
       ),
+      weightSource: _parseNullableString(
+        json['weightSource'] ?? json['weight_source'],
+      ),
+      calculationScope: _parseNullableString(
+        json['calculationScope'] ?? json['calculation_scope'],
+      ),
+      calculationBasis: _parseNullableString(
+        json['calculationBasis'] ?? json['calculation_basis'],
+      ),
+      calculationSource: _parseNullableString(
+        json['calculationSource'] ?? json['calculation_source'],
+      ),
+      calculationNote: _parseNullableString(
+        json['calculationNote'] ?? json['calculation_note'],
+      ),
     );
   }
 
@@ -125,6 +160,11 @@ class Clothes {
       'minWeightGram': minWeightGram,
       'maxWeightGram': maxWeightGram,
       'savedResultId': savedResultId,
+      'weightSource': weightSource,
+      'calculationScope': calculationScope,
+      'calculationBasis': calculationBasis,
+      'calculationSource': calculationSource,
+      'calculationNote': calculationNote,
     };
   }
 
@@ -152,5 +192,10 @@ class Clothes {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value.toString());
+  }
+
+  static String? _parseNullableString(dynamic value) {
+    final text = value?.toString().trim();
+    return text?.isNotEmpty == true ? text : null;
   }
 }

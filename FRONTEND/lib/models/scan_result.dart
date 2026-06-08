@@ -2,6 +2,7 @@ class ScanResult {
   ScanResult({
     required Map<String, double> materials,
     required this.careInstruction,
+    List<ScanMaterialDetail> materialDetails = const [],
     this.title,
     this.category,
     this.health,
@@ -10,11 +11,13 @@ class ScanResult {
     this.calculationMethod,
     this.unit,
     this.savedResultId,
-  }) : materials = Map.unmodifiable(materials);
+  }) : materials = Map.unmodifiable(materials),
+       materialDetails = List.unmodifiable(materialDetails);
 
   static const String defaultCareInstruction = '라벨의 세탁 지침을 확인해 주세요.';
 
   final Map<String, double> materials;
+  final List<ScanMaterialDetail> materialDetails;
   final String careInstruction;
   final String? title;
   final String? category;
@@ -24,6 +27,26 @@ class ScanResult {
   final String? calculationMethod;
   final String? unit;
   final int? savedResultId;
+
+  String displayNameFor(String materialName) {
+    final normalizedName = materialName.trim().toLowerCase();
+
+    for (final detail in materialDetails) {
+      if (detail.originalName.trim().toLowerCase() == normalizedName ||
+          detail.standardName?.trim().toLowerCase() == normalizedName) {
+        return detail.displayName;
+      }
+    }
+
+    return materialName;
+  }
+
+  Map<String, double> get displayMaterials {
+    return Map.unmodifiable({
+      for (final entry in materials.entries)
+        displayNameFor(entry.key): entry.value,
+    });
+  }
 
   factory ScanResult.fromJson(Map<String, dynamic> json) {
     final rawMaterials =
@@ -35,6 +58,7 @@ class ScanResult {
 
     return ScanResult(
       materials: _parseMaterials(rawMaterials),
+      materialDetails: _parseMaterialDetails(json['material_details']),
       careInstruction:
           _readOptionalString(json, const [
             'care_instruction',
@@ -101,6 +125,19 @@ class ScanResult {
     return materials;
   }
 
+  static List<ScanMaterialDetail> _parseMaterialDetails(dynamic value) {
+    if (value is! List) return const [];
+
+    return value
+        .whereType<Map>()
+        .map(
+          (item) =>
+              ScanMaterialDetail.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .where((item) => item.originalName.isNotEmpty)
+        .toList(growable: false);
+  }
+
   static double? _parsePercentage(dynamic value) {
     if (value == null) return null;
     if (value is num) return value.toDouble();
@@ -134,5 +171,41 @@ class ScanResult {
     if (value == null) return null;
     if (value is num) return value.toDouble();
     return double.tryParse(value.toString());
+  }
+}
+
+class ScanMaterialDetail {
+  const ScanMaterialDetail({
+    required this.originalName,
+    required this.displayName,
+    required this.ratio,
+    required this.isSupported,
+    this.standardName,
+  });
+
+  final String originalName;
+  final String? standardName;
+  final String displayName;
+  final double ratio;
+  final bool isSupported;
+
+  factory ScanMaterialDetail.fromJson(Map<String, dynamic> json) {
+    final originalName = json['original_name']?.toString().trim() ?? '';
+    final displayName = json['display_name']?.toString().trim();
+
+    return ScanMaterialDetail(
+      originalName: originalName,
+      standardName: _optionalString(json['standard_name']),
+      displayName: displayName?.isNotEmpty == true
+          ? displayName!
+          : originalName,
+      ratio: ScanResult._parsePercentage(json['ratio']) ?? 0,
+      isSupported: json['is_supported'] == true,
+    );
+  }
+
+  static String? _optionalString(dynamic value) {
+    final text = value?.toString().trim();
+    return text?.isNotEmpty == true ? text : null;
   }
 }

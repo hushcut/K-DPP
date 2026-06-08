@@ -7,6 +7,8 @@ class ClothingTypeOption {
     required this.weightRangeLabel,
     required this.estimatedWeightGram,
     required this.icon,
+    this.minimumWeightGram,
+    this.maximumWeightGram,
     this.isDirectWeightPlaceholder = false,
     this.isDirectWeight = false,
   });
@@ -31,6 +33,8 @@ class ClothingTypeOption {
   final String weightRangeLabel;
   final double estimatedWeightGram;
   final IconData icon;
+  final double? minimumWeightGram;
+  final double? maximumWeightGram;
   final bool isDirectWeightPlaceholder;
   final bool isDirectWeight;
 
@@ -53,6 +57,7 @@ class ClothingTypeOption {
 
   double get minWeightGram {
     if (isDirectWeight || isDirectWeightPlaceholder) return estimatedWeightGram;
+    if (minimumWeightGram != null) return minimumWeightGram!;
 
     final match = RegExp(
       r'(\d+(?:\.\d+)?)~(\d+(?:\.\d+)?)g',
@@ -64,6 +69,7 @@ class ClothingTypeOption {
 
   double get maxWeightGram {
     if (isDirectWeight || isDirectWeightPlaceholder) return estimatedWeightGram;
+    if (maximumWeightGram != null) return maximumWeightGram!;
 
     final match = RegExp(
       r'(\d+(?:\.\d+)?)~(\d+(?:\.\d+)?)g',
