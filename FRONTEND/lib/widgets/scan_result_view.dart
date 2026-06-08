@@ -12,7 +12,9 @@ class ScanResultView extends StatelessWidget {
     required this.formKey,
     required this.hasTriedSubmit,
     required this.isSaving,
+    required this.isScanFailed,
     required this.isManualMaterialMode,
+    this.scanFailureMessage,
     required this.titleController,
     required this.selectedClothingType,
     required this.materialInputs,
@@ -37,7 +39,9 @@ class ScanResultView extends StatelessWidget {
   final GlobalKey<FormState> formKey;
   final bool hasTriedSubmit;
   final bool isSaving;
+  final bool isScanFailed;
   final bool isManualMaterialMode;
+  final String? scanFailureMessage;
   final TextEditingController titleController;
   final ClothingTypeOption selectedClothingType;
   final MaterialInputCollection materialInputs;
@@ -95,6 +99,14 @@ class ScanResultView extends StatelessWidget {
         ? const Color(0xFF2C4C7A)
         : Colors.green.shade100;
     final careBoxColor = isDark ? const Color(0xFF1E2A3A) : Colors.blue.shade50;
+    final statusColor = isScanFailed ? Colors.orangeAccent : Colors.green;
+    final statusIcon = isScanFailed ? Icons.error_outline : Icons.check_circle;
+    final statusTitle = isScanFailed ? '스캔 실패' : '스캔 완료!';
+    final statusSubtitle = isScanFailed
+        ? 'AI가 라벨을 정확히 인식하지 못했어요. 소재와 혼용률을 직접 입력해 주세요.'
+        : isManualMaterialMode
+        ? '인식하지 못한 정보를 직접 입력해 주세요.'
+        : '의류 무게 기준과 분석 결과를 확인해 주세요.';
 
     return Container(
       color: backgroundColor,
@@ -109,13 +121,11 @@ class ScanResultView extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Center(
-                child: Icon(Icons.check_circle, color: Colors.green, size: 60),
-              ),
+              Center(child: Icon(statusIcon, color: statusColor, size: 60)),
               const SizedBox(height: 16),
               Center(
                 child: Text(
-                  '스캔 완료!',
+                  statusTitle,
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
@@ -126,9 +136,7 @@ class ScanResultView extends StatelessWidget {
               const SizedBox(height: 8),
               Center(
                 child: Text(
-                  isManualMaterialMode
-                      ? '인식하지 못한 정보를 직접 입력해 주세요.'
-                      : '의류 무게 기준과 분석 결과를 확인해 주세요.',
+                  statusSubtitle,
                   style: TextStyle(fontSize: 14, color: secondaryText),
                   textAlign: TextAlign.center,
                 ),
@@ -241,6 +249,9 @@ class ScanResultView extends StatelessWidget {
               if (isManualMaterialMode) ...[
                 const SizedBox(height: 16),
                 _buildManualNotice(
+                  isScanFailed: isScanFailed,
+                  failureMessage: scanFailureMessage,
+                  primaryText: primaryText,
                   secondaryText: secondaryText,
                   borderColor: borderColor,
                   cardColor: cardColor,
@@ -248,7 +259,7 @@ class ScanResultView extends StatelessWidget {
               ],
               const SizedBox(height: 24),
               Text(
-                '소재 및 혼용률',
+                isScanFailed ? '직접 소재 입력' : '소재 및 혼용률',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -326,7 +337,7 @@ class ScanResultView extends StatelessWidget {
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        'AI 분석 세탁 지침\n$scannedCare',
+                        '${isScanFailed ? '관리 지침' : 'AI 분석 세탁 지침'}\n$scannedCare',
                         softWrap: true,
                         style: TextStyle(
                           fontSize: 14,
@@ -388,10 +399,15 @@ class ScanResultView extends StatelessWidget {
   }
 
   Widget _buildManualNotice({
+    required bool isScanFailed,
+    required String? failureMessage,
+    required Color primaryText,
     required Color secondaryText,
     required Color borderColor,
     required Color cardColor,
   }) {
+    final normalizedMessage = failureMessage?.trim();
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
@@ -406,10 +422,30 @@ class ScanResultView extends StatelessWidget {
           const Icon(Icons.edit_note, color: Color(0xFF4A4EFE)),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              'AI가 소재 정보를 정확히 읽지 못했어요. 라벨에 적힌 소재명과 혼용률을 직접 추가해 주세요.',
-              softWrap: true,
-              style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isScanFailed ? '직접 입력 모드' : '직접 입력 안내',
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  normalizedMessage?.isNotEmpty == true
+                      ? normalizedMessage!
+                      : 'AI가 소재 정보를 정확히 읽지 못했어요. 라벨에 적힌 소재명과 혼용률을 직접 추가해 주세요.',
+                  softWrap: true,
+                  style: TextStyle(
+                    color: secondaryText,
+                    fontSize: 13,
+                    height: 1.5,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

@@ -33,7 +33,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('테스트 코튼 후드'), findsOneWidget);
-    expect(find.textContaining('의류 상태와 관리 가이드를 확인하세요.'), findsOneWidget);
+    expect(find.textContaining('소재 정보와 생산·제조 탄소 추정값을 확인하세요.'), findsOneWidget);
+    expect(find.text('현재 건강 상태'), findsNothing);
+    expect(find.textContaining('단계별 탄소 배출량'), findsNothing);
+    expect(find.text('생산·제조 탄소 배출량'), findsOneWidget);
+    expect(find.text('탄소 배출량 체감'), findsOneWidget);
+    expect(find.textContaining('전체 생애주기 배출량이 아닙니다'), findsOneWidget);
+    expect(find.text('자동차'), findsOneWidget);
+    expect(find.text('스마트폰'), findsOneWidget);
+    expect(find.text('LED 전구'), findsOneWidget);
     expect(find.textContaining('라벨 지침: 찬물 세탁 후 자연 건조'), findsOneWidget);
     expect(find.text('찬물 세탁 후 자연 건조'), findsOneWidget);
     expect(find.textContaining('COTTON 80%'), findsWidgets);

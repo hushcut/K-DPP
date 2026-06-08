@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 
@@ -43,6 +45,7 @@ class ScanCameraSession extends ChangeNotifier {
       );
 
       await controller.initialize();
+      await _configureAutoFocus(controller);
 
       if (!canUseCamera() || requestId != _requestId) {
         await controller.dispose();
@@ -64,6 +67,17 @@ class ScanCameraSession extends ChangeNotifier {
       _isInitializing = false;
       _errorMessage = _buildCameraErrorMessage(e);
       notifyListeners();
+    }
+  }
+
+  Future<void> _configureAutoFocus(CameraController controller) async {
+    try {
+      await controller.setFocusMode(FocusMode.auto);
+      await controller.setExposureMode(ExposureMode.auto);
+      await controller.setFocusPoint(const Offset(0.5, 0.5));
+      await controller.setExposurePoint(const Offset(0.5, 0.5));
+    } catch (_) {
+      // Some camera implementations do not support explicit focus/exposure points.
     }
   }
 

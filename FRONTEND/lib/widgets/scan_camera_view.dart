@@ -34,14 +34,16 @@ class ScanCameraView extends StatelessWidget {
         top: false,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final frameSize = (constraints.maxWidth - 48).clamp(220.0, 280.0);
+            final frameSize = constraints.maxWidth < 320
+                ? (constraints.maxWidth - 64).clamp(210.0, 250.0).toDouble()
+                : 250.0;
             final availableHeight = constraints.maxHeight - 140;
             final minContentHeight = availableHeight < 520
                 ? 520.0
                 : availableHeight;
 
             return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 24, 20, 116),
+              padding: const EdgeInsets.fromLTRB(20, 112, 20, 72),
               child: ConstrainedBox(
                 constraints: BoxConstraints(minHeight: minContentHeight),
                 child: Column(
@@ -117,12 +119,12 @@ class ScanCameraView extends StatelessWidget {
                     const SizedBox(height: 46),
                     SizedBox(
                       width: double.infinity,
-                      height: 150,
+                      height: 168,
                       child: Stack(
                         alignment: Alignment.center,
                         children: [
                           Positioned(
-                            left: 6,
+                            left: 26,
                             bottom: 0,
                             child: Semantics(
                               label: '앨범에서 라벨 사진 선택',

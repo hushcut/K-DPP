@@ -33,6 +33,7 @@ class ScanScreen extends StatefulWidget {
 class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   bool _isScanning = false;
   bool _isScanComplete = false;
+  bool _isScanFailed = false;
   bool _hasTriedSubmit = false;
   bool _isManualMaterialMode = false;
   bool _isSaving = false;
@@ -52,6 +53,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
 
   String _scannedCare = '';
+  String? _scanFailureMessage;
   Map<String, double> _originalScannedMaterials = const {};
   int? _serverHealth;
   double? _serverCarbonFootprint;
@@ -137,9 +139,11 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       _selectedImage = imageFile;
       _isScanning = true;
       _isScanComplete = false;
+      _isScanFailed = false;
       _hasTriedSubmit = false;
       _isSaving = false;
       _isManualMaterialMode = false;
+      _scanFailureMessage = null;
     });
 
     final outcome = await _scanAnalysisService.analyzeLabel(
@@ -203,7 +207,11 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       return;
     }
 
-    _applyScanDraft(_scanDraftService.buildManual(clothingType: selectedType));
+    _applyScanDraft(
+      _scanDraftService.buildManual(clothingType: selectedType),
+      isScanFailed: true,
+      failureMessage: message,
+    );
 
     ScaffoldMessenger.of(
       context,
@@ -217,8 +225,10 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       _selectedImage = null;
       _isScanning = false;
       _isScanComplete = false;
+      _isScanFailed = false;
       _isManualMaterialMode = false;
       _scannedCare = '';
+      _scanFailureMessage = null;
       _originalScannedMaterials = const {};
       _serverHealth = null;
       _serverCarbonFootprint = null;
@@ -311,15 +321,25 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
     }
   }
 
-  void _applyScanDraft(ScanDraft draft) {
+  void _applyScanDraft(
+    ScanDraft draft, {
+    bool isScanFailed = false,
+    String? failureMessage,
+  }) {
     _setMaterialInputs(draft.materials);
+
+    if (draft.isManualMaterialMode && draft.materials.isEmpty) {
+      _materialInputs.addEmpty();
+    }
 
     setState(() {
       _selectedClothingType = draft.clothingType;
       _selectedCategory = draft.category;
       _isScanComplete = true;
+      _isScanFailed = isScanFailed;
       _isManualMaterialMode = draft.isManualMaterialMode;
       _scannedCare = draft.careInstruction;
+      _scanFailureMessage = failureMessage;
       _originalScannedMaterials = Map.unmodifiable(draft.materials);
       _serverHealth = draft.serverHealth;
       _serverCarbonFootprint = draft.serverCarbonFootprint;
@@ -541,8 +561,10 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       _selectedImage = null;
       _isScanning = false;
       _isScanComplete = false;
+      _isScanFailed = false;
       _isManualMaterialMode = false;
       _scannedCare = '';
+      _scanFailureMessage = null;
       _originalScannedMaterials = const {};
       _serverHealth = null;
       _serverCarbonFootprint = null;
@@ -591,7 +613,9 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       formKey: _formKey,
       hasTriedSubmit: _hasTriedSubmit,
       isSaving: _isSaving,
+      isScanFailed: _isScanFailed,
       isManualMaterialMode: _isManualMaterialMode,
+      scanFailureMessage: _scanFailureMessage,
       titleController: _titleController,
       selectedClothingType: _selectedClothingType,
       materialInputs: _materialInputs,

@@ -26,9 +26,6 @@ class ReportScreen extends StatelessWidget {
     final secondaryText = isDark
         ? const Color(0xFFD1D1D6)
         : const Color(0xFF5F6368);
-    final softCardColor = isDark
-        ? const Color(0xFF2A2A2E)
-        : const Color(0xFFF8F9FC);
     if (item == null) {
       return Center(
         child: Text(
@@ -43,11 +40,9 @@ class ReportScreen extends StatelessWidget {
         .map((e) => '${e.key.toUpperCase()} ${_formatMaterialValue(e.value)}%')
         .join(', ');
 
-    final lcaStages = _buildLcaBreakdown(item);
     final careTips = _buildCareTips(item);
     final storageTip = _buildStorageTip(item);
     final disposalGuide = _buildDisposalGuide(item);
-    final healthLabel = _healthLabel(item.health);
     final mainMaterial = _mainMaterialLabel(item);
 
     return Container(
@@ -88,7 +83,7 @@ class ReportScreen extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              '의류 상태와 관리 가이드를 확인하세요.',
+              '소재 정보와 생산·제조 탄소 추정값을 확인하세요.',
               style: TextStyle(color: secondaryText, fontSize: 14),
             ),
             const SizedBox(height: 16),
@@ -107,25 +102,17 @@ class ReportScreen extends StatelessWidget {
                   label: mainMaterial,
                   isDark: isDark,
                 ),
-                _buildTagChip(
-                  icon: Icons.favorite_border,
-                  label: healthLabel,
-                  isDark: isDark,
-                ),
               ],
             ),
-            const SizedBox(height: 24),
-
-            _buildHealthStatusCard(item.health, isDark: isDark),
             const SizedBox(height: 24),
 
             LayoutBuilder(
               builder: (context, constraints) {
                 final textScale = MediaQuery.textScalerOf(context).scale(1);
                 final useVerticalLayout =
-                    constraints.maxWidth < 380 || textScale > 1.25;
+                    constraints.maxWidth < 300 || textScale > 1.35;
                 final carbonCard = _buildSummaryCard(
-                  title: '총 탄소발자국',
+                  title: '탄소 추정값',
                   value: '${item.carbonFootprint.toStringAsFixed(1)} kg',
                   subtitle:
                       item.carbonFootprintSource == CarbonFootprintSource.server
@@ -155,6 +142,7 @@ class ReportScreen extends StatelessWidget {
 
                 if (useVerticalLayout) {
                   return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       carbonCard,
                       const SizedBox(height: 12),
@@ -176,7 +164,7 @@ class ReportScreen extends StatelessWidget {
             const SizedBox(height: 24),
 
             Text(
-              '단계별 탄소 배출량 (LCA)',
+              '생산·제조 탄소 배출량',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -185,47 +173,35 @@ class ReportScreen extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              item.carbonFootprintSource == CarbonFootprintSource.server
-                  ? item.carbonFootprintMin != null &&
-                            item.carbonFootprintMax != null
-                        ? '평균 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 범위 ${item.carbonFootprintMin!.toStringAsFixed(1)}~${item.carbonFootprintMax!.toStringAsFixed(1)} kg'
-                        : '총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 무게 기반 서버 계산'
-                  : '총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 소재와 무게 기반 임시 추정',
+              '이 수치는 전체 생애주기 배출량이 아닙니다. 소재와 무게를 바탕으로 생산·제조 과정에서 발생한 탄소 배출량을 추정한 값입니다.',
               style: TextStyle(color: secondaryText, fontSize: 13),
             ),
             const SizedBox(height: 16),
 
-            _buildLcaChart(
+            _buildProductionCarbonCard(
               item,
-              lcaStages,
               primaryText: primaryText,
               secondaryText: secondaryText,
               cardColor: cardColor,
               borderColor: borderColor,
-              softCardColor: softCardColor,
+              isDark: isDark,
             ),
             const SizedBox(height: 12),
 
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF3A3020) : Colors.orange.shade50,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: isDark
-                      ? const Color(0xFF5A4930)
-                      : Colors.orange.shade100,
-                ),
-              ),
-              child: Text(
-                '원단 생산 단계의 배출량이 크게 나타나는 경우가 많습니다. 소재 선택과 세탁 습관을 함께 관리하면 의류의 전 생애주기 환경 부담을 줄이는 데 도움이 됩니다.',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: isDark ? const Color(0xFFFFE0B2) : Colors.black87,
-                  height: 1.5,
-                ),
-              ),
+            _buildCarbonComparisonCard(
+              item,
+              primaryText: primaryText,
+              secondaryText: secondaryText,
+              cardColor: cardColor,
+              borderColor: borderColor,
+              isDark: isDark,
+            ),
+            const SizedBox(height: 12),
+
+            _buildCarbonScopeNotice(
+              primaryText: primaryText,
+              secondaryText: secondaryText,
+              isDark: isDark,
             ),
             const SizedBox(height: 24),
 
@@ -442,13 +418,6 @@ class ReportScreen extends StatelessWidget {
     return value.toStringAsFixed(1);
   }
 
-  static String _healthLabel(int health) {
-    if (health <= 20) return '수명 만료 주의';
-    if (health <= 40) return '관리 주의';
-    if (health <= 70) return '보통';
-    return '양호';
-  }
-
   static String _mainMaterialLabel(Clothes item) {
     if (item.materials.isEmpty) return '소재 정보 없음';
 
@@ -484,13 +453,7 @@ class ReportScreen extends StatelessWidget {
       tips.add('신축성 섬유가 포함된 의류는 비틀어 짜기보다 눌러서 물기를 제거하는 편이 안전합니다.');
     }
 
-    if (item.health <= 20) {
-      tips.add('현재 건강도가 낮아 추가 세탁 전 오염 부위만 부분 세탁하는 방식이 더 적합할 수 있습니다.');
-    } else if (item.health <= 40) {
-      tips.add('세탁 빈도를 줄이고 통풍 보관을 병행하면 의류 수명 저하를 완화할 수 있습니다.');
-    } else {
-      tips.add('현재 상태가 양호하므로 라벨 지침을 유지하면 비교적 안정적으로 관리할 수 있습니다.');
-    }
+    tips.add('착용 후 바로 보관하기보다 잠시 통풍시키고, 세탁 전에는 케어 라벨의 온도와 건조 지침을 먼저 확인하세요.');
 
     if (item.careInstruction.isNotEmpty) {
       tips.add('라벨 지침: ${item.careInstruction}');
@@ -516,130 +479,15 @@ class ReportScreen extends StatelessWidget {
   }
 
   static String _buildDisposalGuide(Clothes item) {
-    if (item.health > 40) {
-      return '아직 사용 가능한 상태입니다. 중고 거래, 기부, 재사용을 먼저 검토해 보세요.';
-    }
-
     if (_hasMaterial(item, ['cotton', 'linen', 'wool'])) {
-      return '천연섬유 비중이 높다면 상태에 따라 의류수거함, 기부, 업사이클링 활용 가능성을 먼저 확인해 보세요.';
+      return '천연섬유 비중이 높다면 오염과 손상 정도를 직접 확인한 뒤 의류수거함, 기부, 업사이클링 활용 가능성을 검토해 보세요.';
     }
 
     if (_hasMaterial(item, ['polyester', 'nylon', 'polyurethane'])) {
-      return '혼방·합성섬유 의류는 지역 분리배출 기준을 먼저 확인하고, 재사용이 어렵다면 의류 수거 체계에 맞춰 배출하세요.';
+      return '혼방·합성섬유 의류는 지역 분리배출 기준을 먼저 확인하고, 재사용이 어렵다고 판단될 때 의류 수거 체계에 맞춰 배출하세요.';
     }
 
-    return '상태가 좋지 않다면 지역 의류 수거 또는 섬유 분리배출 기준을 확인해 적절히 처리하는 것이 좋습니다.';
-  }
-
-  static List<_LcaStageData> _buildLcaBreakdown(Clothes item) {
-    final totalFootprint = item.carbonFootprint > 0
-        ? item.carbonFootprint
-        : 10.0;
-
-    final syntheticShare = _sumMatchingMaterials(item.materials, [
-      'polyester',
-      'nylon',
-      'polyurethane',
-      'spandex',
-      'acrylic',
-    ]);
-
-    final animalFiberShare = _sumMatchingMaterials(item.materials, [
-      'wool',
-      'silk',
-      'leather',
-    ]);
-
-    final plantFiberShare = _sumMatchingMaterials(item.materials, [
-      'cotton',
-      'organic cotton',
-      'linen',
-      'hemp',
-    ]);
-
-    final blendComplexity = item.materials.length >= 3
-        ? 0.02
-        : item.materials.length == 2
-        ? 0.01
-        : 0.0;
-
-    double rawMaterialRatio =
-        0.48 +
-        (syntheticShare / 100 * 0.10) +
-        (animalFiberShare / 100 * 0.08) -
-        (plantFiberShare / 100 * 0.05);
-
-    double manufacturingRatio =
-        0.22 + (item.category == '하의' ? 0.02 : 0.0) + blendComplexity;
-
-    double transportRatio = 0.12 + (item.category == '하의' ? 0.01 : 0.0);
-
-    rawMaterialRatio = rawMaterialRatio.clamp(0.40, 0.62);
-    manufacturingRatio = manufacturingRatio.clamp(0.18, 0.28);
-    transportRatio = transportRatio.clamp(0.10, 0.16);
-
-    double careRatio =
-        1 - rawMaterialRatio - manufacturingRatio - transportRatio;
-
-    if (careRatio < 0.12) {
-      final shortage = 0.12 - careRatio;
-      rawMaterialRatio -= shortage * 0.6;
-      manufacturingRatio -= shortage * 0.3;
-      transportRatio -= shortage * 0.1;
-      careRatio = 0.12;
-    }
-
-    final ratioSum =
-        rawMaterialRatio + manufacturingRatio + transportRatio + careRatio;
-
-    final normalizedRaw = rawMaterialRatio / ratioSum;
-    final normalizedManufacturing = manufacturingRatio / ratioSum;
-    final normalizedTransport = transportRatio / ratioSum;
-    final normalizedCare = careRatio / ratioSum;
-
-    return [
-      _LcaStageData(
-        label: '원단 생산',
-        ratio: normalizedRaw,
-        carbonKg: totalFootprint * normalizedRaw,
-        color: Colors.redAccent,
-      ),
-      _LcaStageData(
-        label: '제조 공정',
-        ratio: normalizedManufacturing,
-        carbonKg: totalFootprint * normalizedManufacturing,
-        color: Colors.orangeAccent,
-      ),
-      _LcaStageData(
-        label: '운송 및 유통',
-        ratio: normalizedTransport,
-        carbonKg: totalFootprint * normalizedTransport,
-        color: const Color(0xFF7C83FD),
-      ),
-      _LcaStageData(
-        label: '세탁 및 관리',
-        ratio: normalizedCare,
-        carbonKg: totalFootprint * normalizedCare,
-        color: Colors.green,
-      ),
-    ];
-  }
-
-  static double _sumMatchingMaterials(
-    Map<String, double> materials,
-    List<String> keywords,
-  ) {
-    double total = 0.0;
-
-    for (final entry in materials.entries) {
-      final lowerKey = entry.key.toLowerCase();
-      final isMatch = keywords.any((keyword) => lowerKey.contains(keyword));
-      if (isMatch) {
-        total += entry.value;
-      }
-    }
-
-    return total;
+    return '의류의 오염과 손상 정도를 직접 확인한 뒤 재사용, 기부, 지역 의류 수거 기준을 순서대로 검토해 보세요.';
   }
 
   static void _showDisposalBottomSheet(
@@ -742,95 +590,6 @@ class ReportScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildHealthStatusCard(int health, {required bool isDark}) {
-    final isWarning = health <= 20;
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: isWarning
-              ? [Colors.redAccent, Colors.orangeAccent]
-              : [const Color(0xFF4A4EFE), const Color(0xFF6B72FF)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: (isWarning ? Colors.redAccent : const Color(0xFF4A4EFE))
-                .withValues(alpha: 0.30),
-            blurRadius: 10,
-            offset: const Offset(0, 5),
-          ),
-        ],
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final textScale = MediaQuery.textScalerOf(context).scale(1);
-          final useVerticalLayout =
-              constraints.maxWidth < 290 || textScale > 1.35;
-          final healthValue = Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                '현재 건강 상태',
-                style: TextStyle(color: Colors.white, fontSize: 14),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '$health%',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          );
-          final statusBadge = Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.20),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  isWarning
-                      ? Icons.warning_amber_rounded
-                      : Icons.timer_outlined,
-                  color: Colors.white,
-                  size: 18,
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  isWarning ? '수명 만료' : '세탁 양호',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          );
-
-          if (useVerticalLayout) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [healthValue, const SizedBox(height: 12), statusBadge],
-            );
-          }
-
-          return Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [healthValue, const SizedBox(width: 12), statusBadge],
-          );
-        },
-      ),
-    );
-  }
-
   Widget _buildSummaryCard({
     required String title,
     required String value,
@@ -843,6 +602,7 @@ class ReportScreen extends StatelessWidget {
     required Color borderColor,
   }) {
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: cardColor,
@@ -874,15 +634,21 @@ class ReportScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildLcaChart(
-    Clothes item,
-    List<_LcaStageData> stages, {
+  Widget _buildProductionCarbonCard(
+    Clothes item, {
     required Color primaryText,
     required Color secondaryText,
     required Color cardColor,
     required Color borderColor,
-    required Color softCardColor,
+    required bool isDark,
   }) {
+    final sourceText =
+        item.carbonFootprintSource == CarbonFootprintSource.server
+        ? item.carbonFootprintMin != null && item.carbonFootprintMax != null
+              ? '서버 계산값 · ${item.carbonFootprintMin!.toStringAsFixed(1)}~${item.carbonFootprintMax!.toStringAsFixed(1)} kg CO2eq 범위'
+              : '서버 계산값'
+        : '앱 임시 추정값';
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -891,24 +657,211 @@ class ReportScreen extends StatelessWidget {
         border: Border.all(color: borderColor),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ...stages.map((stage) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: _buildChartBar(
-                stage,
-                primaryText: primaryText,
-                secondaryText: secondaryText,
-                softCardColor: softCardColor,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: const Color(
+                    0xFF4A4EFE,
+                  ).withValues(alpha: isDark ? 0.22 : 0.10),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.factory_outlined,
+                  color: Color(0xFF4A4EFE),
+                ),
               ),
-            );
-          }),
-          const SizedBox(height: 4),
-          Align(
-            alignment: Alignment.centerLeft,
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '생산·제조 과정 추정값',
+                      style: TextStyle(
+                        color: secondaryText,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq',
+                      style: TextStyle(
+                        color: primaryText,
+                        fontSize: 28,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      sourceText,
+                      style: TextStyle(
+                        color: secondaryText,
+                        fontSize: 12,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _buildScopeRow(
+            icon: Icons.check_circle_outline,
+            label: '포함',
+            value: '소재, 혼용률, 의류 무게 기준',
+            color: Colors.green,
+            primaryText: primaryText,
+            secondaryText: secondaryText,
+          ),
+          const SizedBox(height: 8),
+          _buildScopeRow(
+            icon: Icons.info_outline,
+            label: '미포함',
+            value: '운송, 사용, 세탁, 폐기 과정',
+            color: Colors.orange,
+            primaryText: primaryText,
+            secondaryText: secondaryText,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCarbonComparisonCard(
+    Clothes item, {
+    required Color primaryText,
+    required Color secondaryText,
+    required Color cardColor,
+    required Color borderColor,
+    required bool isDark,
+  }) {
+    final carbon = item.carbonFootprint <= 0 ? 0.1 : item.carbonFootprint;
+    final comparisons = [
+      _CarbonComparisonData(
+        icon: Icons.directions_car_filled_outlined,
+        title: '자동차',
+        value: '약 ${_formatImpactValue(carbon / 0.2)} km',
+      ),
+      _CarbonComparisonData(
+        icon: Icons.smartphone_outlined,
+        title: '스마트폰',
+        value: '약 ${_formatImpactValue(carbon / 0.012)}회 충전',
+      ),
+      _CarbonComparisonData(
+        icon: Icons.lightbulb_outline,
+        title: 'LED 전구',
+        value: '약 ${_formatImpactValue(carbon / 0.02)}시간',
+      ),
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '탄소 배출량 체감',
+            style: TextStyle(
+              color: primaryText,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '이 옷의 추정 배출량은 생활 속 기준으로 보면 아래와 비슷해요.',
+            style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
+          ),
+          const SizedBox(height: 14),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final textScale = MediaQuery.textScalerOf(context).scale(1);
+              final useVerticalLayout =
+                  constraints.maxWidth < 330 || textScale > 1.35;
+
+              if (useVerticalLayout) {
+                return Column(
+                  children: [
+                    for (final comparison in comparisons) ...[
+                      _buildComparisonTile(
+                        comparison,
+                        primaryText: primaryText,
+                        secondaryText: secondaryText,
+                        isDark: isDark,
+                      ),
+                      if (comparison != comparisons.last)
+                        const SizedBox(height: 10),
+                    ],
+                  ],
+                );
+              }
+
+              return Row(
+                children: [
+                  for (final comparison in comparisons) ...[
+                    Expanded(
+                      child: _buildComparisonTile(
+                        comparison,
+                        primaryText: primaryText,
+                        secondaryText: secondaryText,
+                        isDark: isDark,
+                      ),
+                    ),
+                    if (comparison != comparisons.last)
+                      const SizedBox(width: 10),
+                  ],
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '비교값은 수치를 쉽게 이해하기 위한 대략적인 환산입니다.',
+            style: TextStyle(color: secondaryText, fontSize: 12, height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCarbonScopeNotice({
+    required Color primaryText,
+    required Color secondaryText,
+    required bool isDark,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E2A3A) : const Color(0xFFEEF4FF),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isDark ? const Color(0xFF30445F) : const Color(0xFFD9E6FF),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline, color: Color(0xFF4A4EFE), size: 20),
+          const SizedBox(width: 10),
+          Expanded(
             child: Text(
-              '${item.category} · 총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq',
-              style: TextStyle(color: secondaryText, fontSize: 12),
+              '운송, 사용, 세탁, 폐기 과정의 배출량은 현재 수치에 포함하지 않습니다.',
+              style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
             ),
           ),
         ],
@@ -916,80 +869,96 @@ class ReportScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildChartBar(
-    _LcaStageData stage, {
+  Widget _buildScopeRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
     required Color primaryText,
     required Color secondaryText,
-    required Color softCardColor,
   }) {
-    final percent = (stage.ratio * 100).round();
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final textScale = MediaQuery.textScalerOf(context).scale(1);
-        final useVerticalHeader =
-            constraints.maxWidth < 250 || textScale > 1.35;
-
-        final labelWidget = Text(
-          stage.label,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: primaryText,
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: color, size: 18),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 52,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: primaryText,
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
           ),
-        );
-        final valueWidget = Text(
-          '${stage.carbonKg.toStringAsFixed(1)} kg · $percent%',
-          style: TextStyle(
-            fontSize: 12,
-            color: primaryText,
-            fontWeight: FontWeight.w600,
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(color: secondaryText, fontSize: 13, height: 1.4),
           ),
-          textAlign: useVerticalHeader ? TextAlign.left : TextAlign.right,
-        );
+        ),
+      ],
+    );
+  }
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (useVerticalHeader) ...[
-              labelWidget,
-              const SizedBox(height: 4),
-              valueWidget,
-            ] else
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(child: labelWidget),
-                  const SizedBox(width: 8),
-                  Flexible(child: valueWidget),
-                ],
-              ),
-            const SizedBox(height: 8),
-            Stack(
+  Widget _buildComparisonTile(
+    _CarbonComparisonData data, {
+    required Color primaryText,
+    required Color secondaryText,
+    required bool isDark,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF2A2A2E) : const Color(0xFFF6F7FB),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Icon(data.icon, color: const Color(0xFF4A4EFE), size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  height: 16,
-                  decoration: BoxDecoration(
-                    color: softCardColor,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
+                Text(
+                  data.title,
+                  style: TextStyle(color: secondaryText, fontSize: 12),
                 ),
-                FractionallySizedBox(
-                  widthFactor: stage.ratio,
-                  child: Container(
-                    height: 16,
-                    decoration: BoxDecoration(
-                      color: stage.color,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
+                const SizedBox(height: 4),
+                Text(
+                  data.value,
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ],
             ),
-          ],
-        );
-      },
+          ),
+        ],
+      ),
     );
+  }
+
+  static String _formatImpactValue(double value) {
+    if (!value.isFinite || value <= 0) return '1';
+
+    if (value < 10) {
+      final rounded = value.toStringAsFixed(1);
+      return rounded.endsWith('.0')
+          ? rounded.substring(0, rounded.length - 2)
+          : rounded;
+    }
+
+    if (value < 100) {
+      return value.round().toString();
+    }
+
+    return ((value / 10).round() * 10).toString();
   }
 
   Widget _buildGuideSection({
@@ -1151,16 +1120,14 @@ class ReportScreen extends StatelessWidget {
   }
 }
 
-class _LcaStageData {
-  final String label;
-  final double ratio;
-  final double carbonKg;
-  final Color color;
-
-  const _LcaStageData({
-    required this.label,
-    required this.ratio,
-    required this.carbonKg,
-    required this.color,
+class _CarbonComparisonData {
+  const _CarbonComparisonData({
+    required this.icon,
+    required this.title,
+    required this.value,
   });
+
+  final IconData icon;
+  final String title;
+  final String value;
 }
