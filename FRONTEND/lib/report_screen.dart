@@ -15,16 +15,16 @@ class ReportScreen extends StatelessWidget {
     final item = passedItem ?? closetProvider.currentReportItem;
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor =
-    isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FC);
+    final backgroundColor = isDark
+        ? const Color(0xFF121212)
+        : const Color(0xFFF8F9FC);
     final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
-    final borderColor =
-    isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade200;
+    final borderColor = isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade200;
     final primaryText = isDark ? Colors.white : const Color(0xFF1A1A1A);
-    final secondaryText =
-    isDark ? const Color(0xFFD1D1D6) : Colors.grey;
-    final softCardColor =
-    isDark ? const Color(0xFF2A2A2E) : const Color(0xFFF8F9FC);
+    final secondaryText = isDark ? const Color(0xFFD1D1D6) : Colors.grey;
+    final softCardColor = isDark
+        ? const Color(0xFF2A2A2E)
+        : const Color(0xFFF8F9FC);
     if (item == null) {
       return Center(
         child: Text(
@@ -36,7 +36,10 @@ class ReportScreen extends StatelessWidget {
     }
 
     final materialsText = item.materials.entries
-        .map((e) => '${_materialDisplayName(e.key)} ${_formatMaterialValue(e.value)}%')
+        .map(
+          (e) =>
+              '${_materialDisplayName(e.key)} ${_formatMaterialValue(e.value)}%',
+        )
         .join(', ');
 
     final lcaStages = _buildLcaBreakdown(item);
@@ -83,10 +86,7 @@ class ReportScreen extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               '의류 상태와 관리 가이드를 확인하세요.',
-              style: TextStyle(
-                color: secondaryText,
-                fontSize: 14,
-              ),
+              style: TextStyle(color: secondaryText, fontSize: 14),
             ),
             const SizedBox(height: 16),
 
@@ -121,8 +121,15 @@ class ReportScreen extends StatelessWidget {
                 Expanded(
                   child: _buildSummaryCard(
                     title: '총 탄소발자국',
-                    value: item.carbonFootprintRangeText,
-                    subtitle: 'CO2eq 기준 추정값',
+                    value: '${item.carbonFootprint.toStringAsFixed(1)} kg',
+                    subtitle:
+                        item.carbonFootprintSource ==
+                            CarbonFootprintSource.server
+                        ? item.carbonFootprintMin != null &&
+                                  item.carbonFootprintMax != null
+                              ? '${item.carbonFootprintMin!.toStringAsFixed(1)}~${item.carbonFootprintMax!.toStringAsFixed(1)} kg CO2eq'
+                              : 'CO2eq 기준 백엔드 계산값'
+                        : 'CO2eq 기준 임시 추정값',
                     icon: Icons.eco_outlined,
                     color: const Color(0xFF4A4EFE),
                     primaryText: primaryText,
@@ -136,7 +143,9 @@ class ReportScreen extends StatelessWidget {
                   child: _buildSummaryCard(
                     title: '주요 소재',
                     value: mainMaterial,
-                    subtitle: materialsText.isEmpty ? '소재 정보 없음' : materialsText,
+                    subtitle: materialsText.isEmpty
+                        ? '소재 정보 없음'
+                        : materialsText,
                     icon: Icons.checkroom_outlined,
                     color: Colors.green,
                     primaryText: primaryText,
@@ -151,11 +160,20 @@ class ReportScreen extends StatelessWidget {
 
             Text(
               '단계별 탄소 배출량 (LCA)',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: primaryText),
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: primaryText,
+              ),
             ),
             const SizedBox(height: 8),
             Text(
-              '탄소배출량 ${item.carbonFootprintRangeText} · 소재와 카테고리 기반 추정',
+              item.carbonFootprintSource == CarbonFootprintSource.server
+                  ? item.carbonFootprintMin != null &&
+                            item.carbonFootprintMax != null
+                        ? '평균 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 범위 ${item.carbonFootprintMin!.toStringAsFixed(1)}~${item.carbonFootprintMax!.toStringAsFixed(1)} kg'
+                        : '총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 무게 기반 백엔드 계산'
+                  : '총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq · 소재와 무게 기반 임시 추정',
               style: TextStyle(color: secondaryText, fontSize: 13),
             ),
             const SizedBox(height: 16),
@@ -178,7 +196,9 @@ class ReportScreen extends StatelessWidget {
                 color: isDark ? const Color(0xFF3A3020) : Colors.orange.shade50,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: isDark ? const Color(0xFF5A4930) : Colors.orange.shade100,
+                  color: isDark
+                      ? const Color(0xFF5A4930)
+                      : Colors.orange.shade100,
                 ),
               ),
               child: Text(
@@ -194,7 +214,11 @@ class ReportScreen extends StatelessWidget {
 
             Text(
               '맞춤 관리 가이드',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: primaryText),
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: primaryText,
+              ),
             ),
             const SizedBox(height: 12),
 
@@ -224,7 +248,11 @@ class ReportScreen extends StatelessWidget {
 
             Text(
               '관리 정보',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: primaryText),
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: primaryText,
+              ),
             ),
             const SizedBox(height: 12),
 
@@ -276,11 +304,8 @@ class ReportScreen extends StatelessWidget {
               width: double.infinity,
               height: 54,
               child: ElevatedButton.icon(
-                onPressed: () => _showDisposalBottomSheet(
-                  context,
-                  item,
-                  disposalGuide,
-                ),
+                onPressed: () =>
+                    _showDisposalBottomSheet(context, item, disposalGuide),
                 icon: const Icon(Icons.recycling, color: Colors.white),
                 label: const Text(
                   '올바른 폐기 방법 보기',
@@ -359,10 +384,7 @@ class ReportScreen extends StatelessWidget {
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.redAccent,
               ),
-              child: const Text(
-                '삭제',
-                style: TextStyle(color: Colors.white),
-              ),
+              child: const Text('삭제', style: TextStyle(color: Colors.white)),
             ),
           ],
         );
@@ -377,15 +399,11 @@ class ReportScreen extends StatelessWidget {
 
     if (!context.mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('"${item.title}"이(가) 삭제되었습니다.')),
-    );
-
-    Navigator.pushReplacementNamed(
+    ScaffoldMessenger.of(
       context,
-      '/main',
-      arguments: 2,
-    );
+    ).showSnackBar(SnackBar(content: Text('"${item.title}"이(가) 삭제되었습니다.')));
+
+    Navigator.pushReplacementNamed(context, '/main', arguments: 2);
   }
 
   static String _formatMaterialValue(double value) {
@@ -393,36 +411,6 @@ class ReportScreen extends StatelessWidget {
       return value.toInt().toString();
     }
     return value.toStringAsFixed(1);
-  }
-
-  static String _materialDisplayName(String key) {
-    const names = {
-      'cotton': '\uBA74',
-      'polyester': '\uD3F4\uB9AC\uC5D0\uC2A4\uD130',
-      'rayon': '\uB808\uC774\uC628',
-      'nylon': '\uB098\uC77C\uB860',
-      'wool': '\uC6B8',
-      'acrylic': '\uC544\uD06C\uB9B4',
-      'spandex': '\uC2A4\uD310\uB371\uC2A4',
-      'linen': '\uB9B0\uB128',
-      'viscose': '\uBE44\uC2A4\uCF54\uC2A4',
-      'silk': '\uC2E4\uD06C',
-      'modal': '\uBAA8\uB2EC',
-      'cashmere': '\uCE90\uC2DC\uBBF8\uC5B4',
-      'polyurethane': '\uD3F4\uB9AC\uC6B0\uB808\uD0C4',
-      'leather': '\uAC00\uC8FD',
-      'ramie': '\uB77C\uBBF8',
-      'lyocell': '\uB9AC\uC624\uC140',
-      'down': '\uB2E4\uC6B4',
-      'feather': '\uAE43\uD138',
-      'yak': '\uC57C\uD06C',
-      'mohair': '\uBAA8\uD5E4\uC5B4',
-      'bamboo': '\uB300\uB098\uBB34',
-      'cupro': '\uD050\uD504\uB85C',
-    };
-
-    final normalized = key.toLowerCase().trim();
-    return names[normalized] ?? key.toUpperCase();
   }
 
   static String _healthLabel(int health) {
@@ -441,10 +429,48 @@ class ReportScreen extends StatelessWidget {
     return '${_materialDisplayName(sorted.first.key)} ${_formatMaterialValue(sorted.first.value)}%';
   }
 
+  static String _materialDisplayName(String name) {
+    switch (name.trim().toLowerCase()) {
+      case 'cotton':
+        return '면';
+      case 'polyester':
+        return '폴리에스터';
+      case 'nylon':
+      case 'polyamide':
+        return '나일론';
+      case 'rayon':
+        return '레이온';
+      case 'viscose':
+        return '비스코스';
+      case 'wool':
+        return '울';
+      case 'acrylic':
+        return '아크릴';
+      case 'spandex':
+      case 'elastane':
+      case 'lycra':
+        return '스판덱스';
+      case 'polyurethane':
+      case 'pu':
+        return '폴리우레탄';
+      case 'linen':
+        return '린넨';
+      case 'silk':
+        return '실크';
+      case 'modal':
+        return '모달';
+      case 'lyocell':
+      case 'tencel':
+        return '리오셀';
+      default:
+        return name.toUpperCase();
+    }
+  }
+
   static bool _hasMaterial(Clothes item, List<String> keywords) {
     final lowerKeys = item.materials.keys.map((e) => e.toLowerCase()).toList();
     return lowerKeys.any(
-          (key) => keywords.any((keyword) => key.contains(keyword)),
+      (key) => keywords.any((keyword) => key.contains(keyword)),
     );
   }
 
@@ -515,22 +541,30 @@ class ReportScreen extends StatelessWidget {
   }
 
   static List<_LcaStageData> _buildLcaBreakdown(Clothes item) {
-    final totalFootprint = item.carbonFootprint > 0 ? item.carbonFootprint : 10.0;
+    final totalFootprint = item.carbonFootprint > 0
+        ? item.carbonFootprint
+        : 10.0;
 
-    final syntheticShare = _sumMatchingMaterials(
-      item.materials,
-      ['polyester', 'nylon', 'polyurethane', 'spandex', 'acrylic'],
-    );
+    final syntheticShare = _sumMatchingMaterials(item.materials, [
+      'polyester',
+      'nylon',
+      'polyurethane',
+      'spandex',
+      'acrylic',
+    ]);
 
-    final animalFiberShare = _sumMatchingMaterials(
-      item.materials,
-      ['wool', 'silk', 'leather'],
-    );
+    final animalFiberShare = _sumMatchingMaterials(item.materials, [
+      'wool',
+      'silk',
+      'leather',
+    ]);
 
-    final plantFiberShare = _sumMatchingMaterials(
-      item.materials,
-      ['cotton', 'organic cotton', 'linen', 'hemp'],
-    );
+    final plantFiberShare = _sumMatchingMaterials(item.materials, [
+      'cotton',
+      'organic cotton',
+      'linen',
+      'hemp',
+    ]);
 
     final blendComplexity = item.materials.length >= 3
         ? 0.02
@@ -540,9 +574,9 @@ class ReportScreen extends StatelessWidget {
 
     double rawMaterialRatio =
         0.48 +
-            (syntheticShare / 100 * 0.10) +
-            (animalFiberShare / 100 * 0.08) -
-            (plantFiberShare / 100 * 0.05);
+        (syntheticShare / 100 * 0.10) +
+        (animalFiberShare / 100 * 0.08) -
+        (plantFiberShare / 100 * 0.05);
 
     double manufacturingRatio =
         0.22 + (item.category == '하의' ? 0.02 : 0.0) + blendComplexity;
@@ -601,9 +635,9 @@ class ReportScreen extends StatelessWidget {
   }
 
   static double _sumMatchingMaterials(
-      Map<String, double> materials,
-      List<String> keywords,
-      ) {
+    Map<String, double> materials,
+    List<String> keywords,
+  ) {
     double total = 0.0;
 
     for (final entry in materials.entries) {
@@ -634,11 +668,7 @@ class ReportScreen extends StatelessWidget {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
-                Icons.verified,
-                color: Color(0xFF4A4EFE),
-                size: 52,
-              ),
+              const Icon(Icons.verified, color: Color(0xFF4A4EFE), size: 52),
               const SizedBox(height: 16),
               Text(
                 '${item.title}의 DPP 요약 인증서를 발급할 수 있습니다.',
@@ -653,7 +683,9 @@ class ReportScreen extends StatelessWidget {
                 '현재는 시연용 안내 단계이며, 이후 QR 기반 인증서 공유 기능과 연결할 예정입니다.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: isDark ? const Color(0xFFD1D1D6) : Colors.grey.shade700,
+                  color: isDark
+                      ? const Color(0xFFD1D1D6)
+                      : Colors.grey.shade700,
                   fontSize: 13,
                   height: 1.5,
                 ),
@@ -676,16 +708,14 @@ class ReportScreen extends StatelessWidget {
   }
 
   static void _showDisposalBottomSheet(
-      BuildContext context,
-      Clothes item,
-      String disposalGuide,
-      ) {
+    BuildContext context,
+    Clothes item,
+    String disposalGuide,
+  ) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor =
-    isDark ? const Color(0xFF121212) : Colors.white;
+    final backgroundColor = isDark ? const Color(0xFF121212) : Colors.white;
     final primaryText = isDark ? Colors.white : const Color(0xFF111111);
-    final secondaryText =
-    isDark ? const Color(0xFFD1D1D6) : Colors.black87;
+    final secondaryText = isDark ? const Color(0xFFD1D1D6) : Colors.black87;
 
     showModalBottomSheet(
       context: context,
@@ -803,61 +833,48 @@ class ReportScreen extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '현재 건강 상태',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: Colors.white70, fontSize: 14),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '현재 건강 상태',
+                style: TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '$health%',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
                 ),
-                const SizedBox(height: 4),
+              ),
+            ],
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.20),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  isWarning
+                      ? Icons.warning_amber_rounded
+                      : Icons.timer_outlined,
+                  color: Colors.white,
+                  size: 18,
+                ),
+                const SizedBox(width: 6),
                 Text(
-                  '$health%',
+                  isWarning ? '수명 만료' : '세탁 양호',
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 32,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
               ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Flexible(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.20),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      isWarning
-                          ? Icons.warning_amber_rounded
-                          : Icons.timer_outlined,
-                      color: Colors.white,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      isWarning ? '수명 만료' : '세탁 양호',
-                      maxLines: 1,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             ),
           ),
         ],
@@ -888,13 +905,7 @@ class ReportScreen extends StatelessWidget {
         children: [
           Icon(icon, color: color),
           const SizedBox(height: 12),
-          Text(
-            title,
-            style: TextStyle(
-              color: secondaryText,
-              fontSize: 12,
-            ),
-          ),
+          Text(title, style: TextStyle(color: secondaryText, fontSize: 12)),
           const SizedBox(height: 6),
           Text(
             value,
@@ -909,11 +920,7 @@ class ReportScreen extends StatelessWidget {
             subtitle,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 12,
-              color: secondaryText,
-              height: 1.4,
-            ),
+            style: TextStyle(fontSize: 12, color: secondaryText, height: 1.4),
           ),
         ],
       ),
@@ -921,14 +928,14 @@ class ReportScreen extends StatelessWidget {
   }
 
   Widget _buildLcaChart(
-      Clothes item,
-      List<_LcaStageData> stages, {
-        required Color primaryText,
-        required Color secondaryText,
-        required Color cardColor,
-        required Color borderColor,
-        required Color softCardColor,
-      }) {
+    Clothes item,
+    List<_LcaStageData> stages, {
+    required Color primaryText,
+    required Color secondaryText,
+    required Color cardColor,
+    required Color borderColor,
+    required Color softCardColor,
+  }) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -953,11 +960,8 @@ class ReportScreen extends StatelessWidget {
           Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              '${item.category} · 총 ${item.carbonFootprintRangeText}',
-              style: TextStyle(
-                color: secondaryText,
-                fontSize: 12,
-              ),
+              '${item.category} · 총 ${item.carbonFootprint.toStringAsFixed(1)} kg CO2eq',
+              style: TextStyle(color: secondaryText, fontSize: 12),
             ),
           ),
         ],
@@ -966,11 +970,11 @@ class ReportScreen extends StatelessWidget {
   }
 
   Widget _buildChartBar(
-      _LcaStageData stage, {
-        required Color primaryText,
-        required Color secondaryText,
-        required Color softCardColor,
-      }) {
+    _LcaStageData stage, {
+    required Color primaryText,
+    required Color secondaryText,
+    required Color softCardColor,
+  }) {
     final percent = (stage.ratio * 100).round();
 
     return Column(
@@ -999,10 +1003,7 @@ class ReportScreen extends StatelessWidget {
             const SizedBox(width: 8),
             Text(
               '$percent%',
-              style: TextStyle(
-                fontSize: 12,
-                color: secondaryText,
-              ),
+              style: TextStyle(fontSize: 12, color: secondaryText),
             ),
           ],
         ),
@@ -1069,7 +1070,7 @@ class ReportScreen extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           ...children.map(
-                (tip) => Padding(
+            (tip) => Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1103,11 +1104,11 @@ class ReportScreen extends StatelessWidget {
   }
 
   Widget _buildHistoryRow(
-      String title,
-      String value, {
-        required Color primaryText,
-        required Color secondaryText,
-      }) {
+    String title,
+    String value, {
+    required Color primaryText,
+    required Color secondaryText,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10.0),
       child: Row(
@@ -1142,8 +1143,7 @@ class ReportScreen extends StatelessWidget {
     required String label,
     required bool isDark,
   }) {
-    final bgColor =
-    isDark ? const Color(0xFF232A45) : const Color(0xFFEEF1FF);
+    final bgColor = isDark ? const Color(0xFF232A45) : const Color(0xFFEEF1FF);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),

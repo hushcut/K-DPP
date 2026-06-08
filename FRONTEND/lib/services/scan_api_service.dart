@@ -1,11 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-
 import 'package:http/http.dart' as http;
-
 import '../models/scan_result.dart';
-import 'auth_session_service.dart';
 
 enum ScanApiErrorType {
   badRequest,
@@ -49,7 +46,7 @@ class ScanApiException implements Exception {
       case ScanApiErrorType.server:
         return '서버에서 문제가 발생했어요. 잠시 후 다시 시도하거나 직접 입력해 주세요.';
       case ScanApiErrorType.network:
-        return '서버에 연결할 수 없어요. 네트워크 상태와 서버 실행 여부를 확인해 주세요.';
+        return '서버에 연결할 수 없어요. 네트워크 상태를 확인하거나 직접 입력해 주세요.';
       case ScanApiErrorType.timeout:
         return '분석 시간이 너무 오래 걸렸어요. 다시 시도하거나 직접 입력해 주세요.';
       case ScanApiErrorType.invalidResponse:
@@ -134,9 +131,11 @@ class ScanApiException implements Exception {
       final decoded = jsonDecode(responseBody);
 
       if (decoded is Map<String, dynamic>) {
+        final detail = decoded['detail'];
+        final detailMessage = detail is Map ? detail['message'] : detail;
         final message =
             decoded['message'] ??
-            decoded['detail'] ??
+            detailMessage ??
             decoded['error'] ??
             decoded['reason'];
 
@@ -158,26 +157,25 @@ class ScanApiService {
       'SCAN_API_ENDPOINT',
       defaultValue: 'http://10.0.2.2:8000/api/scan',
     ),
-    this.sessionService = const AuthSessionService(),
+    this.requestHeaders = const {'ngrok-skip-browser-warning': 'true'},
+    this.client,
   });
 
   final String endpoint;
-  final AuthSessionService sessionService;
+  final Map<String, String> requestHeaders;
+  final http.Client? client;
 
   Future<ScanResult> scanLabel({required File imageFile}) async {
+    final uri = Uri.parse(endpoint);
+
     try {
-      final accessToken = await sessionService.readAccessToken();
-      final request = http.MultipartRequest('POST', Uri.parse(endpoint))
-        ..headers.addAll({
-          'ngrok-skip-browser-warning': 'true',
-          if (accessToken != null && accessToken.isNotEmpty)
-            'Authorization': 'Bearer $accessToken',
-        })
+      final request = http.MultipartRequest('POST', uri)
+        ..headers.addAll(requestHeaders)
         ..files.add(await http.MultipartFile.fromPath('image', imageFile.path));
 
-      final streamedResponse = await request.send().timeout(
-        const Duration(seconds: 35),
-      );
+      final streamedResponse = await (client?.send(request) ?? request.send())
+          .timeout(const Duration(seconds: 35));
+
       final responseBody = await streamedResponse.stream.bytesToString();
 
       if (streamedResponse.statusCode < 200 ||
@@ -224,15 +222,7 @@ class ScanApiService {
       );
     }
 
-    final status = decoded['status'];
-    if (status != null && status != 'success') {
-      throw ScanApiException(
-        type: ScanApiErrorType.aiRecognitionFailed,
-        message: decoded['message']?.toString() ?? '분석 실패 응답입니다.',
-      );
-    }
-
-    if (decoded['success'] == false) {
+    if (decoded['success'] == false || decoded['status'] == 'error') {
       throw ScanApiException(
         type: ScanApiErrorType.aiRecognitionFailed,
         message: decoded['message']?.toString() ?? 'AI 분석 실패',
@@ -240,30 +230,16 @@ class ScanApiService {
     }
 
     final payload = _extractPayload(decoded);
-    final materials = _parseMaterials(payload);
+    final result = ScanResult.fromJson(payload);
 
-    if (materials.isEmpty) {
+    if (result.materials.isEmpty) {
       throw const ScanApiException(
         type: ScanApiErrorType.aiRecognitionFailed,
         message: '소재 정보를 인식하지 못했습니다.',
       );
     }
 
-    return ScanResult(
-      title: _readOptionalString(payload, ['title', 'name', 'clothingName']),
-      category: _readOptionalString(payload, ['category', 'type']),
-      materials: materials,
-      careInstruction: _readString(payload, [
-        'care_instruction',
-        'careInstruction',
-        'care',
-        'washingInstruction',
-      ], fallback: '라벨의 세탁 지침을 확인해 주세요.'),
-      health: _parseNullableInt(payload['health']),
-      carbonFootprint: _parseNullableDouble(
-        payload['carbon_footprint'] ?? payload['carbonFootprint'],
-      ),
-    );
+    return result;
   }
 
   Map<String, dynamic> _extractPayload(Map<String, dynamic> decoded) {
@@ -274,92 +250,5 @@ class ScanApiService {
     if (result is Map<String, dynamic>) return result;
 
     return decoded;
-  }
-
-  Map<String, double> _parseMaterials(Map<String, dynamic> payload) {
-    final rawMaterials =
-        payload['materials'] ?? payload['material'] ?? payload['composition'];
-
-    final materials = <String, double>{};
-
-    if (rawMaterials is Map) {
-      rawMaterials.forEach((key, value) {
-        final name = key.toString().trim();
-        final percent = _parsePercent(value);
-
-        if (name.isNotEmpty && percent != null) {
-          materials[name] = percent;
-        }
-      });
-    }
-
-    if (rawMaterials is List) {
-      for (final item in rawMaterials) {
-        if (item is Map) {
-          final name =
-              (item['name'] ??
-                      item['material'] ??
-                      item['label'] ??
-                      item['type'])
-                  ?.toString()
-                  .trim();
-
-          final percent = _parsePercent(
-            item['percent'] ??
-                item['percentage'] ??
-                item['ratio'] ??
-                item['value'],
-          );
-
-          if (name != null && name.isNotEmpty && percent != null) {
-            materials[name] = percent;
-          }
-        }
-      }
-    }
-
-    return materials;
-  }
-
-  double? _parsePercent(dynamic value) {
-    if (value == null) return null;
-    if (value is num) return value.toDouble();
-
-    final text = value.toString().replaceAll('%', '').trim();
-    return double.tryParse(text);
-  }
-
-  int? _parseNullableInt(dynamic value) {
-    if (value == null) return null;
-    if (value is int) return value;
-    if (value is double) return value.round();
-    return int.tryParse(value.toString());
-  }
-
-  double? _parseNullableDouble(dynamic value) {
-    if (value == null) return null;
-    if (value is double) return value;
-    if (value is int) return value.toDouble();
-    return double.tryParse(value.toString());
-  }
-
-  String? _readOptionalString(Map<String, dynamic> payload, List<String> keys) {
-    for (final key in keys) {
-      final value = payload[key];
-
-      if (value != null && value.toString().trim().isNotEmpty) {
-        return value.toString().trim();
-      }
-    }
-
-    return null;
-  }
-
-  String _readString(
-    Map<String, dynamic> payload,
-    List<String> keys, {
-    required String fallback,
-  }) {
-    return _readOptionalString(payload, keys) ?? fallback;
   }
 }

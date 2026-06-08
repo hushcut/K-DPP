@@ -1,65 +1,85 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/services/scan_save_service.dart';
+import 'package:k_dpp/utils/clothing_type_catalog.dart';
 
 void main() {
   group('ScanSaveService', () {
     const service = ScanSaveService();
 
-    test('buildClothes creates Clothes with estimated health and carbon', () {
+    test('buildClothes creates Clothes with local estimated values', () {
       final result = service.buildClothes(
-        title: ' 홍길동 코튼 셔츠 ',
+        title: ' 스캔한 코튼 셔츠 ',
         category: '상의',
         materials: {'cotton': 100},
         careInstruction: '찬물 세탁',
-        carbonFootprint: 1.46,
-        carbonFootprintMin: 0.83,
-        carbonFootprintMax: 2.08,
+        clothingType: ClothingTypeCatalog.defaultOption,
       );
 
       expect(result, isA<ScanSaveSuccess>());
 
       final success = result as ScanSaveSuccess;
-      expect(success.clothes.title, '홍길동 코튼 셔츠');
+      expect(success.clothes.title, '스캔한 코튼 셔츠');
       expect(success.clothes.category, '상의');
       expect(success.clothes.health, 93);
-      expect(success.clothes.carbonFootprint, 1.46);
-      expect(success.clothes.carbonFootprintMin, 0.83);
-      expect(success.clothes.carbonFootprintMax, 2.08);
-      expect(success.clothes.carbonFootprintRangeText, '0.8~2.1 kg CO2eq');
+      expect(success.clothes.carbonFootprint, 1.5);
+      expect(
+        success.clothes.carbonFootprintSource,
+        CarbonFootprintSource.localEstimate,
+      );
     });
 
     test('buildClothes rejects empty materials', () {
       final result = service.buildClothes(
-        title: '홍길동 기타 의류',
+        title: '스캔한 의류',
         category: '상의',
         materials: {},
         careInstruction: '',
-        carbonFootprint: 0,
-        carbonFootprintMin: 0,
-        carbonFootprintMax: 0,
+        clothingType: ClothingTypeCatalog.defaultOption,
       );
 
       expect(result, isA<ScanSaveFailure>());
 
       final failure = result as ScanSaveFailure;
-      expect(failure.message, contains('소재를 1개 이상'));
+      expect(failure.message, contains('소재'));
+    });
+
+    test('buildClothes prefers valid server calculations', () {
+      final result = service.buildClothes(
+        title: '스캔한 코튼 셔츠',
+        category: '상의',
+        materials: {'cotton': 100},
+        careInstruction: '찬물 세탁',
+        clothingType: ClothingTypeCatalog.defaultOption,
+        originalMaterials: const {'cotton': 100},
+        serverHealth: 88,
+        serverCarbonFootprint: 2.75,
+        serverWeightGram: ClothingTypeCatalog.defaultOption.estimatedWeightGram,
+        serverCalculationMethod: 'weight_based_v1',
+      );
+
+      final success = result as ScanSaveSuccess;
+      expect(success.clothes.health, 88);
+      expect(success.clothes.carbonFootprint, 2.75);
+      expect(
+        success.clothes.carbonFootprintSource,
+        CarbonFootprintSource.server,
+      );
     });
 
     test('buildClothes rejects material total that is not 100 percent', () {
       final result = service.buildClothes(
-        title: '홍길동 기타 의류',
+        title: '스캔한 의류',
         category: '상의',
         materials: {'cotton': 80},
         careInstruction: '',
-        carbonFootprint: 0,
-        carbonFootprintMin: 0,
-        carbonFootprintMax: 0,
+        clothingType: ClothingTypeCatalog.defaultOption,
       );
 
       expect(result, isA<ScanSaveFailure>());
 
       final failure = result as ScanSaveFailure;
-      expect(failure.message, contains('현재 80.0%'));
+      expect(failure.message, contains('80.0%'));
     });
   });
 }

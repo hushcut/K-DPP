@@ -3,10 +3,7 @@ enum CarbonFootprintSource {
   localEstimate;
 
   static CarbonFootprintSource fromJson(dynamic value) {
-    return values.firstWhere(
-      (source) => source.name == value?.toString(),
-      orElse: () => CarbonFootprintSource.localEstimate,
-    );
+    return value?.toString() == server.name ? server : localEstimate;
   }
 }
 
@@ -18,8 +15,8 @@ class Clothes {
   final String careInstruction;
   final double carbonFootprint;
   final CarbonFootprintSource carbonFootprintSource;
-  final double carbonFootprintMin;
-  final double carbonFootprintMax;
+  final double? carbonFootprintMin;
+  final double? carbonFootprintMax;
   final double? minWeightGram;
   final double? maxWeightGram;
   final int? savedResultId;
@@ -32,21 +29,12 @@ class Clothes {
     required this.careInstruction,
     required this.carbonFootprint,
     this.carbonFootprintSource = CarbonFootprintSource.localEstimate,
-    double? carbonFootprintMin,
-    double? carbonFootprintMax,
+    this.carbonFootprintMin,
+    this.carbonFootprintMax,
     this.minWeightGram,
     this.maxWeightGram,
     this.savedResultId,
-  })  : carbonFootprintMin = carbonFootprintMin ?? carbonFootprint,
-        carbonFootprintMax = carbonFootprintMax ?? carbonFootprint;
-
-  String get carbonFootprintRangeText {
-    if ((carbonFootprintMin - carbonFootprintMax).abs() < 0.05) {
-      return '${carbonFootprint.toStringAsFixed(1)} kg CO2eq';
-    }
-
-    return '${carbonFootprintMin.toStringAsFixed(1)}~${carbonFootprintMax.toStringAsFixed(1)} kg CO2eq';
-  }
+  });
 
   Clothes copyWith({
     String? title,
@@ -90,26 +78,27 @@ class Clothes {
       }
     }
 
-    final footprint = _parseDouble(
-      json['carbonFootprint'] ?? json['carbon_footprint'],
-    );
-
     return Clothes(
       title: json['title']?.toString() ?? '이름 없는 의류',
       category: json['category']?.toString() ?? '기타',
       health: _parseInt(json['health']),
       materials: parsedMaterials,
-      careInstruction: json['careInstruction']?.toString() ??
+      careInstruction:
+          json['careInstruction']?.toString() ??
           json['care_instruction']?.toString() ??
           '',
-      carbonFootprint: footprint,
+      carbonFootprint: _parseDouble(
+        json['carbonFootprint'] ?? json['carbon_footprint'],
+      ),
       carbonFootprintSource: CarbonFootprintSource.fromJson(
         json['carbonFootprintSource'] ?? json['carbon_footprint_source'],
       ),
       carbonFootprintMin: _parseNullableDouble(
-            json['carbonFootprintMin'] ?? json['carbon_footprint_min'],
-          ) ??
-          footprint,
+        json['carbonFootprintMin'] ?? json['carbon_footprint_min'],
+      ),
+      carbonFootprintMax: _parseNullableDouble(
+        json['carbonFootprintMax'] ?? json['carbon_footprint_max'],
+      ),
       minWeightGram: _parseNullableDouble(
         json['minWeightGram'] ?? json['min_weight_grams'],
       ),
@@ -119,10 +108,6 @@ class Clothes {
       savedResultId: _parseNullableInt(
         json['savedResultId'] ?? json['saved_result_id'],
       ),
-      carbonFootprintMax: _parseNullableDouble(
-            json['carbonFootprintMax'] ?? json['carbon_footprint_max'],
-          ) ??
-          footprint,
     );
   }
 
@@ -158,7 +143,7 @@ class Clothes {
   static double? _parseNullableDouble(dynamic value) {
     if (value == null) return null;
     if (value is double) return value;
-    if (value is int) return value.toDouble();
+    if (value is num) return value.toDouble();
     return double.tryParse(value.toString());
   }
 

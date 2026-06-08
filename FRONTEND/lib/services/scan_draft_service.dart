@@ -9,6 +9,10 @@ class ScanDraft {
     required this.careInstruction,
     required this.title,
     required this.isManualMaterialMode,
+    this.serverHealth,
+    this.serverCarbonFootprint,
+    this.serverWeightGram,
+    this.serverCalculationMethod,
   });
 
   final ClothingTypeOption clothingType;
@@ -16,6 +20,10 @@ class ScanDraft {
   final String careInstruction;
   final String title;
   final bool isManualMaterialMode;
+  final int? serverHealth;
+  final double? serverCarbonFootprint;
+  final double? serverWeightGram;
+  final String? serverCalculationMethod;
 
   String get category => clothingType.category;
 }
@@ -41,6 +49,10 @@ class ScanDraftService {
           ? scannedTitle!
           : clothingType.defaultTitle,
       isManualMaterialMode: false,
+      serverHealth: result.health,
+      serverCarbonFootprint: result.carbonFootprint,
+      serverWeightGram: result.weightGram,
+      serverCalculationMethod: result.calculationMethod,
     );
   }
 

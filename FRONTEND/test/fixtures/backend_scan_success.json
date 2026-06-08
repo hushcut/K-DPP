@@ -1,0 +1,34 @@
+{
+  "status": "success",
+  "message": "라벨 인식 완료",
+  "ai_success": true,
+  "analysis_failure_reason": null,
+  "materials": {
+    "cotton": 80,
+    "polyester": 20
+  },
+  "material_details": [
+    {
+      "original_name": "cotton",
+      "standard_name": "cotton",
+      "display_name": "면",
+      "ratio": 80,
+      "is_supported": true
+    },
+    {
+      "original_name": "polyester",
+      "standard_name": "polyester",
+      "display_name": "폴리에스터",
+      "ratio": 20,
+      "is_supported": true
+    }
+  ],
+  "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
+  "raw_ocr_preview": "COTTON 80% POLYESTER 20%",
+  "clothing": {
+    "name": "스캔한 의류",
+    "category": "상의"
+  },
+  "title": "스캔한 의류",
+  "category": "상의"
+}
