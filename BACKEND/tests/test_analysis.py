@@ -153,6 +153,9 @@ def test_carbon_range_uses_db_factor_and_weight_range(client):
     assert body["carbon_footprint"] == 1.46
     assert body["average_carbon_footprint"] == 1.46
     assert body["source"] == "backend"
+    assert body["calculation_scope"] == "material_production_estimate"
+    assert "development estimates" in body["calculation_source"]
+    assert "개발용 추정값" in body["calculation_note"]
     assert body["weight_source"] == "range"
     assert body["emission_factors"] == [
         {
@@ -162,6 +165,7 @@ def test_carbon_range_uses_db_factor_and_weight_range(client):
             "ratio": 100.0,
             "carbon_factor": 8.3,
             "unit": "kg CO2eq/kg textile",
+            "source": "K-DPP backend material carbon factor table (development estimates)",
         }
     ]
     assert body["saved_result_id"] is not None
@@ -269,6 +273,29 @@ def test_scan_returns_materials_without_saving_carbon_result(client):
 
     assert response.status_code == 200
     assert body["materials"] == {"cotton": 80, "polyester": 20}
+    assert body["ai_success"] is True
+    assert body["analysis_failure_reason"] is None
+    assert body["clothing"] == {
+        "name": "스캔한 의류",
+        "category": "상의",
+    }
+    assert body["material_details"] == [
+        {
+            "original_name": "cotton",
+            "standard_name": "cotton",
+            "display_name": "면",
+            "ratio": 80,
+            "is_supported": True,
+        },
+        {
+            "original_name": "polyester",
+            "standard_name": "polyester",
+            "display_name": "폴리에스터",
+            "ratio": 20,
+            "is_supported": True,
+        },
+    ]
+    assert "raw_ocr_preview" in body
     assert "carbon_footprint" not in body
     assert "saved_result_id" not in body
 

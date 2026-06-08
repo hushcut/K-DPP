@@ -44,6 +44,74 @@ DEFAULT_ERROR_CODES = {
     503: "AI_MODULE_FAILED",
 }
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+MATERIAL_FACTOR_SOURCE = "K-DPP backend material carbon factor table (development estimates)"
+CALCULATION_SCOPE = "material_production_estimate"
+CLOTHING_TYPE_OPTIONS = [
+    {
+        "id": "short_sleeve_tshirt",
+        "label": "반팔 티셔츠",
+        "category": "상의",
+        "min_weight_grams": 100,
+        "max_weight_grams": 250,
+        "estimated_weight_grams": 180,
+    },
+    {
+        "id": "shirt_blouse",
+        "label": "셔츠 / 블라우스",
+        "category": "상의",
+        "min_weight_grams": 150,
+        "max_weight_grams": 350,
+        "estimated_weight_grams": 240,
+    },
+    {
+        "id": "long_sleeve_sweatshirt",
+        "label": "긴팔 / 맨투맨",
+        "category": "상의",
+        "min_weight_grams": 350,
+        "max_weight_grams": 750,
+        "estimated_weight_grams": 520,
+    },
+    {
+        "id": "knit",
+        "label": "니트",
+        "category": "상의",
+        "min_weight_grams": 400,
+        "max_weight_grams": 900,
+        "estimated_weight_grams": 620,
+    },
+    {
+        "id": "pants",
+        "label": "바지",
+        "category": "하의",
+        "min_weight_grams": 450,
+        "max_weight_grams": 900,
+        "estimated_weight_grams": 680,
+    },
+    {
+        "id": "skirt",
+        "label": "스커트",
+        "category": "하의",
+        "min_weight_grams": 250,
+        "max_weight_grams": 650,
+        "estimated_weight_grams": 420,
+    },
+    {
+        "id": "dress",
+        "label": "원피스",
+        "category": "상의",
+        "min_weight_grams": 350,
+        "max_weight_grams": 850,
+        "estimated_weight_grams": 560,
+    },
+    {
+        "id": "outer",
+        "label": "아우터",
+        "category": "상의",
+        "min_weight_grams": 800,
+        "max_weight_grams": 1800,
+        "estimated_weight_grams": 1200,
+    },
+]
 
 
 def utc_now() -> datetime:
@@ -404,10 +472,29 @@ def build_emission_factors(materials: dict[str, float], db: Session) -> list[dic
                 "ratio": round(normalized_ratio, 2),
                 "carbon_factor": material.carbon_factor,
                 "unit": material.unit,
+                "source": MATERIAL_FACTOR_SOURCE,
             }
         )
 
     return emission_factors
+
+
+def build_material_details(materials: dict[str, float], db: Session) -> list[dict]:
+    material_details = []
+
+    for original_name, ratio in materials.items():
+        material = find_material(db, original_name)
+        material_details.append(
+            {
+                "original_name": original_name,
+                "standard_name": material.name_en if material is not None else None,
+                "display_name": material.name_ko if material is not None else original_name,
+                "ratio": ratio,
+                "is_supported": material is not None,
+            }
+        )
+
+    return material_details
 
 
 def build_analysis_response(
@@ -527,7 +614,7 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
         Path(temp_path).unlink(missing_ok=True)
 
 
-def parse_label_materials(label_text: str) -> tuple[dict[str, float], str]:
+def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
     if parse_label is None:
         raise HTTPException(
             status_code=503,
@@ -556,7 +643,7 @@ def parse_label_materials(label_text: str) -> tuple[dict[str, float], str]:
             },
         )
 
-    return materials, care_instruction
+    return materials, care_instruction, raw_ocr_preview
 
 # --- API 엔드포인트 시작 ---
 
@@ -650,17 +737,28 @@ def analyze_clothes(
 def scan_label(
     image: UploadFile = File(...),
     raw_ocr_text: str | None = Form(default=None),
+    db: Session = Depends(get_db),
 ):
     label_text = extract_label_text(image, raw_ocr_text)
-    materials, care_instruction = parse_label_materials(label_text)
+    materials, care_instruction, raw_ocr_preview = parse_label_materials(label_text)
+    title = "스캔한 의류"
+    category = "상의"
 
     return {
         "status": "success",
         "message": "라벨 인식 완료",
+        "ai_success": True,
+        "analysis_failure_reason": None,
         "materials": materials,
+        "material_details": build_material_details(materials, db),
         "care_instruction": care_instruction,
-        "title": "스캔한 의류",
-        "category": "상의",
+        "raw_ocr_preview": raw_ocr_preview,
+        "clothing": {
+            "name": title,
+            "category": category,
+        },
+        "title": title,
+        "category": category,
     }
 
 
@@ -766,9 +864,11 @@ def calculate_carbon_range(
         "category": request.category,
         "unit": "kg CO2eq",
         "source": "backend",
+        "calculation_scope": CALCULATION_SCOPE,
         "calculation_basis": "소재별 탄소배출계수(kg CO2eq/kg)와 의류 무게(g)를 곱해 계산했습니다.",
         "emission_factors": emission_factors,
-        "calculation_source": "K-DPP backend material carbon factor table",
+        "calculation_source": MATERIAL_FACTOR_SOURCE,
+        "calculation_note": "현재 소재별 배출계수는 개발용 추정값입니다. 최종 발표 전 팀 승인 출처로 교체해야 합니다.",
         "saved_result_id": result.id,
     }
 
@@ -820,3 +920,13 @@ def get_materials(db: Session = Depends(get_db)):
         }
         for material in materials
     ]
+
+
+@app.get("/clothing-types", tags=["v1-carbon"])
+def get_clothing_types():
+    return {
+        "status": "success",
+        "source": "backend",
+        "unit": "g",
+        "items": CLOTHING_TYPE_OPTIONS,
+    }

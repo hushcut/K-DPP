@@ -1,57 +1,48 @@
 # K-DPP Backend API Contract
 
-이 문서는 프론트엔드, 백엔드, AI/OCR 파트가 같은 요청/응답 형식을 기준으로 협업하기 위한 API 계약서입니다.
+기준 브랜치: `develop(중간통합)`
 
-현재 기준 로컬 서버 주소는 다음과 같습니다.
+이 문서는 프론트엔드, 백엔드, AI/OCR 파트가 같은 응답 구조를 기준으로 연동하기 위한 API 계약서입니다.
 
-```text
-http://127.0.0.1:8000
-```
+## 공통 규칙
 
-Android Emulator에서 Flutter가 백엔드를 호출할 때는 다음 주소를 사용합니다.
+- 응답은 기본적으로 `status`, `message`를 포함합니다.
+- 오류 응답은 프론트 분기를 위해 `error_code`를 포함합니다.
+- 탄소배출량 단위는 `kg CO2eq`입니다.
+- 소재별 배출계수 단위는 `kg CO2eq/kg textile`입니다.
+- 현재 소재별 배출계수는 개발용 추정값입니다. 최종 발표 전 팀 승인 출처로 교체해야 합니다.
 
-```text
-http://10.0.2.2:8000
-```
-
-## 공통 응답 규칙
-
-성공 응답은 가능한 한 다음 필드를 포함합니다.
-
-```json
-{
-  "status": "success",
-  "message": "처리 결과 메시지"
-}
-```
-
-실패 응답은 FastAPI 예외 핸들러를 통해 다음 형식으로 반환합니다.
+## 공통 오류 응답
 
 ```json
 {
   "status": "error",
-  "message": "사용자에게 보여줄 수 있는 오류 메시지",
-  "detail": "또는 상세 오류 객체"
+  "error_code": "MATERIAL_EXTRACTION_FAILED",
+  "message": "라벨에서 소재 혼용률을 찾지 못했습니다.",
+  "detail": {
+    "message": "라벨에서 소재 혼용률을 찾지 못했습니다."
+  }
 }
 ```
 
-프론트엔드와 우선 맞춰야 하는 주요 필드는 다음과 같습니다.
+주요 `error_code`:
 
-```text
-status
-message
-materials
-carbon_footprint
-unit
-care_instruction
-saved_result_id
-title
-category
-```
+- `IMAGE_MISSING`: 이미지 파일 누락
+- `UNSUPPORTED_IMAGE_FORMAT`: 지원하지 않는 이미지 형식
+- `OCR_FAILED`: OCR 처리 실패
+- `AI_MODULE_FAILED`: AI/OCR 모듈 로드 실패
+- `MATERIAL_EXTRACTION_FAILED`: 소재 혼용률 추출 실패
+- `MATERIAL_NOT_FOUND`: DB에 없는 소재
+- `MATERIAL_RATIO_INVALID`: 혼용률 합계 또는 비율 오류
+- `WEIGHT_MISSING`: 무게 입력 누락
+- `WEIGHT_INVALID`: 무게 값 오류
+- `WEIGHT_RANGE_INVALID`: 최소/최대 무게 범위 오류
+- `AUTH_REQUIRED`: 인증 필요
+- `INTERNAL_SERVER_ERROR`: 서버 내부 오류
 
 ## POST /auth/signup
 
-회원가입 API입니다. 이메일 중복 가입을 막고, 비밀번호는 해시로 저장합니다.
+회원가입 API입니다.
 
 ### Request
 
@@ -77,31 +68,9 @@ category
 }
 ```
 
-### Error Responses
-
-이메일 형식이 잘못된 경우:
-
-```json
-{
-  "status": "error",
-  "message": "올바른 이메일을 입력해 주세요.",
-  "detail": "올바른 이메일을 입력해 주세요."
-}
-```
-
-이미 가입된 이메일인 경우:
-
-```json
-{
-  "status": "error",
-  "message": "이미 가입된 이메일입니다.",
-  "detail": "이미 가입된 이메일입니다."
-}
-```
-
 ## POST /auth/login
 
-로그인 API입니다. 성공 시 사용자 정보와 30일 동안 유효한 access token을 반환합니다.
+로그인 API입니다.
 
 ### Request
 
@@ -123,7 +92,7 @@ category
     "email": "user@example.com",
     "nickname": "홍길동"
   },
-  "access_token": "temporary-token-value",
+  "access_token": "token-value",
   "token_type": "bearer",
   "expires_in": 2592000
 }
@@ -131,91 +100,21 @@ category
 
 ## POST /auth/logout
 
-`Authorization: Bearer <token>` 헤더로 현재 로그인 토큰을 폐기합니다.
+로그아웃 API입니다.
 
-### Error Response
+Header:
 
-```json
-{
-  "status": "error",
-  "message": "이메일 또는 비밀번호가 올바르지 않습니다.",
-  "detail": "이메일 또는 비밀번호가 올바르지 않습니다."
-}
-```
-
-## POST /analyze
-
-기존 연동 호환을 위한 소재 계수 확인 API입니다. 최종 의류 탄소배출량은 무게가 포함된 `POST /api/carbon/calculate`를 사용합니다.
-
-현재 성공한 분석 결과는 `analysis_results` 테이블에 저장됩니다.
-
-### Request
-
-```json
-{
-  "materials": {
-    "cotton": 80,
-    "polyester": 20
-  },
-  "raw_ocr_text": "COTTON 80% POLYESTER 20%"
-}
-```
-
-### Request Rules
-
-- `materials`는 필수입니다.
-- 소재명은 `materials.name_ko`, `materials.name_en`, `materials.aliases` 중 하나와 매칭되어야 합니다.
-- 소재 비율은 0 이상이어야 합니다.
-- 전체 비율 합계는 OCR 오차를 고려해 `99.5 ~ 100.5` 범위까지 허용합니다.
-- `raw_ocr_text`는 선택 값입니다.
-
-### Success Response
-
-```json
-{
-  "status": "success",
-  "message": "분석 완료",
-  "materials": {
-    "cotton": 80,
-    "polyester": 20
-  },
-  "carbon_footprint": 8.54,
-  "unit": "kg CO2eq",
-  "care_instruction": "30도 이하 물에 중성세제로 세탁하세요.",
-  "saved_result_id": 13
-}
-```
-
-### Error Responses
-
-비율 합계가 100이 아닌 경우:
-
-```json
-{
-  "status": "error",
-  "message": "전체 비율의 합이 100이 아닙니다. 현재 합계: 90",
-  "detail": "전체 비율의 합이 100이 아닙니다. 현재 합계: 90"
-}
-```
-
-등록되지 않은 소재가 포함된 경우:
-
-```json
-{
-  "status": "error",
-  "message": "DB에 등록되지 않은 소재가 있습니다.",
-  "detail": {
-    "message": "DB에 등록되지 않은 소재가 있습니다.",
-    "unknown_materials": ["unknown_fiber"]
-  }
-}
+```text
+Authorization: Bearer <token>
 ```
 
 ## POST /api/scan
 
-의류 라벨 이미지를 업로드하면 백엔드가 OCR과 라벨 파싱을 수행해 소재 혼용률을 반환합니다. 이 단계에서는 의류 무게가 정해지지 않았으므로 탄소배출량을 계산하거나 저장하지 않습니다.
+의류 라벨 이미지를 업로드하면 OCR과 라벨 파싱을 수행해 소재 혼용률을 반환합니다.
 
-테스트 목적으로 OCR을 건너뛰고 싶을 때는 `raw_ocr_text` form field를 함께 보낼 수 있습니다.
+이 단계에서는 의류 무게가 정해지지 않았으므로 탄소배출량을 계산하거나 저장하지 않습니다.
+
+테스트 목적으로 OCR을 건너뛰려면 `raw_ocr_text` form field를 함께 보낼 수 있습니다.
 
 ### Request
 
@@ -232,21 +131,67 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
 {
   "status": "success",
   "message": "라벨 인식 완료",
+  "ai_success": true,
+  "analysis_failure_reason": null,
   "materials": {
     "cotton": 80,
     "polyester": 20
   },
+  "material_details": [
+    {
+      "original_name": "cotton",
+      "standard_name": "cotton",
+      "display_name": "면",
+      "ratio": 80,
+      "is_supported": true
+    },
+    {
+      "original_name": "polyester",
+      "standard_name": "polyester",
+      "display_name": "폴리에스터",
+      "ratio": 20,
+      "is_supported": true
+    }
+  ],
   "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
+  "raw_ocr_preview": "COTTON 80% POLYESTER 20%",
+  "clothing": {
+    "name": "스캔한 의류",
+    "category": "상의"
+  },
   "title": "스캔한 의류",
   "category": "상의"
 }
 ```
 
+### Material Extraction Failure
+
+```json
+{
+  "status": "error",
+  "error_code": "MATERIAL_EXTRACTION_FAILED",
+  "message": "라벨에서 소재 혼용률을 찾지 못했습니다.",
+  "detail": {
+    "message": "라벨에서 소재 혼용률을 찾지 못했습니다.",
+    "error_code": "MATERIAL_EXTRACTION_FAILED",
+    "materials": {},
+    "partial_materials": {},
+    "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
+    "raw_ocr_preview": "wash cold do not bleach dry flat",
+    "ai_success": false
+  }
+}
+```
+
 ## POST /api/carbon/calculate
 
-사용자가 의류 종류 또는 실제 무게를 선택한 뒤 호출하는 최종 탄소배출량 계산 API입니다. 소재별 계수는 백엔드 DB만 사용하며, 계산 결과는 로그인 사용자 분석 이력에 저장됩니다.
+소재 혼용률과 의류 무게를 기준으로 최종 탄소배출량을 계산하고, 로그인 사용자 이력에 저장합니다.
 
-`Authorization: Bearer <token>` 헤더가 필요합니다.
+Header:
+
+```text
+Authorization: Bearer <token>
+```
 
 ### Request
 
@@ -259,14 +204,13 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
   "min_weight_grams": 100,
   "max_weight_grams": 250,
   "weight_grams": null,
-  "clothing_type": "short_sleeve",
-  "category": "top"
+  "clothing_type": "short_sleeve_tshirt",
+  "category": "상의",
+  "raw_ocr_text": "COTTON 80% POLYESTER 20%"
 }
 ```
 
 `weight_grams`가 있으면 직접 입력 무게로 보고 `min_weight_grams`, `max_weight_grams`보다 우선합니다.
-
-직접 입력한 실제 무게는 최소·최대 무게에 같은 값을 전달합니다.
 
 ### Calculation
 
@@ -274,7 +218,7 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
 혼합 소재 계수 = Σ(소재별 탄소계수 × 혼용률)
 최소 탄소배출량 = 혼합 소재 계수 × 최소 무게(kg)
 최대 탄소배출량 = 혼합 소재 계수 × 최대 무게(kg)
-대표 탄소배출량 = (최소 + 최대) / 2
+평균 탄소배출량 = (최소 + 최대) / 2
 ```
 
 ### Success Response
@@ -296,59 +240,35 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
   "max_weight_grams": 250,
   "weight_grams": null,
   "weight_source": "range",
-  "clothing_type": "short_sleeve",
-  "category": "top",
+  "clothing_type": "short_sleeve_tshirt",
+  "category": "상의",
   "unit": "kg CO2eq",
   "source": "backend",
+  "calculation_scope": "material_production_estimate",
   "calculation_basis": "소재별 탄소배출계수(kg CO2eq/kg)와 의류 무게(g)를 곱해 계산했습니다.",
   "emission_factors": [
     {
       "input_name": "cotton",
       "standard_name": "cotton",
       "display_name": "면",
-      "ratio": 80.0,
+      "ratio": 80,
       "carbon_factor": 8.3,
-      "unit": "kg CO2eq/kg textile"
+      "unit": "kg CO2eq/kg textile",
+      "source": "K-DPP backend material carbon factor table (development estimates)"
     },
     {
       "input_name": "polyester",
       "standard_name": "polyester",
       "display_name": "폴리에스터",
-      "ratio": 20.0,
+      "ratio": 20,
       "carbon_factor": 9.5,
-      "unit": "kg CO2eq/kg textile"
+      "unit": "kg CO2eq/kg textile",
+      "source": "K-DPP backend material carbon factor table (development estimates)"
     }
   ],
-  "calculation_source": "K-DPP backend material carbon factor table",
+  "calculation_source": "K-DPP backend material carbon factor table (development estimates)",
+  "calculation_note": "현재 소재별 배출계수는 개발용 추정값입니다. 최종 발표 전 팀 승인 출처로 교체해야 합니다.",
   "saved_result_id": 13
-}
-```
-
-### Error Responses
-
-OCR 모듈을 불러오지 못한 경우:
-
-```json
-{
-  "status": "error",
-  "message": "AI OCR 모듈을 불러오지 못했습니다.",
-  "detail": {
-    "message": "AI OCR 모듈을 불러오지 못했습니다.",
-    "hint": "AI/kdpp_ai_ocr_integrated 의존성을 설치하고 다시 실행하세요."
-  }
-}
-```
-
-라벨에서 소재 정보를 찾지 못한 경우:
-
-```json
-{
-  "status": "error",
-  "message": "라벨에서 소재 비율을 찾지 못했습니다.",
-  "detail": {
-    "message": "라벨에서 소재 비율을 찾지 못했습니다.",
-    "raw_ocr_preview": "OCR preview text"
-  }
 }
 ```
 
@@ -364,24 +284,46 @@ OCR 모듈을 불러오지 못한 경우:
     "id": 1,
     "name_ko": "면",
     "name_en": "cotton",
-    "aliases": ["면", "코튼", "cotton", "cotton"],
+    "aliases": ["면", "코튼", "cotton", "COTTON"],
     "carbon_factor": 8.3,
-    "unit": "kg CO2eq/kg textile"
-  },
-  {
-    "id": 2,
-    "name_ko": "폴리에스터",
-    "name_en": "polyester",
-    "aliases": ["폴리에스터", "polyester", "polyester", "poly"],
-    "carbon_factor": 9.5,
     "unit": "kg CO2eq/kg textile"
   }
 ]
 ```
 
+## GET /clothing-types
+
+의류 종류별 기본 무게 범위를 반환합니다.
+
+### Success Response
+
+```json
+{
+  "status": "success",
+  "source": "backend",
+  "unit": "g",
+  "items": [
+    {
+      "id": "short_sleeve_tshirt",
+      "label": "반팔 티셔츠",
+      "category": "상의",
+      "min_weight_grams": 100,
+      "max_weight_grams": 250,
+      "estimated_weight_grams": 180
+    }
+  ]
+}
+```
+
 ## GET /history
 
-로그인한 사용자의 분석 결과 목록을 최신순으로 반환합니다. `/history`와 `/me/history`는 모두 `Authorization: Bearer <token>` 헤더가 필요합니다.
+로그인 사용자의 분석 결과 목록을 최신순으로 반환합니다.
+
+Header:
+
+```text
+Authorization: Bearer <token>
+```
 
 ### Success Response
 
@@ -391,11 +333,16 @@ OCR 모듈을 불러오지 못한 경우:
   "history": [
     {
       "id": 13,
+      "user_id": 1,
       "materials": {
         "cotton": 80,
         "polyester": 20
       },
-      "carbon_footprint": 8.54,
+      "carbon_footprint": 1.49,
+      "carbon_footprint_min": 0.85,
+      "carbon_footprint_max": 2.13,
+      "min_weight_grams": 100,
+      "max_weight_grams": 250,
       "unit": "kg CO2eq",
       "unknown_materials": [],
       "created_at": "2026-06-04T12:00:00"
@@ -404,34 +351,13 @@ OCR 모듈을 불러오지 못한 경우:
 }
 ```
 
-## 사용자별 분석 결과 저장 정책 초안
+## GET /me/history
 
-PM 요청에 따라 `analysis_results`와 사용자를 연결하려면 다음 정책을 확정해야 합니다.
+`/history`와 동일하게 로그인 사용자의 분석 결과를 반환합니다.
 
-추천 정책:
+## POST /analyze
 
-- 로그인 사용자의 `/analyze`, `/api/scan` 결과만 저장합니다.
-- 비로그인 사용자의 분석 결과는 저장하지 않고 응답만 반환합니다.
-- `analysis_results.user_id`를 추가해 `users.id`와 연결합니다.
-- 로그인 토큰은 임시 문자열이 아니라 검증 가능한 방식으로 관리합니다.
+기존 연동 호환용 API입니다. 소재 혼용률만 받아 탄소배출계수를 계산하고 저장합니다.
 
-구현 후보:
+최종 의류 탄소배출량은 무게 정보가 포함된 `POST /api/carbon/calculate`를 사용합니다.
 
-1. MVP 방식: `access_tokens` 테이블을 만들고 로그인 시 토큰을 저장합니다.
-2. 표준 방식: JWT를 사용하고 `Authorization: Bearer <token>` 헤더를 검증합니다.
-
-## 프론트엔드 호출 예시
-
-```dart
-final response = await http.post(
-  Uri.parse('http://10.0.2.2:8000/analyze'),
-  headers: {'Content-Type': 'application/json'},
-  body: jsonEncode({
-    'materials': {
-      'cotton': 80,
-      'polyester': 20,
-    },
-    'raw_ocr_text': 'COTTON 80% POLYESTER 20%',
-  }),
-);
-```
