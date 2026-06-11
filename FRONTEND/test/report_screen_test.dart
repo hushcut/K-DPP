@@ -49,6 +49,11 @@ void main() {
     expect(find.text('자동차'), findsOneWidget);
     expect(find.text('스마트폰'), findsOneWidget);
     expect(find.text('LED 전구'), findsOneWidget);
+    expect(find.text('약 38 km'), findsOneWidget);
+    expect(find.text('약 740회 충전'), findsOneWidget);
+    expect(find.text('약 2300시간'), findsOneWidget);
+    expect(find.textContaining('미국 EPA 환산 기준'), findsOneWidget);
+    expect(find.textContaining('LED 전구는 10W 소비전력 기준'), findsOneWidget);
     expect(find.text('계산 범위: 원료·소재 생산 단계 중심 추정'), findsOneWidget);
     expect(find.text('계산 출처: K-DPP 소재 배출계수 표'), findsOneWidget);
     expect(find.textContaining('라벨 지침: 찬물 세탁 후 자연 건조'), findsOneWidget);

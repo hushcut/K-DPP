@@ -6,6 +6,10 @@ import 'models/clothes.dart';
 class ReportScreen extends StatelessWidget {
   const ReportScreen({super.key, this.onDeleted});
 
+  static const double _passengerCarKgCo2EqPerKm = 0.244;
+  static const double _smartphoneChargeKgCo2Eq = 0.0124;
+  static const double _led10WKgCo2EqPerHour = 0.004;
+
   final VoidCallback? onDeleted;
 
   @override
@@ -810,17 +814,17 @@ class ReportScreen extends StatelessWidget {
       _CarbonComparisonData(
         icon: Icons.directions_car_filled_outlined,
         title: '자동차',
-        value: '약 ${_formatImpactValue(carbon / 0.2)} km',
+        value: '약 ${_formatImpactValue(carbon / _passengerCarKgCo2EqPerKm)} km',
       ),
       _CarbonComparisonData(
         icon: Icons.smartphone_outlined,
         title: '스마트폰',
-        value: '약 ${_formatImpactValue(carbon / 0.012)}회 충전',
+        value: '약 ${_formatImpactValue(carbon / _smartphoneChargeKgCo2Eq)}회 충전',
       ),
       _CarbonComparisonData(
         icon: Icons.lightbulb_outline,
         title: 'LED 전구',
-        value: '약 ${_formatImpactValue(carbon / 0.02)}시간',
+        value: '약 ${_formatImpactValue(carbon / _led10WKgCo2EqPerHour)}시간',
       ),
     ];
 
@@ -892,7 +896,7 @@ class ReportScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            '비교값은 시각화를 위한 참고 환산값이며 공식 인증값이 아닙니다. 자동차 0.2 kg CO2eq/km, 스마트폰 충전 0.012 kg CO2eq/회, LED 전구 0.02 kg CO2eq/시간을 기준으로 계산했습니다.',
+            '비교값은 사용자 이해를 위한 참고 환산값이며 공식 인증값이 아닙니다. 미국 EPA 환산 기준을 참고해 자동차 0.244 kg CO2eq/km, 스마트폰 완전 충전 0.0124 kg CO2eq/회를 적용했습니다. LED 전구는 10W 소비전력 기준 0.004 kg CO2eq/시간으로 계산했습니다.',
             style: TextStyle(color: secondaryText, fontSize: 12, height: 1.4),
           ),
         ],
