@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'services/auth_session_validation_service.dart';
+import 'widgets/kdpp_logo_mark.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({
@@ -119,19 +120,7 @@ class _SplashScreenState extends State<SplashScreen>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  width: 84,
-                  height: 84,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF4A4EFE),
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                  child: const Icon(
-                    Icons.eco_outlined,
-                    color: Colors.white,
-                    size: 40,
-                  ),
-                ),
+                const KdppLogoMark(size: 84, borderRadius: 24),
                 const SizedBox(height: 20),
                 Text(
                   'K-DPP',

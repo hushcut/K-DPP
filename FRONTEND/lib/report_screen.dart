@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'models/clothes.dart';
+import 'utils/scan_form_validator.dart';
 
 class ReportScreen extends StatelessWidget {
   const ReportScreen({super.key, this.onDeleted});
@@ -14,7 +15,9 @@ class ReportScreen extends StatelessWidget {
     final Clothes? passedItem = routeArgs is Clothes ? routeArgs : null;
 
     final closetProvider = context.watch<ClosetProvider>();
-    final item = passedItem ?? closetProvider.currentReportItem;
+    final item =
+        _resolveDisplayItem(closetProvider, passedItem) ??
+        closetProvider.currentReportItem;
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final backgroundColor = isDark
@@ -69,6 +72,11 @@ class ReportScreen extends StatelessWidget {
                       color: primaryText,
                     ),
                   ),
+                ),
+                IconButton(
+                  onPressed: () => _showEditBottomSheet(context, item),
+                  tooltip: '의류 정보 수정',
+                  icon: Icon(Icons.edit_outlined, color: secondaryText),
                 ),
               ],
             ),
@@ -202,6 +210,15 @@ class ReportScreen extends StatelessWidget {
               primaryText: primaryText,
               secondaryText: secondaryText,
               isDark: isDark,
+            ),
+            const SizedBox(height: 12),
+
+            _buildCalculationBasisCard(
+              item,
+              primaryText: primaryText,
+              secondaryText: secondaryText,
+              cardColor: cardColor,
+              borderColor: borderColor,
             ),
             const SizedBox(height: 24),
 
@@ -409,6 +426,70 @@ class ReportScreen extends StatelessWidget {
     }
 
     Navigator.pushReplacementNamed(context, '/main', arguments: 2);
+  }
+
+  static Clothes? _resolveDisplayItem(
+    ClosetProvider provider,
+    Clothes? passedItem,
+  ) {
+    if (passedItem == null) {
+      return provider.currentReportItem;
+    }
+
+    final savedResultId = passedItem.savedResultId;
+
+    if (savedResultId != null) {
+      for (final item in provider.items) {
+        if (item.savedResultId == savedResultId) {
+          return item;
+        }
+      }
+    }
+
+    for (final item in provider.items) {
+      if (identical(item, passedItem)) {
+        return item;
+      }
+    }
+
+    return passedItem;
+  }
+
+  static Future<void> _showEditBottomSheet(
+    BuildContext context,
+    Clothes item,
+  ) async {
+    final updated = await showModalBottomSheet<Clothes>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: Theme.of(context).brightness == Brightness.dark
+          ? const Color(0xFF121212)
+          : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        return _ReportEditSheet(item: item);
+      },
+    );
+
+    if (updated == null) return;
+
+    if (!context.mounted) return;
+
+    final success = await context.read<ClosetProvider>().updateClothes(
+      item,
+      updated,
+    );
+
+    if (!context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(success ? '의류 정보가 수정되었습니다.' : '수정할 의류를 찾지 못했습니다.'),
+      ),
+    );
   }
 
   static String _formatMaterialValue(double value) {
@@ -869,6 +950,99 @@ class ReportScreen extends StatelessWidget {
     );
   }
 
+  Widget _buildCalculationBasisCard(
+    Clothes item, {
+    required Color primaryText,
+    required Color secondaryText,
+    required Color cardColor,
+    required Color borderColor,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.fact_check_outlined,
+                color: Color(0xFF4A4EFE),
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '계산 기준',
+                style: TextStyle(
+                  color: primaryText,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _buildBasisRow(
+            label: '출처',
+            value: _carbonSourceLabel(item),
+            primaryText: primaryText,
+            secondaryText: secondaryText,
+          ),
+          const SizedBox(height: 8),
+          _buildBasisRow(
+            label: '무게',
+            value: _weightBasisText(item),
+            primaryText: primaryText,
+            secondaryText: secondaryText,
+          ),
+          const SizedBox(height: 8),
+          _buildBasisRow(
+            label: '범위',
+            value: '소재, 혼용률, 의류 무게 기준의 생산·제조 과정',
+            primaryText: primaryText,
+            secondaryText: secondaryText,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBasisRow({
+    required String label,
+    required String value,
+    required Color primaryText,
+    required Color secondaryText,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 44,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: secondaryText,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(color: primaryText, fontSize: 13, height: 1.45),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildScopeRow({
     required IconData icon,
     required String label,
@@ -959,6 +1133,36 @@ class ReportScreen extends StatelessWidget {
     }
 
     return ((value / 10).round() * 10).toString();
+  }
+
+  static String _carbonSourceLabel(Clothes item) {
+    return switch (item.carbonFootprintSource) {
+      CarbonFootprintSource.server => '백엔드 계산값',
+      CarbonFootprintSource.localEstimate => '앱 임시 추정값',
+    };
+  }
+
+  static String _weightBasisText(Clothes item) {
+    final minWeight = item.minWeightGram;
+    final maxWeight = item.maxWeightGram;
+
+    if (minWeight == null || maxWeight == null) {
+      return '저장된 소재와 의류 유형 기준';
+    }
+
+    if ((maxWeight - minWeight).abs() <= 0.05) {
+      return '실제 무게 ${_formatWeightGram(maxWeight)}g';
+    }
+
+    return '선택 무게 범위 ${_formatWeightGram(minWeight)}~${_formatWeightGram(maxWeight)}g';
+  }
+
+  static String _formatWeightGram(double value) {
+    if (value % 1 == 0) {
+      return value.toInt().toString();
+    }
+
+    return value.toStringAsFixed(1);
   }
 
   Widget _buildGuideSection({
@@ -1130,4 +1334,203 @@ class _CarbonComparisonData {
   final IconData icon;
   final String title;
   final String value;
+}
+
+class _ReportEditSheet extends StatefulWidget {
+  const _ReportEditSheet({required this.item});
+
+  final Clothes item;
+
+  @override
+  State<_ReportEditSheet> createState() => _ReportEditSheetState();
+}
+
+class _ReportEditSheetState extends State<_ReportEditSheet> {
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  late final TextEditingController _titleController;
+  late final TextEditingController _careController;
+  late final List<String> _categoryOptions;
+  late String _category;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController = TextEditingController(text: widget.item.title);
+    _careController = TextEditingController(text: widget.item.careInstruction);
+    _categoryOptions = [
+      '상의',
+      '하의',
+      if (widget.item.category != '상의' && widget.item.category != '하의')
+        widget.item.category,
+    ];
+    _category = _categoryOptions.contains(widget.item.category)
+        ? widget.item.category
+        : '상의';
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _careController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final isValid = _formKey.currentState?.validate() ?? false;
+
+    if (!isValid) return;
+
+    Navigator.pop(
+      context,
+      widget.item.copyWith(
+        title: _titleController.text.trim(),
+        category: _category,
+        careInstruction: _careController.text.trim(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+    final secondaryText = isDark
+        ? const Color(0xFFD1D1D6)
+        : const Color(0xFF5F6368);
+    final inputFillColor = isDark ? const Color(0xFF2A2A2E) : Colors.white;
+
+    return SafeArea(
+      top: false,
+      child: AnimatedPadding(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '의류 정보 수정',
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '이름, 분류, 라벨 지침을 수정할 수 있어요. 소재와 탄소 계산값은 유지됩니다.',
+                  style: TextStyle(
+                    color: secondaryText,
+                    fontSize: 13,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                TextFormField(
+                  controller: _titleController,
+                  validator: ScanFormValidator.validateTitle,
+                  textInputAction: TextInputAction.next,
+                  style: TextStyle(color: primaryText),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: inputFillColor,
+                    labelText: '의류 이름',
+                    hintText: '예: 코튼 맨투맨',
+                    labelStyle: TextStyle(color: secondaryText),
+                    hintStyle: TextStyle(color: secondaryText),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    prefixIcon: const Icon(Icons.checkroom_outlined),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                DropdownButtonFormField<String>(
+                  initialValue: _category,
+                  items: _categoryOptions
+                      .map(
+                        (category) => DropdownMenuItem(
+                          value: category,
+                          child: Text(category),
+                        ),
+                      )
+                      .toList(),
+                  dropdownColor: inputFillColor,
+                  style: TextStyle(color: primaryText),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: inputFillColor,
+                    labelText: '분류',
+                    labelStyle: TextStyle(color: secondaryText),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    prefixIcon: const Icon(Icons.category_outlined),
+                  ),
+                  onChanged: (value) {
+                    if (value == null) return;
+
+                    setState(() {
+                      _category = value;
+                    });
+                  },
+                ),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: _careController,
+                  minLines: 3,
+                  maxLines: 5,
+                  style: TextStyle(color: primaryText),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: inputFillColor,
+                    labelText: '세탁 지침',
+                    hintText: '예: 찬물 세탁 후 자연 건조',
+                    alignLabelWithHint: true,
+                    labelStyle: TextStyle(color: secondaryText),
+                    hintStyle: TextStyle(color: secondaryText),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    prefixIcon: const Padding(
+                      padding: EdgeInsets.only(bottom: 56),
+                      child: Icon(Icons.local_laundry_service_outlined),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 22),
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton(
+                    onPressed: _submit,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF4A4EFE),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      '수정 완료',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

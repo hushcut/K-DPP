@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/models/scan_result.dart';
 import 'package:k_dpp/services/scan_analysis_service.dart';
@@ -43,6 +44,12 @@ void main() {
   );
 
   test('analyzeLabel converts unexpected errors to unknown failure', () async {
+    final originalDebugPrint = debugPrint;
+    debugPrint = (String? message, {int? wrapWidth}) {};
+    addTearDown(() {
+      debugPrint = originalDebugPrint;
+    });
+
     final service = ScanAnalysisService(
       scanApiService: _FailingScanApiService(StateError('broken')),
     );

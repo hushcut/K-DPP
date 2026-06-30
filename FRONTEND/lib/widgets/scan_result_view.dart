@@ -163,6 +163,7 @@ class ScanResultView extends StatelessWidget {
                     TextFormField(
                       controller: titleController,
                       validator: validateTitle,
+                      enabled: !isSaving,
                       style: TextStyle(color: primaryText),
                       decoration: InputDecoration(
                         filled: true,
@@ -183,7 +184,7 @@ class ScanResultView extends StatelessWidget {
                           '무게 기준, ${selectedClothingType.label}, ${selectedClothingType.weightDisplayText}',
                       button: true,
                       child: InkWell(
-                        onTap: onSelectClothingType,
+                        onTap: isSaving ? null : onSelectClothingType,
                         borderRadius: BorderRadius.circular(10),
                         child: InputDecorator(
                           decoration: InputDecoration(
@@ -284,6 +285,15 @@ class ScanResultView extends StatelessWidget {
                   ),
                 ),
               ),
+              if (!materialInputs.isEmpty && !isTotalValid) ...[
+                const SizedBox(height: 8),
+                _buildMaterialTotalHint(
+                  totalMaterials: totalMaterials,
+                  primaryText: primaryText,
+                  secondaryText: secondaryText,
+                  isDark: isDark,
+                ),
+              ],
               const SizedBox(height: 12),
               Container(
                 padding: const EdgeInsets.all(16),
@@ -315,7 +325,7 @@ class ScanResultView extends StatelessWidget {
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
-                        onPressed: onAddMaterial,
+                        onPressed: isSaving ? null : onAddMaterial,
                         icon: const Icon(Icons.add),
                         label: const Text('소재 추가'),
                       ),
@@ -387,7 +397,7 @@ class ScanResultView extends StatelessWidget {
               const SizedBox(height: 12),
               Center(
                 child: TextButton(
-                  onPressed: onReset,
+                  onPressed: isSaving ? null : onReset,
                   child: Text('다시 촬영', style: TextStyle(color: secondaryText)),
                 ),
               ),
@@ -469,6 +479,54 @@ class ScanResultView extends StatelessWidget {
     );
   }
 
+  Widget _buildMaterialTotalHint({
+    required double totalMaterials,
+    required Color primaryText,
+    required Color secondaryText,
+    required bool isDark,
+  }) {
+    final difference = 100 - totalMaterials;
+    final isShort = difference > 0;
+    final amount = difference.abs();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF2A1E1E) : const Color(0xFFFFF4F2),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.redAccent.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.info_outline_rounded,
+            color: Colors.redAccent,
+            size: 18,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              isShort
+                  ? '100%까지 ${_formatMaterialGap(amount)}% 부족해요. 저장 전 소재 비율을 조정해 주세요.'
+                  : '100%보다 ${_formatMaterialGap(amount)}% 많아요. 저장 전 소재 비율을 조정해 주세요.',
+              style: TextStyle(color: primaryText, fontSize: 12, height: 1.45),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatMaterialGap(double value) {
+    if (value % 1 == 0) {
+      return value.toInt().toString();
+    }
+
+    return value.toStringAsFixed(1);
+  }
+
   Widget _buildMaterialRow(
     int index, {
     required Color primaryText,
@@ -504,6 +562,7 @@ class ScanResultView extends StatelessWidget {
                     controller: controller,
                     focusNode: focusNode,
                     validator: validateMaterialName,
+                    enabled: !isSaving,
                     style: TextStyle(color: primaryText, fontSize: 14),
                     decoration: InputDecoration(
                       filled: true,
@@ -580,6 +639,7 @@ class ScanResultView extends StatelessWidget {
           child: TextFormField(
             controller: item.percentController,
             validator: validateMaterialValue,
+            enabled: !isSaving,
             style: TextStyle(color: primaryText, fontSize: 14),
             textAlign: TextAlign.right,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -601,7 +661,7 @@ class ScanResultView extends StatelessWidget {
         SizedBox(
           width: 48,
           child: IconButton(
-            onPressed: () => onRemoveMaterial(index),
+            onPressed: isSaving ? null : () => onRemoveMaterial(index),
             tooltip:
                 '${item.nameController.text.trim().isEmpty ? '소재' : item.nameController.text.trim()} 삭제',
             icon: Icon(Icons.close, color: secondaryText, size: 20),

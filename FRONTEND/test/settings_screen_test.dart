@@ -65,11 +65,41 @@ void main() {
     );
 
     final passwordChange = find.text('비밀번호 변경');
-    await tester.ensureVisible(passwordChange);
+    await tester.scrollUntilVisible(
+      passwordChange,
+      220,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
     await tester.tap(passwordChange);
     await tester.pumpAndSettle();
 
     expect(find.text('아직 준비 중인 기능이에요. 업데이트 후 사용할 수 있어요.'), findsOneWidget);
+  });
+
+  testWidgets('사진 및 권한 안내에서 스캔 이미지 처리 방식을 확인할 수 있다', (tester) async {
+    final provider = ClosetProvider(
+      storage: FakeClosetStorage(),
+      authSessionStorage: FakeAuthSessionStorage(),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ],
+        child: const MaterialApp(home: SettingsScreen()),
+      ),
+    );
+
+    final privacyGuide = find.text('사진 및 권한 안내');
+    await tester.ensureVisible(privacyGuide);
+    await tester.pumpAndSettle();
+    await tester.tap(privacyGuide);
+    await tester.pumpAndSettle();
+
+    expect(find.text('카메라는 스캔 화면에서만 켜지고, 다른 화면에서는 사용하지 않습니다.'), findsOneWidget);
+    expect(find.text('카메라로 새로 촬영한 임시 파일은 분석이 끝난 뒤 정리합니다.'), findsOneWidget);
   });
 }

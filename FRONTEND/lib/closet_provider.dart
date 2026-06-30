@@ -182,6 +182,36 @@ class ClosetProvider with ChangeNotifier {
     await _persist();
   }
 
+  Future<bool> updateClothes(Clothes target, Clothes updated) async {
+    var index = _items.indexOf(target);
+
+    if (index == -1 && target.savedResultId != null) {
+      index = _items.indexWhere(
+        (item) => item.savedResultId == target.savedResultId,
+      );
+    }
+
+    if (index == -1) {
+      return false;
+    }
+
+    _items[index] = updated;
+
+    final isSelectedTarget =
+        identical(_selectedClothes, target) ||
+        _selectedClothes == target ||
+        (target.savedResultId != null &&
+            _selectedClothes?.savedResultId == target.savedResultId);
+
+    if (isSelectedTarget) {
+      _selectedClothes = updated;
+    }
+
+    notifyListeners();
+    await _persist();
+    return true;
+  }
+
   Future<int> synchronizeServerHistory(
     List<AnalysisHistoryRecord> history,
   ) async {

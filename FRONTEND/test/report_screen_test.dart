@@ -38,6 +38,9 @@ void main() {
     expect(find.textContaining('단계별 탄소 배출량'), findsNothing);
     expect(find.text('생산·제조 탄소 배출량'), findsOneWidget);
     expect(find.text('탄소 배출량 체감'), findsOneWidget);
+    expect(find.text('계산 기준'), findsOneWidget);
+    expect(find.text('앱 임시 추정값'), findsWidgets);
+    expect(find.text('저장된 소재와 의류 유형 기준'), findsOneWidget);
     expect(find.textContaining('전체 생애주기 배출량이 아닙니다'), findsOneWidget);
     expect(find.text('자동차'), findsOneWidget);
     expect(find.text('스마트폰'), findsOneWidget);
@@ -45,6 +48,44 @@ void main() {
     expect(find.textContaining('라벨 지침: 찬물 세탁 후 자연 건조'), findsOneWidget);
     expect(find.text('찬물 세탁 후 자연 건조'), findsOneWidget);
     expect(find.textContaining('COTTON 80%'), findsWidgets);
+  });
+
+  testWidgets('상세 리포트에서 의류 이름과 세탁 지침을 수정할 수 있다', (tester) async {
+    final provider = ClosetProvider(storage: FakeClosetStorage());
+
+    final selected = Clothes(
+      title: '수정 전 셔츠',
+      category: '상의',
+      health: 82,
+      materials: {'cotton': 100},
+      careInstruction: '찬물 세탁',
+      carbonFootprint: 3.2,
+    );
+
+    await provider.addClothes(selected);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: provider,
+        child: const MaterialApp(home: Scaffold(body: ReportScreen())),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.edit_outlined));
+    await tester.pumpAndSettle();
+
+    expect(find.text('의류 정보 수정'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextFormField).first, '수정 후 셔츠');
+    await tester.enterText(find.byType(TextFormField).last, '찬물 손세탁');
+    await tester.tap(find.text('수정 완료'));
+    await tester.pumpAndSettle();
+
+    expect(provider.items.single.title, '수정 후 셔츠');
+    expect(provider.items.single.careInstruction, '찬물 손세탁');
+    expect(find.text('수정 후 셔츠'), findsOneWidget);
+    expect(find.text('의류 정보가 수정되었습니다.'), findsOneWidget);
   });
 
   testWidgets('내장 리포트에서 의류를 삭제하면 콜백으로 옷장 화면 복귀를 요청한다', (tester) async {

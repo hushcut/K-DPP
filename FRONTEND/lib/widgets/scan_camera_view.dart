@@ -82,7 +82,10 @@ class ScanCameraView extends StatelessWidget {
                             Positioned.fill(
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(10),
-                                child: _buildCameraPreviewContent(frameSize),
+                                child: _buildCameraPreviewContent(
+                                  context,
+                                  frameSize,
+                                ),
                               ),
                             ),
                             if (isScanning)
@@ -226,7 +229,7 @@ class ScanCameraView extends StatelessWidget {
     );
   }
 
-  Widget _buildCameraPreviewContent(double frameSize) {
+  Widget _buildCameraPreviewContent(BuildContext context, double frameSize) {
     if (isScanning && selectedImage != null) {
       return Image.file(
         selectedImage!,
@@ -246,31 +249,67 @@ class ScanCameraView extends StatelessWidget {
     final errorMessage = cameraErrorMessage;
 
     if (errorMessage != null) {
+      final isPermissionError = errorMessage.contains('권한');
+
       return Semantics(
         liveRegion: true,
         child: Padding(
           padding: const EdgeInsets.all(18),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(
-                Icons.no_photography_outlined,
-                color: Colors.white70,
-                size: 34,
+          child: Center(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.no_photography_outlined,
+                    color: Colors.white70,
+                    size: 34,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    errorMessage,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextButton(
+                    onPressed: onRetryCamera,
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(0, 36),
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text('다시 시도'),
+                  ),
+                  if (isPermissionError) ...[
+                    const SizedBox(height: 6),
+                    TextButton(
+                      onPressed: () => _showCameraPermissionGuide(context),
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(0, 36),
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      child: const Text('권한 확인 방법'),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '앨범 사진 선택은 계속 사용할 수 있어요.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white60,
+                        fontSize: 11,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ],
               ),
-              const SizedBox(height: 12),
-              Text(
-                errorMessage,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextButton(onPressed: onRetryCamera, child: const Text('다시 시도')),
-            ],
+            ),
           ),
         ),
       );
@@ -307,6 +346,126 @@ class ScanCameraView extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  void _showCameraPermissionGuide(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        final isDark = Theme.of(sheetContext).brightness == Brightness.dark;
+        final sheetColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+        final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+        final secondaryText = isDark
+            ? const Color(0xFFD1D1D6)
+            : const Color(0xFF5F6368);
+
+        return SafeArea(
+          top: false,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+            decoration: BoxDecoration(
+              color: sheetColor,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(24),
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 38,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: isDark ? Colors.white24 : Colors.black12,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  '카메라 권한 확인',
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  '기기 설정에서 K-DPP의 카메라 권한을 허용한 뒤 스캔 화면으로 돌아와 다시 시도해 주세요.',
+                  style: TextStyle(
+                    color: secondaryText,
+                    fontSize: 14,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _buildPermissionGuideStep(
+                  icon: Icons.settings_outlined,
+                  text: '설정 앱을 열고 앱 목록에서 K-DPP를 선택하세요.',
+                  primaryText: primaryText,
+                ),
+                const SizedBox(height: 10),
+                _buildPermissionGuideStep(
+                  icon: Icons.camera_alt_outlined,
+                  text: '권한 메뉴에서 카메라를 허용으로 변경하세요.',
+                  primaryText: primaryText,
+                ),
+                const SizedBox(height: 10),
+                _buildPermissionGuideStep(
+                  icon: Icons.photo_library_outlined,
+                  text: '급하다면 앨범 버튼으로 이미 찍어둔 라벨 사진을 선택할 수 있어요.',
+                  primaryText: primaryText,
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(sheetContext),
+                    style: ElevatedButton.styleFrom(
+                      elevation: 0,
+                      backgroundColor: const Color(0xFF4A4EFE),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      '확인',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPermissionGuideStep({
+    required IconData icon,
+    required String text,
+    required Color primaryText,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: const Color(0xFF4A4EFE), size: 20),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(color: primaryText, fontSize: 13, height: 1.5),
+          ),
+        ),
+      ],
     );
   }
 }

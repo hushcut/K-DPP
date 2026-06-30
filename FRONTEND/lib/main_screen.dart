@@ -8,6 +8,7 @@ import 'models/clothes.dart';
 import 'models/main_screen_arguments.dart';
 import 'report_screen.dart';
 import 'scan_screen.dart';
+import 'widgets/kdpp_logo_mark.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key, this.initialArguments});
@@ -79,9 +80,13 @@ class _MainScreenState extends State<MainScreen> {
 
   List<Widget> _buildTabScreens() {
     return [
-      const HomeScreen(),
+      HomeScreen(
+        onStartScan: () => _selectTab(1),
+        onOpenReport: _openReport,
+        onOpenCloset: () => _selectTab(2),
+      ),
       ScanScreen(isActive: _selectedIndex == 1 && !_isShowingReport),
-      ClosetScreen(onOpenReport: _openReport),
+      ClosetScreen(onOpenReport: _openReport, onStartScan: () => _selectTab(1)),
     ];
   }
 
@@ -147,7 +152,7 @@ class _MainScreenState extends State<MainScreen> {
       scrolledUnderElevation: 0,
       automaticallyImplyLeading: false,
       centerTitle: true,
-      title: const _KDppSplashLogoMark(),
+      title: const KdppLogoMark(size: 34, borderRadius: 10),
       actions: [
         IconButton(
           onPressed: () {
@@ -183,29 +188,6 @@ class _MainScreenState extends State<MainScreen> {
       bottomNavigationBar: _KDppBottomNavigationBar(
         selectedIndex: _selectedIndex,
         onSelect: _selectTab,
-      ),
-    );
-  }
-}
-
-class _KDppSplashLogoMark extends StatelessWidget {
-  const _KDppSplashLogoMark();
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      label: 'K-DPP',
-      image: true,
-      child: ExcludeSemantics(
-        child: Container(
-          width: 34,
-          height: 34,
-          decoration: BoxDecoration(
-            color: const Color(0xFF4A4EFE),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: const Icon(Icons.eco_outlined, color: Colors.white, size: 21),
-        ),
       ),
     );
   }

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
 import 'package:k_dpp/models/analysis_history_record.dart';
@@ -244,6 +245,37 @@ void main() {
       expect(provider.count, beforeCount - 2);
     });
 
+    test('updateClothes를 호출하면 기존 의류와 선택 상태를 함께 갱신한다', () async {
+      final storage = FakeClosetStorage();
+      final provider = ClosetProvider(storage: storage);
+      final original = Clothes(
+        title: '수정 전 셔츠',
+        category: '상의',
+        health: 80,
+        materials: {'cotton': 100},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: 4.2,
+      );
+
+      await provider.addClothes(original);
+
+      final updated = original.copyWith(
+        title: '수정 후 셔츠',
+        careInstruction: '찬물 손세탁',
+      );
+
+      final success = await provider.updateClothes(original, updated);
+
+      expect(success, isTrue);
+      expect(provider.items.single.title, '수정 후 셔츠');
+      expect(provider.currentReportItem, updated);
+
+      final savedItems = await storage.loadClothesList();
+
+      expect(savedItems.single.title, '수정 후 셔츠');
+      expect(savedItems.single.careInstruction, '찬물 손세탁');
+    });
+
     test('로그인 사용자 프로필을 저장하고 다시 불러온다', () async {
       final storage = FakeClosetStorage();
       final authStorage = FakeAuthSessionStorage();
@@ -317,6 +349,12 @@ void main() {
       final storage = FakeClosetStorage();
       await storage.saveUserName('홍길동');
       await storage.saveUserEmail('honggildong@example.com');
+
+      final originalDebugPrint = debugPrint;
+      debugPrint = (String? message, {int? wrapWidth}) {};
+      addTearDown(() {
+        debugPrint = originalDebugPrint;
+      });
 
       final authStorage = FakeAuthSessionStorage()
         ..loadError = StateError('secure storage unavailable');

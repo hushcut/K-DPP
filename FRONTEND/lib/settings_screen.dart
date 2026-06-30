@@ -131,6 +131,110 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
+  void _showPrivacyGuide(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final backgroundColor = isDark ? const Color(0xFF121212) : Colors.white;
+    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+    final secondaryText = isDark
+        ? const Color(0xFFD1D1D6)
+        : const Color(0xFF5F6368);
+
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: backgroundColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '사진 및 권한 안내',
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                _buildPrivacyGuideRow(
+                  icon: Icons.camera_alt_outlined,
+                  text: '카메라는 스캔 화면에서만 켜지고, 다른 화면에서는 사용하지 않습니다.',
+                  textColor: secondaryText,
+                ),
+                _buildPrivacyGuideRow(
+                  icon: Icons.delete_outline,
+                  text: '카메라로 새로 촬영한 임시 파일은 분석이 끝난 뒤 정리합니다.',
+                  textColor: secondaryText,
+                ),
+                _buildPrivacyGuideRow(
+                  icon: Icons.photo_library_outlined,
+                  text: '앨범에서 선택한 원본 사진은 앱이 수정하지 않습니다.',
+                  textColor: secondaryText,
+                ),
+                _buildPrivacyGuideRow(
+                  icon: Icons.cloud_done_outlined,
+                  text: '서버 분석이 연결된 경우 이미지는 라벨 분석 요청에만 사용됩니다.',
+                  textColor: secondaryText,
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(sheetContext),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF4A4EFE),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      '확인했어요',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPrivacyGuideRow({
+    required IconData icon,
+    required String text,
+    required Color textColor,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: const Color(0xFF4A4EFE), size: 21),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(color: textColor, fontSize: 14, height: 1.5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSectionTitle(String title, Color color) {
     return Padding(
       padding: const EdgeInsets.only(left: 4, bottom: 10),
@@ -340,6 +444,23 @@ class SettingsScreen extends StatelessWidget {
                 onTap: () {
                   Navigator.pushNamed(context, '/display-settings');
                 },
+              ),
+            ],
+            cardColor,
+            borderColor,
+          ),
+          const SizedBox(height: 24),
+
+          _buildSectionTitle('개인정보', sectionText),
+          _buildCard(
+            [
+              _buildMenuTile(
+                icon: Icons.privacy_tip_outlined,
+                title: '사진 및 권한 안내',
+                subtitle: '스캔에 사용하는 카메라와 사진 처리 방식을 확인합니다.',
+                textColor: primaryText,
+                subtitleColor: secondaryText,
+                onTap: () => _showPrivacyGuide(context),
               ),
             ],
             cardColor,

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
 import 'package:k_dpp/models/analysis_history_record.dart';
@@ -86,6 +87,12 @@ void main() {
       expiresInSeconds: 3600,
     );
     await provider.addClothes(localClothes);
+
+    final originalDebugPrint = debugPrint;
+    debugPrint = (String? message, {int? wrapWidth}) {};
+    addTearDown(() {
+      debugPrint = originalDebugPrint;
+    });
 
     final service = PostLoginSyncService(
       authApiService: _FakeAuthApiService(

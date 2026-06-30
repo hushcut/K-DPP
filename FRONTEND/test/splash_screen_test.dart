@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
@@ -12,6 +13,9 @@ import 'helpers/fake_closet_storage.dart';
 
 void main() {
   testWidgets('인증 저장소 오류가 발생하면 로그인 화면으로 안전하게 이동한다', (tester) async {
+    final originalDebugPrint = debugPrint;
+    debugPrint = (String? message, {int? wrapWidth}) {};
+
     final authStorage = FakeAuthSessionStorage()
       ..loadError = StateError('secure storage unavailable');
     final provider = ClosetProvider(
@@ -38,6 +42,7 @@ void main() {
 
     expect(find.text('로그인 화면'), findsOneWidget);
     expect(find.text('메인 화면'), findsNothing);
+    debugPrint = originalDebugPrint;
   });
 
   testWidgets('유효한 저장 세션은 서버 검증 후 메인 화면으로 이동한다', (tester) async {

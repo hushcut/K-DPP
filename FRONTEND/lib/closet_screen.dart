@@ -6,19 +6,47 @@ import 'models/clothes.dart';
 enum ClosetSortOption { eco, health, latest, custom }
 
 class ClosetScreen extends StatefulWidget {
-  const ClosetScreen({super.key, required this.onOpenReport});
+  const ClosetScreen({super.key, required this.onOpenReport, this.onStartScan});
 
   final ValueChanged<Clothes> onOpenReport;
+  final VoidCallback? onStartScan;
 
   @override
   State<ClosetScreen> createState() => _ClosetScreenState();
 }
 
 class _ClosetScreenState extends State<ClosetScreen> {
+  static const double _bottomNavigationOverlapPadding = 26;
+
   ClosetSortOption _sortOption = ClosetSortOption.eco;
   bool _selectionMode = false;
   bool _reorderMode = false;
   final Set<Clothes> _selectedItems = {};
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(_handleSearchChanged);
+  }
+
+  @override
+  void dispose() {
+    _searchController.removeListener(_handleSearchChanged);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _handleSearchChanged() {
+    final nextQuery = _searchController.text.trim().toLowerCase();
+
+    if (nextQuery == _searchQuery) return;
+
+    setState(() {
+      _searchQuery = nextQuery;
+    });
+  }
 
   String get _sortLabel {
     switch (_sortOption) {
@@ -65,6 +93,40 @@ class _ClosetScreenState extends State<ClosetScreen> {
     }
 
     return sorted;
+  }
+
+  List<Clothes> _filterClothes(List<Clothes> source) {
+    if (_searchQuery.isEmpty) return source;
+
+    return source.where(_matchesSearch).toList();
+  }
+
+  bool _matchesSearch(Clothes item) {
+    final searchTargets = [
+      item.title,
+      item.category,
+      item.careInstruction,
+      ...item.materials.keys,
+    ];
+
+    return searchTargets.any(
+      (target) => target.toLowerCase().contains(_searchQuery),
+    );
+  }
+
+  String _emptyMessage(String defaultMessage) {
+    if (_searchQuery.isEmpty) return defaultMessage;
+
+    return '"${_searchController.text.trim()}"에 맞는 의류가 없습니다.';
+  }
+
+  EdgeInsets _listPadding(BuildContext context) {
+    return EdgeInsets.fromLTRB(
+      16,
+      16,
+      16,
+      _bottomNavigationOverlapPadding + MediaQuery.paddingOf(context).bottom,
+    );
   }
 
   void _enterSelectionMode(Clothes item) {
@@ -314,24 +376,71 @@ class _ClosetScreenState extends State<ClosetScreen> {
     );
   }
 
+  Widget _buildSearchField({
+    required Color primaryText,
+    required Color secondaryText,
+    required Color cardColor,
+    required Color borderColor,
+  }) {
+    return TextField(
+      controller: _searchController,
+      style: TextStyle(color: primaryText, fontSize: 14),
+      textInputAction: TextInputAction.search,
+      decoration: InputDecoration(
+        hintText: '옷 이름, 소재 검색',
+        hintStyle: TextStyle(color: secondaryText, fontSize: 14),
+        prefixIcon: Icon(Icons.search, color: secondaryText, size: 21),
+        suffixIcon: _searchQuery.isEmpty
+            ? null
+            : IconButton(
+                onPressed: _searchController.clear,
+                tooltip: '검색어 지우기',
+                icon: Icon(Icons.close, color: secondaryText, size: 20),
+              ),
+        filled: true,
+        fillColor: cardColor,
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 14,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide(color: borderColor),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide(color: borderColor),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: Color(0xFF4A4EFE), width: 1.4),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final clothesList = context.watch<ClosetProvider>().items;
     final originalOrder = clothesList.toList();
 
-    final allItems = _sortClothes(
-      List<Clothes>.from(clothesList),
-      originalOrder,
+    final allItems = _filterClothes(
+      _sortClothes(List<Clothes>.from(clothesList), originalOrder),
     );
 
-    final topItems = _sortClothes(
-      clothesList.where((item) => item.category == '상의').toList(),
-      originalOrder,
+    final topItems = _filterClothes(
+      _sortClothes(
+        clothesList.where((item) => item.category == '상의').toList(),
+        originalOrder,
+      ),
     );
 
-    final bottomItems = _sortClothes(
-      clothesList.where((item) => item.category == '하의').toList(),
-      originalOrder,
+    final bottomItems = _filterClothes(
+      _sortClothes(
+        clothesList.where((item) => item.category == '하의').toList(),
+        originalOrder,
+      ),
     );
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -460,6 +569,13 @@ class _ClosetScreenState extends State<ClosetScreen> {
                       height: 1.4,
                     ),
                   ),
+                  const SizedBox(height: 14),
+                  _buildSearchField(
+                    primaryText: primaryText,
+                    secondaryText: secondaryText,
+                    cardColor: baseCardColor,
+                    borderColor: borderColor,
+                  ),
                 ],
               ),
             ),
@@ -482,7 +598,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
                         context,
                         allItems,
                         originalOrder,
-                        emptyMessage: '옷장에 등록된 의류가 없습니다.',
+                        emptyMessage: _emptyMessage('옷장에 등록된 의류가 없습니다.'),
                         primaryText: primaryText,
                         secondaryText: secondaryText,
                         cardColor: baseCardColor,
@@ -496,7 +612,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
                     : _buildClothesList(
                         context,
                         allItems,
-                        emptyMessage: '옷장에 등록된 의류가 없습니다.',
+                        emptyMessage: _emptyMessage('옷장에 등록된 의류가 없습니다.'),
                         primaryText: primaryText,
                         secondaryText: secondaryText,
                         cardColor: baseCardColor,
@@ -512,7 +628,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
                         context,
                         topItems,
                         originalOrder,
-                        emptyMessage: '상의 의류가 없습니다.',
+                        emptyMessage: _emptyMessage('상의 의류가 없습니다.'),
                         primaryText: primaryText,
                         secondaryText: secondaryText,
                         cardColor: baseCardColor,
@@ -526,7 +642,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
                     : _buildClothesList(
                         context,
                         topItems,
-                        emptyMessage: '상의 의류가 없습니다.',
+                        emptyMessage: _emptyMessage('상의 의류가 없습니다.'),
                         primaryText: primaryText,
                         secondaryText: secondaryText,
                         cardColor: baseCardColor,
@@ -542,7 +658,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
                         context,
                         bottomItems,
                         originalOrder,
-                        emptyMessage: '하의 의류가 없습니다.',
+                        emptyMessage: _emptyMessage('하의 의류가 없습니다.'),
                         primaryText: primaryText,
                         secondaryText: secondaryText,
                         cardColor: baseCardColor,
@@ -556,7 +672,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
                     : _buildClothesList(
                         context,
                         bottomItems,
-                        emptyMessage: '하의 의류가 없습니다.',
+                        emptyMessage: _emptyMessage('하의 의류가 없습니다.'),
                         primaryText: primaryText,
                         secondaryText: secondaryText,
                         cardColor: baseCardColor,
@@ -571,6 +687,75 @@ class _ClosetScreenState extends State<ClosetScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyListState({
+    required String message,
+    required Color primaryText,
+    required Color secondaryText,
+  }) {
+    final isSearching = _searchQuery.isNotEmpty;
+    final action = isSearching ? _searchController.clear : widget.onStartScan;
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isSearching ? Icons.search_off_rounded : Icons.checkroom_outlined,
+              color: secondaryText,
+              size: 34,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: primaryText,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              isSearching
+                  ? '검색어를 지우고 전체 옷장을 다시 확인해 보세요.'
+                  : '케어 라벨을 스캔하면 소재와 탄소 정보를 옷장에 저장할 수 있어요.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
+            ),
+            if (action != null) ...[
+              const SizedBox(height: 18),
+              SizedBox(
+                height: 44,
+                child: ElevatedButton.icon(
+                  onPressed: action,
+                  icon: Icon(
+                    isSearching
+                        ? Icons.close_rounded
+                        : Icons.camera_alt_outlined,
+                    size: 18,
+                  ),
+                  label: Text(isSearching ? '검색어 지우기' : '스캔하러 가기'),
+                  style: ElevatedButton.styleFrom(
+                    elevation: 0,
+                    backgroundColor: const Color(0xFF4A4EFE),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 18),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -591,20 +776,15 @@ class _ClosetScreenState extends State<ClosetScreen> {
     required bool isDark,
   }) {
     if (clothes.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            emptyMessage,
-            textAlign: TextAlign.center,
-            style: TextStyle(color: secondaryText, height: 1.5),
-          ),
-        ),
+      return _buildEmptyListState(
+        message: emptyMessage,
+        primaryText: primaryText,
+        secondaryText: secondaryText,
       );
     }
 
     return ReorderableListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: _listPadding(context),
       itemCount: clothes.length,
       onReorder: (oldIndex, newIndex) async {
         await _handleReorder(
@@ -664,20 +844,15 @@ class _ClosetScreenState extends State<ClosetScreen> {
     required bool isDark,
   }) {
     if (clothes.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            emptyMessage,
-            textAlign: TextAlign.center,
-            style: TextStyle(color: secondaryText, height: 1.5),
-          ),
-        ),
+      return _buildEmptyListState(
+        message: emptyMessage,
+        primaryText: primaryText,
+        secondaryText: secondaryText,
       );
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: _listPadding(context),
       itemCount: clothes.length,
       itemBuilder: (context, index) {
         final item = clothes[index];

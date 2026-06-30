@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -37,6 +38,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   bool _hasTriedSubmit = false;
   bool _isManualMaterialMode = false;
   bool _isSaving = false;
+  bool _hasRequestedMaterialCatalog = false;
 
   File? _selectedImage;
 
@@ -83,7 +85,6 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
     if (widget.isActive) {
       _cameraLifecycle.initialize();
     }
-    _loadMaterialCatalog();
   }
 
   @override
@@ -121,6 +122,10 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _loadMaterialCatalog() async {
+    if (_hasRequestedMaterialCatalog) return;
+
+    _hasRequestedMaterialCatalog = true;
+
     try {
       final catalog = await _materialCatalogApiService.fetchMaterials();
 
@@ -326,6 +331,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
     bool isScanFailed = false,
     String? failureMessage,
   }) {
+    unawaited(_loadMaterialCatalog());
     _setMaterialInputs(draft.materials);
 
     if (draft.isManualMaterialMode && draft.materials.isEmpty) {

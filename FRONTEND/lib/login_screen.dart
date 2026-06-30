@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'widgets/kdpp_logo_mark.dart';
+
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
 
@@ -29,25 +31,7 @@ class LoginScreen extends StatelessWidget {
                   child: Column(
                     children: [
                       const Spacer(flex: 2),
-                      Semantics(
-                        label: 'K-DPP',
-                        image: true,
-                        child: ExcludeSemantics(
-                          child: Container(
-                            width: 96,
-                            height: 96,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF4A4EFE),
-                              borderRadius: BorderRadius.circular(28),
-                            ),
-                            child: const Icon(
-                              Icons.eco_outlined,
-                              color: Colors.white,
-                              size: 46,
-                            ),
-                          ),
-                        ),
-                      ),
+                      const KdppLogoMark(size: 96, borderRadius: 28),
                       const SizedBox(height: 24),
                       Text(
                         'K-DPP',

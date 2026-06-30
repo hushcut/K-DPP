@@ -67,6 +67,8 @@ class ScanSaveService {
         carbonFootprintSource: calculation.usesServerCarbon
             ? CarbonFootprintSource.server
             : CarbonFootprintSource.localEstimate,
+        minWeightGram: clothingType.minWeightGram,
+        maxWeightGram: clothingType.maxWeightGram,
       ),
     );
   }

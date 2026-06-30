@@ -23,6 +23,8 @@ void main() {
       expect(success.clothes.category, '상의');
       expect(success.clothes.health, 93);
       expect(success.clothes.carbonFootprint, 1.4);
+      expect(success.clothes.minWeightGram, 100);
+      expect(success.clothes.maxWeightGram, 250);
     });
 
     test('buildClothes rejects empty materials', () {

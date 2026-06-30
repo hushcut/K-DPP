@@ -4,7 +4,16 @@ import 'closet_provider.dart';
 import 'models/clothes.dart';
 
 class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({
+    super.key,
+    this.onStartScan,
+    this.onOpenReport,
+    this.onOpenCloset,
+  });
+
+  final VoidCallback? onStartScan;
+  final ValueChanged<Clothes>? onOpenReport;
+  final VoidCallback? onOpenCloset;
 
   @override
   Widget build(BuildContext context) {
@@ -32,7 +41,7 @@ class HomeScreen extends StatelessWidget {
     final tipShadowColor = isDark
         ? Colors.black.withValues(alpha: 0.18)
         : Colors.black.withValues(alpha: 0.02);
-    final bottomContentPadding = MediaQuery.paddingOf(context).bottom + 48;
+    final bottomContentPadding = MediaQuery.paddingOf(context).bottom + 26;
 
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(20, 20, 20, bottomContentPadding),
@@ -74,13 +83,31 @@ class HomeScreen extends StatelessWidget {
           ),
           const SizedBox(height: 24),
 
-          Text(
-            '최근 등록한 의류 상태',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: primaryText,
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '최근 등록한 의류 상태',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: primaryText,
+                  ),
+                ),
+              ),
+              if (recentItems.isNotEmpty && onOpenCloset != null)
+                TextButton.icon(
+                  onPressed: onOpenCloset,
+                  icon: const Icon(Icons.checkroom_outlined, size: 16),
+                  label: const Text('옷장 보기'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF4A4EFE),
+                    minimumSize: const Size(0, 40),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 8),
           Text(
@@ -95,6 +122,7 @@ class HomeScreen extends StatelessWidget {
               cardBorderColor: cardBorderColor,
               primaryText: primaryText,
               secondaryText: secondaryText,
+              onStartScan: onStartScan,
             )
           else
             ...recentItems.indexed.map(
@@ -106,6 +134,9 @@ class HomeScreen extends StatelessWidget {
                   title: entry.$2.title,
                   percentage: entry.$2.health,
                   subtitle: _buildHealthSubtitle(entry.$2),
+                  onTap: onOpenReport == null
+                      ? null
+                      : () => onOpenReport!(entry.$2),
                   cardColor: cardColor,
                   cardBorderColor: cardBorderColor,
                   primaryText: primaryText,
@@ -318,6 +349,7 @@ class HomeScreen extends StatelessWidget {
     required Color cardBorderColor,
     required Color primaryText,
     required Color secondaryText,
+    required VoidCallback? onStartScan,
   }) {
     return Container(
       width: double.infinity,
@@ -343,6 +375,26 @@ class HomeScreen extends StatelessWidget {
             '스캔 탭에서 케어 라벨을 촬영하면 의류 상태와 관리 정보를 여기서 확인할 수 있어요.',
             style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
           ),
+          if (onStartScan != null) ...[
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: ElevatedButton.icon(
+                onPressed: onStartScan,
+                icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                label: const Text('스캔하러 가기'),
+                style: ElevatedButton.styleFrom(
+                  elevation: 0,
+                  backgroundColor: const Color(0xFF4A4EFE),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -352,6 +404,7 @@ class HomeScreen extends StatelessWidget {
     required String title,
     required int percentage,
     required String subtitle,
+    required VoidCallback? onTap,
     required Color cardColor,
     required Color cardBorderColor,
     required Color primaryText,
@@ -362,61 +415,83 @@ class HomeScreen extends StatelessWidget {
         ? Colors.green
         : (percentage > 40 ? Colors.orange : Colors.redAccent);
 
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: cardBorderColor),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                    color: primaryText,
+    return Semantics(
+      button: onTap != null,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Ink(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: cardBorderColor),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                          color: primaryText,
+                        ),
+                        maxLines: 2,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '$percentage%',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: statusColor,
+                      ),
+                    ),
+                    if (onTap != null) ...[
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.chevron_right_rounded,
+                        color: secondaryText,
+                        size: 20,
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Semantics(
+                  label: '건강 상태 $percentage퍼센트',
+                  value: '$percentage%',
+                  child: ExcludeSemantics(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: percentage / 100,
+                        backgroundColor: progressBackgroundColor,
+                        color: statusColor,
+                        minHeight: 8,
+                      ),
+                    ),
                   ),
-                  maxLines: 2,
                 ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                '$percentage%',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: statusColor,
+                const SizedBox(height: 12),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: secondaryText,
+                    fontSize: 12,
+                    height: 1.5,
+                  ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Semantics(
-            label: '건강 상태 $percentage퍼센트',
-            value: '$percentage%',
-            child: ExcludeSemantics(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: percentage / 100,
-                  backgroundColor: progressBackgroundColor,
-                  color: statusColor,
-                  minHeight: 8,
-                ),
-              ),
+              ],
             ),
           ),
-          const SizedBox(height: 12),
-          Text(
-            subtitle,
-            style: TextStyle(color: secondaryText, fontSize: 12, height: 1.5),
-          ),
-        ],
+        ),
       ),
     );
   }
