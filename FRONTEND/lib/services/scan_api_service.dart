@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../config/api_environment.dart';
 import '../models/scan_result.dart';
 
+/// 스캔 API 오류를 화면 안내와 후속 처리 분기에 사용할 범주로 구분한다.
 enum ScanApiErrorType {
   badRequest,
   unauthorized,
@@ -18,6 +19,7 @@ enum ScanApiErrorType {
   unknown,
 }
 
+/// HTTP 상태, 통신 오류, 응답 파싱 오류를 일관된 스캔 오류로 표현한다.
 class ScanApiException implements Exception {
   const ScanApiException({
     required this.type,
@@ -54,6 +56,7 @@ class ScanApiException implements Exception {
     }
   }
 
+  /// 실패한 HTTP 상태와 서버 메시지를 대응하는 오류 유형으로 변환한다.
   factory ScanApiException.fromStatusCode({
     required int statusCode,
     required String responseBody,
@@ -141,6 +144,7 @@ class ScanApiException implements Exception {
   }
 }
 
+/// 의류 라벨 이미지를 multipart 요청으로 전송하고 분석 결과를 파싱한다.
 class ScanApiService {
   ScanApiService({
     String? endpoint,
@@ -152,6 +156,8 @@ class ScanApiService {
   final Map<String, String> requestHeaders;
   final http.Client? client;
 
+  /// 이미지를 전송해 [ScanResult]를 반환하며 네트워크·시간 초과·응답 오류를
+  /// [ScanApiException]으로 통일한다.
   Future<ScanResult> scanLabel({required File imageFile}) async {
     final uri = Uri.parse(endpoint);
 

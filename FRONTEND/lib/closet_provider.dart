@@ -1,3 +1,4 @@
+// 로그인 사용자별 옷장, 선택 의류, 인증 세션을 메모리와 로컬 저장소에 동기화하는 파일입니다.
 import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'models/analysis_history_record.dart';
@@ -5,10 +6,12 @@ import 'models/clothes.dart';
 import 'services/auth_session_storage_service.dart';
 import 'services/closet_storage_service.dart';
 
+/// 앱 전역에서 사용하는 옷장·사용자 상태를 보관하고 변경 시 화면에 알립니다.
 class ClosetProvider with ChangeNotifier {
   final ClosetStorage _storageService;
   final AuthSessionStorage _authSessionStorage;
 
+  // 외부에서는 수정 불가능한 목록으로 노출하고, 모든 변경은 이 Provider를 거칩니다.
   final List<Clothes> _items = [];
 
   Clothes? _selectedClothes;
@@ -44,6 +47,7 @@ class ClosetProvider with ChangeNotifier {
 
   bool get isAuthenticated => _authSession != null && !_authSession!.isExpired;
 
+  /// 기기에 표시할 닉네임을 갱신하고 로컬 저장소에도 기록합니다.
   Future<void> setUserName(String value) async {
     final trimmed = value.trim();
     _userName = trimmed.isEmpty ? '홍길동' : trimmed;
@@ -51,6 +55,7 @@ class ClosetProvider with ChangeNotifier {
     await _storageService.saveUserName(_userName);
   }
 
+  /// 사용자 프로필을 저장하며 계정이 바뀌면 해당 이메일 소유자의 옷장을 불러옵니다.
   Future<void> setUserProfile({
     required String nickname,
     required String email,
@@ -79,6 +84,7 @@ class ClosetProvider with ChangeNotifier {
     ]);
   }
 
+  /// 로그인 응답으로 인증 세션을 만들고 프로필·토큰을 함께 저장합니다.
   Future<void> setAuthenticatedUser({
     required String nickname,
     required String email,
@@ -97,6 +103,7 @@ class ClosetProvider with ChangeNotifier {
     ]);
   }
 
+  /// 메모리의 사용자·옷장 상태와 기기에 저장된 인증 정보를 초기화합니다.
   Future<void> logout() async {
     _items.clear();
     _selectedClothes = null;
@@ -112,16 +119,19 @@ class ClosetProvider with ChangeNotifier {
     ]);
   }
 
+  /// 현재 옷장에 등록된 의류의 탄소 배출 추정값 합계입니다.
   double get totalCarbonFootprint {
     return _items.fold(0.0, (sum, item) => sum + item.carbonFootprint);
   }
 
+  /// 등록 의류가 없으면 0, 있으면 건강도 평균을 반환합니다.
   double get averageHealth {
     if (_items.isEmpty) return 0.0;
     final total = _items.fold<int>(0, (sum, item) => sum + item.health);
     return total / _items.length;
   }
 
+  /// 저장된 프로필과 세션을 복원하고 유효한 계정의 전용 옷장을 불러옵니다.
   Future<void> loadFromStorage() async {
     final savedUserName = await _storageService.loadUserName();
     final savedUserEmail = await _storageService.loadUserEmail();
@@ -164,6 +174,7 @@ class ClosetProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  // 로그인 계정이 있으면 계정별 공간에, 없으면 기존 공용 공간에 옷장을 저장합니다.
   Future<void> _persist() async {
     final ownerEmail = _closetOwnerEmail;
 
@@ -175,6 +186,7 @@ class ClosetProvider with ChangeNotifier {
     await _storageService.saveClothesListFor(ownerEmail, _items);
   }
 
+  /// 새 의류를 목록과 현재 리포트 대상으로 등록한 뒤 저장합니다.
   Future<void> addClothes(Clothes newClothes) async {
     _items.add(newClothes);
     _selectedClothes = newClothes;
@@ -182,6 +194,7 @@ class ClosetProvider with ChangeNotifier {
     await _persist();
   }
 
+  /// 객체 또는 서버 저장 ID로 대상 의류를 찾아 수정하고 선택 상태도 교체합니다.
   Future<bool> updateClothes(Clothes target, Clothes updated) async {
     var index = _items.indexOf(target);
 
@@ -212,6 +225,7 @@ class ClosetProvider with ChangeNotifier {
     return true;
   }
 
+  /// 서버 분석 이력과 로컬 항목을 저장 ID로 연결해 달라진 탄소·소재 값을 반영합니다.
   Future<int> synchronizeServerHistory(
     List<AnalysisHistoryRecord> history,
   ) async {
@@ -273,6 +287,7 @@ class ClosetProvider with ChangeNotifier {
         clothes.maxWeightGram == record.maxWeightGram;
   }
 
+  // 계정별 데이터가 없을 때만 예전 공용 옷장을 이전하고 과거 샘플 항목은 제거합니다.
   Future<void> _loadClosetForOwner(
     String ownerEmail, {
     required bool migrateLegacyData,
@@ -352,11 +367,13 @@ class ClosetProvider with ChangeNotifier {
     return isOrganicCottonSample || isDenimSample;
   }
 
+  /// 상세 리포트에서 사용할 현재 의류를 선택합니다.
   void selectClothes(Clothes clothes) {
     _selectedClothes = clothes;
     notifyListeners();
   }
 
+  /// 한 의류를 삭제하고 선택 대상이 사라지면 마지막 항목으로 보정합니다.
   Future<void> removeClothes(Clothes target) async {
     _items.remove(target);
 
@@ -370,6 +387,7 @@ class ClosetProvider with ChangeNotifier {
     await _persist();
   }
 
+  /// 여러 의류를 한 번에 삭제해 알림과 저장 작업을 한 차례만 수행합니다.
   Future<void> removeClothesBatch(List<Clothes> targets) async {
     final targetSet = targets.toSet();
     _items.removeWhere((item) => targetSet.contains(item));
@@ -385,6 +403,7 @@ class ClosetProvider with ChangeNotifier {
     await _persist();
   }
 
+  /// 사용자가 재배치한 전체 순서를 적용하고 계정별 옷장에 저장합니다.
   Future<void> setCustomOrder(List<Clothes> newOrder) async {
     _items
       ..clear()
@@ -400,6 +419,7 @@ class ClosetProvider with ChangeNotifier {
     await _persist();
   }
 
+  /// 현재 계정의 모든 의류와 선택 상태를 지웁니다.
   Future<void> clearAllClothes() async {
     _items.clear();
     _selectedClothes = null;

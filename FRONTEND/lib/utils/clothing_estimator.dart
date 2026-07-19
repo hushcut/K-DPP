@@ -1,17 +1,22 @@
 import '../models/clothing_type_option.dart';
 
+/// 소재 비율과 의류의 추정 무게를 이용해 저장 전 기본 지표를 계산한다.
 class ClothingEstimator {
   const ClothingEstimator._();
 
+  /// 입력된 모든 소재 비율의 합을 계산한다.
   static double calculateMaterialsTotal(Map<String, double> materials) {
     return materials.values.fold(0.0, (sum, value) => sum + value);
   }
 
+  /// 소재 합계가 허용 범위인 99.5~100.5%인지 검사한다.
   static bool isMaterialsTotalValid(Map<String, double> materials) {
     final total = calculateMaterialsTotal(materials);
     return total >= 99.5 && total <= 100.5;
   }
 
+  /// 소재별 배출계수와 의류 무게를 가중 합산해 탄소 배출량을 추정한다.
+  /// 소재가 없거나 알 수 없는 경우에는 기본 배출계수를 사용한다.
   static double estimateCarbonFootprint(
     Map<String, double> materials,
     ClothingTypeOption clothingType,
@@ -39,6 +44,7 @@ class ClothingEstimator {
     return double.parse(emission.toStringAsFixed(1));
   }
 
+  /// 소재 구성의 단순성 및 소재 종류에 따라 초기 건강 점수를 60~95로 산정한다.
   static int estimateInitialHealth(Map<String, double> materials) {
     if (materials.isEmpty) return 80;
 

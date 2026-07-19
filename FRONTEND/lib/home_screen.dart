@@ -1,8 +1,10 @@
+// 옷장 요약, 탄소 현황, 관리 팁과 최근 등록 의류를 한눈에 보여 주는 홈 화면입니다.
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'models/clothes.dart';
 
+/// [ClosetProvider]의 집계값을 카드 형태로 표시하고 주요 탭 이동 콜백을 제공합니다.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({
     super.key,
@@ -17,6 +19,7 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 옷장 변경 알림을 구독해 개수·탄소 합계·평균 건강도와 최근 항목을 다시 계산합니다.
     final closetProvider = context.watch<ClosetProvider>();
     final clothesCount = closetProvider.count;
     final totalCarbon = closetProvider.totalCarbonFootprint;
@@ -150,11 +153,13 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  // Provider 목록의 현재 순서를 기준으로 마지막 두 벌만 반환합니다.
   List<Clothes> _getRecentItems(List<Clothes> items) {
     final copied = List<Clothes>.from(items.reversed);
     return copied.take(2).toList();
   }
 
+  // 전체 탄소량을 표시하고 이해를 돕기 위한 소나무 환산값을 함께 제공합니다.
   Widget _buildCarbonDashboard({
     required double totalCarbon,
     required int clothesCount,
@@ -244,6 +249,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  // 등록 여부, 평균 건강도, 최근 의류 소재에 따라 맞춤 관리 문구를 선택합니다.
   Widget _buildCareTipCard({
     required Clothes? latestItem,
     required double averageHealth,
@@ -344,6 +350,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  // 등록된 의류가 없을 때 스캔 시작 행동을 안내합니다.
   Widget _buildEmptyRecentCard({
     required Color cardColor,
     required Color cardBorderColor,
@@ -400,6 +407,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  // 최근 의류의 건강도를 색상과 진행률로 표현하며 상세 리포트로 연결합니다.
   Widget _buildLifeExpectancyCard({
     required String title,
     required int percentage,
@@ -496,6 +504,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  // 건강도 구간을 사용자가 이해하기 쉬운 관리 문구로 변환합니다.
   String _buildHealthSubtitle(Clothes item) {
     if (item.health <= 20) {
       return '수명 만료에 가까워요. 재사용 또는 분리배출 방법을 함께 확인해 보세요.';

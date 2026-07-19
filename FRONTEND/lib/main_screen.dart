@@ -1,3 +1,4 @@
+// 홈·스캔·옷장 탭과 상세 리포트 전환을 한 화면에서 관리하는 앱의 메인 셸입니다.
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -10,6 +11,7 @@ import 'report_screen.dart';
 import 'scan_screen.dart';
 import 'widgets/kdpp_logo_mark.dart';
 
+/// 하단 내비게이션의 선택 상태와 리포트 오버레이 표시 상태를 관리합니다.
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key, this.initialArguments});
 
@@ -26,6 +28,7 @@ class _MainScreenState extends State<MainScreen> {
   bool _didReadInitialArgs = false;
   bool _isShowingReport = false;
 
+  // 탭을 바꾸면 열려 있던 상세 리포트도 함께 닫습니다.
   void _selectTab(int index) {
     if (index < 0 || index >= _tabCount) return;
 
@@ -35,6 +38,7 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
+  // 선택 의류를 Provider에 기록한 뒤 탭 위에 상세 리포트를 표시합니다.
   void _openReport(Clothes item) {
     context.read<ClosetProvider>().selectClothes(item);
 
@@ -66,6 +70,7 @@ class _MainScreenState extends State<MainScreen> {
     return 0;
   }
 
+  /// 외부 경로에서 전달된 초기 탭과 리포트 표시 요청을 한 번만 적용합니다.
   void _applyInitialArguments(Object? args) {
     if (args is MainScreenArguments) {
       _selectedIndex = _normalizeInitialIndex(args.initialIndex);
@@ -90,6 +95,7 @@ class _MainScreenState extends State<MainScreen> {
     ];
   }
 
+  // 탭은 IndexedStack으로 상태를 보존하고, 리포트만 AnimatedSwitcher로 교체합니다.
   Widget _buildBody() {
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 260),
@@ -193,6 +199,7 @@ class _MainScreenState extends State<MainScreen> {
   }
 }
 
+/// 좌우 탭과 가운데 돌출형 스캔 버튼을 배치하는 전용 하단 내비게이션입니다.
 class _KDppBottomNavigationBar extends StatelessWidget {
   const _KDppBottomNavigationBar({
     required this.selectedIndex,
@@ -284,6 +291,7 @@ class _KDppBottomNavigationBar extends StatelessWidget {
   }
 }
 
+// 스캔 탭을 강조하는 가운데 원형 카메라 버튼입니다.
 class _CenterScanButton extends StatelessWidget {
   const _CenterScanButton({
     required this.pageBg,
@@ -370,6 +378,7 @@ class _CenterScanButton extends StatelessWidget {
   }
 }
 
+// 선택 상태에 따라 아이콘·색상을 바꾸는 일반 하단 탭 항목입니다.
 class _BottomTabItem extends StatelessWidget {
   const _BottomTabItem({
     required this.icon,

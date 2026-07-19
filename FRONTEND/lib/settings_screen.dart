@@ -1,3 +1,4 @@
+// 프로필 표시값, 화면 테마, 개인정보 안내와 로그아웃을 제공하는 설정 화면입니다.
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
@@ -5,6 +6,7 @@ import 'services/auth_api_service.dart';
 import 'theme_provider.dart';
 import 'widgets/app_back_button.dart';
 
+/// 사용자·테마 상태를 읽어 설정 메뉴를 구성하고 각 설정 동작을 실행합니다.
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key, this.authApiService});
 
@@ -21,6 +23,7 @@ class SettingsScreen extends StatelessWidget {
     }
   }
 
+  /// 닉네임 편집 대화상자의 결과가 달라졌을 때만 Provider와 로컬 저장소를 갱신합니다.
   Future<void> _editNickname(BuildContext context, String currentName) async {
     final result = await showDialog<String>(
       context: context,
@@ -44,6 +47,7 @@ class SettingsScreen extends StatelessWidget {
     ).showSnackBar(const SnackBar(content: Text('이 기기에 표시되는 닉네임이 변경되었습니다.')));
   }
 
+  /// 서버 로그아웃을 시도한 뒤 성공 여부와 관계없이 기기의 세션·사용자 상태를 정리합니다.
   Future<void> _confirmLogout(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -78,6 +82,7 @@ class SettingsScreen extends StatelessWidget {
     bool localLogoutStorageFailed = false;
 
     if (accessToken != null) {
+      // 서버 연결 실패는 기록하되 기기에서 로그아웃하는 흐름은 계속 진행합니다.
       try {
         await (authApiService ?? AuthApiService()).logout(
           accessToken: accessToken,
@@ -131,6 +136,7 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
+  // 카메라·앨범 사진과 임시 파일이 어떻게 사용되는지 하단 시트로 안내합니다.
   void _showPrivacyGuide(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final backgroundColor = isDark ? const Color(0xFF121212) : Colors.white;
@@ -304,6 +310,7 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 사용자와 테마 Provider를 구독해 변경된 닉네임·화면 모드를 즉시 표시합니다.
     final userName = context.watch<ClosetProvider>().userName;
     final userEmail = context.watch<ClosetProvider>().userEmail;
     final themeMode = context.watch<ThemeProvider>().themeMode;
@@ -508,6 +515,7 @@ class SettingsScreen extends StatelessWidget {
   }
 }
 
+/// 닉네임을 입력받아 최소 길이를 검사하고 정규화된 문자열을 반환하는 대화상자입니다.
 class _NicknameEditDialog extends StatefulWidget {
   const _NicknameEditDialog({required this.currentName});
 
@@ -533,6 +541,7 @@ class _NicknameEditDialogState extends State<_NicknameEditDialog> {
     super.dispose();
   }
 
+  // 검증을 통과한 값만 Navigator 결과로 상위 설정 화면에 전달합니다.
   void _submit() {
     final normalizedName = _controller.text.trim();
 

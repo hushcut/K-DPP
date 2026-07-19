@@ -6,6 +6,10 @@ import '../utils/clothing_estimator.dart';
 import '../utils/scan_calculation_resolver.dart';
 import 'material_input_collection.dart';
 
+/// 스캔한 의류 정보를 검토·수정하고 옷장 저장을 요청하는 결과 폼입니다.
+///
+/// 분석값과 편집 컨트롤러는 상위 화면이 소유하며, 이 위젯은 계산 미리보기와
+/// 유효성 상태를 표시한 뒤 사용자 동작을 각 콜백으로 전달합니다.
 class ScanResultView extends StatelessWidget {
   const ScanResultView({
     super.key,
@@ -31,34 +35,46 @@ class ScanResultView extends StatelessWidget {
     required this.onSelectClothingType,
     required this.onAddMaterial,
     required this.onRemoveMaterial,
-    required this.onSyncMaterialInputs,
+    required this.onMaterialInputsChanged,
     required this.onSubmit,
     required this.onReset,
   });
 
+  /// 상위 화면이 폼 검증을 실행할 때 사용하는 키입니다.
   final GlobalKey<FormState> formKey;
+
+  // 검증, 저장, 스캔 실패 및 수동 입력 화면 상태입니다.
   final bool hasTriedSubmit;
   final bool isSaving;
   final bool isScanFailed;
   final bool isManualMaterialMode;
+  /// 스캔 실패 시 사용자에게 보여 줄 선택적 상세 메시지입니다.
   final String? scanFailureMessage;
+
+  // 사용자가 편집하는 의류명, 의류 종류, 소재 입력 목록입니다.
   final TextEditingController titleController;
   final ClothingTypeOption selectedClothingType;
   final MaterialInputCollection materialInputs;
+  /// 소재명 자동 완성에 사용하는 서버 소재 카탈로그입니다.
   final List<MaterialCatalogItem> materialCatalog;
+
+  // 원본 스캔의 관리 지침과 소재 구성입니다.
   final String scannedCare;
   final Map<String, double> originalMaterials;
+  // 소재 동일성 및 값·무게·계산 방식 검증을 통과할 때 활용하는 서버 계산 정보입니다.
   final int? serverHealth;
   final double? serverCarbonFootprint;
   final double? serverWeightGram;
   final String? serverCalculationMethod;
+  // 제목·소재명·함유율 입력에 적용할 상위 폼 검증 함수입니다.
   final FormFieldValidator<String> validateTitle;
   final FormFieldValidator<String> validateMaterialName;
   final FormFieldValidator<String> validateMaterialValue;
+  // 선택, 소재 변경, 저장 및 초기화 동작을 상위 화면에 전달하는 콜백입니다.
   final VoidCallback onSelectClothingType;
   final VoidCallback onAddMaterial;
   final ValueChanged<int> onRemoveMaterial;
-  final VoidCallback onSyncMaterialInputs;
+  final VoidCallback onMaterialInputsChanged;
   final VoidCallback onSubmit;
   final VoidCallback onReset;
 
@@ -408,6 +424,7 @@ class ScanResultView extends StatelessWidget {
     );
   }
 
+  // 자동 인식값을 사용할 수 없을 때 수동 입력 사유와 안내를 표시합니다.
   Widget _buildManualNotice({
     required bool isScanFailed,
     required String? failureMessage,
@@ -479,6 +496,7 @@ class ScanResultView extends StatelessWidget {
     );
   }
 
+  // 소재 함유율 합계와 100%의 차이를 계산해 보정 방향을 안내합니다.
   Widget _buildMaterialTotalHint({
     required double totalMaterials,
     required Color primaryText,
@@ -527,6 +545,7 @@ class ScanResultView extends StatelessWidget {
     return value.toStringAsFixed(1);
   }
 
+  // 소재명 자동 완성과 함유율 입력, 항목 삭제 버튼으로 한 편집 행을 만듭니다.
   Widget _buildMaterialRow(
     int index, {
     required Color primaryText,
@@ -554,7 +573,7 @@ class ScanResultView extends StatelessWidget {
             },
             onSelected: (option) {
               item.nameController.text = option.nameEn;
-              onSyncMaterialInputs();
+              onMaterialInputsChanged();
             },
             fieldViewBuilder:
                 (context, controller, focusNode, onFieldSubmitted) {
@@ -577,7 +596,7 @@ class ScanResultView extends StatelessWidget {
                         borderRadius: BorderRadius.circular(10),
                       ),
                     ),
-                    onChanged: (_) => onSyncMaterialInputs(),
+                    onChanged: (_) => onMaterialInputsChanged(),
                     onFieldSubmitted: (_) => onFieldSubmitted(),
                   );
                 },
@@ -654,7 +673,7 @@ class ScanResultView extends StatelessWidget {
                 borderRadius: BorderRadius.circular(10),
               ),
             ),
-            onChanged: (_) => onSyncMaterialInputs(),
+            onChanged: (_) => onMaterialInputsChanged(),
           ),
         ),
         const SizedBox(width: 4),

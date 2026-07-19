@@ -1,7 +1,9 @@
+// 로그인과 회원가입 진입점을 제공하는 인증 시작 화면입니다.
 import 'package:flutter/material.dart';
 
 import 'widgets/kdpp_logo_mark.dart';
 
+/// 서비스 소개와 함께 이메일 로그인·회원가입 화면으로 이동하는 버튼을 표시합니다.
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
 

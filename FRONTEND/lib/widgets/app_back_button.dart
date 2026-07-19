@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+/// 현재 경로를 닫아 이전 화면으로 돌아가는 공용 뒤로가기 버튼입니다.
 class AppBackButton extends StatelessWidget {
   const AppBackButton({super.key});
 

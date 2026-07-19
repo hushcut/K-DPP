@@ -1,8 +1,10 @@
+// 신규 계정 정보를 검증해 서버에 등록하고 로그인 화면으로 연결하는 파일입니다.
 import 'package:flutter/material.dart';
 
 import 'services/auth_api_service.dart';
 import 'widgets/app_back_button.dart';
 
+/// 닉네임·이메일·비밀번호를 입력받는 회원가입 폼 화면입니다.
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key, this.authApiService});
 
@@ -41,6 +43,7 @@ class _SignupScreenState extends State<SignupScreen> {
     super.dispose();
   }
 
+  // 각 입력값의 필수 여부와 최소 형식, 비밀번호 일치 여부를 검사합니다.
   String? _validateNickname(String? value) {
     final text = value?.trim() ?? '';
 
@@ -97,6 +100,7 @@ class _SignupScreenState extends State<SignupScreen> {
     return null;
   }
 
+  /// 폼이 유효할 때 가입 API를 호출하고, 성공하면 이메일을 로그인 화면에 전달합니다.
   Future<void> _handleSignup() async {
     final isValid = _formKey.currentState?.validate() ?? false;
     if (!isValid) return;
@@ -136,6 +140,7 @@ class _SignupScreenState extends State<SignupScreen> {
     }
   }
 
+  // 네 입력란이 같은 모양과 포커스·오류 스타일을 사용하도록 공통화했습니다.
   InputDecoration _inputDecoration({
     required String labelText,
     required String hintText,

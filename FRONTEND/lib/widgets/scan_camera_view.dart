@@ -3,6 +3,10 @@ import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
+/// 의류 라벨 촬영, 갤러리 선택, AI 분석 진행 상태를 보여 주는 카메라 화면입니다.
+///
+/// 카메라의 생성과 촬영 처리는 상위 화면이 담당하며, 이 위젯은 전달받은 상태에
+/// 맞는 미리보기 또는 오류 UI를 그리고 사용자 동작을 콜백으로 반환합니다.
 class ScanCameraView extends StatelessWidget {
   const ScanCameraView({
     super.key,
@@ -16,11 +20,15 @@ class ScanCameraView extends StatelessWidget {
     required this.onTakePicture,
   });
 
+  /// 초기화된 경우 실시간 미리보기에 사용할 카메라 컨트롤러입니다.
   final CameraController? cameraController;
+
+  // 촬영·선택된 이미지와 현재 처리 상태 및 카메라 오류 메시지입니다.
   final File? selectedImage;
   final bool isScanning;
   final bool isCameraInitializing;
   final String? cameraErrorMessage;
+  // 재초기화, 갤러리 선택, 촬영 요청을 상위 화면에 전달합니다.
   final VoidCallback onRetryCamera;
   final VoidCallback onPickFromGallery;
   final VoidCallback onTakePicture;
@@ -229,6 +237,7 @@ class ScanCameraView extends StatelessWidget {
     );
   }
 
+  // 선택 이미지·분석 상태·오류·컨트롤러 준비 여부에 맞는 카메라 영역을 만듭니다.
   Widget _buildCameraPreviewContent(BuildContext context, double frameSize) {
     if (isScanning && selectedImage != null) {
       return Image.file(
@@ -349,6 +358,7 @@ class ScanCameraView extends StatelessWidget {
     );
   }
 
+  // 권한 오류 시 기기 설정에서 카메라를 허용하는 절차를 바텀 시트로 안내합니다.
   void _showCameraPermissionGuide(BuildContext context) {
     showModalBottomSheet(
       context: context,

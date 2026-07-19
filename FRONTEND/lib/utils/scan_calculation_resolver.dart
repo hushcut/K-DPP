@@ -1,8 +1,10 @@
 import '../models/clothing_type_option.dart';
 import 'clothing_estimator.dart';
 
+/// 최종 지표가 서버 계산값인지 로컬 추정값인지 나타낸다.
 enum ScanCalculationSource { server, localEstimate }
 
+/// 선택된 건강 점수와 탄소 배출량 및 각 값의 출처를 묶은 결과다.
 class ResolvedScanCalculation {
   const ResolvedScanCalculation({
     required this.health,
@@ -21,11 +23,14 @@ class ResolvedScanCalculation {
   bool get usesServerCarbon => carbonSource == ScanCalculationSource.server;
 }
 
+/// 스캔 이후 사용자가 편집한 데이터와 서버 원본을 비교해 신뢰 가능한 계산값을 선택한다.
 class ScanCalculationResolver {
   const ScanCalculationResolver._();
 
   static const String trustedServerCalculationMethod = 'weight_based_v1';
 
+  /// 소재 동일성과 건강 점수·탄소값별 유효 조건을 검사해 사용할 값을 선택한다.
+  /// 조건을 만족하지 않은 지표만 [ClothingEstimator]의 로컬 계산으로 대체한다.
   static ResolvedScanCalculation resolve({
     required Map<String, double> materials,
     required ClothingTypeOption clothingType,

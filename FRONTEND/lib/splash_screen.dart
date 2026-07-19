@@ -1,9 +1,11 @@
+// 앱 시작 애니메이션을 보여 주며 저장 데이터와 로그인 세션을 복원하는 화면입니다.
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'services/auth_session_validation_service.dart';
 import 'widgets/kdpp_logo_mark.dart';
 
+/// 초기화 결과에 따라 메인 화면 또는 로그인 화면으로 사용자를 안내합니다.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({
     super.key,
@@ -47,10 +49,12 @@ class _SplashScreenState extends State<SplashScreen>
       end: 1.0,
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
 
+    // 로고 애니메이션과 앱 초기화는 함께 시작해 대기 시간을 줄입니다.
     _controller.forward();
     _initializeApp();
   }
 
+  /// 로컬 세션을 복원하고 서버 검증 결과에 맞춰 프로필·이력을 동기화합니다.
   Future<void> _initializeApp() async {
     final provider = context.read<ClosetProvider>();
     var shouldOpenMain = false;
@@ -65,6 +69,7 @@ class _SplashScreenState extends State<SplashScreen>
           accessToken: accessToken,
         );
 
+        // 유효하면 최신 서버 정보를 반영하고, 서버가 인증을 거부한 경우만 로컬 로그아웃 처리합니다.
         switch (validation) {
           case AuthSessionValid(:final user, :final history):
             await provider.setUserProfile(
@@ -89,6 +94,7 @@ class _SplashScreenState extends State<SplashScreen>
 
     if (!mounted) return;
 
+    // 초기 화면이 뒤로 가기 스택에 남지 않도록 현재 경로를 교체합니다.
     Navigator.pushReplacementNamed(
       context,
       shouldOpenMain ? '/main' : '/login',

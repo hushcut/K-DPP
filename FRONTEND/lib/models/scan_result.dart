@@ -1,3 +1,7 @@
+/// 의류 라벨 스캔 API가 반환한 소재 구성과 분석 부가 정보를 담는 모델입니다.
+///
+/// [materials]는 생성 시 수정 불가능한 맵으로 복사되어 이후 분석 원본이
+/// 의도치 않게 바뀌지 않도록 합니다.
 class ScanResult {
   ScanResult({
     required Map<String, double> materials,
@@ -14,7 +18,10 @@ class ScanResult {
 
   static const String defaultCareInstruction = '라벨의 세탁 지침을 확인해 주세요.';
 
+  /// 인식한 소재명과 함유율(%)의 대응 관계입니다.
   final Map<String, double> materials;
+
+  // 세탁·관리 지침과 화면 표시에 사용할 선택적 분석 메타데이터입니다.
   final String careInstruction;
   final String? title;
   final String? category;
@@ -25,6 +32,9 @@ class ScanResult {
   final String? unit;
   final int? savedResultId;
 
+  /// 여러 버전의 서버 키 이름을 허용해 JSON을 모델로 변환합니다.
+  ///
+  /// 소재 값이 맵이나 목록 형식이 아니면 [FormatException]을 발생시킵니다.
   factory ScanResult.fromJson(Map<String, dynamic> json) {
     final rawMaterials =
         json['materials'] ?? json['material'] ?? json['composition'];

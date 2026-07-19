@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../config/api_environment.dart';
 
+/// 서버 소재 카탈로그의 식별자, 한·영 이름, 검색 별칭을 표현한다.
 class MaterialCatalogItem {
   const MaterialCatalogItem({
     required this.id,
@@ -21,6 +22,7 @@ class MaterialCatalogItem {
 
   String get label => '$nameKo ($nameEn)';
 
+  /// 한글명, 영문명, 별칭 중 검색어를 포함하는 항목인지 확인한다.
   bool matches(String query) {
     final normalizedQuery = query.trim().toLowerCase();
     if (normalizedQuery.isEmpty) return true;
@@ -30,6 +32,7 @@ class MaterialCatalogItem {
         aliases.any((alias) => alias.toLowerCase().contains(normalizedQuery));
   }
 
+  /// 필수 필드가 누락되거나 ID·이름 형식이 잘못된 응답은 [FormatException]으로 거부한다.
   factory MaterialCatalogItem.fromJson(Map<String, dynamic> json) {
     final id = _parseInt(json['id']);
     final nameKo = json['name_ko']?.toString().trim() ?? '';
@@ -61,6 +64,7 @@ class MaterialCatalogItem {
   }
 }
 
+/// 서버에서 소재 기준 목록을 가져와 검색 가능한 카탈로그 항목으로 변환한다.
 class MaterialCatalogApiService {
   MaterialCatalogApiService({
     String? endpoint,
@@ -77,6 +81,7 @@ class MaterialCatalogApiService {
   final Duration requestTimeout;
   final http.Client? client;
 
+  /// 목록 JSON만 허용하며, 서비스가 직접 만든 HTTP 클라이언트는 요청 후 닫는다.
   Future<List<MaterialCatalogItem>> fetchMaterials() async {
     final activeClient = client ?? http.Client();
     final shouldCloseClient = client == null;

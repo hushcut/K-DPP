@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/clothing_type_option.dart';
 
+/// 선택 가능한 의류 유형과 유형별 대표 무게를 제공하는 정적 카탈로그다.
 class ClothingTypeCatalog {
   const ClothingTypeCatalog._();
 
@@ -72,8 +73,10 @@ class ClothingTypeCatalog {
     ),
   ];
 
+  /// 분류할 단서가 없을 때 사용할 기본 의류 유형이다.
   static ClothingTypeOption get defaultOption => options.first;
 
+  /// 서버 카테고리에 포함된 한국어·영어 키워드를 순서대로 찾아 대응 유형을 반환한다.
   static ClothingTypeOption inferFromCategory(String? category) {
     final text = category?.toLowerCase().trim() ?? '';
 
@@ -119,6 +122,7 @@ class ClothingTypeCatalog {
     return defaultOption;
   }
 
+  /// 제목이 현재 또는 이전 버전에서 자동 생성한 기본 제목인지 판별한다.
   static bool hasDefaultTitle(String title) {
     final normalizedTitle = title.trim();
 

@@ -3,11 +3,13 @@ import 'package:flutter/foundation.dart';
 import '../closet_provider.dart';
 import 'auth_api_service.dart';
 
+/// 로그인 직후 서버 프로필을 반영하고 저장 ID가 일치하는 기존 의류의 분석값을 갱신한다.
 class PostLoginSyncService {
   const PostLoginSyncService({required this.authApiService});
 
   final AuthApiService authApiService;
 
+  /// 인증 거부는 로그아웃 후 상위 호출부로 전달하고, 그 밖의 동기화 실패는 기록만 남긴다.
   Future<void> synchronize({
     required ClosetProvider provider,
     required String accessToken,

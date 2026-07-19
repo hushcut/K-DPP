@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../config/api_environment.dart';
 
+/// 탄소 계산 API 오류를 사용자 안내와 대체 계산 정책에 사용할 범주로 구분한다.
 enum CarbonApiErrorType {
   badRequest,
   unauthorized,
@@ -16,6 +17,7 @@ enum CarbonApiErrorType {
   unknown,
 }
 
+/// HTTP·통신·응답 오류와 서버가 알지 못한 소재 목록을 함께 전달한다.
 class CarbonApiException implements Exception {
   const CarbonApiException({
     required this.type,
@@ -52,6 +54,7 @@ class CarbonApiException implements Exception {
     }
   }
 
+  /// HTTP 상태와 서버 오류 본문을 정규화된 탄소 API 예외로 변환한다.
   factory CarbonApiException.fromStatusCode({
     required int statusCode,
     required String responseBody,
@@ -131,6 +134,7 @@ class CarbonApiException implements Exception {
   }
 }
 
+/// 서버가 계산하고 저장한 탄소 계수, 배출량 범위, 적용 무게를 담는다.
 class CarbonCalculationResult {
   const CarbonCalculationResult({
     required this.carbonFactor,
@@ -152,6 +156,7 @@ class CarbonCalculationResult {
   final String unit;
   final int savedResultId;
 
+  /// 숫자 필드를 변환하고 단위를 포함한 필수값이 누락되거나 형식이 잘못되면 [FormatException]을 던진다.
   factory CarbonCalculationResult.fromJson(Map<String, dynamic> json) {
     final carbonFactor = _parseDouble(json['carbon_factor']);
     final carbonFootprint = _parseDouble(json['carbon_footprint']);
@@ -198,6 +203,7 @@ class CarbonCalculationResult {
   }
 }
 
+/// 인증된 사용자의 소재 구성과 무게 범위를 서버 탄소 계산 API에 전달한다.
 class CarbonApiService {
   CarbonApiService({
     String? endpoint,
@@ -215,6 +221,8 @@ class CarbonApiService {
   final Duration requestTimeout;
   final http.Client? client;
 
+  /// Bearer 토큰을 포함해 계산을 요청하고 모든 실패를 [CarbonApiException]으로 통일한다.
+  /// 외부에서 클라이언트를 주입하지 않은 경우 요청 종료 시 직접 닫는다.
   Future<CarbonCalculationResult> calculate({
     required Map<String, double> materials,
     required double minWeightGram,

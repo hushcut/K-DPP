@@ -1,8 +1,10 @@
+// 블랙·화이트·시스템 화면 테마를 선택하고 미리 보는 설정 화면입니다.
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'theme_provider.dart';
 import 'widgets/app_back_button.dart';
 
+/// [ThemeProvider]의 현재 모드를 표시하고 사용자의 테마 선택을 전달합니다.
 class DisplaySettingsScreen extends StatelessWidget {
   const DisplaySettingsScreen({super.key});
 
@@ -99,6 +101,7 @@ class DisplaySettingsScreen extends StatelessWidget {
   }
 }
 
+/// 테마 미리보기, 선택 상태, 접근성 정보를 함께 제공하는 선택 항목입니다.
 class _ThemeModeTile extends StatelessWidget {
   final String title;
   final bool selected;
@@ -168,6 +171,7 @@ class _ThemeModeTile extends StatelessWidget {
   }
 }
 
+// 다크 테마의 축소 미리보기입니다.
 class _DarkPreview extends StatelessWidget {
   const _DarkPreview();
 
@@ -211,6 +215,7 @@ class _DarkPreview extends StatelessWidget {
   }
 }
 
+// 라이트 테마의 축소 미리보기입니다.
 class _LightPreview extends StatelessWidget {
   const _LightPreview();
 
@@ -254,6 +259,7 @@ class _LightPreview extends StatelessWidget {
   }
 }
 
+// 시스템 설정에 따라 두 테마가 전환됨을 표현하는 미리보기입니다.
 class _SystemPreview extends StatelessWidget {
   const _SystemPreview();
 

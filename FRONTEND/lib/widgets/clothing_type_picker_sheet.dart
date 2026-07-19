@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../models/clothing_type_option.dart';
 
+/// 의류 종류별 예상 무게를 선택하거나 실제 무게를 직접 입력하는 바텀 시트입니다.
+///
+/// 선택 결과는 [onSelected]로 전달하며, 시트 닫기 여부는 호출한 화면이 결정합니다.
 class ClothingTypePickerSheet extends StatefulWidget {
   const ClothingTypePickerSheet({
     super.key,
@@ -10,8 +13,10 @@ class ClothingTypePickerSheet extends StatefulWidget {
     required this.onSelected,
   });
 
+  // 표시할 선택지와 현재 선택된 초기값입니다.
   final List<ClothingTypeOption> options;
   final ClothingTypeOption initialSelection;
+  /// 일반 선택 또는 검증된 직접 입력 결과를 상위 화면에 전달합니다.
   final ValueChanged<ClothingTypeOption> onSelected;
 
   @override
@@ -19,6 +24,7 @@ class ClothingTypePickerSheet extends StatefulWidget {
       _ClothingTypePickerSheetState();
 }
 
+/// 선택 목록과 직접 입력 폼 사이의 전환 및 입력 검증 상태를 관리합니다.
 class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
   final TextEditingController _directNameController = TextEditingController();
   final TextEditingController _directWeightController = TextEditingController();
@@ -48,6 +54,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
     super.dispose();
   }
 
+  // 의류명이 있고 무게가 양수인지 검증한 후 직접 무게 옵션을 onSelected로 전달합니다.
   void _submitDirectInput() {
     final name = _directNameController.text.trim();
     final weightText = _directWeightController.text.trim();
@@ -103,6 +110,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
     );
   }
 
+  // 미리 정의된 의류 옵션과 직접 입력 진입 항목을 목록으로 표시합니다.
   Widget _buildOptionListView(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
@@ -246,6 +254,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
     );
   }
 
+  // 의류명, g 단위 실제 무게, 상·하의 분류를 입력받는 화면을 만듭니다.
   Widget _buildDirectInputView(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
@@ -436,6 +445,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
   }
 }
 
+/// 직접 입력 의류의 분류 하나를 선택하는 내부 선택형 칩입니다.
 class _CategoryChoiceChip extends StatelessWidget {
   const _CategoryChoiceChip({
     required this.label,

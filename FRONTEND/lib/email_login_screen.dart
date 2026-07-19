@@ -1,3 +1,4 @@
+// 이메일·비밀번호 입력을 검증하고 서버 로그인 및 로그인 후 동기화를 수행하는 화면입니다.
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -6,6 +7,7 @@ import 'services/auth_api_service.dart';
 import 'services/post_login_sync_service.dart';
 import 'widgets/app_back_button.dart';
 
+/// 로그인 요청의 진행 상태와 비밀번호 표시 상태를 관리하는 이메일 로그인 화면입니다.
 class EmailLoginScreen extends StatefulWidget {
   const EmailLoginScreen({super.key, this.authApiService});
 
@@ -43,6 +45,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     if (_didLoadInitialEmail) return;
     _didLoadInitialEmail = true;
 
+    // 회원가입 직후 전달된 이메일이 있으면 로그인 폼에 한 번만 채웁니다.
     final args = ModalRoute.of(context)?.settings.arguments;
     if (args is String && args.trim().isNotEmpty) {
       _emailController.text = args.trim();
@@ -56,6 +59,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     super.dispose();
   }
 
+  // 제출 전에 네트워크 요청 없이 기본 입력 형식을 검사합니다.
   String? _validateEmail(String? value) {
     final text = value?.trim() ?? '';
 
@@ -84,6 +88,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     return null;
   }
 
+  /// 폼 검증 → 서버 로그인 → 세션 저장 → 서버 이력 동기화 순으로 처리합니다.
   Future<void> _handleLogin() async {
     final isValid = _formKey.currentState?.validate() ?? false;
     if (!isValid) return;
@@ -119,6 +124,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
 
       if (!mounted) return;
 
+      // 인증 화면으로 돌아오지 않도록 이전 경로를 모두 제거합니다.
       Navigator.pushNamedAndRemoveUntil(context, '/main', (route) => false);
     } on AuthApiException catch (error) {
       if (!mounted) return;
@@ -144,6 +150,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     }
   }
 
+  // 이메일과 비밀번호 입력란에 공통으로 쓰는 테마별 스타일입니다.
   InputDecoration _inputDecoration({
     required String labelText,
     required String hintText,
