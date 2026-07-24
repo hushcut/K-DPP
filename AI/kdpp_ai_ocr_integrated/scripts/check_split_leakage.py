@@ -1,59 +1,43 @@
+from __future__ import annotations
+
 import argparse
-import csv
-import os
-import re
-from collections import defaultdict
+from pathlib import Path
 
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-DATA_DIR = os.path.join(BASE_DIR, "data")
+from apps.symbol.data_quality import find_split_leakage
 
 
-def normalize_origin_name(filename: str) -> str:
-    name = os.path.splitext(os.path.basename(filename))[0].lower()
-    name = re.sub(r"_jpg\.rf\.[a-f0-9]+$", "", name)
-    name = re.sub(r"_png\.rf\.[a-f0-9]+$", "", name)
-    name = re.sub(r"_jpeg\.rf\.[a-f0-9]+$", "", name)
-    name = re.sub(r"\.rf\.[a-f0-9]+$", "", name)
-    return name
+BASE_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_DATA_DIR = BASE_DIR / "data"
 
 
-def read_filenames(split: str) -> set[str]:
-    csv_path = os.path.join(DATA_DIR, split, "_classes.csv")
-    if not os.path.exists(csv_path):
-        return set()
-
-    with open(csv_path, newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        return {row["filename"] for row in reader if row.get("filename")}
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--splits", nargs="+", default=["train", "valid", "test"])
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="원본 파일명과 SHA-256을 이용한 split 누수 검사"
+    )
+    parser.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR))
+    parser.add_argument(
+        "--splits",
+        nargs="+",
+        default=["train", "valid", "test"],
+    )
     args = parser.parse_args()
 
-    origins = defaultdict(list)
-    for split in args.splits:
-        for filename in read_filenames(split):
-            origins[normalize_origin_name(filename)].append((split, filename))
-
-    leaks = {
-        origin: rows
-        for origin, rows in origins.items()
-        if len({split for split, _ in rows}) > 1
-    }
-
+    leaks = find_split_leakage(
+        Path(args.data_dir).expanduser().resolve(),
+        tuple(args.splits),
+    )
     if not leaks:
-        print("No likely Roboflow-origin leakage found across splits.")
+        print("PASS: split 간 원본명/SHA-256 누수가 없습니다.")
         return
 
-    print(f"Potential split leakage groups: {len(leaks)}")
-    for origin, rows in sorted(leaks.items())[:50]:
-        split_names = ", ".join(sorted({split for split, _ in rows}))
-        examples = "; ".join(f"{split}/{filename}" for split, filename in rows[:4])
-        print(f"- {origin} [{split_names}] {examples}")
+    print(f"FAIL: split 누수 그룹 {len(leaks)}개")
+    for leak in leaks[:50]:
+        examples = "; ".join(
+            f"{split}/{filename}" for split, filename in leak.examples[:6]
+        )
+        print(f"- {leak.kind}:{leak.key} -> {examples}")
+    raise SystemExit(1)
 
 
 if __name__ == "__main__":
     main()
-
