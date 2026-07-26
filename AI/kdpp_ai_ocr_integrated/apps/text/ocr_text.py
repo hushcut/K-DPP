@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import re
 import warnings
@@ -16,8 +17,14 @@ MIN_OCR_WIDTH = 1800
 MAX_OCR_WIDTH = 3200
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
+MAX_IMAGE_ASPECT_RATIO = 20.0
+MAX_PREPROCESSED_PIXELS = 16_000_000
+MAX_PREPROCESSED_DIMENSION = 8192
 SUPPORTED_IMAGE_FORMATS = {"JPEG", "PNG"}
 OCR_TIMEOUT_SECONDS = 20
+
+# Keep Pillow's own decompression-bomb protection aligned with the API limit.
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
 
 class OcrError(RuntimeError):
@@ -79,6 +86,18 @@ class ValidatedImage:
     height: int
 
 
+def _validate_image_dimensions(width: int, height: int) -> None:
+    if width <= 0 or height <= 0:
+        raise InvalidImageError("이미지 크기가 올바르지 않습니다.")
+
+    if width * height >= MAX_IMAGE_PIXELS:
+        raise ImageTooLargeError("이미지 해상도가 너무 큽니다.")
+
+    aspect_ratio = max(width / height, height / width)
+    if aspect_ratio > MAX_IMAGE_ASPECT_RATIO:
+        raise ImageTooLargeError("이미지의 가로세로 비율이 너무 큽니다.")
+
+
 def read_image_bytes(image_path: str | os.PathLike[str]) -> bytes:
     try:
         return Path(image_path).read_bytes()
@@ -109,8 +128,7 @@ def validate_image_bytes(
             with Image.open(BytesIO(content)) as image:
                 image_format = (image.format or "").upper()
                 width, height = image.size
-                if width * height > MAX_IMAGE_PIXELS:
-                    raise ImageTooLargeError("이미지 해상도가 너무 큽니다.")
+                _validate_image_dimensions(width, height)
                 image.verify()
     except InvalidImageError:
         raise
@@ -119,19 +137,18 @@ def validate_image_bytes(
             "안전한 처리 범위를 넘는 고해상도 이미지입니다."
         ) from exc
     except (
-        Image.DecompressionBombError,
         UnidentifiedImageError,
         OSError,
         ValueError,
     ) as exc:
         raise InvalidImageError("올바른 이미지 파일이 아닙니다.") from exc
+    except MemoryError as exc:
+        raise ImageTooLargeError(
+            "이미지가 너무 커서 안전하게 처리할 수 없습니다."
+        ) from exc
 
     if image_format not in SUPPORTED_IMAGE_FORMATS:
         raise UnsupportedImageError("JPG 또는 PNG 이미지만 지원합니다.")
-    if width <= 0 or height <= 0:
-        raise InvalidImageError("이미지 크기가 올바르지 않습니다.")
-    if width * height > MAX_IMAGE_PIXELS:
-        raise ImageTooLargeError("이미지 해상도가 너무 큽니다.")
 
     return ValidatedImage(
         content=content,
@@ -146,6 +163,7 @@ def preprocess_image_bytes(content: bytes) -> bytes:
         with Image.open(BytesIO(content)) as image:
             image = ImageOps.exif_transpose(image).convert("RGB")
             width, height = image.size
+            _validate_image_dimensions(width, height)
 
             scale = 1.0
             if width < MIN_OCR_WIDTH:
@@ -153,21 +171,39 @@ def preprocess_image_bytes(content: bytes) -> bytes:
             elif width > MAX_OCR_WIDTH:
                 scale = MAX_OCR_WIDTH / width
 
+            pixel_scale = math.sqrt(
+                MAX_PREPROCESSED_PIXELS / (width * height)
+            )
+            dimension_scale = MAX_PREPROCESSED_DIMENSION / max(width, height)
+            scale = min(scale, pixel_scale, dimension_scale)
+
             if scale != 1.0:
                 resampling = getattr(Image, "Resampling", Image)
+                output_width = max(1, int(width * scale))
+                output_height = max(1, int(height * scale))
                 image = image.resize(
-                    (max(1, int(width * scale)), max(1, int(height * scale))),
+                    (output_width, output_height),
                     resampling.LANCZOS,
                 )
 
             image = ImageOps.autocontrast(image.convert("L"))
-            image = image.filter(ImageFilter.UnsharpMask(radius=1.4, percent=150, threshold=3))
+            image = image.filter(
+                ImageFilter.UnsharpMask(radius=1.4, percent=150, threshold=3)
+            )
 
             buffer = BytesIO()
             image.save(buffer, format="PNG", optimize=True)
             return buffer.getvalue()
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        raise ImageTooLargeError(
+            "OCR 전처리 범위를 넘는 고해상도 이미지입니다."
+        ) from exc
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise InvalidImageError("OCR 전처리 중 이미지 디코딩에 실패했습니다.") from exc
+    except MemoryError as exc:
+        raise ImageTooLargeError(
+            "OCR 전처리 중 이미지가 너무 커서 메모리가 부족합니다."
+        ) from exc
 
 
 def _parse_candidate(text: str) -> dict:
@@ -332,25 +368,31 @@ def run_ocr_bytes(
     )
     client = _get_vision_client(*_resolve_credential_path(credential_path))
 
-    candidates = [
+    candidates: list[OcrCandidate] = [
         _build_candidate(
             "original",
             _run_google_ocr(client, validated.content),
         )
     ]
+    processing_warnings: list[str] = []
 
     # A second paid OCR request is made only when the original is not a
     # high-confidence composition. This improves difficult photos without
     # doubling every request's latency and cost.
     original = candidates[0]
     if original.parser_status != "success" or original.parser_confidence != "high":
-        preprocessed = preprocess_image_bytes(validated.content)
-        candidates.append(
-            _build_candidate(
-                "preprocessed",
-                _run_google_ocr(client, preprocessed),
+        try:
+            preprocessed = preprocess_image_bytes(validated.content)
+            candidates.append(
+                _build_candidate(
+                    "preprocessed",
+                    _run_google_ocr(client, preprocessed),
+                )
             )
-        )
+        except (InvalidImageError, OcrServiceError, MemoryError):
+            processing_warnings.append(
+                "전처리 OCR에 실패하여 원본 OCR 결과를 유지했습니다."
+            )
 
     best = max(candidates, key=lambda candidate: candidate.score)
     ocr_confidence = (
@@ -360,11 +402,11 @@ def run_ocr_bytes(
         if best.text
         else "low"
     )
-    warnings: list[str] = []
+    result_warnings = processing_warnings
     if best.source != "original":
-        warnings.append("전처리된 이미지의 OCR 결과를 사용했습니다.")
+        result_warnings.append("전처리된 이미지의 OCR 결과를 사용했습니다.")
     if not best.text:
-        warnings.append("OCR에서 텍스트를 추출하지 못했습니다.")
+        result_warnings.append("OCR에서 텍스트를 추출하지 못했습니다.")
 
     return OcrResult(
         text=best.text,
@@ -375,7 +417,7 @@ def run_ocr_bytes(
             image_format=validated.image_format,
             width=validated.width,
             height=validated.height,
-            warnings=tuple(warnings),
+            warnings=tuple(result_warnings),
         ),
     )
 
