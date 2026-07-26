@@ -13,8 +13,12 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from apps.service.label_analysis import analyze_label_image
-from apps.text.ocr_text import OcrError
+from apps.service.label_analysis import analyze_ocr_result
+from apps.text.ocr_cache import (
+    OcrCacheError,
+    OcrTextCache,
+)
+from apps.text.ocr_text import OcrError, read_image_bytes, run_ocr_bytes
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
@@ -150,6 +154,27 @@ def image_files(folder: Path) -> list[Path]:
     )
 
 
+def analyze_label_image_cached(
+    image_path: Path,
+    *,
+    cache: OcrTextCache,
+    credential_path: str | None = None,
+    refresh_cache: bool = False,
+    offline: bool = False,
+) -> tuple[dict[str, Any], bool]:
+    content = read_image_bytes(image_path)
+    writes_before = cache.write_count
+    ocr_result = run_ocr_bytes(
+        content,
+        credential_path=credential_path,
+        ocr_cache=cache,
+        refresh_ocr_cache=refresh_cache,
+        offline=offline,
+        cache_label=image_path.name,
+    )
+    return analyze_ocr_result(ocr_result), cache.write_count == writes_before
+
+
 def normalize_values(values: dict[str, float]) -> dict[str, float]:
     return {
         key.lower(): round(float(value), 4)
@@ -276,12 +301,34 @@ def main() -> None:
         action="store_true",
         help="Fail before OCR if an image has no answer or an answer has no image.",
     )
+    parser.add_argument(
+        "--ocr-cache",
+        default=str(BASE_DIR / "outputs" / "qa_ocr_cache.json"),
+        help=(
+            "Local raw OCR cache. It is reused by default so parser-only QA "
+            "does not call Google Vision again."
+        ),
+    )
+    parser.add_argument(
+        "--refresh-ocr-cache",
+        action="store_true",
+        help="Call OCR again and replace cached entries.",
+    )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use cached OCR only and never call Google Vision.",
+    )
     args = parser.parse_args()
     if args.tolerance < 0:
         raise ValueError("--tolerance은 0 이상이어야 합니다.")
+    if args.offline and args.refresh_ocr_cache:
+        raise ValueError("--offline과 --refresh-ocr-cache는 함께 사용할 수 없습니다.")
 
     image_dir = Path(args.image_dir).expanduser().resolve()
     output_path = Path(args.output).expanduser().resolve()
+    cache_path = Path(args.ocr_cache).expanduser().resolve()
+    cache = OcrTextCache(cache_path)
     answers = load_answer_key(Path(args.answer_key).expanduser().resolve())
     images = image_files(image_dir)
     if not images:
@@ -297,6 +344,8 @@ def main() -> None:
         )
 
     rows: list[dict[str, Any]] = []
+    cache_hit_count = 0
+    cache_miss_count = 0
     for image_path in images:
         answer = answers.get(image_path.name, {}).get("_materials", {})
         result: dict[str, Any] = {
@@ -306,10 +355,19 @@ def main() -> None:
         }
         exception = ""
         try:
-            result = analyze_label_image(
+            result, cache_hit = analyze_label_image_cached(
                 image_path,
+                cache=cache,
                 credential_path=args.credentials or None,
+                refresh_cache=args.refresh_ocr_cache,
+                offline=args.offline,
             )
+            if cache_hit:
+                cache_hit_count += 1
+            else:
+                cache_miss_count += 1
+        except OcrCacheError:
+            raise
         except OcrError as exc:
             result["error_code"] = type(exc).__name__
             result["message"] = str(exc)
@@ -370,6 +428,15 @@ def main() -> None:
 
     print(f"Saved: {output_path}")
     print(f"Summary: {summary_path}")
+    print(f"OCR cache: {cache_path}")
+    print(
+        "OCR cache hits/misses/writes: "
+        f"{cache.hit_count}/{cache.miss_count}/{cache.write_count}"
+    )
+    print(
+        "Fully cached/API-backed images: "
+        f"{cache_hit_count}/{cache_miss_count}"
+    )
     print(f"Images: {summary.image_count}")
     print(
         "Exact composition accuracy: "

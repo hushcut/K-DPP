@@ -122,11 +122,25 @@ This copy adds a more robust material parser for real QA images.
 ### QA batch test
 
 ```bash
-python scripts/run_qa_batch.py --image-dir "C:\Users\hany0\OneDrive\?? ??\kdpp-dataset" --answer-key "C:\K-DPP QA\K-DPP\QA\answer_key_template.csv" --credentials key.json
+python scripts/run_qa_batch.py --image-dir "C:\K-DPP-QA-DATASET\images" --answer-key "C:\K-DPP-QA-DATASET\answer_key.csv" --credentials "C:\secure\vision-key.json"
 ```
 
 Output:
 
 ```text
 outputs/qa_batch_results.csv
+outputs/qa_batch_results.summary.json
+outputs/qa_ocr_cache.json
 ```
+
+The first run stores every raw Vision response that was actually requested
+(original and, when needed, preprocessed candidates). Later parser and
+candidate-selection changes can be evaluated without another Vision request:
+
+```bash
+python scripts/run_qa_batch.py --image-dir "C:\K-DPP-QA-DATASET\images" --answer-key "C:\K-DPP-QA-DATASET\answer_key.csv" --offline
+```
+
+Use `--refresh-ocr-cache` only when OCR preprocessing itself changes and a new
+Vision result is intentionally required. The cache can contain label text, is
+stored under the ignored `outputs/` directory, and must not be committed.

@@ -3,6 +3,7 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
+from apps.text.ocr_cache import OcrCacheMissError, OcrTextCache
 from apps.text import ocr_text
 
 
@@ -178,3 +179,80 @@ def test_second_ocr_failure_keeps_original_candidate(monkeypatch) -> None:
     assert result.metadata.source == "original"
     assert result.metadata.candidate_count == 1
     assert calls == 2
+
+
+def test_cached_original_avoids_second_paid_call(monkeypatch, tmp_path) -> None:
+    cache = OcrTextCache(tmp_path / "qa_ocr_cache.json")
+    calls = 0
+    monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_: object())
+
+    def fake_ocr(_client, _content: bytes) -> str:
+        nonlocal calls
+        calls += 1
+        return "COTTON 100%"
+
+    monkeypatch.setattr(ocr_text, "_run_google_ocr", fake_ocr)
+
+    first = ocr_text.run_ocr_bytes(image_bytes(), ocr_cache=cache)
+    second = ocr_text.run_ocr_bytes(
+        image_bytes(),
+        ocr_cache=cache,
+        offline=True,
+    )
+
+    assert first.text == second.text == "COTTON 100%"
+    assert calls == 1
+    assert cache.write_count == 1
+    assert cache.hit_count == 1
+
+
+def test_cached_candidates_are_rescored_without_api(monkeypatch, tmp_path) -> None:
+    cache = OcrTextCache(tmp_path / "qa_ocr_cache.json")
+    responses = iter(
+        [
+            "BRAND AND SIZE ONLY",
+            "COTTON 80% POLYESTER 20%",
+        ]
+    )
+    calls = 0
+    monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_: object())
+
+    def fake_ocr(_client, _content: bytes) -> str:
+        nonlocal calls
+        calls += 1
+        return next(responses)
+
+    monkeypatch.setattr(ocr_text, "_run_google_ocr", fake_ocr)
+
+    first = ocr_text.run_ocr_bytes(image_bytes(), ocr_cache=cache)
+    second = ocr_text.run_ocr_bytes(
+        image_bytes(),
+        ocr_cache=cache,
+        offline=True,
+    )
+
+    assert first.metadata.source == "preprocessed"
+    assert second.metadata.source == "preprocessed"
+    assert second.text == "COTTON 80% POLYESTER 20%"
+    assert calls == 2
+    assert cache.write_count == 2
+    assert cache.hit_count == 2
+
+
+def test_offline_original_cache_miss_does_not_create_client(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    cache = OcrTextCache(tmp_path / "qa_ocr_cache.json")
+
+    def unexpected_client(*_args):
+        raise AssertionError("offline mode must not create a Vision client")
+
+    monkeypatch.setattr(ocr_text, "_get_vision_client", unexpected_client)
+
+    with pytest.raises(OcrCacheMissError):
+        ocr_text.run_ocr_bytes(
+            image_bytes(),
+            ocr_cache=cache,
+            offline=True,
+        )

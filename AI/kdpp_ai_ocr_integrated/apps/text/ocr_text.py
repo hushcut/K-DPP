@@ -12,6 +12,8 @@ from typing import Any
 
 from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
 
+from apps.text.ocr_cache import OcrCacheMissError, OcrTextCache
+
 LANGUAGE_HINTS = ["ko", "en", "ja", "zh-Hans", "zh-Hant"]
 MIN_OCR_WIDTH = 1800
 MAX_OCR_WIDTH = 3200
@@ -361,17 +363,50 @@ def run_ocr_bytes(
     credential_path: str | None = None,
     *,
     declared_content_type: str | None = None,
+    ocr_cache: OcrTextCache | None = None,
+    refresh_ocr_cache: bool = False,
+    offline: bool = False,
+    cache_label: str = "",
 ) -> OcrResult:
     validated = validate_image_bytes(
         content,
         declared_content_type=declared_content_type,
     )
-    client = _get_vision_client(*_resolve_credential_path(credential_path))
+    if offline and ocr_cache is None:
+        raise OcrCacheMissError("오프라인 OCR 실행에는 캐시 파일이 필요합니다.")
+
+    client: Any | None = None
+
+    def run_candidate_ocr(source: str, candidate_content: bytes) -> str:
+        nonlocal client
+        if ocr_cache is not None and not refresh_ocr_cache:
+            cached_text = ocr_cache.get(candidate_content)
+            if cached_text is not None:
+                return cached_text
+
+        if offline:
+            raise OcrCacheMissError(
+                f"오프라인 OCR 캐시에 {source} 후보가 없습니다: {cache_label}"
+            )
+
+        if client is None:
+            client = _get_vision_client(
+                *_resolve_credential_path(credential_path)
+            )
+        text = _run_google_ocr(client, candidate_content)
+        if ocr_cache is not None:
+            ocr_cache.put(
+                candidate_content,
+                text,
+                file_name=cache_label,
+                source=source,
+            )
+        return text
 
     candidates: list[OcrCandidate] = [
         _build_candidate(
             "original",
-            _run_google_ocr(client, validated.content),
+            run_candidate_ocr("original", validated.content),
         )
     ]
     processing_warnings: list[str] = []
@@ -386,10 +421,15 @@ def run_ocr_bytes(
             candidates.append(
                 _build_candidate(
                     "preprocessed",
-                    _run_google_ocr(client, preprocessed),
+                    run_candidate_ocr("preprocessed", preprocessed),
                 )
             )
-        except (InvalidImageError, OcrServiceError, MemoryError):
+        except (
+            InvalidImageError,
+            OcrCacheMissError,
+            OcrServiceError,
+            MemoryError,
+        ):
             processing_warnings.append(
                 "전처리 OCR에 실패하여 원본 OCR 결과를 유지했습니다."
             )
