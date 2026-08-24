@@ -8,6 +8,23 @@ import 'widgets/app_back_button.dart';
 class DisplaySettingsScreen extends StatelessWidget {
   const DisplaySettingsScreen({super.key});
 
+  // 저장 실패를 사용자에게 알리고 테마는 Provider가 이전 값으로 되돌립니다.
+  Future<void> _applyThemeMode(
+    BuildContext context,
+    ThemeProvider themeProvider,
+    ThemeMode mode,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+
+    try {
+      await themeProvider.setThemeMode(mode);
+    } catch (_) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('테마 설정을 저장하지 못했어요. 다시 시도해 주세요.')),
+      );
+    }
+  }
+
   String _modeLabel(ThemeMode mode) {
     switch (mode) {
       case ThemeMode.dark:
@@ -65,21 +82,23 @@ class DisplaySettingsScreen extends StatelessWidget {
           _ThemeModeTile(
             title: '블랙',
             selected: currentMode == ThemeMode.dark,
-            onTap: () => themeProvider.setThemeMode(ThemeMode.dark),
+            onTap: () => _applyThemeMode(context, themeProvider, ThemeMode.dark),
             preview: const _DarkPreview(),
           ),
           const SizedBox(height: 14),
           _ThemeModeTile(
             title: '화이트',
             selected: currentMode == ThemeMode.light,
-            onTap: () => themeProvider.setThemeMode(ThemeMode.light),
+            onTap: () =>
+                _applyThemeMode(context, themeProvider, ThemeMode.light),
             preview: const _LightPreview(),
           ),
           const SizedBox(height: 14),
           _ThemeModeTile(
             title: '시스템 설정',
             selected: currentMode == ThemeMode.system,
-            onTap: () => themeProvider.setThemeMode(ThemeMode.system),
+            onTap: () =>
+                _applyThemeMode(context, themeProvider, ThemeMode.system),
             preview: const _SystemPreview(),
           ),
           const SizedBox(height: 18),

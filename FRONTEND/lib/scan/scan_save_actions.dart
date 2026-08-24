@@ -3,17 +3,34 @@ part of '../scan_screen.dart';
 /// 결과 검증, 서버 탄소 계산, 옷장 저장과 세션 만료 처리를 담당합니다.
 extension _ScanSaveActions on _ScanScreenState {
   /// 세션 만료 시 작성한 의류를 기기에 보존한 뒤 재로그인을 안내합니다.
+  /// 저장이 실패해도 저장 버튼이 잠긴 채 남지 않도록 상태를 되돌립니다.
   Future<void> _saveLocallyAfterSessionExpiry({
     required ClosetProvider provider,
     required Clothes clothes,
   }) async {
-    await provider.addClothes(clothes);
+    var isSaved = false;
+
+    try {
+      await provider.addClothes(clothes);
+      isSaved = true;
+    } catch (error) {
+      debugPrint('세션 만료 후 로컬 저장에 실패했습니다: $error');
+    } finally {
+      if (mounted) {
+        _updateState(() {
+          _isSaving = false;
+        });
+      }
+    }
 
     if (!mounted) return;
 
-    _updateState(() {
-      _isSaving = false;
-    });
+    if (!isSaved) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('의류를 기기에 저장하지 못했어요. 다시 시도해 주세요.')),
+      );
+      return;
+    }
 
     await SessionExpiryHandler.handle(
       context,
@@ -107,6 +124,18 @@ extension _ScanSaveActions on _ScanScreenState {
 
         try {
           await provider.addClothes(clothesToSave);
+        } catch (error) {
+          // Provider가 목록을 되돌리므로 실패를 알리고 화면에 머무릅니다.
+          debugPrint('옷장 저장에 실패했습니다: $error');
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('의류를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'),
+              ),
+            );
+          }
+          return;
         } finally {
           if (mounted) {
             _updateState(() {

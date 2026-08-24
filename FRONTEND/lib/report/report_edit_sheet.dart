@@ -25,10 +25,19 @@ Future<void> _showEditBottomSheet(
 
   if (!context.mounted) return;
 
-  final success = await context.read<ClosetProvider>().updateClothes(
-    item,
-    updated,
-  );
+  final bool success;
+
+  try {
+    success = await context.read<ClosetProvider>().updateClothes(item, updated);
+  } catch (_) {
+    // 저장 실패 시 Provider가 이전 값으로 되돌리므로 재시도만 안내합니다.
+    if (!context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('수정 내용을 저장하지 못했어요. 다시 시도해 주세요.')),
+    );
+    return;
+  }
 
   if (!context.mounted) return;
 

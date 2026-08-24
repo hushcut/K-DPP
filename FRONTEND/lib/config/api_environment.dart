@@ -17,9 +17,30 @@ abstract final class ApiEnvironment {
     'MATERIALS_API_ENDPOINT',
   );
 
-  static final String baseUrl = _baseUrlOverride.isNotEmpty
-      ? _baseUrlOverride
-      : defaultBaseUrlFor(defaultTargetPlatform);
+  // 정규화 결과가 비면("/", 공백 등) 기본 주소로 안전하게 되돌아가도록
+  // 비어 있는지 검사도 정규화된 값 기준으로 수행한다.
+  static final String baseUrl = _resolveBaseUrl();
+
+  static String _resolveBaseUrl() {
+    final normalizedOverride = normalizeBaseUrl(_baseUrlOverride);
+
+    return normalizedOverride.isNotEmpty
+        ? normalizedOverride
+        : defaultBaseUrlFor(defaultTargetPlatform);
+  }
+
+  /// 끝에 슬래시가 붙은 주소가 들어와도 `//api/...` 같은 잘못된 경로가
+  /// 만들어지지 않도록 앞뒤 공백과 끝 슬래시를 정리한다.
+  @visibleForTesting
+  static String normalizeBaseUrl(String value) {
+    var normalized = value.trim();
+
+    while (normalized.endsWith('/')) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+
+    return normalized;
+  }
 
   /// Android 에뮬레이터와 그 외 플랫폼에서 사용할 개발용 기본 주소를 반환한다.
   static String defaultBaseUrlFor(TargetPlatform platform) {
@@ -28,9 +49,13 @@ abstract final class ApiEnvironment {
         : 'http://127.0.0.1:8000';
   }
 
-  static final String authBaseUrl = _authBaseUrlOverride.isNotEmpty
-      ? _authBaseUrlOverride
-      : baseUrl;
+  static final String authBaseUrl = _resolveAuthBaseUrl();
+
+  static String _resolveAuthBaseUrl() {
+    final normalizedOverride = normalizeBaseUrl(_authBaseUrlOverride);
+
+    return normalizedOverride.isNotEmpty ? normalizedOverride : baseUrl;
+  }
 
   static final String scanEndpoint = _scanEndpointOverride.isNotEmpty
       ? _scanEndpointOverride

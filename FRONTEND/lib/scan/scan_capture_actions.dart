@@ -16,8 +16,11 @@ extension _ScanCaptureActions on _ScanScreenState {
       _updateState(() {
         _materialCatalog = catalog;
       });
-    } catch (error) {
+    } catch (error, stackTrace) {
+      // 일시적인 실패가 앱 사용 내내 자동완성을 막지 않도록 다음 스캔에서 재시도합니다.
+      _hasRequestedMaterialCatalog = false;
       debugPrint('소재 자동완성 목록을 불러오지 못했습니다: $error');
+      debugPrintStack(stackTrace: stackTrace);
     }
   }
 
@@ -34,18 +37,29 @@ extension _ScanCaptureActions on _ScanScreenState {
       _scanFailureMessage = null;
     });
 
+    // 백엔드가 스캔 API에 인증을 요구해도 동작하도록 보유한 토큰을 함께 보냅니다.
+    final accessToken = context.read<ClosetProvider>().accessToken;
+
     final outcome = await _scanAnalysisService.analyzeLabel(
       imageFile: imageFile,
+      accessToken: accessToken,
     );
 
     if (!mounted) return;
+
+    // 분석 중 다른 탭·화면으로 이동했다면 결과를 조용히 정리해,
+    // 닫을 수 없는 유형 선택창이 엉뚱한 화면 위에 뜨지 않게 합니다.
+    if (!widget.isActive) {
+      _returnToScanView();
+      return;
+    }
 
     if (outcome is ScanAnalysisSuccess) {
       final result = outcome.result;
       final inferredType = _scanDraftService.inferInitialType(result);
 
+      // _isScanning은 유형 선택이 끝날 때까지 유지해 대기 중 카메라 재초기화를 막습니다.
       _updateState(() {
-        _isScanning = false;
         _selectedClothingType = inferredType;
         _selectedCategory = inferredType.category;
       });
@@ -73,17 +87,25 @@ extension _ScanCaptureActions on _ScanScreenState {
     }
 
     if (outcome is ScanAnalysisFailure) {
+      // 인증 만료는 수동 입력 대신 세션 정리 후 로그인으로 보내
+      // 탄소 계산 경로의 401 처리와 정책을 맞춥니다.
+      if (outcome.exception.type == ScanApiErrorType.unauthorized &&
+          accessToken != null) {
+        _updateState(() {
+          _isScanning = false;
+        });
+        await SessionExpiryHandler.handle(context, message: outcome.userMessage);
+        return;
+      }
+
       await _showManualFallback(outcome.userMessage);
     }
   }
 
   /// 자동 분석에 실패해도 유형과 소재를 직접 입력할 수 있는 초안을 만듭니다.
+  /// _isScanning은 유형 선택이 끝날 때까지 유지해 카메라 재초기화를 막습니다.
   Future<void> _showManualFallback(String message) async {
     if (!mounted) return;
-
-    _updateState(() {
-      _isScanning = false;
-    });
 
     final selectedType = await _showClothingTypePicker(
       initialSelection: _selectedClothingType,
@@ -140,7 +162,17 @@ extension _ScanCaptureActions on _ScanScreenState {
       cameraSession: _cameraSession,
     );
 
-    if (!mounted) return;
+    if (!mounted) {
+      // 화면이 사라졌어도 방금 촬영된 임시 파일은 캐시에 남기지 않고 정리합니다.
+      if (captureResult
+          case ScanCaptureSelected(
+            :final imageFile,
+            shouldDeleteAfterAnalysis: true,
+          )) {
+        await _scanCaptureService.deleteTemporaryCaptureFile(imageFile);
+      }
+      return;
+    }
 
     switch (captureResult) {
       case ScanCaptureBlocked(:final message):
@@ -167,6 +199,12 @@ extension _ScanCaptureActions on _ScanScreenState {
         :final imageFile,
         :final shouldDeleteAfterAnalysis,
       ):
+        // 카메라 해제를 기다리는 사이 앨범 버튼으로 두 번째 스캔이
+        // 겹치지 않도록 먼저 잠급니다.
+        _updateState(() {
+          _isScanning = true;
+        });
+
         await _cameraLifecycle.disposeCamera();
 
         try {
@@ -183,6 +221,11 @@ extension _ScanCaptureActions on _ScanScreenState {
   Future<void> _pickFromGallery() async {
     if (_isScanning) return;
 
+    // 앨범 선택이 끝날 때까지 촬영·중복 선택이 겹치지 않게 잠급니다.
+    _updateState(() {
+      _isScanning = true;
+    });
+
     await _cameraLifecycle.disposeCamera();
 
     if (!mounted) return;
@@ -197,10 +240,16 @@ extension _ScanCaptureActions on _ScanScreenState {
         return;
 
       case ScanCaptureCancelled():
+        _updateState(() {
+          _isScanning = false;
+        });
         _cameraLifecycle.startIfNeeded();
         return;
 
       case ScanCaptureFailure(:final message):
+        _updateState(() {
+          _isScanning = false;
+        });
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(message)));
@@ -209,6 +258,9 @@ extension _ScanCaptureActions on _ScanScreenState {
 
       case ScanCaptureBlocked():
       case ScanCaptureBusy():
+        _updateState(() {
+          _isScanning = false;
+        });
         _cameraLifecycle.startIfNeeded();
         return;
     }

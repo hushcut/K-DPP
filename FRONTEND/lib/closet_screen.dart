@@ -15,10 +15,19 @@ enum ClosetSortOption { eco, health, latest, custom }
 
 /// 의류를 목록으로 보여 주고 선택한 항목의 상세 리포트를 여는 화면입니다.
 class ClosetScreen extends StatefulWidget {
-  const ClosetScreen({super.key, required this.onOpenReport, this.onStartScan});
+  const ClosetScreen({
+    super.key,
+    required this.onOpenReport,
+    this.onStartScan,
+    this.isActive = true,
+  });
 
   final ValueChanged<Clothes> onOpenReport;
   final VoidCallback? onStartScan;
+
+  /// 옷장 탭이 실제로 보이는 상태인지 나타냅니다.
+  /// 숨겨진 상태에서는 뒤로가기 처리에 관여하지 않습니다.
+  final bool isActive;
 
   @override
   State<ClosetScreen> createState() => _ClosetScreenState();
@@ -52,6 +61,54 @@ class _ClosetScreenState extends State<ClosetScreen> {
   /// part 확장이 보호 멤버인 setState를 직접 호출하지 않도록 중계합니다.
   void _updateState(VoidCallback callback) => setState(callback);
 
+  /// 다른 화면에서 항목이 삭제·교체돼도 선택 집합이 어긋나지 않게 맞춥니다.
+  /// 인스턴스가 바뀐 항목은 서버 저장 ID로 다시 찾아 새 인스턴스로 교체합니다.
+  void _syncSelectionWithItems(List<Clothes> items) {
+    if (_selectedItems.isEmpty) return;
+
+    final replacement = <Clothes>[];
+
+    for (final selected in _selectedItems) {
+      for (final item in items) {
+        final isSameItem =
+            identical(item, selected) ||
+            (selected.savedResultId != null &&
+                item.savedResultId == selected.savedResultId);
+
+        if (isSameItem) {
+          replacement.add(item);
+          break;
+        }
+      }
+    }
+
+    _selectedItems
+      ..clear()
+      ..addAll(replacement);
+
+    if (_selectedItems.isEmpty) {
+      _selectionMode = false;
+    }
+  }
+
+  // 선택·순서 변경 모드에서는 시스템 뒤로가기가 앱을 닫는 대신 모드를 끝냅니다.
+  // 선택 집합 정리는 canPop 계산보다 먼저 수행해 상태가 어긋나지 않게 합니다.
   @override
-  Widget build(BuildContext context) => _buildClosetBody(context);
+  Widget build(BuildContext context) {
+    _syncSelectionWithItems(context.watch<ClosetProvider>().items);
+
+    return PopScope(
+      canPop: !widget.isActive || (!_selectionMode && !_reorderMode),
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || !widget.isActive) return;
+
+        if (_selectionMode) {
+          _exitSelectionMode();
+        } else if (_reorderMode) {
+          _toggleReorderMode();
+        }
+      },
+      child: _buildClosetBody(context),
+    );
+  }
 }

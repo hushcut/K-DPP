@@ -106,17 +106,29 @@ class ClothingTypeCatalog {
       return _findByLabel('원피스');
     }
 
+    // '티셔츠'·'sweatshirt'가 일반 '셔츠'/'shirt' 검사에 먼저 걸리면
+    // 240g짜리 셔츠 무게로 잘못 추정되므로, 구체적인 유형을 앞서 확인한다.
+    if (text.contains('맨투맨') ||
+        text.contains('긴팔') ||
+        text.contains('스웨트') ||
+        text.contains('후드') ||
+        text.contains('sweatshirt') ||
+        text.contains('hoodie')) {
+      return _findByLabel('긴팔 / 맨투맨');
+    }
+
+    if (text.contains('티셔츠') ||
+        text.contains('반팔') ||
+        text.contains('t-shirt') ||
+        text.contains('tshirt')) {
+      return _findByLabel('반팔 티셔츠');
+    }
+
     if (text.contains('셔츠') ||
         text.contains('블라우스') ||
         text.contains('shirt') ||
         text.contains('blouse')) {
       return _findByLabel('셔츠 / 블라우스');
-    }
-
-    if (text.contains('맨투맨') ||
-        text.contains('긴팔') ||
-        text.contains('sweatshirt')) {
-      return _findByLabel('긴팔 / 맨투맨');
     }
 
     return defaultOption;

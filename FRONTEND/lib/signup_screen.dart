@@ -8,6 +8,10 @@ import 'widgets/app_back_button.dart';
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key, this.authApiService});
 
+  /// 이메일 로그인 화면에서 진입했음을 알리는 경로 인자입니다.
+  /// 이 값이 전달되면 로그인 화면을 새로 쌓지 않고 pop으로 되돌아갑니다.
+  static const String fromEmailLoginArgument = 'from-email-login';
+
   final AuthApiService? authApiService;
 
   @override
@@ -72,11 +76,16 @@ class _SignupScreenState extends State<SignupScreen> {
     return null;
   }
 
+  // 서버에는 입력값을 그대로 보내므로 검증도 trim 없이 같은 값으로 수행합니다.
   String? _validatePassword(String? value) {
-    final text = value?.trim() ?? '';
+    final text = value ?? '';
 
-    if (text.isEmpty) {
+    if (text.trim().isEmpty) {
       return '비밀번호를 입력해 주세요';
+    }
+
+    if (text != text.trim()) {
+      return '비밀번호 앞뒤 공백은 사용할 수 없어요';
     }
 
     if (text.length < 8) {
@@ -87,17 +96,32 @@ class _SignupScreenState extends State<SignupScreen> {
   }
 
   String? _validateConfirmPassword(String? value) {
-    final text = value?.trim() ?? '';
+    final text = value ?? '';
 
-    if (text.isEmpty) {
+    if (text.trim().isEmpty) {
       return '비밀번호 확인을 입력해 주세요';
     }
 
-    if (text != _passwordController.text.trim()) {
+    if (text != _passwordController.text) {
       return '비밀번호가 일치하지 않습니다';
     }
 
     return null;
+  }
+
+  /// 이메일 로그인에서 진입했으면 pop으로 되돌아가 화면이 중복으로 쌓이지 않게 하고,
+  /// 그 외 경로에서는 기존처럼 로그인 화면으로 교체 이동합니다.
+  void _navigateBackToEmailLogin({String? email}) {
+    final cameFromEmailLogin =
+        ModalRoute.of(context)?.settings.arguments ==
+        SignupScreen.fromEmailLoginArgument;
+
+    if (cameFromEmailLogin && Navigator.canPop(context)) {
+      Navigator.pop(context, email);
+      return;
+    }
+
+    Navigator.pushReplacementNamed(context, '/email-login', arguments: email);
   }
 
   /// 폼이 유효할 때 가입 API를 호출하고, 성공하면 이메일을 로그인 화면에 전달합니다.
@@ -124,7 +148,7 @@ class _SignupScreenState extends State<SignupScreen> {
         context,
       ).showSnackBar(const SnackBar(content: Text('회원가입이 완료되었습니다. 로그인해 주세요.')));
 
-      Navigator.pushReplacementNamed(context, '/email-login', arguments: email);
+      _navigateBackToEmailLogin(email: email);
     } on AuthApiException catch (error) {
       if (!mounted) return;
 
@@ -399,12 +423,7 @@ class _SignupScreenState extends State<SignupScreen> {
                         ),
                         const SizedBox(height: 18),
                         TextButton(
-                          onPressed: () {
-                            Navigator.pushReplacementNamed(
-                              context,
-                              '/email-login',
-                            );
-                          },
+                          onPressed: () => _navigateBackToEmailLogin(),
                           style: TextButton.styleFrom(
                             minimumSize: const Size(48, 48),
                           ),

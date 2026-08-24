@@ -72,11 +72,18 @@ class _SplashScreenState extends State<SplashScreen>
         // 유효하면 최신 서버 정보를 반영하고, 서버가 인증을 거부한 경우만 로컬 로그아웃 처리합니다.
         switch (validation) {
           case AuthSessionValid(:final user, :final history):
-            await provider.setUserProfile(
-              nickname: user.nickname,
-              email: user.email,
-            );
-            await provider.synchronizeServerHistory(history);
+            try {
+              await provider.setUserProfile(
+                nickname: user.nickname,
+                email: user.email,
+              );
+              await provider.synchronizeServerHistory(history);
+            } catch (error, stackTrace) {
+              // 프로필·이력 동기화 실패가 유효한 로그인 상태를
+              // 로그인 화면으로 되돌리는 원인이 되지 않게 합니다.
+              debugPrint('로그인 후 동기화에 실패했습니다: $error');
+              debugPrintStack(stackTrace: stackTrace);
+            }
           case AuthSessionInvalid():
             await provider.logout();
           case AuthSessionUnavailable():

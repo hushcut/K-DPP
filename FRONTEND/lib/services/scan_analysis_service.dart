@@ -34,9 +34,15 @@ class ScanAnalysisService {
   final ScanApiService scanApiService;
 
   /// 알려진 API 오류는 그대로 보존하고 예상 밖 오류는 unknown API 오류로 변환한다.
-  Future<ScanAnalysisOutcome> analyzeLabel({required File imageFile}) async {
+  Future<ScanAnalysisOutcome> analyzeLabel({
+    required File imageFile,
+    String? accessToken,
+  }) async {
     try {
-      final result = await scanApiService.scanLabel(imageFile: imageFile);
+      final result = await scanApiService.scanLabel(
+        imageFile: imageFile,
+        accessToken: accessToken,
+      );
       return ScanAnalysisSuccess(result);
     } on ScanApiException catch (e) {
       return ScanAnalysisFailure(e);

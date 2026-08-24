@@ -65,7 +65,10 @@ void main() {
 
 class _SuccessfulScanApiService extends ScanApiService {
   @override
-  Future<ScanResult> scanLabel({required File imageFile}) async {
+  Future<ScanResult> scanLabel({
+    required File imageFile,
+    String? accessToken,
+  }) async {
     return ScanResult(
       title: '홍길동 테스트 의류',
       category: '상의',
@@ -81,7 +84,10 @@ class _FailingScanApiService extends ScanApiService {
   final Object error;
 
   @override
-  Future<ScanResult> scanLabel({required File imageFile}) async {
+  Future<ScanResult> scanLabel({
+    required File imageFile,
+    String? accessToken,
+  }) async {
     throw error;
   }
 }

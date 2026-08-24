@@ -66,7 +66,8 @@ extension _ClosetSortSheet on _ClosetScreenState {
       },
     );
 
-    if (selected == null) return;
+    // 시트가 닫히는 사이 화면이 사라졌을 수 있으므로 상태 갱신 전에 확인합니다.
+    if (selected == null || !mounted) return;
 
     _updateState(() {
       _sortOption = selected;

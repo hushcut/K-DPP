@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'services/auth_api_service.dart';
 import 'services/post_login_sync_service.dart';
+import 'signup_screen.dart';
 import 'widgets/app_back_button.dart';
 
 /// 로그인 요청의 진행 상태와 비밀번호 표시 상태를 관리하는 이메일 로그인 화면입니다.
@@ -366,8 +367,22 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                         ),
                         const SizedBox(height: 18),
                         TextButton(
-                          onPressed: () {
-                            Navigator.pushNamed(context, '/signup');
+                          onPressed: () async {
+                            // 회원가입이 pop으로 돌아오면 이 화면을 재사용하고,
+                            // 전달된 이메일이 있으면 로그인 폼에 채웁니다.
+                            final result = await Navigator.pushNamed(
+                              context,
+                              '/signup',
+                              arguments: SignupScreen.fromEmailLoginArgument,
+                            );
+
+                            if (!mounted ||
+                                result is! String ||
+                                result.trim().isEmpty) {
+                              return;
+                            }
+
+                            _emailController.text = result.trim();
                           },
                           style: TextButton.styleFrom(
                             minimumSize: const Size(48, 48),

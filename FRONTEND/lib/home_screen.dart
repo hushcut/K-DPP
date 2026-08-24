@@ -153,9 +153,24 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  // Provider 목록의 현재 순서를 기준으로 마지막 두 벌만 반환합니다.
+  // 등록 시각이 최신인 두 벌을 반환하고, 시각이 없는 옛 항목은
+  // 이전처럼 목록 뒤쪽을 최신으로 간주합니다.
   List<Clothes> _getRecentItems(List<Clothes> items) {
-    final copied = List<Clothes>.from(items.reversed);
+    final indexMap = <Clothes, int>{};
+    for (int i = 0; i < items.length; i++) {
+      indexMap[items[i]] = i;
+    }
+
+    final copied = List<Clothes>.from(items);
+    copied.sort((a, b) {
+      final byRecency = Clothes.compareByRecency(a, b);
+      if (byRecency != 0) return byRecency;
+
+      final aIndex = indexMap[a] ?? 0;
+      final bIndex = indexMap[b] ?? 0;
+      return bIndex.compareTo(aIndex);
+    });
+
     return copied.take(2).toList();
   }
 

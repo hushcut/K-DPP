@@ -74,6 +74,8 @@ class ScanSaveService {
             : CarbonFootprintSource.localEstimate,
         minWeightGram: clothingType.minWeightGram,
         maxWeightGram: clothingType.maxWeightGram,
+        // 정렬·최근 표시가 목록 위치 대신 실제 등록 시각을 쓰도록 기록합니다.
+        registeredAt: DateTime.now(),
       ),
     );
   }

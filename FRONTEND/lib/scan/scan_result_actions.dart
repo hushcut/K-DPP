@@ -18,6 +18,7 @@ extension _ScanResultActions on _ScanScreenState {
     _updateState(() {
       _selectedClothingType = draft.clothingType;
       _selectedCategory = draft.category;
+      _isScanning = false;
       _isScanComplete = true;
       _isScanFailed = isScanFailed;
       _isManualMaterialMode = draft.isManualMaterialMode;

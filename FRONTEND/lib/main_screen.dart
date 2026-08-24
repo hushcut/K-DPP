@@ -27,6 +27,8 @@ class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
   bool _didReadInitialArgs = false;
   bool _isShowingReport = false;
+  // 설정 같은 라우트가 위에 열리는 동안 스캔 카메라를 멈추기 위한 표시입니다.
+  bool _isCoveredByRoute = false;
 
   // 탭을 바꾸면 열려 있던 상세 리포트도 함께 닫습니다.
   void _selectTab(int index) {
@@ -40,6 +42,8 @@ class _MainScreenState extends State<MainScreen> {
 
   // 선택 의류를 Provider에 기록한 뒤 탭 위에 상세 리포트를 표시합니다.
   void _openReport(Clothes item) {
+    // 탭 트리가 유지되므로, 검색창 등에 남은 포커스와 키보드를 먼저 정리합니다.
+    FocusManager.instance.primaryFocus?.unfocus();
     context.read<ClosetProvider>().selectClothes(item);
 
     setState(() {
@@ -83,6 +87,24 @@ class _MainScreenState extends State<MainScreen> {
     _selectedIndex = _normalizeInitialIndex(args is int ? args : 0);
   }
 
+  // 설정 화면이 닫힐 때까지 카메라가 꺼지도록 열림 상태를 추적합니다.
+  Future<void> _openSettings() async {
+    // 빠른 연속 탭으로 설정 화면이 두 번 쌓이지 않게 합니다.
+    if (_isCoveredByRoute) return;
+
+    setState(() {
+      _isCoveredByRoute = true;
+    });
+
+    await Navigator.pushNamed(context, '/settings');
+
+    if (!mounted) return;
+
+    setState(() {
+      _isCoveredByRoute = false;
+    });
+  }
+
   List<Widget> _buildTabScreens() {
     return [
       HomeScreen(
@@ -90,38 +112,58 @@ class _MainScreenState extends State<MainScreen> {
         onOpenReport: _openReport,
         onOpenCloset: () => _selectTab(2),
       ),
-      ScanScreen(isActive: _selectedIndex == 1 && !_isShowingReport),
-      ClosetScreen(onOpenReport: _openReport, onStartScan: () => _selectTab(1)),
+      ScanScreen(
+        isActive:
+            _selectedIndex == 1 && !_isShowingReport && !_isCoveredByRoute,
+      ),
+      ClosetScreen(
+        isActive:
+            _selectedIndex == 2 && !_isShowingReport && !_isCoveredByRoute,
+        onOpenReport: _openReport,
+        onStartScan: () => _selectTab(1),
+      ),
     ];
   }
 
-  // 탭은 IndexedStack으로 상태를 보존하고, 리포트만 AnimatedSwitcher로 교체합니다.
+  // 리포트가 열려도 탭 트리는 Offstage로 유지해 작성 중 상태를 보존하고,
+  // 리포트 층만 AnimatedSwitcher로 위에 얹거나 걷어냅니다.
   Widget _buildBody() {
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 260),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: (child, animation) {
-        final slideAnimation = Tween<Offset>(
-          begin: const Offset(0.04, 0),
-          end: Offset.zero,
-        ).animate(animation);
-
-        return FadeTransition(
-          opacity: animation,
-          child: SlideTransition(position: slideAnimation, child: child),
-        );
-      },
-      child: _isShowingReport
-          ? ReportScreen(
-              key: const ValueKey('report'),
-              onDeleted: _handleReportDeleted,
-            )
-          : IndexedStack(
-              key: const ValueKey('main-tabs'),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Offstage(
+          offstage: _isShowingReport,
+          child: TickerMode(
+            enabled: !_isShowingReport,
+            child: IndexedStack(
               index: _selectedIndex,
               children: _buildTabScreens(),
             ),
+          ),
+        ),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 260),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: (child, animation) {
+            final slideAnimation = Tween<Offset>(
+              begin: const Offset(0.04, 0),
+              end: Offset.zero,
+            ).animate(animation);
+
+            return FadeTransition(
+              opacity: animation,
+              child: SlideTransition(position: slideAnimation, child: child),
+            );
+          },
+          child: _isShowingReport
+              ? ReportScreen(
+                  key: const ValueKey('report'),
+                  onDeleted: _handleReportDeleted,
+                )
+              : const SizedBox.shrink(key: ValueKey('report-hidden')),
+        ),
+      ],
     );
   }
 
@@ -161,9 +203,7 @@ class _MainScreenState extends State<MainScreen> {
       title: const KdppLogoMark(size: 34, borderRadius: 10),
       actions: [
         IconButton(
-          onPressed: () {
-            Navigator.pushNamed(context, '/settings');
-          },
+          onPressed: _openSettings,
           tooltip: '설정',
           icon: Icon(Icons.settings_outlined, color: appBarIconColor),
         ),
@@ -186,14 +226,23 @@ class _MainScreenState extends State<MainScreen> {
         ? const Color(0xFF121212)
         : const Color(0xFFF8F9FC);
 
-    return Scaffold(
-      backgroundColor: scaffoldBg,
-      extendBody: true,
-      appBar: _buildAppBar(context),
-      body: _buildBody(),
-      bottomNavigationBar: _KDppBottomNavigationBar(
-        selectedIndex: _selectedIndex,
-        onSelect: _selectTab,
+    // '/main'은 스택의 유일한 라우트라서, 리포트가 열려 있을 때 시스템
+    // 뒤로가기가 앱을 종료하지 않고 리포트만 닫도록 가로챕니다.
+    return PopScope(
+      canPop: !_isShowingReport,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _closeReport();
+      },
+      child: Scaffold(
+        backgroundColor: scaffoldBg,
+        extendBody: true,
+        appBar: _buildAppBar(context),
+        body: _buildBody(),
+        bottomNavigationBar: _KDppBottomNavigationBar(
+          selectedIndex: _selectedIndex,
+          onSelect: _selectTab,
+        ),
       ),
     );
   }

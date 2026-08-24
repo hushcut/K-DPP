@@ -5,7 +5,11 @@ class FakeClosetStorage implements ClosetStorage {
   List<Clothes>? _savedItems;
   final Map<String, List<Clothes>> _accountItems = {};
   String? _savedUserName;
+  bool _savedUserNameCustomized = false;
   String? _savedUserEmail;
+
+  /// 옷장 저장 실패를 흉내 낼 때 던질 오류입니다.
+  Object? saveClothesError;
 
   @override
   Future<void> clearClothesList() async {
@@ -59,6 +63,10 @@ class FakeClosetStorage implements ClosetStorage {
 
   @override
   Future<void> saveClothesList(List<Clothes> items) async {
+    if (saveClothesError case final error?) {
+      throw error;
+    }
+
     _savedItems = List<Clothes>.from(items);
   }
 
@@ -67,12 +75,31 @@ class FakeClosetStorage implements ClosetStorage {
     String ownerEmail,
     List<Clothes> items,
   ) async {
+    if (saveClothesError case final error?) {
+      throw error;
+    }
+
     _accountItems[_normalizeEmail(ownerEmail)] = List<Clothes>.from(items);
   }
 
   @override
   Future<void> saveUserName(String userName) async {
     _savedUserName = userName;
+  }
+
+  @override
+  Future<void> saveUserNameCustomized(bool value) async {
+    _savedUserNameCustomized = value;
+  }
+
+  @override
+  Future<bool> loadUserNameCustomized() async {
+    return _savedUserNameCustomized;
+  }
+
+  @override
+  Future<void> clearUserNameCustomized() async {
+    _savedUserNameCustomized = false;
   }
 
   @override

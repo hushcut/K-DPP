@@ -38,7 +38,8 @@ class ScanFormValidator {
 
     final parsed = double.tryParse(text.replaceAll('%', ''));
 
-    if (parsed == null) {
+    // "NaN" 입력도 숫자 오류로 처리해 합계가 NaN%로 표시되는 것을 막는다.
+    if (parsed == null || parsed.isNaN) {
       return '숫자만';
     }
 

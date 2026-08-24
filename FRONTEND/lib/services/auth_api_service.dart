@@ -139,6 +139,14 @@ class AuthApiService {
         throw const FormatException('응답이 JSON 객체 형식이 아닙니다.');
       }
 
+      // 2xx로 내려온 오류 봉투도 로그인·가입 파싱과 동일하게 서버 메시지를 살립니다.
+      if (decoded['success'] == false || decoded['status'] == 'error') {
+        throw AuthApiException(
+          type: AuthApiErrorType.badRequest,
+          message: decoded['message']?.toString() ?? '세션 정보를 불러오지 못했습니다.',
+        );
+      }
+
       final userJson = decoded['user'];
 
       if (userJson is! Map) {

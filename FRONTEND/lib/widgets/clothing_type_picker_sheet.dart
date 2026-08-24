@@ -67,7 +67,8 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
       return;
     }
 
-    if (weight == null || weight <= 0) {
+    // NaN·Infinity는 저장 시 오류를 일으키므로 유한한 양수만 허용합니다.
+    if (weight == null || !weight.isFinite || weight <= 0) {
       setState(() {
         _directErrorText = '실제 무게를 g 단위로 입력해 주세요.';
       });

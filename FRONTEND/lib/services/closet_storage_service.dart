@@ -29,6 +29,13 @@ abstract class ClosetStorage {
   /// 저장된 사용자 이름을 삭제한다.
   Future<void> clearUserName();
 
+  /// 사용자가 기기에서 직접 수정한 닉네임인지 여부를 저장한다.
+  Future<void> saveUserNameCustomized(bool value);
+  /// 닉네임 직접 수정 여부를 불러온다. 저장된 값이 없으면 false를 반환한다.
+  Future<bool> loadUserNameCustomized();
+  /// 닉네임 직접 수정 여부를 삭제한다.
+  Future<void> clearUserNameCustomized();
+
   /// 마지막으로 사용한 사용자 이메일을 저장한다.
   Future<void> saveUserEmail(String userEmail);
   /// 저장된 사용자 이메일을 불러온다.
@@ -44,6 +51,7 @@ class ClosetStorageService implements ClosetStorage {
   static const String _closetItemsKey = 'closet_items';
   static const String _accountClosetItemsKeyPrefix = 'closet_items_account_';
   static const String _userNameKey = 'user_name';
+  static const String _userNameCustomizedKey = 'user_name_customized';
   static const String _userEmailKey = 'user_email';
 
   final SharedPreferencesAsync _prefs = SharedPreferencesAsync();
@@ -112,6 +120,21 @@ class ClosetStorageService implements ClosetStorage {
   @override
   Future<void> clearUserName() async {
     await _prefs.remove(_userNameKey);
+  }
+
+  @override
+  Future<void> saveUserNameCustomized(bool value) async {
+    await _prefs.setBool(_userNameCustomizedKey, value);
+  }
+
+  @override
+  Future<bool> loadUserNameCustomized() async {
+    return await _prefs.getBool(_userNameCustomizedKey) ?? false;
+  }
+
+  @override
+  Future<void> clearUserNameCustomized() async {
+    await _prefs.remove(_userNameCustomizedKey);
   }
 
   @override

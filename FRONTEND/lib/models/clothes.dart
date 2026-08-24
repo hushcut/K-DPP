@@ -25,6 +25,8 @@ class Clothes {
   final double? minWeightGram;
   final double? maxWeightGram;
   final int? savedResultId;
+  // 옷장에 등록한 시각입니다. 필드 도입 전에 저장된 의류는 null입니다.
+  final DateTime? registeredAt;
 
   Clothes({
     required this.title,
@@ -39,7 +41,23 @@ class Clothes {
     this.minWeightGram,
     this.maxWeightGram,
     this.savedResultId,
+    this.registeredAt,
   });
+
+  /// 등록 시각 기준 최신순 비교값을 반환합니다.
+  /// 시각이 없는 옛 항목은 더 오래된 것으로 취급하고,
+  /// 둘 다 시각이 없거나 같으면 0을 반환해 호출부의 위치 기준을 따릅니다.
+  static int compareByRecency(Clothes a, Clothes b) {
+    final aTime = a.registeredAt;
+    final bTime = b.registeredAt;
+
+    if (aTime != null && bTime != null) {
+      return bTime.compareTo(aTime);
+    }
+    if (aTime != null) return -1;
+    if (bTime != null) return 1;
+    return 0;
+  }
 
   /// 지정한 필드만 바꾼 새 [Clothes] 인스턴스를 반환합니다.
   Clothes copyWith({
@@ -55,6 +73,7 @@ class Clothes {
     double? minWeightGram,
     double? maxWeightGram,
     int? savedResultId,
+    DateTime? registeredAt,
   }) {
     return Clothes(
       title: title ?? this.title,
@@ -70,6 +89,7 @@ class Clothes {
       minWeightGram: minWeightGram ?? this.minWeightGram,
       maxWeightGram: maxWeightGram ?? this.maxWeightGram,
       savedResultId: savedResultId ?? this.savedResultId,
+      registeredAt: registeredAt ?? this.registeredAt,
     );
   }
 
@@ -115,6 +135,9 @@ class Clothes {
       savedResultId: _parseNullableInt(
         json['savedResultId'] ?? json['saved_result_id'],
       ),
+      registeredAt: _parseNullableDateTime(
+        json['registeredAt'] ?? json['registered_at'],
+      ),
     );
   }
 
@@ -133,6 +156,7 @@ class Clothes {
       'minWeightGram': minWeightGram,
       'maxWeightGram': maxWeightGram,
       'savedResultId': savedResultId,
+      'registeredAt': registeredAt?.toIso8601String(),
     };
   }
 
@@ -160,5 +184,10 @@ class Clothes {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value.toString());
+  }
+
+  static DateTime? _parseNullableDateTime(dynamic value) {
+    if (value == null) return null;
+    return DateTime.tryParse(value.toString());
   }
 }

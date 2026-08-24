@@ -44,11 +44,16 @@ extension _ClosetActions on _ClosetScreenState {
         break;
 
       case ClosetSortOption.latest:
+        // 등록 시각을 우선 사용하고, 시각이 없는 옛 항목끼리는
+        // 이전처럼 목록 위치(뒤쪽일수록 최신)로 정렬합니다.
         final indexMap = <Clothes, int>{};
         for (int i = 0; i < originalOrder.length; i++) {
           indexMap[originalOrder[i]] = i;
         }
         sorted.sort((a, b) {
+          final byRecency = Clothes.compareByRecency(a, b);
+          if (byRecency != 0) return byRecency;
+
           final aIndex = indexMap[a] ?? 0;
           final bIndex = indexMap[b] ?? 0;
           return bIndex.compareTo(aIndex);
@@ -164,10 +169,29 @@ extension _ClosetActions on _ClosetScreenState {
 
     if (confirmed != true || !mounted) return;
 
-    final deleteCount = _selectedItems.length;
-    await context.read<ClosetProvider>().removeClothesBatch(
-      _selectedItems.toList(),
-    );
+    final targets = _selectedItems.toList();
+    final deleteCount = targets.length;
+
+    try {
+      await context.read<ClosetProvider>().removeClothesBatch(targets);
+    } catch (_) {
+      if (!mounted) return;
+
+      // 삭제 대기 중 빌드 정리가 선택 집합을 비웠을 수 있으므로,
+      // 되돌아온 항목 기준으로 선택 상태를 복원해 바로 재시도할 수 있게 합니다.
+      final restoredItems = context.read<ClosetProvider>().items;
+      _updateState(() {
+        _selectedItems
+          ..clear()
+          ..addAll(targets.where(restoredItems.contains));
+        _selectionMode = _selectedItems.isNotEmpty;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('의류 삭제를 저장하지 못했어요. 다시 시도해 주세요.')),
+      );
+      return;
+    }
 
     if (!mounted) return;
 
@@ -224,7 +248,15 @@ extension _ClosetActions on _ClosetScreenState {
       }).toList();
     }
 
-    await context.read<ClosetProvider>().setCustomOrder(newGlobalOrder);
+    try {
+      await context.read<ClosetProvider>().setCustomOrder(newGlobalOrder);
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('변경한 순서를 저장하지 못했어요. 다시 시도해 주세요.')),
+      );
+    }
   }
 
 }

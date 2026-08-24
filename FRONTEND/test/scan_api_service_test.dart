@@ -174,6 +174,69 @@ void main() {
         client.close();
       }
     });
+
+    test('이미지 파트에 image/jpeg Content-Type을 명시해 전송한다', () async {
+      late http.Request capturedRequest;
+      final client = MockClient((request) async {
+        capturedRequest = request;
+
+        return http.Response(
+          jsonEncode({
+            'status': 'success',
+            'materials': {'cotton': 100},
+            'care_instruction': '찬물 세탁',
+          }),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      });
+      final service = ScanApiService(
+        endpoint: 'https://example.ngrok-free.app/api/scan',
+        client: client,
+      );
+
+      try {
+        await service.scanLabel(imageFile: imageFile);
+
+        // 미지정 시 application/octet-stream으로 전송되어 서버가 415로
+        // 거부하므로, 멀티파트 본문의 파트 헤더를 직접 확인한다.
+        final multipartBody = String.fromCharCodes(
+          capturedRequest.bodyBytes,
+        ).toLowerCase();
+
+        expect(multipartBody, contains('content-type: image/jpeg'));
+        expect(multipartBody, isNot(contains('application/octet-stream')));
+      } finally {
+        client.close();
+      }
+    });
+
+    test('업로드 도중 끊긴 연결(ClientException)은 네트워크 오류로 분류한다', () async {
+      final client = MockClient((request) async {
+        throw http.ClientException(
+          'Connection closed before full header was received',
+        );
+      });
+      final service = ScanApiService(
+        endpoint: 'https://example.ngrok-free.app/api/scan',
+        client: client,
+      );
+
+      try {
+        await expectLater(
+          service.scanLabel(imageFile: imageFile),
+          throwsA(
+            isA<ScanApiException>().having(
+              (error) => error.type,
+              'type',
+              ScanApiErrorType.network,
+            ),
+          ),
+        );
+      } finally {
+        client.close();
+      }
+    });
   });
 }
 

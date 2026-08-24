@@ -38,4 +38,19 @@ void main() {
       'http://127.0.0.1:8000',
     );
   });
+
+  test('normalizes a trailing slash so endpoint paths stay valid', () {
+    expect(
+      ApiEnvironment.normalizeBaseUrl('https://example.ngrok-free.app/'),
+      'https://example.ngrok-free.app',
+    );
+    expect(
+      ApiEnvironment.normalizeBaseUrl(' https://example.ngrok-free.app// '),
+      'https://example.ngrok-free.app',
+    );
+    expect(
+      ApiEnvironment.normalizeBaseUrl('http://10.0.2.2:8000'),
+      'http://10.0.2.2:8000',
+    );
+  });
 }

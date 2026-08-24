@@ -12,6 +12,7 @@ import 'models/main_screen_arguments.dart';
 import 'services/carbon_api_service.dart';
 import 'services/material_catalog_api_service.dart';
 import 'services/scan_analysis_service.dart';
+import 'services/scan_api_service.dart';
 import 'services/scan_camera_lifecycle_service.dart';
 import 'services/scan_camera_session.dart';
 import 'services/scan_capture_service.dart';

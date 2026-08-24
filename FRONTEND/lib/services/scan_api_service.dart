@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import '../config/api_environment.dart';
 import '../models/scan_result.dart';
 
@@ -156,20 +157,42 @@ class ScanApiService {
   final Map<String, String> requestHeaders;
   final http.Client? client;
 
+  static const Duration _requestTimeout = Duration(seconds: 35);
+
   /// 이미지를 전송해 [ScanResult]를 반환하며 네트워크·시간 초과·응답 오류를
   /// [ScanApiException]으로 통일한다.
-  Future<ScanResult> scanLabel({required File imageFile}) async {
+  /// [accessToken]이 있으면 다른 API와 동일하게 Bearer 헤더를 첨부한다.
+  Future<ScanResult> scanLabel({
+    required File imageFile,
+    String? accessToken,
+  }) async {
     final uri = Uri.parse(endpoint);
 
     try {
       final request = http.MultipartRequest('POST', uri)
         ..headers.addAll(requestHeaders)
-        ..files.add(await http.MultipartFile.fromPath('image', imageFile.path));
+        ..files.add(
+          await http.MultipartFile.fromPath(
+            'image',
+            imageFile.path,
+            // Content-Type을 명시하지 않으면 application/octet-stream으로 전송되어
+            // 서버의 이미지 형식 검사(415)에 걸리므로 확장자 기준으로 지정한다.
+            contentType: _imageMediaTypeFor(imageFile.path),
+          ),
+        );
+
+      if (accessToken != null && accessToken.isNotEmpty) {
+        request.headers['Authorization'] = 'Bearer $accessToken';
+      }
 
       final streamedResponse = await (client?.send(request) ?? request.send())
-          .timeout(const Duration(seconds: 35));
+          .timeout(_requestTimeout);
 
-      final responseBody = await streamedResponse.stream.bytesToString();
+      // send()는 응답 헤더가 오면 완료되므로, 본문 수신이 중간에 멈춰도
+      // 무한 대기하지 않도록 본문 읽기에도 시간 제한을 둡니다.
+      final responseBody = await streamedResponse.stream
+          .bytesToString()
+          .timeout(_requestTimeout);
 
       if (streamedResponse.statusCode < 200 ||
           streamedResponse.statusCode >= 300) {
@@ -183,6 +206,12 @@ class ScanApiService {
     } on ScanApiException {
       rethrow;
     } on SocketException catch (e) {
+      throw ScanApiException(
+        type: ScanApiErrorType.network,
+        message: e.message,
+      );
+    } on http.ClientException catch (e) {
+      // 업로드 도중 끊긴 연결도 다른 서비스처럼 네트워크 오류로 안내한다.
       throw ScanApiException(
         type: ScanApiErrorType.network,
         message: e.message,
@@ -202,6 +231,21 @@ class ScanApiService {
         type: ScanApiErrorType.unknown,
         message: e.toString(),
       );
+    }
+  }
+
+  // 서버가 지원하는 형식(jpeg/png/webp)만 구분하고, 카메라 기본 출력이
+  // JPEG이므로 그 외 확장자는 image/jpeg로 처리한다.
+  static MediaType _imageMediaTypeFor(String path) {
+    final extension = path.toLowerCase().split('.').last;
+
+    switch (extension) {
+      case 'png':
+        return MediaType('image', 'png');
+      case 'webp':
+        return MediaType('image', 'webp');
+      default:
+        return MediaType('image', 'jpeg');
     }
   }
 

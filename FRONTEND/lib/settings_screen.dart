@@ -38,7 +38,17 @@ class SettingsScreen extends StatelessWidget {
 
     if (normalizedName == currentName.trim()) return;
 
-    await context.read<ClosetProvider>().setUserName(normalizedName);
+    try {
+      await context.read<ClosetProvider>().setUserName(normalizedName);
+    } catch (_) {
+      // 저장 실패 시 Provider가 이전 닉네임으로 되돌리므로 재시도만 안내합니다.
+      if (!context.mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('닉네임을 저장하지 못했어요. 다시 시도해 주세요.')),
+      );
+      return;
+    }
 
     if (!context.mounted) return;
 
