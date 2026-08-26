@@ -39,6 +39,7 @@ MATERIAL_ALIASES = {
         "polyestera",
         "polyster",
         "polister",
+        "폴리",
         "폴리에스터",
         "폴리에스테르",
         "聚酯",

@@ -285,12 +285,41 @@ def _looks_like_non_composition_number(line: str) -> bool:
 
 def extract_numbers(line: str, allow_plain_numbers: bool = False) -> list[float]:
     normalized = normalize_text(line)
-    percentages = [
-        float(match.group(1))
+    percentage_matches = [
+        match
         for match in _PERCENT_PATTERN.finditer(normalized)
         if 0 < float(match.group(1)) <= 100
     ]
+    percentages = [float(match.group(1)) for match in percentage_matches]
     if percentages:
+        if not allow_plain_numbers or _looks_like_non_composition_number(normalized):
+            return percentages
+
+        material_count = len(extract_materials(normalized))
+        if material_count <= len(percentages):
+            return percentages
+
+        values_by_position = [
+            (match.start(), float(match.group(1)))
+            for match in percentage_matches
+        ]
+        percentage_spans = [match.span() for match in percentage_matches]
+        for match in _PLAIN_NUMBER_PATTERN.finditer(normalized):
+            start, end = match.span()
+            overlaps_percentage = any(
+                start < percent_end and end > percent_start
+                for percent_start, percent_end in percentage_spans
+            )
+            if overlaps_percentage:
+                continue
+
+            value = float(match.group(1))
+            if 0 < value <= 100:
+                values_by_position.append((start, value))
+
+        values_by_position.sort(key=lambda item: item[0])
+        if len(values_by_position) == material_count:
+            return [value for _, value in values_by_position]
         return percentages
 
     if not allow_plain_numbers or _looks_like_non_composition_number(normalized):
@@ -337,10 +366,12 @@ def build_line_infos(text: str) -> list[LineInfo]:
 
         current_part = detect_part(normalized, current_part)
         materials = tuple(extract_materials(normalized))
-        explicit_percent = bool(_PERCENT_PATTERN.search(normalized))
         number_only_line = not materials and not _TOKEN_PATTERN.search(normalized)
         allow_plain = bool(materials) or number_only_line
         numbers = tuple(extract_numbers(normalized, allow_plain_numbers=allow_plain))
+        explicit_percent = bool(numbers) and len(
+            _PERCENT_PATTERN.findall(normalized)
+        ) == len(numbers)
 
         infos.append(
             LineInfo(
@@ -408,7 +439,7 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
 
         materials: list[str] = []
         numbers: list[float] = []
-        explicit_percent = False
+        explicit_percent = True
         for current in infos[position : position + 6]:
             if (
                 current.part != info.part
@@ -419,7 +450,7 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
                 break
             materials.extend(current.materials)
             numbers.extend(current.numbers)
-            explicit_percent = explicit_percent or current.explicit_percent
+            explicit_percent = explicit_percent and current.explicit_percent
             candidate = _pair_values(
                 info.part,
                 materials,
@@ -473,7 +504,7 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
 
         material_block: list[str] = []
         number_block: list[float] = []
-        explicit_percent = False
+        explicit_percent = True
         cursor = position
 
         while cursor < len(infos) and len(material_block) < 6:
@@ -488,7 +519,7 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
             if current.part != info.part or current.materials or not current.numbers:
                 break
             number_block.extend(current.numbers)
-            explicit_percent = explicit_percent or current.explicit_percent
+            explicit_percent = explicit_percent and current.explicit_percent
             cursor += 1
 
         candidate = _pair_values(
@@ -531,6 +562,9 @@ def _normalize_candidate(
     total = candidate.total
     warnings: list[str] = []
     values = candidate.materials
+
+    if not candidate.explicit_percent:
+        warnings.append("ratio_marker_inferred")
 
     if abs(total - 100.0) > 0.01:
         warnings.append(
