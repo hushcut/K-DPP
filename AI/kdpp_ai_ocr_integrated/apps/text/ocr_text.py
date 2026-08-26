@@ -53,6 +53,18 @@ class OcrServiceError(OcrError):
     """Google Vision could not complete the OCR request."""
 
 
+class OcrQuotaExceededError(OcrServiceError):
+    """Google Vision rejected the request because its quota was exhausted."""
+
+
+class OcrTimeoutError(OcrServiceError):
+    """Google Vision did not complete the request before the deadline."""
+
+
+class OcrUnavailableError(OcrServiceError):
+    """Google Vision is temporarily unavailable after retries."""
+
+
 @dataclass(frozen=True)
 class OcrMetadata:
     source: str
@@ -273,8 +285,25 @@ def _build_candidate(source: str, text: str) -> OcrCandidate:
 
 
 def _extract_response_text(response: Any) -> str:
-    if response.error.message:
-        raise OcrServiceError(response.error.message)
+    error = getattr(response, "error", None)
+    error_message = getattr(error, "message", "")
+    if error_message:
+        error_code = getattr(error, "code", None)
+        if error_code in {7, 16}:  # PERMISSION_DENIED, UNAUTHENTICATED
+            raise OcrConfigurationError(
+                "Google Vision 인증 권한 또는 결제 설정을 확인해 주세요."
+            )
+        if error_code == 8:  # RESOURCE_EXHAUSTED
+            raise OcrQuotaExceededError(
+                "Google Vision OCR 사용량 한도를 초과했습니다."
+            )
+        if error_code == 4:  # DEADLINE_EXCEEDED
+            raise OcrTimeoutError("Google Vision OCR 요청 시간이 초과되었습니다.")
+        if error_code in {13, 14}:  # INTERNAL, UNAVAILABLE
+            raise OcrUnavailableError(
+                "Google Vision OCR 서비스를 일시적으로 사용할 수 없습니다."
+            )
+        raise OcrServiceError(error_message)
 
     if response.full_text_annotation and response.full_text_annotation.text:
         return response.full_text_annotation.text
@@ -350,11 +379,35 @@ def _run_google_ocr(client: Any, content: bytes) -> str:
         return _extract_response_text(response).strip()
     except OcrServiceError:
         raise
-    except (
-        google_exceptions.GoogleAPICallError,
-        google_exceptions.RetryError,
-        TimeoutError,
-    ) as exc:
+    except OcrConfigurationError:
+        raise
+    except (google_exceptions.GoogleAPIError, TimeoutError) as exc:
+        cause = getattr(exc, "cause", None) or exc
+        if isinstance(
+            cause,
+            (google_exceptions.Unauthorized, google_exceptions.Forbidden),
+        ):
+            raise OcrConfigurationError(
+                "Google Vision 인증 권한 또는 결제 설정을 확인해 주세요."
+            ) from exc
+        if isinstance(cause, google_exceptions.TooManyRequests):
+            raise OcrQuotaExceededError(
+                "Google Vision OCR 사용량 한도를 초과했습니다."
+            ) from exc
+        if isinstance(cause, (google_exceptions.DeadlineExceeded, TimeoutError)):
+            raise OcrTimeoutError(
+                "Google Vision OCR 요청 시간이 초과되었습니다."
+            ) from exc
+        if isinstance(
+            cause,
+            (
+                google_exceptions.ServiceUnavailable,
+                google_exceptions.InternalServerError,
+            ),
+        ):
+            raise OcrUnavailableError(
+                "Google Vision OCR 서비스를 일시적으로 사용할 수 없습니다."
+            ) from exc
         raise OcrServiceError("Google Vision OCR 요청에 실패했습니다.") from exc
 
 

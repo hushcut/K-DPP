@@ -22,7 +22,10 @@ from apps.text.ocr_text import (
     InvalidImageError,
     MAX_IMAGE_BYTES,
     OcrConfigurationError,
+    OcrQuotaExceededError,
     OcrServiceError,
+    OcrTimeoutError,
+    OcrUnavailableError,
     UnsupportedImageError,
 )
 
@@ -123,6 +126,24 @@ async def analyze_label(file: UploadFile = File(...)):
         return failure_response(
             status_code=503,
             error_code="ocr_not_configured",
+            message=str(exc),
+        )
+    except OcrQuotaExceededError as exc:
+        return failure_response(
+            status_code=503,
+            error_code="ocr_quota_exceeded",
+            message=str(exc),
+        )
+    except OcrTimeoutError as exc:
+        return failure_response(
+            status_code=504,
+            error_code="ocr_timeout",
+            message=str(exc),
+        )
+    except OcrUnavailableError as exc:
+        return failure_response(
+            status_code=503,
+            error_code="ocr_service_unavailable",
             message=str(exc),
         )
     except OcrServiceError as exc:

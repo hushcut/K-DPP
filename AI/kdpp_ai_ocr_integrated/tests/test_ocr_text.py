@@ -1,4 +1,6 @@
+import os
 from io import BytesIO
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -93,6 +95,84 @@ def test_preprocess_image_converts_memory_error(monkeypatch) -> None:
 
     with pytest.raises(ocr_text.ImageTooLargeError):
         ocr_text.preprocess_image_bytes(image_bytes())
+
+
+def test_explicit_credentials_do_not_mutate_environment(monkeypatch, tmp_path) -> None:
+    environment_key = tmp_path / "environment-key.json"
+    explicit_key = tmp_path / "explicit-key.json"
+    environment_key.write_text("{}", encoding="utf-8")
+    explicit_key.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(environment_key))
+
+    resolved_path, _ = ocr_text._resolve_credential_path(str(explicit_key))
+
+    assert resolved_path == str(explicit_key.resolve())
+    assert os.environ["GOOGLE_APPLICATION_CREDENTIALS"] == str(environment_key)
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_exception"),
+    [
+        (7, ocr_text.OcrConfigurationError),
+        (8, ocr_text.OcrQuotaExceededError),
+        (4, ocr_text.OcrTimeoutError),
+        (14, ocr_text.OcrUnavailableError),
+    ],
+)
+def test_response_error_status_is_classified(
+    status_code,
+    expected_exception,
+) -> None:
+    response = SimpleNamespace(
+        error=SimpleNamespace(code=status_code, message="provider error")
+    )
+
+    with pytest.raises(expected_exception):
+        ocr_text._extract_response_text(response)
+
+
+@pytest.mark.parametrize(
+    ("provider_error", "expected_exception"),
+    [
+        ("forbidden", ocr_text.OcrConfigurationError),
+        ("quota", ocr_text.OcrQuotaExceededError),
+        ("timeout", ocr_text.OcrTimeoutError),
+        ("unavailable", ocr_text.OcrUnavailableError),
+    ],
+)
+def test_google_ocr_classifies_provider_exception(
+    provider_error,
+    expected_exception,
+) -> None:
+    from google.api_core import exceptions as google_exceptions
+
+    errors = {
+        "forbidden": google_exceptions.Forbidden("permission denied"),
+        "quota": google_exceptions.ResourceExhausted("quota exceeded"),
+        "timeout": google_exceptions.DeadlineExceeded("provider timeout"),
+        "unavailable": google_exceptions.ServiceUnavailable("unavailable"),
+    }
+
+    class FailingClient:
+        def document_text_detection(self, **_kwargs):
+            raise errors[provider_error]
+
+    with pytest.raises(expected_exception):
+        ocr_text._run_google_ocr(FailingClient(), image_bytes())
+
+
+def test_google_ocr_classifies_retry_deadline() -> None:
+    from google.api_core import exceptions as google_exceptions
+
+    class RetryDeadlineClient:
+        def document_text_detection(self, **_kwargs):
+            raise google_exceptions.RetryError(
+                "retry deadline reached",
+                google_exceptions.DeadlineExceeded("provider timeout"),
+            )
+
+    with pytest.raises(ocr_text.OcrTimeoutError):
+        ocr_text._run_google_ocr(RetryDeadlineClient(), image_bytes())
 
 
 def test_high_confidence_original_uses_one_paid_ocr_call(monkeypatch) -> None:

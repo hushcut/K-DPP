@@ -1,11 +1,18 @@
 from io import BytesIO
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
 from apps.service import main as service_main
 from apps.symbol.model_io import ModelCheckpointError
-from apps.text.ocr_text import OcrServiceError
+from apps.text.ocr_text import (
+    OcrConfigurationError,
+    OcrQuotaExceededError,
+    OcrServiceError,
+    OcrTimeoutError,
+    OcrUnavailableError,
+)
 
 
 client = TestClient(service_main.app)
@@ -77,6 +84,42 @@ def test_analyze_label_maps_ocr_provider_failure_to_502(monkeypatch) -> None:
 
     assert response.status_code == 502
     assert response.json()["error_code"] == "ocr_service_failed"
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "error_code"),
+    [
+        (OcrConfigurationError("configuration"), 503, "ocr_not_configured"),
+        (
+            OcrQuotaExceededError("quota exceeded"),
+            503,
+            "ocr_quota_exceeded",
+        ),
+        (OcrTimeoutError("timeout"), 504, "ocr_timeout"),
+        (
+            OcrUnavailableError("unavailable"),
+            503,
+            "ocr_service_unavailable",
+        ),
+    ],
+)
+def test_analyze_label_maps_specific_ocr_failures(
+    monkeypatch,
+    error,
+    status_code,
+    error_code,
+) -> None:
+    def fail(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr(service_main, "analyze_label_image_bytes", fail)
+    response = client.post(
+        "/v1/analyze-label",
+        files={"file": ("label.png", image_bytes(), "image/png")},
+    )
+
+    assert response.status_code == status_code
+    assert response.json()["error_code"] == error_code
 
 
 def test_analyze_symbol_returns_versioned_success_contract(monkeypatch) -> None:

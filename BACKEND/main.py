@@ -19,8 +19,11 @@ if AI_MODULE_PATH.exists() and str(AI_MODULE_PATH) not in sys.path:
     sys.path.append(str(AI_MODULE_PATH))
 
 try:
-    from apps.text.ocr_text import run_ocr
+    from apps.text import ocr_text as ocr_text_module
+
+    run_ocr = ocr_text_module.run_ocr
 except Exception:
+    ocr_text_module = None
     run_ocr = None
 
 try:
@@ -273,10 +276,33 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
             credential_path=str(credential_path) if credential_path.exists() else "",
         )
     except Exception as exc:
+        status_code = 502
+        error_code = "ocr_service_failed"
+        message = "AI OCR 처리에 실패했습니다."
+
+        if ocr_text_module is not None:
+            if isinstance(exc, ocr_text_module.OcrConfigurationError):
+                status_code = 503
+                error_code = "ocr_not_configured"
+                message = "Google Vision OCR 설정을 확인해 주세요."
+            elif isinstance(exc, ocr_text_module.OcrQuotaExceededError):
+                status_code = 503
+                error_code = "ocr_quota_exceeded"
+                message = "Google Vision OCR 사용량 한도를 초과했습니다."
+            elif isinstance(exc, ocr_text_module.OcrTimeoutError):
+                status_code = 504
+                error_code = "ocr_timeout"
+                message = "Google Vision OCR 응답 시간이 초과되었습니다."
+            elif isinstance(exc, ocr_text_module.OcrUnavailableError):
+                status_code = 503
+                error_code = "ocr_service_unavailable"
+                message = "Google Vision OCR 서비스를 일시적으로 사용할 수 없습니다."
+
         raise HTTPException(
-            status_code=502,
+            status_code=status_code,
             detail={
-                "message": "AI OCR 처리에 실패했습니다.",
+                "message": message,
+                "error_code": error_code,
                 "error": str(exc),
             },
         ) from exc
