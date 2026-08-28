@@ -43,15 +43,12 @@ Widget _buildReportBody(
       closetProvider.currentReportItem;
 
   final isDark = Theme.of(context).brightness == Brightness.dark;
-  final backgroundColor = isDark
-      ? const Color(0xFF121212)
-      : const Color(0xFFF8F9FC);
-  final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+  final palette = AppPalette.of(context);
+  final backgroundColor = palette.background;
+  final cardColor = palette.card;
   final borderColor = isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade200;
   final primaryText = isDark ? Colors.white : const Color(0xFF1A1A1A);
-  final secondaryText = isDark
-      ? const Color(0xFFD1D1D6)
-      : const Color(0xFF5F6368);
+  final secondaryText = palette.textSecondary;
   if (item == null) {
     return Center(
       child: Text(
@@ -82,7 +79,7 @@ Widget _buildReportBody(
             children: [
               const Icon(
                 Icons.verified_user_outlined,
-                color: Color(0xFF4A4EFE),
+                color: AppPalette.accent,
                 size: 28,
               ),
               const SizedBox(width: 8),
@@ -154,7 +151,7 @@ Widget _buildReportBody(
                           : 'CO2eq 기준 서버 계산값'
                     : 'CO2eq 기준 임시 추정값',
                 icon: Icons.eco_outlined,
-                color: const Color(0xFF4A4EFE),
+                color: AppPalette.accent,
                 primaryText: primaryText,
                 secondaryText: secondaryText,
                 cardColor: cardColor,

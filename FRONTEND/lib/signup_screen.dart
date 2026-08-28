@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 
 import 'services/auth_api_service.dart';
+import 'theme/app_palette.dart';
 import 'widgets/app_back_button.dart';
 
 /// 닉네임·이메일·비밀번호를 입력받는 회원가입 폼 화면입니다.
@@ -202,7 +203,7 @@ class _SignupScreenState extends State<SignupScreen> {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
-        borderSide: const BorderSide(color: Color(0xFF4A4EFE), width: 1.5),
+        borderSide: const BorderSide(color: AppPalette.accent, width: 1.5),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
@@ -219,10 +220,9 @@ class _SignupScreenState extends State<SignupScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor = isDark
-        ? const Color(0xFF121212)
-        : const Color(0xFFF8F9FC);
-    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+    final palette = AppPalette.of(context);
+    final backgroundColor = palette.background;
+    final primaryText = palette.textPrimary;
     final secondaryText = isDark
         ? const Color(0xFFD1D1D6)
         : const Color(0xFF8C8C8C);
@@ -293,7 +293,7 @@ class _SignupScreenState extends State<SignupScreen> {
                           autofillHints: const [AutofillHints.nickname],
                           validator: _validateNickname,
                           style: TextStyle(color: primaryText),
-                          cursorColor: const Color(0xFF4A4EFE),
+                          cursorColor: AppPalette.accent,
                           decoration: _inputDecoration(
                             labelText: '닉네임',
                             hintText: '예: 홍길동',
@@ -308,7 +308,7 @@ class _SignupScreenState extends State<SignupScreen> {
                           autocorrect: false,
                           validator: _validateEmail,
                           style: TextStyle(color: primaryText),
-                          cursorColor: const Color(0xFF4A4EFE),
+                          cursorColor: AppPalette.accent,
                           decoration: _inputDecoration(
                             labelText: '이메일',
                             hintText: 'honggildong@example.com',
@@ -324,7 +324,7 @@ class _SignupScreenState extends State<SignupScreen> {
                           autocorrect: false,
                           validator: _validatePassword,
                           style: TextStyle(color: primaryText),
-                          cursorColor: const Color(0xFF4A4EFE),
+                          cursorColor: AppPalette.accent,
                           decoration: _inputDecoration(
                             labelText: '비밀번호',
                             hintText: '8자 이상 입력',
@@ -356,7 +356,7 @@ class _SignupScreenState extends State<SignupScreen> {
                           autocorrect: false,
                           validator: _validateConfirmPassword,
                           style: TextStyle(color: primaryText),
-                          cursorColor: const Color(0xFF4A4EFE),
+                          cursorColor: AppPalette.accent,
                           decoration: _inputDecoration(
                             labelText: '비밀번호 확인',
                             hintText: '비밀번호 다시 입력',
@@ -392,7 +392,7 @@ class _SignupScreenState extends State<SignupScreen> {
                             onPressed: _isLoading ? null : _handleSignup,
                             style: ElevatedButton.styleFrom(
                               elevation: 0,
-                              backgroundColor: const Color(0xFF4A4EFE),
+                              backgroundColor: AppPalette.accent,
                               disabledBackgroundColor: const Color(0x8C4A4EFE),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(30),

@@ -21,7 +21,7 @@ class ScanCameraSession extends ChangeNotifier {
   /// 요청 번호로 오래된 비동기 초기화 결과가 새 세션을 덮어쓰지 않게 한다.
   Future<void> initialize({required bool Function() canUseCamera}) async {
     if (!canUseCamera()) return;
-    if (isReady) return;
+    if (isReady || _isInitializing) return;
 
     final requestId = ++_requestId;
 
@@ -52,6 +52,13 @@ class ScanCameraSession extends ChangeNotifier {
 
       if (!canUseCamera() || requestId != _requestId) {
         await controller.dispose();
+
+        // 더 새로운 요청이 없다면 준비 중 표시를 반드시 되돌려,
+        // 다음 초기화가 막히지 않게 합니다.
+        if (requestId == _requestId) {
+          _isInitializing = false;
+          notifyListeners();
+        }
         return;
       }
 

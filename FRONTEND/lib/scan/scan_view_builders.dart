@@ -26,7 +26,6 @@ extension _ScanViewBuilders on _ScanScreenState {
       hasTriedSubmit: _hasTriedSubmit,
       isSaving: _isSaving,
       isScanFailed: _isScanFailed,
-      isManualMaterialMode: _isManualMaterialMode,
       scanFailureMessage: _scanFailureMessage,
       titleController: _titleController,
       selectedClothingType: _selectedClothingType,

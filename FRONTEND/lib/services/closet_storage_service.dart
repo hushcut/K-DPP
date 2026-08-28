@@ -10,6 +10,8 @@ abstract class ClosetStorage {
   Future<void> saveClothesList(List<Clothes> items);
   /// 계정과 연결되지 않은 옷장 목록을 불러온다.
   Future<List<Clothes>> loadClothesList();
+  /// 계정과 연결되지 않은 옷장 목록을 불러오되, 저장된 적이 없으면 null을 반환한다.
+  Future<List<Clothes>?> loadClothesListOrNull();
   /// 계정과 연결되지 않은 옷장 목록을 삭제한다.
   Future<void> clearClothesList();
 
@@ -19,6 +21,8 @@ abstract class ClosetStorage {
   Future<void> saveClothesListFor(String ownerEmail, List<Clothes> items);
   /// 특정 계정의 옷장 목록을 불러온다.
   Future<List<Clothes>> loadClothesListFor(String ownerEmail);
+  /// 특정 계정의 옷장 목록을 불러오되, 저장된 적이 없으면 null을 반환한다.
+  Future<List<Clothes>?> loadClothesListOrNullFor(String ownerEmail);
   /// 특정 계정의 옷장 목록을 삭제한다.
   Future<void> clearClothesListFor(String ownerEmail);
 
@@ -76,6 +80,13 @@ class ClosetStorageService implements ClosetStorage {
   }
 
   @override
+  Future<List<Clothes>?> loadClothesListOrNull() async {
+    final raw = await _prefs.getString(_closetItemsKey);
+    if (raw == null) return null;
+    return _decodeClothesList(raw);
+  }
+
+  @override
   Future<void> clearClothesList() async {
     await _prefs.remove(_closetItemsKey);
   }
@@ -99,6 +110,13 @@ class ClosetStorageService implements ClosetStorage {
   @override
   Future<List<Clothes>> loadClothesListFor(String ownerEmail) async {
     final raw = await _prefs.getString(_accountClosetKey(ownerEmail));
+    return _decodeClothesList(raw);
+  }
+
+  @override
+  Future<List<Clothes>?> loadClothesListOrNullFor(String ownerEmail) async {
+    final raw = await _prefs.getString(_accountClosetKey(ownerEmail));
+    if (raw == null) return null;
     return _decodeClothesList(raw);
   }
 

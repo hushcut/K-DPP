@@ -47,8 +47,20 @@ class FakeClosetStorage implements ClosetStorage {
   }
 
   @override
+  Future<List<Clothes>?> loadClothesListOrNull() async {
+    final items = _savedItems;
+    return items == null ? null : List<Clothes>.from(items);
+  }
+
+  @override
   Future<List<Clothes>> loadClothesListFor(String ownerEmail) async {
     return List<Clothes>.from(_accountItems[_normalizeEmail(ownerEmail)] ?? []);
+  }
+
+  @override
+  Future<List<Clothes>?> loadClothesListOrNullFor(String ownerEmail) async {
+    final items = _accountItems[_normalizeEmail(ownerEmail)];
+    return items == null ? null : List<Clothes>.from(items);
   }
 
   @override

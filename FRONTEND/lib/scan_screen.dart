@@ -44,10 +44,12 @@ class ScanScreen extends StatefulWidget {
 class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   // 스캔 흐름의 현재 단계를 나타냅니다.
   bool _isScanning = false;
+  // 앨범 선택창이 열려 있는 동안만 켜지는 잠금입니다.
+  // 카메라 사용 조건과 분리해 두어야 잠금이 남아도 카메라가 멈추지 않습니다.
+  bool _isPickingImage = false;
   bool _isScanComplete = false;
   bool _isScanFailed = false;
   bool _hasTriedSubmit = false;
-  bool _isManualMaterialMode = false;
   bool _isSaving = false;
   bool _hasRequestedMaterialCatalog = false;
 
@@ -76,7 +78,6 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   final MaterialInputCollection _materialInputs = MaterialInputCollection();
   final TextEditingController _titleController = TextEditingController();
   ClothingTypeOption _selectedClothingType = ClothingTypeCatalog.defaultOption;
-  String _selectedCategory = ClothingTypeCatalog.defaultOption.category;
 
   // 카메라 세션과 앱·탭 생명주기 연결을 한곳에서 관리합니다.
   final ScanCameraSession _cameraSession = ScanCameraSession();
@@ -103,6 +104,13 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   @override
   void didUpdateWidget(covariant ScanScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+
+    // 앨범 결과가 끝내 돌아오지 않은 경우를 대비해, 스캔 화면에 다시 들어오면
+    // 잠금을 풀어 앨범 버튼이 계속 막혀 있지 않도록 합니다.
+    if (!oldWidget.isActive && widget.isActive) {
+      _isPickingImage = false;
+    }
+
     _cameraLifecycle.handleActiveChanged(
       wasActive: oldWidget.isActive,
       isActive: widget.isActive,

@@ -70,6 +70,51 @@ void main() {
       }
     });
 
+    test('평균 배출량과 계산 기준 설명 필드도 함께 파싱한다', () async {
+      final client = MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'status': 'success',
+            'carbon_factor': 8.3,
+            'carbon_footprint': 1.46,
+            'carbon_footprint_min': 0.83,
+            'carbon_footprint_max': 2.08,
+            'average_carbon_footprint': 1.45,
+            'min_weight_grams': 100,
+            'max_weight_grams': 250,
+            'unit': 'kg CO2eq',
+            'saved_result_id': 22,
+            'weight_source': 'category_average',
+            'calculation_scope': 'material_production_estimate',
+            'calculation_basis': '소재 배출계수 × 의류 무게',
+            'calculation_source': '소재별 공개 배출계수 정리표',
+            'calculation_note': '운송·사용 단계는 포함하지 않습니다.',
+          }),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        ),
+      );
+      final service = CarbonApiService(client: client);
+
+      try {
+        final result = await service.calculate(
+          materials: const {'cotton': 100},
+          minWeightGram: 100,
+          maxWeightGram: 250,
+          accessToken: 'access-token',
+        );
+
+        expect(result.averageCarbonFootprint, 1.45);
+        expect(result.weightSource, 'category_average');
+        expect(result.calculationScope, 'material_production_estimate');
+        expect(result.calculationBasis, '소재 배출계수 × 의류 무게');
+        expect(result.calculationSource, '소재별 공개 배출계수 정리표');
+        expect(result.calculationNote, '운송·사용 단계는 포함하지 않습니다.');
+      } finally {
+        client.close();
+      }
+    });
+
     test('maps an unauthenticated response to unauthorized', () async {
       final client = MockClient(
         (_) async => http.Response(

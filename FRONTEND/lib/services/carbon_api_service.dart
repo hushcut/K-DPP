@@ -1,10 +1,9 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
 import '../config/api_environment.dart';
+import 'api_http.dart';
 
 /// 탄소 계산 API 오류를 사용자 안내와 대체 계산 정책에 사용할 범주로 구분한다.
 enum CarbonApiErrorType {
@@ -145,6 +144,12 @@ class CarbonCalculationResult {
     required this.maxWeightGram,
     required this.unit,
     required this.savedResultId,
+    this.averageCarbonFootprint,
+    this.weightSource,
+    this.calculationScope,
+    this.calculationBasis,
+    this.calculationSource,
+    this.calculationNote,
   });
 
   final double carbonFactor;
@@ -155,6 +160,13 @@ class CarbonCalculationResult {
   final double maxWeightGram;
   final String unit;
   final int savedResultId;
+  // 서버가 함께 내려주는 선택 필드: 평균 배출량과 계산 기준 설명입니다.
+  final double? averageCarbonFootprint;
+  final String? weightSource;
+  final String? calculationScope;
+  final String? calculationBasis;
+  final String? calculationSource;
+  final String? calculationNote;
 
   /// 숫자 필드를 변환하고 단위를 포함한 필수값이 누락되거나 형식이 잘못되면 [FormatException]을 던진다.
   factory CarbonCalculationResult.fromJson(Map<String, dynamic> json) {
@@ -187,6 +199,12 @@ class CarbonCalculationResult {
       maxWeightGram: maxWeightGram,
       unit: unit,
       savedResultId: savedResultId,
+      averageCarbonFootprint: _parseDouble(json['average_carbon_footprint']),
+      weightSource: _parseNullableString(json['weight_source']),
+      calculationScope: _parseNullableString(json['calculation_scope']),
+      calculationBasis: _parseNullableString(json['calculation_basis']),
+      calculationSource: _parseNullableString(json['calculation_source']),
+      calculationNote: _parseNullableString(json['calculation_note']),
     );
   }
 
@@ -194,6 +212,11 @@ class CarbonCalculationResult {
     if (value is double) return value;
     if (value is num) return value.toDouble();
     return double.tryParse(value?.toString() ?? '');
+  }
+
+  static String? _parseNullableString(dynamic value) {
+    final text = value?.toString().trim();
+    return text?.isNotEmpty == true ? text : null;
   }
 
   static int? _parseInt(dynamic value) {
@@ -207,11 +230,7 @@ class CarbonCalculationResult {
 class CarbonApiService {
   CarbonApiService({
     String? endpoint,
-    this.requestHeaders = const {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'ngrok-skip-browser-warning': 'true',
-    },
+    this.requestHeaders = kDefaultJsonApiHeaders,
     this.requestTimeout = const Duration(seconds: 20),
     this.client,
   }) : endpoint = endpoint ?? ApiEnvironment.carbonEndpoint;
@@ -229,34 +248,29 @@ class CarbonApiService {
     required double maxWeightGram,
     required String accessToken,
   }) async {
-    final activeClient = client ?? http.Client();
-    final shouldCloseClient = client == null;
-
     try {
-      final response = await activeClient
-          .post(
-            Uri.parse(endpoint),
-            headers: {
-              ...requestHeaders,
-              'Authorization': 'Bearer $accessToken',
-            },
-            body: jsonEncode({
-              'materials': materials,
-              'min_weight_grams': minWeightGram,
-              'max_weight_grams': maxWeightGram,
-            }),
-          )
-          .timeout(requestTimeout);
-      final responseBody = utf8.decode(response.bodyBytes);
+      final response = await runJsonApiRequest(
+        method: 'POST',
+        uri: Uri.parse(endpoint),
+        headers: requestHeaders,
+        timeout: requestTimeout,
+        jsonBody: {
+          'materials': materials,
+          'min_weight_grams': minWeightGram,
+          'max_weight_grams': maxWeightGram,
+        },
+        accessToken: accessToken,
+        client: client,
+      );
 
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (!response.isSuccess) {
         throw CarbonApiException.fromStatusCode(
           statusCode: response.statusCode,
-          responseBody: responseBody,
+          responseBody: response.body,
         );
       }
 
-      final decoded = jsonDecode(responseBody);
+      final decoded = jsonDecode(response.body);
 
       if (decoded is! Map<String, dynamic>) {
         throw const FormatException('응답이 JSON 객체 형식이 아닙니다.');
@@ -265,21 +279,17 @@ class CarbonApiService {
       return CarbonCalculationResult.fromJson(decoded);
     } on CarbonApiException {
       rethrow;
-    } on SocketException catch (error) {
-      throw CarbonApiException(
-        type: CarbonApiErrorType.network,
-        message: error.message,
-      );
-    } on http.ClientException catch (error) {
-      throw CarbonApiException(
-        type: CarbonApiErrorType.network,
-        message: error.message,
-      );
-    } on TimeoutException {
-      throw const CarbonApiException(
-        type: CarbonApiErrorType.timeout,
-        message: '탄소 계산 요청 시간이 초과되었습니다.',
-      );
+    } on ApiTransportException catch (error) {
+      throw switch (error.type) {
+        ApiTransportErrorType.network => CarbonApiException(
+          type: CarbonApiErrorType.network,
+          message: error.message,
+        ),
+        ApiTransportErrorType.timeout => const CarbonApiException(
+          type: CarbonApiErrorType.timeout,
+          message: '탄소 계산 요청 시간이 초과되었습니다.',
+        ),
+      };
     } on FormatException catch (error) {
       throw CarbonApiException(
         type: CarbonApiErrorType.invalidResponse,
@@ -290,10 +300,6 @@ class CarbonApiService {
         type: CarbonApiErrorType.unknown,
         message: error.toString(),
       );
-    } finally {
-      if (shouldCloseClient) {
-        activeClient.close();
-      }
     }
   }
 }

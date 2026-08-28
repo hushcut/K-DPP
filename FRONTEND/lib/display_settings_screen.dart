@@ -1,6 +1,7 @@
 // 블랙·화이트·시스템 화면 테마를 선택하고 미리 보는 설정 화면입니다.
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'theme/app_palette.dart';
 import 'theme_provider.dart';
 import 'widgets/app_back_button.dart';
 
@@ -41,18 +42,15 @@ class DisplaySettingsScreen extends StatelessWidget {
     final themeProvider = context.watch<ThemeProvider>();
     final currentMode = themeProvider.themeMode;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.of(context);
 
-    final backgroundColor = isDark
-        ? const Color(0xFF121212)
-        : const Color(0xFFF8F9FC);
-    final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final backgroundColor = palette.background;
+    final cardColor = palette.card;
     final borderColor = isDark
         ? const Color(0xFF2C2C2E)
         : const Color(0xFFEAEAEA);
-    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
-    final secondaryText = isDark
-        ? const Color(0xFFD1D1D6)
-        : const Color(0xFF5F6368);
+    final primaryText = palette.textPrimary;
+    final secondaryText = palette.textSecondary;
 
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -137,12 +135,13 @@ class _ThemeModeTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.of(context);
 
-    final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final cardColor = palette.card;
     final borderColor = selected
-        ? const Color(0xFF4A4EFE)
+        ? AppPalette.accent
         : (isDark ? const Color(0xFF2C2C2E) : const Color(0xFFEAEAEA));
-    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+    final primaryText = palette.textPrimary;
 
     return Semantics(
       label: '$title 테마',
@@ -178,7 +177,7 @@ class _ThemeModeTile extends StatelessWidget {
                       ? Icons.radio_button_checked
                       : Icons.radio_button_off,
                   color: selected
-                      ? const Color(0xFF4A4EFE)
+                      ? AppPalette.accent
                       : const Color(0xFF5F6368),
                 ),
               ],

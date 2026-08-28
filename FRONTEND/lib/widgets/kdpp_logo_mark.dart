@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_palette.dart';
+
 /// 지정한 정사각형 크기로 K-DPP 로고 자산을 표시하는 공용 위젯입니다.
 ///
 /// 자산을 불러오지 못하면 동일한 영역에 브랜드 색상의 친환경 아이콘을 표시합니다.
@@ -34,7 +36,7 @@ class KdppLogoMark extends StatelessWidget {
                 width: size,
                 height: size,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF4A4EFE),
+                  color: AppPalette.accent,
                   borderRadius: BorderRadius.circular(radius),
                 ),
                 child: Icon(

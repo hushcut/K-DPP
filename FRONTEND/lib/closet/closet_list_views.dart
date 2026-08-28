@@ -70,7 +70,7 @@ extension _ClosetListViews on _ClosetScreenState {
                   label: Text(isSearching ? '검색어 지우기' : '스캔하러 가기'),
                   style: ElevatedButton.styleFrom(
                     elevation: 0,
-                    backgroundColor: const Color(0xFF4A4EFE),
+                    backgroundColor: AppPalette.accent,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(horizontal: 18),
                     shape: RoundedRectangleBorder(
@@ -208,7 +208,7 @@ extension _ClosetListViews on _ClosetScreenState {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: isSelected
-                ? const Color(0xFF4A4EFE)
+                ? AppPalette.accent
                 : (isWarning
                       ? Colors.redAccent.shade200
                       : palette.borderColor),
@@ -245,7 +245,7 @@ extension _ClosetListViews on _ClosetScreenState {
             child: Icon(
               Icons.checkroom,
               color: isSelected
-                  ? const Color(0xFF4A4EFE)
+                  ? AppPalette.accent
                   : (isWarning
                         ? Colors.redAccent
                         : palette.secondaryText),
@@ -304,7 +304,7 @@ extension _ClosetListViews on _ClosetScreenState {
                             ? Icons.check_circle
                             : Icons.radio_button_unchecked,
                         color: isSelected
-                            ? const Color(0xFF4A4EFE)
+                            ? AppPalette.accent
                             : palette.secondaryText,
                       )
                     : Icon(

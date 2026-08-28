@@ -107,10 +107,9 @@ class _ReportEditSheetState extends State<_ReportEditSheet> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
-    final secondaryText = isDark
-        ? const Color(0xFFD1D1D6)
-        : const Color(0xFF5F6368);
+    final palette = AppPalette.of(context);
+    final primaryText = palette.textPrimary;
+    final secondaryText = palette.textSecondary;
     final inputFillColor = isDark ? const Color(0xFF2A2A2E) : Colors.white;
 
     return SafeArea(
@@ -226,7 +225,7 @@ class _ReportEditSheetState extends State<_ReportEditSheet> {
                   child: ElevatedButton(
                     onPressed: _submit,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF4A4EFE),
+                      backgroundColor: AppPalette.accent,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),

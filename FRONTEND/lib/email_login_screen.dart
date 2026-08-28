@@ -6,6 +6,7 @@ import 'closet_provider.dart';
 import 'services/auth_api_service.dart';
 import 'services/post_login_sync_service.dart';
 import 'signup_screen.dart';
+import 'theme/app_palette.dart';
 import 'widgets/app_back_button.dart';
 
 /// 로그인 요청의 진행 상태와 비밀번호 표시 상태를 관리하는 이메일 로그인 화면입니다.
@@ -189,7 +190,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
-        borderSide: const BorderSide(color: Color(0xFF4A4EFE), width: 1.5),
+        borderSide: const BorderSide(color: AppPalette.accent, width: 1.5),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
@@ -206,10 +207,9 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor = isDark
-        ? const Color(0xFF121212)
-        : const Color(0xFFF8F9FC);
-    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+    final palette = AppPalette.of(context);
+    final backgroundColor = palette.background;
+    final primaryText = palette.textPrimary;
     final secondaryText = isDark
         ? const Color(0xFFD1D1D6)
         : const Color(0xFF8C8C8C);
@@ -285,7 +285,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                           autocorrect: false,
                           validator: _validateEmail,
                           style: TextStyle(color: primaryText),
-                          cursorColor: const Color(0xFF4A4EFE),
+                          cursorColor: AppPalette.accent,
                           decoration: _inputDecoration(
                             labelText: '이메일',
                             hintText: 'honggildong@example.com',
@@ -301,7 +301,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                           autocorrect: false,
                           validator: _validatePassword,
                           style: TextStyle(color: primaryText),
-                          cursorColor: const Color(0xFF4A4EFE),
+                          cursorColor: AppPalette.accent,
                           decoration: _inputDecoration(
                             labelText: '비밀번호',
                             hintText: '8자 이상 입력',
@@ -336,7 +336,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                             onPressed: _isLoading ? null : _handleLogin,
                             style: ElevatedButton.styleFrom(
                               elevation: 0,
-                              backgroundColor: const Color(0xFF4A4EFE),
+                              backgroundColor: AppPalette.accent,
                               disabledBackgroundColor: const Color(0x8C4A4EFE),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(30),

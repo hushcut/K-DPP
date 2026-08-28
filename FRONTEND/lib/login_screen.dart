@@ -1,6 +1,7 @@
 // 로그인과 회원가입 진입점을 제공하는 인증 시작 화면입니다.
 import 'package:flutter/material.dart';
 
+import 'theme/app_palette.dart';
 import 'widgets/kdpp_logo_mark.dart';
 
 /// 서비스 소개와 함께 이메일 로그인·회원가입 화면으로 이동하는 버튼을 표시합니다.
@@ -10,14 +11,11 @@ class LoginScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.of(context);
 
-    final backgroundColor = isDark
-        ? const Color(0xFF121212)
-        : const Color(0xFFF8F9FC);
+    final backgroundColor = palette.background;
     final primaryText = isDark ? Colors.white : const Color(0xFF1A1A1A);
-    final secondaryText = isDark
-        ? const Color(0xFFD1D1D6)
-        : const Color(0xFF5F6368);
+    final secondaryText = palette.textSecondary;
     final subText = isDark ? const Color(0xFFB8B8BE) : const Color(0xFF5F6368);
 
     return Scaffold(
@@ -77,7 +75,7 @@ class LoginScreen extends StatelessWidget {
                                 },
                                 style: ElevatedButton.styleFrom(
                                   elevation: 0,
-                                  backgroundColor: const Color(0xFF4A4EFE),
+                                  backgroundColor: AppPalette.accent,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(16),
                                   ),

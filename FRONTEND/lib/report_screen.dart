@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'closet_provider.dart';
 import 'models/clothes.dart';
+import 'theme/app_palette.dart';
 import 'utils/scan_form_validator.dart';
 
 part 'report/report_body.dart';

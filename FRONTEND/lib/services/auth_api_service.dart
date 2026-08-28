@@ -1,11 +1,10 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
 import '../config/api_environment.dart';
 import '../models/analysis_history_record.dart';
+import 'api_http.dart';
 
 part 'auth_api_models.dart';
 
@@ -13,11 +12,7 @@ part 'auth_api_models.dart';
 class AuthApiService {
   AuthApiService({
     String? baseUrl,
-    this.requestHeaders = const {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'ngrok-skip-browser-warning': 'true',
-    },
+    this.requestHeaders = kDefaultJsonApiHeaders,
     this.requestTimeout = const Duration(seconds: 15),
     this.client,
   }) : baseUrl = baseUrl ?? ApiEnvironment.authBaseUrl;
@@ -50,53 +45,31 @@ class AuthApiService {
 
   /// Bearer 토큰으로 서버 세션 종료를 요청하고 통신 실패를 인증 예외로 변환한다.
   Future<void> logout({required String accessToken}) async {
-    final activeClient = client ?? http.Client();
-    final shouldCloseClient = client == null;
-
     try {
-      final response = await activeClient
-          .post(
-            _buildUri('/auth/logout'),
-            headers: {
-              ...requestHeaders,
-              'Authorization': 'Bearer $accessToken',
-            },
-          )
-          .timeout(requestTimeout);
-      final responseBody = utf8.decode(response.bodyBytes);
+      final response = await runJsonApiRequest(
+        method: 'POST',
+        uri: _buildUri('/auth/logout'),
+        headers: requestHeaders,
+        timeout: requestTimeout,
+        accessToken: accessToken,
+        client: client,
+      );
 
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (!response.isSuccess) {
         throw AuthApiException.fromStatusCode(
           statusCode: response.statusCode,
-          responseBody: responseBody,
+          responseBody: response.body,
         );
       }
     } on AuthApiException {
       rethrow;
-    } on SocketException catch (error) {
-      throw AuthApiException(
-        type: AuthApiErrorType.network,
-        message: error.message,
-      );
-    } on http.ClientException catch (error) {
-      throw AuthApiException(
-        type: AuthApiErrorType.network,
-        message: error.message,
-      );
-    } on TimeoutException {
-      throw const AuthApiException(
-        type: AuthApiErrorType.timeout,
-        message: '로그아웃 요청 시간이 초과되었습니다.',
-      );
+    } on ApiTransportException catch (error) {
+      throw _fromTransport(error, timeoutMessage: '로그아웃 요청 시간이 초과되었습니다.');
     } catch (error) {
       throw AuthApiException(
         type: AuthApiErrorType.unknown,
         message: error.toString(),
       );
-    } finally {
-      if (shouldCloseClient) {
-        activeClient.close();
-      }
     }
   }
 
@@ -111,29 +84,24 @@ class AuthApiService {
   Future<AuthSessionSnapshot> fetchSessionSnapshot({
     required String accessToken,
   }) async {
-    final activeClient = client ?? http.Client();
-    final shouldCloseClient = client == null;
-
     try {
-      final response = await activeClient
-          .get(
-            _buildUri('/me/history'),
-            headers: {
-              ...requestHeaders,
-              'Authorization': 'Bearer $accessToken',
-            },
-          )
-          .timeout(requestTimeout);
-      final responseBody = utf8.decode(response.bodyBytes);
+      final response = await runJsonApiRequest(
+        method: 'GET',
+        uri: _buildUri('/me/history'),
+        headers: requestHeaders,
+        timeout: requestTimeout,
+        accessToken: accessToken,
+        client: client,
+      );
 
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (!response.isSuccess) {
         throw AuthApiException.fromStatusCode(
           statusCode: response.statusCode,
-          responseBody: responseBody,
+          responseBody: response.body,
         );
       }
 
-      final decoded = jsonDecode(responseBody);
+      final decoded = jsonDecode(response.body);
 
       if (decoded is! Map<String, dynamic>) {
         throw const FormatException('응답이 JSON 객체 형식이 아닙니다.');
@@ -177,21 +145,8 @@ class AuthApiService {
       );
     } on AuthApiException {
       rethrow;
-    } on SocketException catch (error) {
-      throw AuthApiException(
-        type: AuthApiErrorType.network,
-        message: error.message,
-      );
-    } on http.ClientException catch (error) {
-      throw AuthApiException(
-        type: AuthApiErrorType.network,
-        message: error.message,
-      );
-    } on TimeoutException {
-      throw const AuthApiException(
-        type: AuthApiErrorType.timeout,
-        message: '로그인 확인 시간이 초과되었습니다.',
-      );
+    } on ApiTransportException catch (error) {
+      throw _fromTransport(error, timeoutMessage: '로그인 확인 시간이 초과되었습니다.');
     } on FormatException catch (error) {
       throw AuthApiException(
         type: AuthApiErrorType.invalidResponse,
@@ -202,10 +157,6 @@ class AuthApiService {
         type: AuthApiErrorType.unknown,
         message: error.toString(),
       );
-    } finally {
-      if (shouldCloseClient) {
-        activeClient.close();
-      }
     }
   }
 
@@ -214,47 +165,31 @@ class AuthApiService {
     Map<String, String> body, {
     bool requiresAccessToken = false,
   }) async {
-    final activeClient = client ?? http.Client();
-    final shouldCloseClient = client == null;
-
     try {
-      final response = await activeClient
-          .post(
-            _buildUri(path),
-            headers: requestHeaders,
-            body: jsonEncode(body),
-          )
-          .timeout(requestTimeout);
-      final responseBody = utf8.decode(response.bodyBytes);
+      final response = await runJsonApiRequest(
+        method: 'POST',
+        uri: _buildUri(path),
+        headers: requestHeaders,
+        timeout: requestTimeout,
+        jsonBody: body,
+        client: client,
+      );
 
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (!response.isSuccess) {
         throw AuthApiException.fromStatusCode(
           statusCode: response.statusCode,
-          responseBody: responseBody,
+          responseBody: response.body,
         );
       }
 
       return _parseResult(
-        responseBody,
+        response.body,
         requiresAccessToken: requiresAccessToken,
       );
     } on AuthApiException {
       rethrow;
-    } on SocketException catch (error) {
-      throw AuthApiException(
-        type: AuthApiErrorType.network,
-        message: error.message,
-      );
-    } on http.ClientException catch (error) {
-      throw AuthApiException(
-        type: AuthApiErrorType.network,
-        message: error.message,
-      );
-    } on TimeoutException {
-      throw const AuthApiException(
-        type: AuthApiErrorType.timeout,
-        message: '인증 요청 시간이 초과되었습니다.',
-      );
+    } on ApiTransportException catch (error) {
+      throw _fromTransport(error, timeoutMessage: '인증 요청 시간이 초과되었습니다.');
     } on FormatException catch (error) {
       throw AuthApiException(
         type: AuthApiErrorType.invalidResponse,
@@ -265,11 +200,24 @@ class AuthApiService {
         type: AuthApiErrorType.unknown,
         message: error.toString(),
       );
-    } finally {
-      if (shouldCloseClient) {
-        activeClient.close();
-      }
     }
+  }
+
+  /// 공통 전송 오류를 인증 오류 유형으로 변환한다.
+  AuthApiException _fromTransport(
+    ApiTransportException error, {
+    required String timeoutMessage,
+  }) {
+    return switch (error.type) {
+      ApiTransportErrorType.network => AuthApiException(
+        type: AuthApiErrorType.network,
+        message: error.message,
+      ),
+      ApiTransportErrorType.timeout => AuthApiException(
+        type: AuthApiErrorType.timeout,
+        message: timeoutMessage,
+      ),
+    };
   }
 
   Uri _buildUri(String path) {

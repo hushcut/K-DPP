@@ -73,8 +73,9 @@ void _showDisposalBottomSheet(
   String disposalGuide,
 ) {
   final isDark = Theme.of(context).brightness == Brightness.dark;
+  final palette = AppPalette.of(context);
   final backgroundColor = isDark ? const Color(0xFF121212) : Colors.white;
-  final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+  final primaryText = palette.textPrimary;
   final secondaryText = isDark ? const Color(0xFFD1D1D6) : Colors.black87;
 
   showModalBottomSheet(
@@ -216,7 +217,7 @@ Widget _buildGuideSection({
                   child: Icon(
                     Icons.circle,
                     size: 8,
-                    color: Color(0xFF4A4EFE),
+                    color: AppPalette.accent,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -306,14 +307,14 @@ Widget _buildTagChip({
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 16, color: const Color(0xFF4A4EFE)),
+          Icon(icon, size: 16, color: AppPalette.accent),
           const SizedBox(width: 6),
           Flexible(
             child: Text(
               label,
               softWrap: true,
               style: const TextStyle(
-                color: Color(0xFF4A4EFE),
+                color: AppPalette.accent,
                 fontWeight: FontWeight.w600,
                 fontSize: 12,
               ),

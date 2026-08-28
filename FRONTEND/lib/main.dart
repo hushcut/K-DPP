@@ -9,6 +9,7 @@ import 'splash_screen.dart';
 import 'email_login_screen.dart';
 import 'signup_screen.dart';
 import 'settings_screen.dart';
+import 'theme/app_palette.dart';
 import 'theme_provider.dart';
 import 'display_settings_screen.dart';
 
@@ -41,7 +42,7 @@ class MyApp extends StatelessWidget {
       brightness: Brightness.light,
       scaffoldBackgroundColor: const Color(0xFFF8F9FC),
       colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF4A4EFE),
+        seedColor: AppPalette.accent,
         brightness: Brightness.light,
       ),
       useMaterial3: true,
@@ -56,7 +57,7 @@ class MyApp extends StatelessWidget {
       cardColor: const Color(0xFF1C1C1E),
       dividerColor: const Color(0xFF2C2C2E),
       colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF4A4EFE),
+        seedColor: AppPalette.accent,
         brightness: Brightness.dark,
         surface: const Color(0xFF1C1C1E),
       ),

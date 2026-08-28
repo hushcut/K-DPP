@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'services/auth_session_validation_service.dart';
+import 'theme/app_palette.dart';
 import 'widgets/kdpp_logo_mark.dart';
 
 /// 초기화 결과에 따라 메인 화면 또는 로그인 화면으로 사용자를 안내합니다.
@@ -59,6 +60,9 @@ class _SplashScreenState extends State<SplashScreen>
     final provider = context.read<ClosetProvider>();
     var shouldOpenMain = false;
 
+    // 최소 표시 시간을 초기화와 동시에 진행해 대기 시간이 합산되지 않게 합니다.
+    final minimumDisplay = Future.delayed(widget.minimumDisplayDuration);
+
     try {
       await provider.loadFromStorage();
 
@@ -97,7 +101,7 @@ class _SplashScreenState extends State<SplashScreen>
       debugPrintStack(stackTrace: stackTrace);
     }
 
-    await Future.delayed(widget.minimumDisplayDuration);
+    await minimumDisplay;
 
     if (!mounted) return;
 
@@ -116,12 +120,10 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.of(context);
 
-    final backgroundColor = isDark
-        ? const Color(0xFF121212)
-        : const Color(0xFFF8F9FC);
-    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+    final backgroundColor = palette.background;
+    final primaryText = palette.textPrimary;
 
     return Scaffold(
       backgroundColor: backgroundColor,

@@ -17,11 +17,9 @@ extension _ScanResultActions on _ScanScreenState {
 
     _updateState(() {
       _selectedClothingType = draft.clothingType;
-      _selectedCategory = draft.category;
       _isScanning = false;
       _isScanComplete = true;
       _isScanFailed = isScanFailed;
-      _isManualMaterialMode = draft.isManualMaterialMode;
       _scannedCare = draft.careInstruction;
       _scanFailureMessage = failureMessage;
       _originalScannedMaterials = Map.unmodifiable(draft.materials);
@@ -56,7 +54,6 @@ extension _ScanResultActions on _ScanScreenState {
 
     _updateState(() {
       _selectedClothingType = option;
-      _selectedCategory = option.category;
 
       if (shouldReplaceTitle) {
         _titleController.text = option.defaultTitle;
@@ -134,7 +131,6 @@ extension _ScanResultActions on _ScanScreenState {
       _isScanning = false;
       _isScanComplete = false;
       _isScanFailed = false;
-      _isManualMaterialMode = false;
       _scannedCare = '';
       _scanFailureMessage = null;
       _originalScannedMaterials = const {};
@@ -143,7 +139,6 @@ extension _ScanResultActions on _ScanScreenState {
       _serverWeightGram = null;
       _serverCalculationMethod = null;
       _selectedClothingType = ClothingTypeCatalog.defaultOption;
-      _selectedCategory = _selectedClothingType.category;
       _titleController.text = '새로 스캔한 의류';
       _hasTriedSubmit = false;
       _isSaving = false;

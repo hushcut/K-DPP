@@ -374,3 +374,4 @@ app.*.symbols
 # 파트별 전달용 협업 문서 (커밋하지 않고 직접 공유)
 docs/BACKEND_REQUESTS.md
 docs/AI_REQUESTS.md
+docs/MERGE_PLAN.md

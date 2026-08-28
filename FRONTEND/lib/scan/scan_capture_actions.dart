@@ -33,7 +33,6 @@ extension _ScanCaptureActions on _ScanScreenState {
       _isScanFailed = false;
       _hasTriedSubmit = false;
       _isSaving = false;
-      _isManualMaterialMode = false;
       _scanFailureMessage = null;
     });
 
@@ -61,7 +60,6 @@ extension _ScanCaptureActions on _ScanScreenState {
       // _isScanning은 유형 선택이 끝날 때까지 유지해 대기 중 카메라 재초기화를 막습니다.
       _updateState(() {
         _selectedClothingType = inferredType;
-        _selectedCategory = inferredType.category;
       });
 
       // 무게 범위와 분류를 확정할 수 있도록 분석 유형을 사용자에게 확인받습니다.
@@ -139,7 +137,6 @@ extension _ScanCaptureActions on _ScanScreenState {
       _isScanning = false;
       _isScanComplete = false;
       _isScanFailed = false;
-      _isManualMaterialMode = false;
       _scannedCare = '';
       _scanFailureMessage = null;
       _originalScannedMaterials = const {};
@@ -156,7 +153,7 @@ extension _ScanCaptureActions on _ScanScreenState {
 
   /// 카메라 촬영 결과를 분기하고 임시 파일은 분석이 끝난 뒤 정리합니다.
   Future<void> _takePicture() async {
-    if (_isScanning) return;
+    if (_isScanning || _isPickingImage) return;
 
     final captureResult = await _scanCaptureService.captureFromCamera(
       cameraSession: _cameraSession,
@@ -219,18 +216,24 @@ extension _ScanCaptureActions on _ScanScreenState {
 
   /// 카메라를 잠시 해제한 뒤 앨범 이미지를 같은 분석 흐름으로 전달합니다.
   Future<void> _pickFromGallery() async {
-    if (_isScanning) return;
+    if (_isScanning || _isPickingImage) return;
 
-    // 앨범 선택이 끝날 때까지 촬영·중복 선택이 겹치지 않게 잠급니다.
-    _updateState(() {
-      _isScanning = true;
-    });
+    // 앨범 선택 잠금은 카메라 사용 조건과 분리해, 혹시 잠금이 남더라도
+    // 카메라가 다시 켜지는 것을 막지 않도록 합니다.
+    _isPickingImage = true;
 
-    await _cameraLifecycle.disposeCamera();
+    final ScanCaptureResult captureResult;
 
-    if (!mounted) return;
+    try {
+      await _cameraLifecycle.disposeCamera();
 
-    final captureResult = await _scanCaptureService.pickFromGallery();
+      if (!mounted) return;
+
+      captureResult = await _scanCaptureService.pickFromGallery();
+    } finally {
+      // 예외로 끝나더라도 앨범 버튼이 영구히 잠기지 않게 합니다.
+      _isPickingImage = false;
+    }
 
     if (!mounted) return;
 
@@ -240,16 +243,10 @@ extension _ScanCaptureActions on _ScanScreenState {
         return;
 
       case ScanCaptureCancelled():
-        _updateState(() {
-          _isScanning = false;
-        });
         _cameraLifecycle.startIfNeeded();
         return;
 
       case ScanCaptureFailure(:final message):
-        _updateState(() {
-          _isScanning = false;
-        });
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(message)));
@@ -258,9 +255,6 @@ extension _ScanCaptureActions on _ScanScreenState {
 
       case ScanCaptureBlocked():
       case ScanCaptureBusy():
-        _updateState(() {
-          _isScanning = false;
-        });
         _cameraLifecycle.startIfNeeded();
         return;
     }

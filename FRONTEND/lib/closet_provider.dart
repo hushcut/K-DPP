@@ -1,4 +1,5 @@
 // 로그인 사용자별 옷장, 선택 의류, 인증 세션을 메모리와 로컬 저장소에 동기화하는 파일입니다.
+import 'dart:async';
 import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'models/analysis_history_record.dart';
@@ -201,8 +202,13 @@ class ClosetProvider with ChangeNotifier {
 
   /// 저장된 프로필과 세션을 복원하고 유효한 계정의 전용 옷장을 불러옵니다.
   Future<void> loadFromStorage() async {
-    final savedUserName = await _storageService.loadUserName();
-    final savedUserEmail = await _storageService.loadUserEmail();
+    // 서로 독립적인 저장소 읽기는 병렬로 실행해 시작 시간을 줄입니다.
+    final (savedUserName, savedUserEmail, savedNameCustomized) =
+        await (
+          _storageService.loadUserName(),
+          _storageService.loadUserEmail(),
+          _storageService.loadUserNameCustomized(),
+        ).wait;
     AuthSession? savedAuthSession;
 
     try {
@@ -216,7 +222,7 @@ class ClosetProvider with ChangeNotifier {
       _userName = savedUserName.trim();
     }
 
-    _isUserNameCustomized = await _storageService.loadUserNameCustomized();
+    _isUserNameCustomized = savedNameCustomized;
 
     if (savedUserEmail != null && savedUserEmail.trim().isNotEmpty) {
       _userEmail = savedUserEmail.trim();
@@ -367,6 +373,11 @@ class ClosetProvider with ChangeNotifier {
         maxWeightGram: record.maxWeightGram,
         savedResultId: current.savedResultId,
         registeredAt: current.registeredAt,
+        weightSource: current.weightSource,
+        calculationScope: current.calculationScope,
+        calculationBasis: current.calculationBasis,
+        calculationSource: current.calculationSource,
+        calculationNote: current.calculationNote,
       );
 
       if (updatedCount == 0) {
@@ -412,23 +423,19 @@ class ClosetProvider with ChangeNotifier {
       return;
     }
 
-    final hasAccountData = await _storageService.hasSavedClothesListFor(
+    // 존재 확인과 로드를 한 번의 읽기로 처리해 시작 경로의 저장소 I/O를 줄입니다.
+    final accountItems = await _storageService.loadClothesListOrNullFor(
       normalizedEmail,
     );
-    final accountItems = hasAccountData
-        ? await _storageService.loadClothesListFor(normalizedEmail)
-        : const <Clothes>[];
+    final hasAccountData = accountItems != null;
 
     // 예전 공용 옷장은 계정 옷장에 실제로 합쳐 저장한 뒤에만 비워서 유실을 막습니다.
-    var shouldClearLegacyData = false;
-    var legacyItems = const <Clothes>[];
+    final legacyItems = migrateLegacyData
+        ? await _storageService.loadClothesListOrNull()
+        : null;
+    final shouldClearLegacyData = legacyItems != null;
 
-    if (migrateLegacyData && await _storageService.hasSavedClothesList()) {
-      legacyItems = await _storageService.loadClothesList();
-      shouldClearLegacyData = true;
-    }
-
-    final savedItems = [...accountItems, ...legacyItems];
+    final savedItems = [...?accountItems, ...?legacyItems];
     final migratedItems = savedItems
         .where((item) => !_isLegacySampleClothes(item))
         .toList();

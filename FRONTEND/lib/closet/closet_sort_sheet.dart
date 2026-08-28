@@ -5,7 +5,8 @@ extension _ClosetSortSheet on _ClosetScreenState {
   /// 정렬 기준 선택 시트를 열고 선택 결과를 화면 상태에 반영합니다.
   Future<void> _showSortBottomSheet() async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+    final palette = AppPalette.of(context);
+    final primaryText = palette.textPrimary;
     final sheetColor = isDark ? const Color(0xFF121212) : Colors.white;
     final secondaryText = isDark
         ? const Color(0xFFD1D1D6)
@@ -20,7 +21,8 @@ extension _ClosetSortSheet on _ClosetScreenState {
       ),
       builder: (context) {
         return SafeArea(
-          child: Padding(
+          // 작은 화면이나 큰 글자 설정에서 옵션이 잘리지 않도록 스크롤을 허용합니다.
+          child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -98,14 +100,14 @@ extension _ClosetSortSheet on _ClosetScreenState {
                 label,
                 style: TextStyle(
                   fontSize: 18,
-                  color: isSelected ? const Color(0xFF4A4EFE) : primaryText,
+                  color: isSelected ? AppPalette.accent : primaryText,
                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                 ),
               ),
             ),
             Icon(
               isSelected ? Icons.check : Icons.radio_button_unchecked,
-              color: isSelected ? const Color(0xFF4A4EFE) : secondaryText,
+              color: isSelected ? AppPalette.accent : secondaryText,
             ),
           ],
         ),

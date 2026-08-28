@@ -95,14 +95,12 @@ Widget _buildProductionCarbonCard(
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: const Color(
-                  0xFF4A4EFE,
-                ).withValues(alpha: isDark ? 0.22 : 0.10),
+                color: AppPalette.accent.withValues(alpha: isDark ? 0.22 : 0.10),
                 borderRadius: BorderRadius.circular(14),
               ),
               child: const Icon(
                 Icons.factory_outlined,
-                color: Color(0xFF4A4EFE),
+                color: AppPalette.accent,
               ),
             ),
             const SizedBox(width: 14),
@@ -159,10 +157,92 @@ Widget _buildProductionCarbonCard(
           primaryText: primaryText,
           secondaryText: secondaryText,
         ),
+        // 서버 계산일 때만 백엔드가 내려준 계산 범위·근거·출처를 보여 줍니다.
+        if (item.carbonFootprintSource == CarbonFootprintSource.server &&
+            (item.calculationScope != null ||
+                item.calculationBasis != null ||
+                item.calculationSource != null ||
+                item.calculationNote != null)) ...[
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? AppPalette.dark.background
+                  : AppPalette.light.background,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: borderColor),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '계산 기준',
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                if (item.calculationScope != null)
+                  Text(
+                    _calculationScopeLabel(item.calculationScope!),
+                    style: TextStyle(
+                      color: secondaryText,
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  ),
+                if (item.calculationBasis != null)
+                  Text(
+                    item.calculationBasis!,
+                    style: TextStyle(
+                      color: secondaryText,
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  ),
+                if (item.calculationSource != null)
+                  Text(
+                    '출처: ${item.calculationSource!}',
+                    style: TextStyle(
+                      color: secondaryText,
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  ),
+                if (item.calculationNote != null)
+                  Text(
+                    item.calculationNote!,
+                    style: TextStyle(
+                      color: secondaryText,
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
       ],
     ),
   );
 }
+
+// 서버가 내려준 계산 범위 코드를 사용자 문구로 바꿉니다.
+String _calculationScopeLabel(String scope) {
+  if (scope == 'material_production_estimate') {
+    return '범위: 원료 및 소재 생산 단계 추정';
+  }
+  return '범위: $scope';
+}
+
+// 미국 EPA 환산 기준을 참고한 생활 속 탄소 비교 계수입니다. (develop d0df5a4 기준)
+const double _passengerCarKgCo2EqPerKm = 0.244;
+const double _smartphoneChargeKgCo2Eq = 0.0124;
+const double _led10WKgCo2EqPerHour = 0.004;
 
 // kg CO2eq를 자동차 거리·충전 횟수·전구 사용 시간으로 단순 환산합니다.
 Widget _buildCarbonComparisonCard(
@@ -178,17 +258,17 @@ Widget _buildCarbonComparisonCard(
     _CarbonComparisonData(
       icon: Icons.directions_car_filled_outlined,
       title: '자동차',
-      value: '약 ${_formatImpactValue(carbon / 0.2)} km',
+      value: '약 ${_formatImpactValue(carbon / _passengerCarKgCo2EqPerKm)} km',
     ),
     _CarbonComparisonData(
       icon: Icons.smartphone_outlined,
       title: '스마트폰',
-      value: '약 ${_formatImpactValue(carbon / 0.012)}회 충전',
+      value: '약 ${_formatImpactValue(carbon / _smartphoneChargeKgCo2Eq)}회 충전',
     ),
     _CarbonComparisonData(
       icon: Icons.lightbulb_outline,
       title: 'LED 전구',
-      value: '약 ${_formatImpactValue(carbon / 0.02)}시간',
+      value: '약 ${_formatImpactValue(carbon / _led10WKgCo2EqPerHour)}시간',
     ),
   ];
 
@@ -260,7 +340,10 @@ Widget _buildCarbonComparisonCard(
         ),
         const SizedBox(height: 12),
         Text(
-          '비교값은 수치를 쉽게 이해하기 위한 대략적인 환산입니다.',
+          '비교값은 사용자 이해를 위한 참고 환산값이며 공식 인증값이 아닙니다. '
+          '미국 EPA 환산 기준을 참고해 자동차 0.244 kg CO2eq/km, '
+          '스마트폰 완전 충전 0.0124 kg CO2eq/회를 적용했습니다. '
+          'LED 전구는 10W 소비전력 기준 0.004 kg CO2eq/시간으로 계산했습니다.',
           style: TextStyle(color: secondaryText, fontSize: 12, height: 1.4),
         ),
       ],
@@ -286,7 +369,7 @@ Widget _buildCarbonScopeNotice({
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Icon(Icons.info_outline, color: Color(0xFF4A4EFE), size: 20),
+        const Icon(Icons.info_outline, color: AppPalette.accent, size: 20),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
@@ -322,7 +405,7 @@ Widget _buildCalculationBasisCard(
           children: [
             const Icon(
               Icons.fact_check_outlined,
-              color: Color(0xFF4A4EFE),
+              color: AppPalette.accent,
               size: 20,
             ),
             const SizedBox(width: 8),
@@ -441,7 +524,7 @@ Widget _buildComparisonTile(
     ),
     child: Row(
       children: [
-        Icon(data.icon, color: const Color(0xFF4A4EFE), size: 22),
+        Icon(data.icon, color: AppPalette.accent, size: 22),
         const SizedBox(width: 10),
         Expanded(
           child: Column(

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'models/clothes.dart';
+import 'theme/app_palette.dart';
 
 /// [ClosetProvider]의 집계값을 카드 형태로 표시하고 주요 탭 이동 콜백을 제공합니다.
 class HomeScreen extends StatelessWidget {
@@ -29,12 +30,11 @@ class HomeScreen extends StatelessWidget {
     final userName = closetProvider.userName;
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.of(context);
 
     final primaryText = isDark ? Colors.white : const Color(0xFF1A1A1A);
-    final secondaryText = isDark
-        ? const Color(0xFFD1D1D6)
-        : const Color(0xFF5F6368);
-    final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final secondaryText = palette.textSecondary;
+    final cardColor = palette.card;
     final cardBorderColor = isDark
         ? const Color(0xFF2C2C2E)
         : Colors.grey.shade200;
@@ -104,7 +104,7 @@ class HomeScreen extends StatelessWidget {
                   icon: const Icon(Icons.checkroom_outlined, size: 16),
                   label: const Text('옷장 보기'),
                   style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFF4A4EFE),
+                    foregroundColor: AppPalette.accent,
                     minimumSize: const Size(0, 40),
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -185,11 +185,11 @@ class HomeScreen extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: const Color(0xFF4A4EFE),
+        color: AppPalette.accent,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF4A4EFE).withValues(alpha: 0.30),
+            color: AppPalette.accent.withValues(alpha: 0.30),
             blurRadius: 15,
             offset: const Offset(0, 8),
           ),
@@ -408,7 +408,7 @@ class HomeScreen extends StatelessWidget {
                 label: const Text('스캔하러 가기'),
                 style: ElevatedButton.styleFrom(
                   elevation: 0,
-                  backgroundColor: const Color(0xFF4A4EFE),
+                  backgroundColor: AppPalette.accent,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),

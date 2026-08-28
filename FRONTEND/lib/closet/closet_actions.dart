@@ -97,13 +97,12 @@ extension _ClosetActions on _ClosetScreenState {
   /// 길게 누른 항목을 선택하고 순서 변경 모드는 종료합니다.
   void _enterSelectionMode(Clothes item) {
     _updateState(() {
-      _selectionMode = true;
       _reorderMode = false;
       _selectedItems.add(item);
     });
   }
 
-  /// 항목 선택을 전환하고 선택 항목이 없으면 선택 모드를 끝냅니다.
+  /// 항목 선택을 전환합니다. 선택이 모두 해제되면 선택 모드도 함께 끝납니다.
   void _toggleSelection(Clothes item) {
     _updateState(() {
       if (_selectedItems.contains(item)) {
@@ -111,17 +110,12 @@ extension _ClosetActions on _ClosetScreenState {
       } else {
         _selectedItems.add(item);
       }
-
-      if (_selectedItems.isEmpty) {
-        _selectionMode = false;
-      }
     });
   }
 
   /// 선택 상태를 모두 초기화합니다.
   void _exitSelectionMode() {
     _updateState(() {
-      _selectionMode = false;
       _selectedItems.clear();
     });
   }
@@ -134,13 +128,14 @@ extension _ClosetActions on _ClosetScreenState {
       context: context,
       builder: (dialogContext) {
         final isDark = Theme.of(dialogContext).brightness == Brightness.dark;
+        final palette = AppPalette.of(dialogContext);
 
         return AlertDialog(
-          backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+          backgroundColor: palette.card,
           title: Text(
             '선택한 의류 삭제',
             style: TextStyle(
-              color: isDark ? Colors.white : const Color(0xFF111111),
+              color: palette.textPrimary,
             ),
           ),
           content: Text(
@@ -184,7 +179,6 @@ extension _ClosetActions on _ClosetScreenState {
         _selectedItems
           ..clear()
           ..addAll(targets.where(restoredItems.contains));
-        _selectionMode = _selectedItems.isNotEmpty;
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -196,7 +190,6 @@ extension _ClosetActions on _ClosetScreenState {
     if (!mounted) return;
 
     _updateState(() {
-      _selectionMode = false;
       _selectedItems.clear();
     });
 
@@ -210,7 +203,6 @@ extension _ClosetActions on _ClosetScreenState {
     _updateState(() {
       _reorderMode = !_reorderMode;
       if (_reorderMode) {
-        _selectionMode = false;
         _selectedItems.clear();
       }
     });

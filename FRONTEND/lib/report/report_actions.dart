@@ -8,16 +8,17 @@ Future<void> _confirmDelete(
   VoidCallback? onDeleted,
 }) async {
   final isDark = Theme.of(context).brightness == Brightness.dark;
+  final palette = AppPalette.of(context);
 
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) {
       return AlertDialog(
-        backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+        backgroundColor: palette.card,
         title: Text(
           '의류 삭제',
           style: TextStyle(
-            color: isDark ? Colors.white : const Color(0xFF111111),
+            color: palette.textPrimary,
           ),
         ),
         content: Text(

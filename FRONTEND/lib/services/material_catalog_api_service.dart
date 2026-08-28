@@ -1,10 +1,10 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
 import '../config/api_environment.dart';
+import 'api_http.dart';
 
 /// 서버 소재 카탈로그의 식별자, 한·영 이름, 검색 별칭을 표현한다.
 class MaterialCatalogItem {
@@ -83,34 +83,29 @@ class MaterialCatalogApiService {
 
   /// 목록 JSON만 허용하며, 서비스가 직접 만든 HTTP 클라이언트는 요청 후 닫는다.
   Future<List<MaterialCatalogItem>> fetchMaterials() async {
-    final activeClient = client ?? http.Client();
-    final shouldCloseClient = client == null;
+    final response = await runJsonApiRequest(
+      method: 'GET',
+      uri: Uri.parse(endpoint),
+      headers: requestHeaders,
+      timeout: requestTimeout,
+      client: client,
+    );
 
-    try {
-      final response = await activeClient
-          .get(Uri.parse(endpoint), headers: requestHeaders)
-          .timeout(requestTimeout);
-
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException('소재 기준표 요청에 실패했습니다. (${response.statusCode})');
-      }
-
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-      if (decoded is! List) {
-        throw const FormatException('소재 기준표가 목록 형식이 아닙니다.');
-      }
-
-      return decoded
-          .whereType<Map>()
-          .map(
-            (item) =>
-                MaterialCatalogItem.fromJson(Map<String, dynamic>.from(item)),
-          )
-          .toList(growable: false);
-    } finally {
-      if (shouldCloseClient) {
-        activeClient.close();
-      }
+    if (!response.isSuccess) {
+      throw HttpException('소재 기준표 요청에 실패했습니다. (${response.statusCode})');
     }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is! List) {
+      throw const FormatException('소재 기준표가 목록 형식이 아닙니다.');
+    }
+
+    return decoded
+        .whereType<Map>()
+        .map(
+          (item) =>
+              MaterialCatalogItem.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .toList(growable: false);
   }
 }

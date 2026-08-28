@@ -27,6 +27,12 @@ class Clothes {
   final int? savedResultId;
   // 옷장에 등록한 시각입니다. 필드 도입 전에 저장된 의류는 null입니다.
   final DateTime? registeredAt;
+  // 서버 계산의 무게 출처와 계산 범위·근거·출처·비고 설명입니다.
+  final String? weightSource;
+  final String? calculationScope;
+  final String? calculationBasis;
+  final String? calculationSource;
+  final String? calculationNote;
 
   Clothes({
     required this.title,
@@ -42,6 +48,11 @@ class Clothes {
     this.maxWeightGram,
     this.savedResultId,
     this.registeredAt,
+    this.weightSource,
+    this.calculationScope,
+    this.calculationBasis,
+    this.calculationSource,
+    this.calculationNote,
   });
 
   /// 등록 시각 기준 최신순 비교값을 반환합니다.
@@ -74,6 +85,11 @@ class Clothes {
     double? maxWeightGram,
     int? savedResultId,
     DateTime? registeredAt,
+    String? weightSource,
+    String? calculationScope,
+    String? calculationBasis,
+    String? calculationSource,
+    String? calculationNote,
   }) {
     return Clothes(
       title: title ?? this.title,
@@ -90,6 +106,11 @@ class Clothes {
       maxWeightGram: maxWeightGram ?? this.maxWeightGram,
       savedResultId: savedResultId ?? this.savedResultId,
       registeredAt: registeredAt ?? this.registeredAt,
+      weightSource: weightSource ?? this.weightSource,
+      calculationScope: calculationScope ?? this.calculationScope,
+      calculationBasis: calculationBasis ?? this.calculationBasis,
+      calculationSource: calculationSource ?? this.calculationSource,
+      calculationNote: calculationNote ?? this.calculationNote,
     );
   }
 
@@ -138,6 +159,21 @@ class Clothes {
       registeredAt: _parseNullableDateTime(
         json['registeredAt'] ?? json['registered_at'],
       ),
+      weightSource: _parseNullableString(
+        json['weightSource'] ?? json['weight_source'],
+      ),
+      calculationScope: _parseNullableString(
+        json['calculationScope'] ?? json['calculation_scope'],
+      ),
+      calculationBasis: _parseNullableString(
+        json['calculationBasis'] ?? json['calculation_basis'],
+      ),
+      calculationSource: _parseNullableString(
+        json['calculationSource'] ?? json['calculation_source'],
+      ),
+      calculationNote: _parseNullableString(
+        json['calculationNote'] ?? json['calculation_note'],
+      ),
     );
   }
 
@@ -157,6 +193,11 @@ class Clothes {
       'maxWeightGram': maxWeightGram,
       'savedResultId': savedResultId,
       'registeredAt': registeredAt?.toIso8601String(),
+      'weightSource': weightSource,
+      'calculationScope': calculationScope,
+      'calculationBasis': calculationBasis,
+      'calculationSource': calculationSource,
+      'calculationNote': calculationNote,
     };
   }
 
@@ -189,5 +230,10 @@ class Clothes {
   static DateTime? _parseNullableDateTime(dynamic value) {
     if (value == null) return null;
     return DateTime.tryParse(value.toString());
+  }
+
+  static String? _parseNullableString(dynamic value) {
+    final text = value?.toString().trim();
+    return text?.isNotEmpty == true ? text : null;
   }
 }

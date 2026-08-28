@@ -54,7 +54,7 @@ extension _ScanSaveActions on _ScanScreenState {
 
     final saveResult = _scanSaveService.buildClothes(
       title: _titleController.text,
-      category: _selectedCategory,
+      category: _selectedClothingType.category,
       materials: editedMaterials,
       careInstruction: _scannedCare,
       clothingType: _selectedClothingType,
@@ -107,6 +107,11 @@ extension _ScanSaveActions on _ScanScreenState {
               minWeightGram: calculation.minWeightGram,
               maxWeightGram: calculation.maxWeightGram,
               savedResultId: calculation.savedResultId,
+              weightSource: calculation.weightSource,
+              calculationScope: calculation.calculationScope,
+              calculationBasis: calculation.calculationBasis,
+              calculationSource: calculation.calculationSource,
+              calculationNote: calculation.calculationNote,
             );
           } on CarbonApiException catch (error) {
             if (error.type == CarbonApiErrorType.unauthorized) {

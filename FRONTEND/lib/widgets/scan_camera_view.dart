@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
+import '../theme/app_palette.dart';
+
 /// 의류 라벨 촬영, 갤러리 선택, AI 분석 진행 상태를 보여 주는 카메라 화면입니다.
 ///
 /// 카메라의 생성과 촬영 처리는 상위 화면이 담당하며, 이 위젯은 전달받은 상태에
@@ -42,31 +44,73 @@ class ScanCameraView extends StatelessWidget {
         top: false,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final frameSize = constraints.maxWidth < 320
-                ? (constraints.maxWidth - 64).clamp(210.0, 250.0).toDouble()
-                : 250.0;
-            final availableHeight = constraints.maxHeight - 140;
-            final minContentHeight = availableHeight < 520
-                ? 520.0
-                : availableHeight;
+            // 본문 영역은 이미 하단 내비게이션 위에서 끝나므로 위아래 여백은
+            // 최소한만 두고, 내용은 남은 높이의 가운데에 배치합니다.
+            const topContentPadding = 20.0;
+            const bottomContentPadding = 20.0;
+            // 촬영 버튼(74) 아래 왼쪽에 앨범 버튼(54)을 두기 위한 높이입니다.
+            // 버튼 자체 크기는 터치 영역 확보를 위해 기기와 무관하게 고정합니다.
+            const buttonAreaHeight = 155.0;
 
-            return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 112, 20, 72),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: minContentHeight),
+            final availableHeight =
+                constraints.maxHeight -
+                topContentPadding -
+                bottomContentPadding;
+
+            // 기기 화면 비율이 달라도 배치가 비슷해 보이도록 간격과 프레임을
+            // 남은 높이 기준 비율로 계산하고, 지나치게 커지거나 작아지지 않게
+            // 최소·최대값으로 제한합니다.
+            final guideGap = (availableHeight * 0.053)
+                .clamp(16.0, 36.0)
+                .toDouble();
+            final buttonAreaGap = (availableHeight * 0.082)
+                .clamp(24.0, 56.0)
+                .toDouble();
+            final frameSizeByWidth = (constraints.maxWidth - 40)
+                .clamp(180.0, 250.0)
+                .toDouble();
+            // 비율로 계산하되, 남는 공간을 넘지 않게 해 짧은 화면에서도
+            // 문구·버튼이 잘리지 않도록 합니다.
+            const fixedContentHeight = 22.0;
+            final frameSizeByLeftover =
+                availableHeight -
+                fixedContentHeight -
+                guideGap -
+                buttonAreaGap -
+                buttonAreaHeight;
+            final frameSize =
+                (availableHeight * 0.44 < frameSizeByLeftover
+                        ? availableHeight * 0.44
+                        : frameSizeByLeftover)
+                    .clamp(150.0, frameSizeByWidth)
+                    .toDouble();
+
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(
+                20,
+                topContentPadding,
+                20,
+                bottomContentPadding,
+              ),
+              child: SizedBox(
+                height: availableHeight,
                 child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
+                    // 남는 여백을 위쪽에 더 두어 촬영 UI가 화면 아래쪽에
+                    // 자리 잡도록 합니다.
+                    const Spacer(flex: 3),
                     const Text(
-                      '옷의 케어 라벨을 프레임 안에 맞춰 촬영해 주세요',
+                      '케어 라벨을 프레임 안에 맞춰 촬영해 주세요',
                       textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: Colors.white,
-                        fontSize: 16,
+                        fontSize: 15,
                         height: 1.4,
                       ),
                     ),
-                    const SizedBox(height: 30),
+                    SizedBox(height: guideGap),
                     Semantics(
                       label: isScanning ? '촬영한 라벨을 분석하는 중' : '카메라 라벨 촬영 영역',
                       image: true,
@@ -127,10 +171,10 @@ class ScanCameraView extends StatelessWidget {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 46),
+                    SizedBox(height: buttonAreaGap),
                     SizedBox(
                       width: double.infinity,
-                      height: 168,
+                      height: buttonAreaHeight,
                       child: Stack(
                         alignment: Alignment.center,
                         children: [
@@ -197,7 +241,7 @@ class ScanCameraView extends StatelessWidget {
                                       decoration: BoxDecoration(
                                         color: isScanning
                                             ? const Color(0xFF6B6B6B)
-                                            : const Color(0xFF4A4EFE),
+                                            : AppPalette.accent,
                                         shape: BoxShape.circle,
                                         border: Border.all(
                                           color: Colors.white,
@@ -205,9 +249,8 @@ class ScanCameraView extends StatelessWidget {
                                         ),
                                         boxShadow: [
                                           BoxShadow(
-                                            color: const Color(
-                                              0xFF4A4EFE,
-                                            ).withValues(alpha: 0.35),
+                                            color: AppPalette.accent
+                                                .withValues(alpha: 0.35),
                                             blurRadius: 18,
                                             offset: const Offset(0, 8),
                                           ),
@@ -227,6 +270,7 @@ class ScanCameraView extends StatelessWidget {
                         ],
                       ),
                     ),
+                    const Spacer(),
                   ],
                 ),
               ),
@@ -245,6 +289,9 @@ class ScanCameraView extends StatelessWidget {
         width: frameSize,
         height: frameSize,
         fit: BoxFit.cover,
+        // 원본(수 MB) 대신 표시 크기만큼만 디코드해 메모리와 버벅임을 줄입니다.
+        cacheWidth: (frameSize * MediaQuery.devicePixelRatioOf(context))
+            .round(),
         semanticLabel: '촬영한 케어 라벨 사진',
       );
     }
@@ -365,11 +412,10 @@ class ScanCameraView extends StatelessWidget {
       backgroundColor: Colors.transparent,
       builder: (sheetContext) {
         final isDark = Theme.of(sheetContext).brightness == Brightness.dark;
-        final sheetColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
-        final primaryText = isDark ? Colors.white : const Color(0xFF111111);
-        final secondaryText = isDark
-            ? const Color(0xFFD1D1D6)
-            : const Color(0xFF5F6368);
+        final palette = AppPalette.of(sheetContext);
+        final sheetColor = palette.card;
+        final primaryText = palette.textPrimary;
+        final secondaryText = palette.textSecondary;
 
         return SafeArea(
           top: false,
@@ -439,7 +485,7 @@ class ScanCameraView extends StatelessWidget {
                     onPressed: () => Navigator.pop(sheetContext),
                     style: ElevatedButton.styleFrom(
                       elevation: 0,
-                      backgroundColor: const Color(0xFF4A4EFE),
+                      backgroundColor: AppPalette.accent,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -467,7 +513,7 @@ class ScanCameraView extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, color: const Color(0xFF4A4EFE), size: 20),
+        Icon(icon, color: AppPalette.accent, size: 20),
         const SizedBox(width: 10),
         Expanded(
           child: Text(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/clothing_type_option.dart';
 import '../services/material_catalog_api_service.dart';
+import '../theme/app_palette.dart';
 import '../utils/clothing_estimator.dart';
 import '../utils/scan_calculation_resolver.dart';
 import 'material_input_collection.dart';
@@ -17,7 +18,6 @@ class ScanResultView extends StatelessWidget {
     required this.hasTriedSubmit,
     required this.isSaving,
     required this.isScanFailed,
-    required this.isManualMaterialMode,
     this.scanFailureMessage,
     required this.titleController,
     required this.selectedClothingType,
@@ -47,7 +47,6 @@ class ScanResultView extends StatelessWidget {
   final bool hasTriedSubmit;
   final bool isSaving;
   final bool isScanFailed;
-  final bool isManualMaterialMode;
   /// 스캔 실패 시 사용자에게 보여 줄 선택적 상세 메시지입니다.
   final String? scanFailureMessage;
 
@@ -98,15 +97,12 @@ class ScanResultView extends StatelessWidget {
         ClothingEstimator.isMaterialsTotalValid(editedMaterials);
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor = isDark
-        ? const Color(0xFF121212)
-        : const Color(0xFFF8F9FC);
-    final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final palette = AppPalette.of(context);
+    final backgroundColor = palette.background;
+    final cardColor = palette.card;
     final borderColor = isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade300;
-    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
-    final secondaryText = isDark
-        ? const Color(0xFFD1D1D6)
-        : const Color(0xFF5F6368);
+    final primaryText = palette.textPrimary;
+    final secondaryText = palette.textSecondary;
     final inputFillColor = isDark ? const Color(0xFF2A2A2E) : Colors.white;
     final previewBoxColor = isDark
         ? const Color(0xFF1F2A3D)
@@ -120,8 +116,6 @@ class ScanResultView extends StatelessWidget {
     final statusTitle = isScanFailed ? '스캔 실패' : '스캔 완료!';
     final statusSubtitle = isScanFailed
         ? 'AI가 라벨을 정확히 인식하지 못했어요. 소재와 혼용률을 직접 입력해 주세요.'
-        : isManualMaterialMode
-        ? '인식하지 못한 정보를 직접 입력해 주세요.'
         : '의류 무게 기준과 분석 결과를 확인해 주세요.';
 
     return Container(
@@ -133,7 +127,8 @@ class ScanResultView extends StatelessWidget {
             : AutovalidateMode.disabled,
         child: SingleChildScrollView(
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 140),
+          // 스캔 화면에는 하단 내비게이션이 없으므로 여백은 최소한만 둡니다.
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 36),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -263,7 +258,7 @@ class ScanResultView extends StatelessWidget {
                   ],
                 ),
               ),
-              if (isManualMaterialMode) ...[
+              if (isScanFailed) ...[
                 const SizedBox(height: 16),
                 _buildManualNotice(
                   isScanFailed: isScanFailed,
@@ -382,7 +377,7 @@ class ScanResultView extends StatelessWidget {
                 child: ElevatedButton(
                   onPressed: isSaving ? null : onSubmit,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4A4EFE),
+                    backgroundColor: AppPalette.accent,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
@@ -446,7 +441,7 @@ class ScanResultView extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.edit_note, color: Color(0xFF4A4EFE)),
+          const Icon(Icons.edit_note, color: AppPalette.accent),
           const SizedBox(width: 12),
           Expanded(
             child: Column(

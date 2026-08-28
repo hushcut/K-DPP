@@ -41,4 +41,28 @@ void main() {
 
     expect(restored.carbonFootprintSource, CarbonFootprintSource.localEstimate);
   });
+
+  test('서버 계산 기준 필드는 저장·복원을 거쳐도 유지된다', () {
+    final clothes = Clothes(
+      title: '홍길동 계산 기준 셔츠',
+      category: '상의',
+      health: 88,
+      materials: {'cotton': 100},
+      careInstruction: '찬물 세탁',
+      carbonFootprint: 4.2,
+      weightSource: 'category_average',
+      calculationScope: 'material_production_estimate',
+      calculationBasis: '소재 배출계수 × 의류 무게',
+      calculationSource: '소재별 공개 배출계수 정리표',
+      calculationNote: '운송·사용 단계는 포함하지 않습니다.',
+    );
+
+    final restored = Clothes.fromJson(clothes.toJson());
+
+    expect(restored.weightSource, 'category_average');
+    expect(restored.calculationScope, 'material_production_estimate');
+    expect(restored.calculationBasis, '소재 배출계수 × 의류 무게');
+    expect(restored.calculationSource, '소재별 공개 배출계수 정리표');
+    expect(restored.calculationNote, '운송·사용 단계는 포함하지 않습니다.');
+  });
 }

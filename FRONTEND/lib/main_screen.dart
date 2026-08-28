@@ -9,6 +9,7 @@ import 'models/clothes.dart';
 import 'models/main_screen_arguments.dart';
 import 'report_screen.dart';
 import 'scan_screen.dart';
+import 'theme/app_palette.dart';
 import 'widgets/kdpp_logo_mark.dart';
 
 /// 하단 내비게이션의 선택 상태와 리포트 오버레이 표시 상태를 관리합니다.
@@ -21,8 +22,10 @@ class MainScreen extends StatefulWidget {
   State<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> {
+class _MainScreenState extends State<MainScreen>
+    with SingleTickerProviderStateMixin {
   static const int _tabCount = 3;
+  static const Duration _transitionDuration = Duration(milliseconds: 260);
 
   int _selectedIndex = 0;
   bool _didReadInitialArgs = false;
@@ -30,15 +33,54 @@ class _MainScreenState extends State<MainScreen> {
   // 설정 같은 라우트가 위에 열리는 동안 스캔 카메라를 멈추기 위한 표시입니다.
   bool _isCoveredByRoute = false;
 
+  // 탭을 바꿀 때마다 새 화면이 부드럽게 나타나도록 재생하는 전환 애니메이션입니다.
+  late final AnimationController _tabTransitionController;
+  late final Animation<double> _tabTransition;
+  // 이동 방향에 맞춰 새 화면이 들어오는 쪽을 정합니다.
+  double _tabSlideDirection = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabTransitionController = AnimationController(
+      vsync: this,
+      duration: _transitionDuration,
+      value: 1,
+    );
+    _tabTransition = CurvedAnimation(
+      parent: _tabTransitionController,
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  @override
+  void dispose() {
+    _tabTransitionController.dispose();
+    super.dispose();
+  }
+
   // 탭을 바꾸면 열려 있던 상세 리포트도 함께 닫습니다.
   void _selectTab(int index) {
     if (index < 0 || index >= _tabCount) return;
 
+    final isSameView = index == _selectedIndex && !_isShowingReport;
+    // 오른쪽 탭으로 가면 오른쪽에서, 왼쪽 탭으로 가면 왼쪽에서 들어옵니다.
+    final direction = index >= _selectedIndex ? 1.0 : -1.0;
+
     setState(() {
       _selectedIndex = index;
       _isShowingReport = false;
+      _tabSlideDirection = direction;
     });
+
+    // 같은 탭을 다시 누른 경우에는 굳이 다시 재생하지 않습니다.
+    if (!isSameView) {
+      _tabTransitionController.forward(from: 0);
+    }
   }
+
+  /// 촬영에 집중할 수 있도록 하단 내비게이션을 감추는 스캔 화면 상태입니다.
+  bool get _isScanTabActive => _selectedIndex == 1 && !_isShowingReport;
 
   // 선택 의류를 Provider에 기록한 뒤 탭 위에 상세 리포트를 표시합니다.
   void _openReport(Clothes item) {
@@ -135,14 +177,24 @@ class _MainScreenState extends State<MainScreen> {
           offstage: _isShowingReport,
           child: TickerMode(
             enabled: !_isShowingReport,
-            child: IndexedStack(
-              index: _selectedIndex,
-              children: _buildTabScreens(),
+            // 탭을 유지한 채(작성 중인 내용 보존) 화면만 부드럽게 나타나게 합니다.
+            child: FadeTransition(
+              opacity: _tabTransition,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: Offset(0.06 * _tabSlideDirection, 0),
+                  end: Offset.zero,
+                ).animate(_tabTransition),
+                child: IndexedStack(
+                  index: _selectedIndex,
+                  children: _buildTabScreens(),
+                ),
+              ),
             ),
           ),
         ),
         AnimatedSwitcher(
-          duration: const Duration(milliseconds: 260),
+          duration: _transitionDuration,
           switchInCurve: Curves.easeOutCubic,
           switchOutCurve: Curves.easeInCubic,
           transitionBuilder: (child, animation) {
@@ -200,6 +252,14 @@ class _MainScreenState extends State<MainScreen> {
       scrolledUnderElevation: 0,
       automaticallyImplyLeading: false,
       centerTitle: true,
+      // 스캔 화면에서는 하단 내비게이션이 없으므로 나가는 버튼을 제공합니다.
+      leading: _isScanTabActive
+          ? IconButton(
+              onPressed: () => _selectTab(0),
+              tooltip: '스캔 화면 닫기',
+              icon: Icon(Icons.arrow_back, color: appBarIconColor),
+            )
+          : null,
       title: const KdppLogoMark(size: 34, borderRadius: 10),
       actions: [
         IconButton(
@@ -221,27 +281,42 @@ class _MainScreenState extends State<MainScreen> {
       _didReadInitialArgs = true;
     }
 
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final scaffoldBg = isDark
-        ? const Color(0xFF121212)
-        : const Color(0xFFF8F9FC);
+    final palette = AppPalette.of(context);
+    final scaffoldBg = palette.background;
 
-    // '/main'은 스택의 유일한 라우트라서, 리포트가 열려 있을 때 시스템
-    // 뒤로가기가 앱을 종료하지 않고 리포트만 닫도록 가로챕니다.
+    // '/main'은 스택의 유일한 라우트라서, 리포트가 열려 있거나 스캔 화면일 때
+    // 시스템 뒤로가기가 앱을 종료하지 않고 이전 화면으로 돌아가게 합니다.
     return PopScope(
-      canPop: !_isShowingReport,
+      canPop: !_isShowingReport && !_isScanTabActive,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        _closeReport();
+
+        if (_isShowingReport) {
+          _closeReport();
+          return;
+        }
+
+        if (_isScanTabActive) {
+          _selectTab(0);
+        }
       },
       child: Scaffold(
         backgroundColor: scaffoldBg,
         extendBody: true,
         appBar: _buildAppBar(context),
         body: _buildBody(),
-        bottomNavigationBar: _KDppBottomNavigationBar(
-          selectedIndex: _selectedIndex,
-          onSelect: _selectTab,
+        // 촬영 중에는 하단 내비게이션을 감춰 화면을 넓게 사용하고,
+        // 사라지고 나타날 때는 아래로 밀려나듯 부드럽게 전환합니다.
+        bottomNavigationBar: AnimatedSize(
+          duration: _transitionDuration,
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topCenter,
+          child: _isScanTabActive
+              ? const SizedBox(width: double.infinity)
+              : _KDppBottomNavigationBar(
+                  selectedIndex: _selectedIndex,
+                  onSelect: _selectTab,
+                ),
         ),
       ),
     );
@@ -261,12 +336,11 @@ class _KDppBottomNavigationBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.of(context);
 
-    final pageBg = isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FC);
-    final barColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
-    final borderColor = isDark
-        ? const Color(0xFF2C2C2E)
-        : const Color(0xFFE8E8EE);
+    final pageBg = palette.background;
+    final barColor = palette.card;
+    final borderColor = palette.border;
     final shadowColor = isDark
         ? Colors.black.withValues(alpha: 0.30)
         : Colors.black.withValues(alpha: 0.10);
@@ -354,11 +428,9 @@ class _CenterScanButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    const activeColor = Color(0xFF4A4EFE);
-    final labelColor = selected
-        ? activeColor
-        : (isDark ? const Color(0xFFD1D1D6) : const Color(0xFF5F6368));
+    final palette = AppPalette.of(context);
+    const activeColor = AppPalette.accent;
+    final labelColor = selected ? activeColor : palette.textSecondary;
 
     return Semantics(
       label: '스캔',
@@ -384,7 +456,7 @@ class _CenterScanButton extends StatelessWidget {
                   ),
                   child: Container(
                     decoration: BoxDecoration(
-                      color: selected ? const Color(0xFF383CDB) : activeColor,
+                      color: selected ? AppPalette.accentPressed : activeColor,
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
@@ -445,12 +517,10 @@ class _BottomTabItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.of(context);
 
-    const activeColor = Color(0xFF4A4EFE);
-    final inactiveColor = isDark
-        ? const Color(0xFFD1D1D6)
-        : const Color(0xFF5F6368);
+    const activeColor = AppPalette.accent;
+    final inactiveColor = palette.textSecondary;
     final color = selected ? activeColor : inactiveColor;
 
     return Semantics(
@@ -463,21 +533,41 @@ class _BottomTabItem extends StatelessWidget {
         child: SizedBox(
           height: 70,
           child: ExcludeSemantics(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(selected ? activeIcon : icon, color: color, size: 25),
-                const SizedBox(height: 4),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 12,
-                    height: 1.1,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  ),
-                ),
-              ],
+            // 선택 상태가 바뀔 때 색과 아이콘이 부드럽게 이어지도록 합니다.
+            child: TweenAnimationBuilder<double>(
+              tween: Tween<double>(begin: 0, end: selected ? 1 : 0),
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOut,
+              builder: (context, progress, _) {
+                final animatedColor =
+                    Color.lerp(inactiveColor, activeColor, progress) ?? color;
+
+                return Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Transform.scale(
+                      scale: 1 + progress * 0.08,
+                      child: Icon(
+                        selected ? activeIcon : icon,
+                        color: animatedColor,
+                        size: 25,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color: animatedColor,
+                        fontSize: 12,
+                        height: 1.1,
+                        fontWeight: selected
+                            ? FontWeight.w700
+                            : FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
           ),
         ),

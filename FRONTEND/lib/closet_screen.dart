@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'closet_provider.dart';
 import 'models/clothes.dart';
+import 'theme/app_palette.dart';
 
 part 'closet/closet_actions.dart';
 part 'closet/closet_body.dart';
@@ -39,9 +40,11 @@ class _ClosetScreenState extends State<ClosetScreen> {
 
   // 다중 선택과 순서 변경은 충돌하지 않도록 서로 배타적으로 관리합니다.
   ClosetSortOption _sortOption = ClosetSortOption.eco;
-  bool _selectionMode = false;
   bool _reorderMode = false;
   final Set<Clothes> _selectedItems = {};
+
+  /// 선택 모드 여부는 선택 집합에서 파생해 별도 동기화가 필요 없게 합니다.
+  bool get _selectionMode => _selectedItems.isNotEmpty;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
@@ -85,10 +88,6 @@ class _ClosetScreenState extends State<ClosetScreen> {
     _selectedItems
       ..clear()
       ..addAll(replacement);
-
-    if (_selectedItems.isEmpty) {
-      _selectionMode = false;
-    }
   }
 
   // 선택·순서 변경 모드에서는 시스템 뒤로가기가 앱을 닫는 대신 모드를 끝냅니다.

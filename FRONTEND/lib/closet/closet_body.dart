@@ -8,20 +8,17 @@ extension _ClosetBody on _ClosetScreenState {
     final originalOrder = clothesList.toList();
     final palette = _ClosetPalette.from(context);
 
-    final allItems = _filterClothes(
-      _sortClothes(List<Clothes>.from(clothesList), originalOrder),
+    // 전체를 한 번만 정렬한 뒤 분류로 나눠 빌드당 정렬 비용을 1회로 줄입니다.
+    final sortedItems = _sortClothes(
+      List<Clothes>.from(clothesList),
+      originalOrder,
     );
+    final allItems = _filterClothes(sortedItems);
     final topItems = _filterClothes(
-      _sortClothes(
-        clothesList.where((item) => item.category == '상의').toList(),
-        originalOrder,
-      ),
+      sortedItems.where((item) => item.category == '상의').toList(),
     );
     final bottomItems = _filterClothes(
-      _sortClothes(
-        clothesList.where((item) => item.category == '하의').toList(),
-        originalOrder,
-      ),
+      sortedItems.where((item) => item.category == '하의').toList(),
     );
 
     return DefaultTabController(
@@ -140,7 +137,7 @@ extension _ClosetBody on _ClosetScreenState {
                       tooltip: '옷장 정렬',
                       icon: const Icon(
                         Icons.sort,
-                        color: Color(0xFF4A4EFE),
+                        color: AppPalette.accent,
                       ),
                     ),
                   ],
@@ -216,7 +213,7 @@ extension _ClosetBody on _ClosetScreenState {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: Color(0xFF4A4EFE), width: 1.4),
+          borderSide: const BorderSide(color: AppPalette.accent, width: 1.4),
         ),
       ),
     );
@@ -225,9 +222,9 @@ extension _ClosetBody on _ClosetScreenState {
   /// 전체·상의·하의 목록 사이를 전환하는 탭입니다.
   Widget _buildCategoryTabBar(_ClosetPalette palette) {
     return TabBar(
-      labelColor: const Color(0xFF4A4EFE),
+      labelColor: AppPalette.accent,
       unselectedLabelColor: palette.secondaryText,
-      indicatorColor: const Color(0xFF4A4EFE),
+      indicatorColor: AppPalette.accent,
       indicatorWeight: 3,
       tabs: const [
         Tab(text: '전체'),

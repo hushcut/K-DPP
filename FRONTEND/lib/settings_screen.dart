@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'services/auth_api_service.dart';
+import 'theme/app_palette.dart';
 import 'theme_provider.dart';
 import 'widgets/app_back_button.dart';
 
@@ -73,7 +74,7 @@ class SettingsScreen extends StatelessWidget {
             ElevatedButton(
               onPressed: () => Navigator.pop(dialogContext, true),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF4A4EFE),
+                backgroundColor: AppPalette.accent,
               ),
               child: const Text('로그아웃', style: TextStyle(color: Colors.white)),
             ),
@@ -149,11 +150,10 @@ class SettingsScreen extends StatelessWidget {
   // 카메라·앨범 사진과 임시 파일이 어떻게 사용되는지 하단 시트로 안내합니다.
   void _showPrivacyGuide(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.of(context);
     final backgroundColor = isDark ? const Color(0xFF121212) : Colors.white;
-    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
-    final secondaryText = isDark
-        ? const Color(0xFFD1D1D6)
-        : const Color(0xFF5F6368);
+    final primaryText = palette.textPrimary;
+    final secondaryText = palette.textSecondary;
 
     showModalBottomSheet<void>(
       context: context,
@@ -206,7 +206,7 @@ class SettingsScreen extends StatelessWidget {
                   child: ElevatedButton(
                     onPressed: () => Navigator.pop(sheetContext),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF4A4EFE),
+                      backgroundColor: AppPalette.accent,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
@@ -238,7 +238,7 @@ class SettingsScreen extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: const Color(0xFF4A4EFE), size: 21),
+          Icon(icon, color: AppPalette.accent, size: 21),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
@@ -269,7 +269,7 @@ class SettingsScreen extends StatelessWidget {
     required IconData icon,
     required String title,
     String? subtitle,
-    Color iconColor = const Color(0xFF4A4EFE),
+    Color iconColor = AppPalette.accent,
     Color textColor = const Color(0xFF111111),
     Color subtitleColor = const Color(0xFF8C8C8C),
     VoidCallback? onTap,
@@ -325,18 +325,15 @@ class SettingsScreen extends StatelessWidget {
     final userEmail = context.watch<ClosetProvider>().userEmail;
     final themeMode = context.watch<ThemeProvider>().themeMode;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.of(context);
 
-    final backgroundColor = isDark
-        ? const Color(0xFF121212)
-        : const Color(0xFFF8F9FC);
-    final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final backgroundColor = palette.background;
+    final cardColor = palette.card;
     final borderColor = isDark
         ? const Color(0xFF2C2C2E)
         : const Color(0xFFEAEAEA);
-    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
-    final secondaryText = isDark
-        ? const Color(0xFFD1D1D6)
-        : const Color(0xFF5F6368);
+    final primaryText = palette.textPrimary;
+    final secondaryText = palette.textSecondary;
     final sectionText = isDark
         ? const Color(0xFF9A9A9A)
         : const Color(0xFF8E8E93);
@@ -387,7 +384,7 @@ class SettingsScreen extends StatelessWidget {
                   ),
                   child: const Icon(
                     Icons.person_outline,
-                    color: Color(0xFF4A4EFE),
+                    color: AppPalette.accent,
                     size: 30,
                   ),
                 ),
@@ -568,6 +565,7 @@ class _NicknameEditDialogState extends State<_NicknameEditDialog> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.of(context);
 
     return AlertDialog(
       title: const Text('닉네임 수정'),
@@ -576,9 +574,7 @@ class _NicknameEditDialogState extends State<_NicknameEditDialog> {
         autofocus: true,
         textInputAction: TextInputAction.done,
         autofillHints: const [AutofillHints.nickname],
-        style: TextStyle(
-          color: isDark ? Colors.white : const Color(0xFF111111),
-        ),
+        style: TextStyle(color: palette.textPrimary),
         decoration: InputDecoration(
           labelText: '닉네임',
           hintText: '예: 홍길동',
@@ -613,7 +609,7 @@ class _NicknameEditDialogState extends State<_NicknameEditDialog> {
         ElevatedButton(
           onPressed: _submit,
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF4A4EFE),
+            backgroundColor: AppPalette.accent,
           ),
           child: const Text('저장', style: TextStyle(color: Colors.white)),
         ),

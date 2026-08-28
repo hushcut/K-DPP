@@ -1,10 +1,9 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
 import '../config/api_environment.dart';
 import '../models/scan_result.dart';
+import 'api_http.dart';
 
 /// 스캔 API 오류를 화면 안내와 후속 처리 분기에 사용할 범주로 구분한다.
 enum ScanApiErrorType {
@@ -12,6 +11,7 @@ enum ScanApiErrorType {
   unauthorized,
   payloadTooLarge,
   unsupportedMediaType,
+  ocrFailed,
   aiRecognitionFailed,
   server,
   network,
@@ -42,6 +42,8 @@ class ScanApiException implements Exception {
         return '사진 용량이 너무 커요. 사진을 줄이거나 다른 사진을 선택해 주세요.';
       case ScanApiErrorType.unsupportedMediaType:
         return '이 사진 형식은 분석할 수 없어요. JPG 또는 PNG 사진을 사용해 주세요.';
+      case ScanApiErrorType.ocrFailed:
+        return '사진에서 라벨 글자를 읽지 못했어요. 라벨이 선명하게 보이도록 다시 촬영하거나 직접 입력해 주세요.';
       case ScanApiErrorType.aiRecognitionFailed:
         return 'AI가 라벨 정보를 정확히 인식하지 못했어요. 소재와 혼용률을 직접 입력해 주세요.';
       case ScanApiErrorType.server:
@@ -95,6 +97,13 @@ class ScanApiException implements Exception {
           type: ScanApiErrorType.aiRecognitionFailed,
           statusCode: statusCode,
           message: serverMessage ?? 'AI가 라벨을 인식하지 못했습니다.',
+        );
+      // 백엔드 계약상 502는 OCR 처리 실패이므로 재촬영 안내로 구분한다.
+      case 502:
+        return ScanApiException(
+          type: ScanApiErrorType.ocrFailed,
+          statusCode: statusCode,
+          message: serverMessage ?? 'AI OCR 처리에 실패했습니다.',
         );
       default:
         if (statusCode >= 500) {
@@ -166,61 +175,38 @@ class ScanApiService {
     required File imageFile,
     String? accessToken,
   }) async {
-    final uri = Uri.parse(endpoint);
-
     try {
-      final request = http.MultipartRequest('POST', uri)
-        ..headers.addAll(requestHeaders)
-        ..files.add(
-          await http.MultipartFile.fromPath(
-            'image',
-            imageFile.path,
-            // Content-Type을 명시하지 않으면 application/octet-stream으로 전송되어
-            // 서버의 이미지 형식 검사(415)에 걸리므로 확장자 기준으로 지정한다.
-            contentType: _imageMediaTypeFor(imageFile.path),
-          ),
-        );
+      final response = await runImageUploadRequest(
+        uri: Uri.parse(endpoint),
+        headers: requestHeaders,
+        timeout: _requestTimeout,
+        imageFile: imageFile,
+        fieldName: 'image',
+        accessToken: accessToken,
+        client: client,
+      );
 
-      if (accessToken != null && accessToken.isNotEmpty) {
-        request.headers['Authorization'] = 'Bearer $accessToken';
-      }
-
-      final streamedResponse = await (client?.send(request) ?? request.send())
-          .timeout(_requestTimeout);
-
-      // send()는 응답 헤더가 오면 완료되므로, 본문 수신이 중간에 멈춰도
-      // 무한 대기하지 않도록 본문 읽기에도 시간 제한을 둡니다.
-      final responseBody = await streamedResponse.stream
-          .bytesToString()
-          .timeout(_requestTimeout);
-
-      if (streamedResponse.statusCode < 200 ||
-          streamedResponse.statusCode >= 300) {
+      if (!response.isSuccess) {
         throw ScanApiException.fromStatusCode(
-          statusCode: streamedResponse.statusCode,
-          responseBody: responseBody,
+          statusCode: response.statusCode,
+          responseBody: response.body,
         );
       }
 
-      return _parseScanResult(responseBody);
+      return _parseScanResult(response.body);
     } on ScanApiException {
       rethrow;
-    } on SocketException catch (e) {
-      throw ScanApiException(
-        type: ScanApiErrorType.network,
-        message: e.message,
-      );
-    } on http.ClientException catch (e) {
-      // 업로드 도중 끊긴 연결도 다른 서비스처럼 네트워크 오류로 안내한다.
-      throw ScanApiException(
-        type: ScanApiErrorType.network,
-        message: e.message,
-      );
-    } on TimeoutException {
-      throw const ScanApiException(
-        type: ScanApiErrorType.timeout,
-        message: '분석 요청 시간이 초과되었습니다.',
-      );
+    } on ApiTransportException catch (e) {
+      throw switch (e.type) {
+        ApiTransportErrorType.network => ScanApiException(
+          type: ScanApiErrorType.network,
+          message: e.message,
+        ),
+        ApiTransportErrorType.timeout => const ScanApiException(
+          type: ScanApiErrorType.timeout,
+          message: '분석 요청 시간이 초과되었습니다.',
+        ),
+      };
     } on FormatException catch (e) {
       throw ScanApiException(
         type: ScanApiErrorType.invalidResponse,
@@ -231,21 +217,6 @@ class ScanApiService {
         type: ScanApiErrorType.unknown,
         message: e.toString(),
       );
-    }
-  }
-
-  // 서버가 지원하는 형식(jpeg/png/webp)만 구분하고, 카메라 기본 출력이
-  // JPEG이므로 그 외 확장자는 image/jpeg로 처리한다.
-  static MediaType _imageMediaTypeFor(String path) {
-    final extension = path.toLowerCase().split('.').last;
-
-    switch (extension) {
-      case 'png':
-        return MediaType('image', 'png');
-      case 'webp':
-        return MediaType('image', 'webp');
-      default:
-        return MediaType('image', 'jpeg');
     }
   }
 

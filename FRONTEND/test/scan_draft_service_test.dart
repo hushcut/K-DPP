@@ -60,6 +60,28 @@ void main() {
       expect(draft.title, ClothingTypeCatalog.defaultOption.defaultTitle);
     });
 
+    test('buildFromResult는 서버 표시명을 소재 구성에 사용한다', () {
+      final result = ScanResult(
+        materials: const {'cotton': 100},
+        materialDetails: const [
+          ScanMaterialDetail(
+            originalName: 'cotton',
+            displayName: '면(cotton)',
+            ratio: 100,
+            isSupported: true,
+          ),
+        ],
+        careInstruction: '찬물 세탁',
+      );
+
+      final draft = service.buildFromResult(
+        result: result,
+        clothingType: ClothingTypeCatalog.defaultOption,
+      );
+
+      expect(draft.materials, {'면(cotton)': 100.0});
+    });
+
     test('buildManual creates empty manual draft', () {
       final draft = service.buildManual(
         clothingType: ClothingTypeCatalog.defaultOption,

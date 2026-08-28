@@ -47,7 +47,8 @@ class ScanDraftService {
 
     return ScanDraft(
       clothingType: clothingType,
-      materials: result.materials,
+      // 서버가 정규화한 표시명(한글 등)을 편집 폼에 그대로 사용합니다.
+      materials: result.displayMaterials,
       careInstruction: result.careInstruction,
       title: scannedTitle?.isNotEmpty == true
           ? scannedTitle!

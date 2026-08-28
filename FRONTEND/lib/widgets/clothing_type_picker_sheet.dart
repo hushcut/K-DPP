@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/clothing_type_option.dart';
+import '../theme/app_palette.dart';
 
 /// 의류 종류별 예상 무게를 선택하거나 실제 무게를 직접 입력하는 바텀 시트입니다.
 ///
@@ -114,9 +115,10 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
   // 미리 정의된 의류 옵션과 직접 입력 진입 항목을 목록으로 표시합니다.
   Widget _buildOptionListView(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final palette = AppPalette.of(context);
+    final cardColor = palette.card;
     final borderColor = isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade200;
-    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+    final primaryText = palette.textPrimary;
     final secondaryText = isDark
         ? const Color(0xFFD1D1D6)
         : const Color(0xFF777777);
@@ -172,14 +174,14 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
                       color: isSelected
-                          ? const Color(
-                              0xFF4A4EFE,
-                            ).withValues(alpha: isDark ? 0.20 : 0.10)
+                          ? AppPalette.accent.withValues(
+                              alpha: isDark ? 0.20 : 0.10,
+                            )
                           : cardColor,
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(
                         color: isSelected
-                            ? const Color(0xFF4A4EFE)
+                            ? AppPalette.accent
                             : borderColor,
                         width: isSelected ? 1.5 : 1,
                       ),
@@ -191,7 +193,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
                           height: 42,
                           decoration: BoxDecoration(
                             color: isSelected
-                                ? const Color(0xFF4A4EFE)
+                                ? AppPalette.accent
                                 : (isDark
                                       ? const Color(0xFF2A2A2E)
                                       : const Color(0xFFF2F3F8)),
@@ -201,7 +203,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
                             option.icon,
                             color: isSelected
                                 ? Colors.white
-                                : const Color(0xFF4A4EFE),
+                                : AppPalette.accent,
                           ),
                         ),
                         const SizedBox(width: 14),
@@ -234,7 +236,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
                         if (isSelected)
                           const Icon(
                             Icons.check_circle,
-                            color: Color(0xFF4A4EFE),
+                            color: AppPalette.accent,
                           )
                         else
                           Icon(
@@ -258,9 +260,10 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
   // 의류명, g 단위 실제 무게, 상·하의 분류를 입력받는 화면을 만듭니다.
   Widget _buildDirectInputView(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final palette = AppPalette.of(context);
+    final cardColor = palette.card;
     final borderColor = isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade300;
-    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+    final primaryText = palette.textPrimary;
     final secondaryText = isDark
         ? const Color(0xFFD1D1D6)
         : const Color(0xFF777777);
@@ -427,7 +430,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
           child: ElevatedButton(
             onPressed: _submitDirectInput,
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4A4EFE),
+              backgroundColor: AppPalette.accent,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10),
               ),
@@ -462,13 +465,13 @@ class _CategoryChoiceChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final borderColor = selected
-        ? const Color(0xFF4A4EFE)
+        ? AppPalette.accent
         : const Color(0xFF8C8C8C);
     final backgroundColor = selected
-        ? const Color(0xFF4A4EFE).withValues(alpha: isDark ? 0.22 : 0.10)
+        ? AppPalette.accent.withValues(alpha: isDark ? 0.22 : 0.10)
         : Colors.transparent;
     final textColor = selected
-        ? const Color(0xFF4A4EFE)
+        ? AppPalette.accent
         : (isDark ? Colors.white : Colors.black87);
 
     return InkWell(
