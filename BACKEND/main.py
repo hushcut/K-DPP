@@ -5,11 +5,15 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import json
+import math
+import re
 import shutil
 import sys
+import threading
 import tempfile
 from pathlib import Path
 import hashlib
@@ -40,10 +44,15 @@ DEFAULT_ERROR_CODES = {
     413: "PAYLOAD_TOO_LARGE",
     415: "UNSUPPORTED_IMAGE_FORMAT",
     422: "VALIDATION_ERROR",
+    429: "TOO_MANY_ATTEMPTS",
     502: "OCR_FAILED",
     503: "AI_MODULE_FAILED",
 }
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+# 스캔 업로드 상한. 실기기 원본 사진(3~8MB)에 여유를 둔 값입니다.
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+# 탄소 계산에 허용하는 의류 무게 상한(100kg).
+MAX_WEIGHT_GRAMS = 100_000
 MATERIAL_FACTOR_SOURCE = "K-DPP backend material carbon factor table (development estimates)"
 CALCULATION_SCOPE = "material_production_estimate"
 CLOTHING_TYPE_OPTIONS = [
@@ -146,6 +155,107 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# 큰 본문은 엔드포인트에 닿기 전에 차단합니다. Content-Length만 믿으면
+# Transfer-Encoding: chunked(길이 미표기) 요청이 그대로 통과하므로(교차 검토
+# 지적), 실제 수신 바이트를 누적 계산해 상한 초과 즉시 413을 돌려줍니다.
+# 실배포에서는 프록시(nginx 등)의 client_max_body_size도 함께 두어야 합니다.
+MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 1024 * 1024
+
+
+class BodySizeLimitMiddleware:
+    """요청 본문 상한 미들웨어.
+
+    - Content-Length가 있으면 그 값으로 조기 차단합니다.
+    - 길이 미표기(chunked) 요청은 상한까지만 직접 수신해 보고,
+      초과하면 앱에 전달하지 않고 413을 반환합니다. 상한 이내면
+      버퍼를 재생(replay)해 앱에 그대로 넘깁니다.
+    """
+
+    def __init__(self, app, max_bytes: int):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        declared_length = None
+        for name, value in scope.get("headers") or []:
+            if name == b"content-length":
+                try:
+                    declared_length = int(value)
+                except ValueError:
+                    declared_length = None
+
+        if declared_length is not None:
+            if declared_length > self.max_bytes:
+                await self._send_413(send)
+                return
+            # 길이가 신고돼 있고 상한 이내면 버퍼링 없이 그대로 통과시킵니다.
+            # (신고 길이를 속여 더 보내는 경우는 서버(h11)가 프로토콜
+            #  위반으로 거부하므로 여기서 다시 세지 않습니다)
+            await self.app(scope, receive, send)
+            return
+
+        # 길이 미표기: 상한까지만 수신하며 검사합니다.
+        body_chunks: list[bytes] = []
+        received_bytes = 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            chunk = message.get("body", b"")
+            body_chunks.append(chunk)
+            received_bytes += len(chunk)
+            if received_bytes > self.max_bytes:
+                await self._send_413(send)
+                return
+            if not message.get("more_body", False):
+                break
+
+        chunk_index = 0
+
+        async def replay_receive():
+            nonlocal chunk_index
+            if chunk_index < len(body_chunks):
+                chunk = body_chunks[chunk_index]
+                chunk_index += 1
+                return {
+                    "type": "http.request",
+                    "body": chunk,
+                    "more_body": chunk_index < len(body_chunks),
+                }
+            return {"type": "http.disconnect"}
+
+        await self.app(scope, replay_receive, send)
+
+    async def _send_413(self, send):
+        body = json.dumps(
+            {
+                "status": "error",
+                "error_code": "PAYLOAD_TOO_LARGE",
+                "message": f"요청이 너무 큽니다. 이미지는 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB 이하로 올려 주세요.",
+                "detail": None,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 413,
+                "headers": [
+                    (b"content-type", b"application/json; charset=utf-8"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+
+# CORS를 나중에 추가해야 바깥층이 되어 413 응답에도 CORS 헤더가 붙습니다.
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
 
 app.add_middleware(
     CORSMiddleware,
@@ -275,6 +385,70 @@ def verify_password(password: str, stored_hash: str) -> bool:
     return secrets.compare_digest(digest, expected)
 
 
+# 미가입 이메일 로그인 시에도 같은 비용의 해시 검증을 수행하기 위한 더미 해시.
+DUMMY_PASSWORD_HASH = hash_password("k-dpp-timing-guard")
+# 최소한의 이메일 형식 검사: 공백 없는 로컬@도메인.최상위 형태만 허용.
+EMAIL_PATTERN = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+
+# 로그인 무차별 대입 방어: 같은 이메일로 연속 실패하면 잠시 잠급니다.
+# (프로세스 메모리 기준 — 단일 서버 개발 환경에는 충분합니다)
+LOGIN_MAX_ATTEMPTS = 5
+LOGIN_LOCKOUT_SECONDS = 60
+# 저횟수(1~4회) 실패 기록이 영구히 남으면 임의 이메일 반복 전송으로 메모리를
+# 불릴 수 있어(교차 검토 지적), 오래된 기록과 초과분을 주기적으로 청소합니다.
+LOGIN_FAILURE_TTL_SECONDS = 15 * 60
+LOGIN_FAILURES_MAX_ENTRIES = 10_000
+_login_failures: dict[str, tuple[int, datetime]] = {}
+# 동기 엔드포인트는 스레드풀에서 병렬 실행되므로, 조회-갱신이 겹쳐
+# 실패 횟수가 유실되지 않도록 잠금으로 감쌉니다(교차 검토 지적).
+_login_failures_lock = threading.Lock()
+
+
+def check_login_lockout(email: str) -> None:
+    with _login_failures_lock:
+        record = _login_failures.get(email)
+        if record is None:
+            return
+        count, last_failure = record
+        if count < LOGIN_MAX_ATTEMPTS:
+            return
+        unlocked_at = last_failure + timedelta(seconds=LOGIN_LOCKOUT_SECONDS)
+        if utc_now() >= unlocked_at:
+            # 잠금 시간이 지나면 다시 기회를 줍니다.
+            _login_failures.pop(email, None)
+            return
+
+    raise HTTPException(
+        status_code=429,
+        detail=f"로그인 시도가 너무 많습니다. {LOGIN_LOCKOUT_SECONDS}초 후 다시 시도해 주세요.",
+    )
+
+
+def _prune_login_failures_locked() -> None:
+    """오래된 실패 기록과 상한 초과분을 제거한다. 반드시 잠금 안에서 호출."""
+    cutoff = utc_now() - timedelta(seconds=LOGIN_FAILURE_TTL_SECONDS)
+    for key in [k for k, (_, last) in _login_failures.items() if last < cutoff]:
+        del _login_failures[key]
+
+    overflow = len(_login_failures) - LOGIN_FAILURES_MAX_ENTRIES
+    if overflow > 0:
+        oldest = sorted(_login_failures.items(), key=lambda kv: kv[1][1])[:overflow]
+        for key, _ in oldest:
+            del _login_failures[key]
+
+
+def record_login_failure(email: str) -> None:
+    with _login_failures_lock:
+        _prune_login_failures_locked()
+        count, _ = _login_failures.get(email, (0, utc_now()))
+        _login_failures[email] = (count + 1, utc_now())
+
+
+def clear_login_failures(email: str) -> None:
+    with _login_failures_lock:
+        _login_failures.pop(email, None)
+
+
 def auth_user_response(user: database.User) -> dict:
     return {
         "id": user.id,
@@ -283,16 +457,22 @@ def auth_user_response(user: database.User) -> dict:
     }
 
 
-def create_access_token(user: database.User, db: Session) -> database.AccessToken:
-    token = secrets.token_urlsafe(32)
+def hash_access_token(token: str) -> str:
+    """DB 파일이 유출돼도 토큰 원문을 알 수 없도록 해시로만 저장한다."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_access_token(user: database.User, db: Session) -> tuple[str, database.AccessToken]:
+    """토큰 원문은 응답으로만 전달하고 DB에는 해시를 저장한다."""
+    raw_token = secrets.token_urlsafe(32)
     access_token = database.AccessToken(
-        token=token,
+        token=hash_access_token(raw_token),
         user_id=user.id,
         expires_at=utc_now() + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS),
     )
     db.add(access_token)
     db.commit()
-    return access_token
+    return raw_token, access_token
 
 
 def read_bearer_token(authorization: str | None) -> str | None:
@@ -310,24 +490,38 @@ def get_optional_current_user(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> database.User | None:
+    # 헤더가 아예 없을 때만 익명으로 취급합니다. 헤더를 보냈는데 토큰이
+    # 무효·만료라면 401을 돌려줘야 클라이언트가 재로그인 기회를 얻고,
+    # 결과가 익명(user_id=NULL)으로 저장돼 이력에서 유실되는 것을 막습니다.
+    if authorization is None or not authorization.strip():
+        return None
+
     token = read_bearer_token(authorization)
     if token is None:
-        return None
+        # 'Basic ...'나 빈 Bearer처럼 형식이 잘못된 헤더를 익명으로 눙치면
+        # 클라이언트 버그가 조용히 숨으므로 401로 알립니다(교차 검토 지적).
+        raise HTTPException(status_code=401, detail="인증 헤더 형식이 올바르지 않습니다.")
 
     access_token = (
         db.query(database.AccessToken)
-        .filter(database.AccessToken.token == token)
+        .filter(database.AccessToken.token == hash_access_token(token))
         .first()
     )
     if access_token is None:
-        return None
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
 
     if access_token.expires_at is None or access_token.expires_at <= utc_now():
         db.delete(access_token)
         db.commit()
-        return None
+        raise HTTPException(status_code=401, detail="로그인이 만료되었습니다. 다시 로그인해 주세요.")
 
-    return db.query(database.User).filter(database.User.id == access_token.user_id).first()
+    user = (
+        db.query(database.User).filter(database.User.id == access_token.user_id).first()
+    )
+    if user is None:
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
+
+    return user
 
 
 def get_current_user(
@@ -349,7 +543,7 @@ def get_current_access_token(
 
     access_token = (
         db.query(database.AccessToken)
-        .filter(database.AccessToken.token == token)
+        .filter(database.AccessToken.token == hash_access_token(token))
         .first()
     )
     if (
@@ -407,14 +601,22 @@ def validate_materials(
         )
 
     for name, ratio in materials.items():
-        if ratio < 0:
+        # NaN/Infinity는 모든 대소 비교가 False라 아래 검증을 전부 통과한 뒤
+        # DB 저장 단계에서 500을 일으키므로 여기서 먼저 차단합니다.
+        # 오류 응답에 NaN을 그대로 되돌려주면 JSON 직렬화가 실패하므로
+        # 비정상 값은 None으로 바꿔 돌려줍니다.
+        if not math.isfinite(ratio) or ratio < 0:
+            safe_materials = {
+                key: (value if isinstance(value, (int, float)) and math.isfinite(value) else None)
+                for key, value in materials.items()
+            }
             raise HTTPException(
                 status_code=400,
                 detail=build_error_detail(
-                    f"{name} 비율이 음수입니다.",
+                    f"{name} 비율이 올바른 숫자가 아닙니다.",
                     "MATERIAL_RATIO_INVALID",
-                    materials=materials,
-                    partial_materials=materials,
+                    materials=safe_materials,
+                    partial_materials=safe_materials,
                 ),
             )
 
@@ -517,18 +719,10 @@ def build_analysis_response(
             },
         )
 
-    new_result = database.AnalysisResult(
-        user_id=user.id if user is not None else None,
-        materials=json.dumps(materials, ensure_ascii=False),
-        carbon_footprint=total_carbon,
-        unit="kg CO2eq",
-        raw_ocr_text=raw_ocr_text,
-        unknown_materials=json.dumps(unknown_materials, ensure_ascii=False),
-    )
-    db.add(new_result)
-    db.commit()
-    db.refresh(new_result)
-
+    # /analyze의 값은 무게를 곱하지 않은 소재 계수(kg CO2eq/kg)라서,
+    # 실제 배출량(/api/carbon/calculate)과 같은 이력 테이블에 저장하면
+    # 단위가 다른 값이 한 목록에 섞입니다. 계산 전용으로 두고 저장은
+    # /api/carbon/calculate 한 곳에서만 합니다.
     response = {
         "status": "success",
         "message": "분석 완료",
@@ -536,7 +730,7 @@ def build_analysis_response(
         "carbon_footprint": total_carbon,
         "unit": "kg CO2eq",
         "care_instruction": care_instruction or "30도 이하 물에서 중성세제로 손세탁하세요.",
-        "saved_result_id": new_result.id,
+        "saved_result_id": None,
     }
 
     if title:
@@ -559,15 +753,24 @@ def serialize_analysis_result(result: database.AnalysisResult) -> dict:
         "max_weight_grams": result.max_weight_grams,
         "unit": result.unit or "kg CO2eq",
         "unknown_materials": json.loads(result.unknown_materials or "[]"),
-        "created_at": result.created_at,
+        # naive UTC를 그대로 내보내면 클라이언트가 기기 시간대로 오해하므로
+        # UTC 오프셋(+00:00)을 붙여 직렬화합니다.
+        "created_at": (
+            result.created_at.replace(tzinfo=timezone.utc).isoformat()
+            if result.created_at is not None
+            else None
+        ),
     }
 
 
-def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
-    if raw_ocr_text and raw_ocr_text.strip():
-        return raw_ocr_text.strip()
+def validate_scan_upload(image: UploadFile) -> None:
+    """스캔 업로드의 형식·크기 검사. raw_ocr_text 유무와 무관하게 항상 실행한다.
 
-    if image.content_type and image.content_type not in SUPPORTED_IMAGE_TYPES:
+    검사를 조기 반환 뒤에 두면 raw_ocr_text를 함께 보내는 것만으로
+    형식·용량 제한을 우회할 수 있으므로(교차 검토 지적) 진입 시점에 검사한다.
+    """
+    # Content-Type이 아예 없는 업로드도 거부해 형식 검사 우회를 막습니다.
+    if image.content_type not in SUPPORTED_IMAGE_TYPES:
         raise HTTPException(
             status_code=415,
             detail=build_error_detail(
@@ -576,6 +779,28 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
                 content_type=image.content_type,
             ),
         )
+
+    # 파일을 쓰지 않고 크기만 세어 상한을 검사한 뒤 읽기 위치를 되돌립니다.
+    total_bytes = 0
+    while chunk := image.file.read(1024 * 1024):
+        total_bytes += len(chunk)
+        if total_bytes > MAX_UPLOAD_BYTES:
+            image.file.seek(0)
+            raise HTTPException(
+                status_code=413,
+                detail=build_error_detail(
+                    f"이미지가 너무 큽니다. {MAX_UPLOAD_BYTES // (1024 * 1024)}MB 이하로 올려 주세요.",
+                    "PAYLOAD_TOO_LARGE",
+                ),
+            )
+    image.file.seek(0)
+
+
+def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
+    validate_scan_upload(image)
+
+    if raw_ocr_text and raw_ocr_text.strip():
+        return raw_ocr_text.strip()
 
     if run_ocr is None:
         raise HTTPException(
@@ -587,9 +812,24 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
         )
 
     suffix = Path(image.filename or "label.jpg").suffix or ".jpg"
+    copied_bytes = 0
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-        shutil.copyfileobj(image.file, temp_file)
         temp_path = temp_file.name
+        # 크기 검사 없이 통째로 복사하면 대용량 업로드로 디스크가 고갈될 수
+        # 있으므로, 청크 단위로 복사하며 상한을 넘는 즉시 중단합니다.
+        while chunk := image.file.read(1024 * 1024):
+            copied_bytes += len(chunk)
+            if copied_bytes > MAX_UPLOAD_BYTES:
+                temp_file.close()
+                Path(temp_path).unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=build_error_detail(
+                        f"이미지가 너무 큽니다. {MAX_UPLOAD_BYTES // (1024 * 1024)}MB 이하로 올려 주세요.",
+                        "PAYLOAD_TOO_LARGE",
+                    ),
+                )
+            temp_file.write(chunk)
 
     try:
         credential_path = (
@@ -603,11 +843,14 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
             credential_path=str(credential_path) if credential_path.exists() else "",
         )
     except Exception as exc:
+        # 예외 원문에는 서버 경로·계정 식별자 등이 섞일 수 있어
+        # 서버 로그에만 남기고 클라이언트에는 고정 메시지만 돌려줍니다.
+        print(f"[scan] OCR 실패: {exc!r}", file=sys.stderr)
         raise HTTPException(
             status_code=502,
             detail={
                 "message": "AI OCR 처리에 실패했습니다.",
-                "error": str(exc),
+                "error": "라벨 이미지를 인식하지 못했습니다. 잠시 후 다시 시도해 주세요.",
             },
         ) from exc
     finally:
@@ -651,12 +894,17 @@ def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
 def signup(request: SignupRequest, db: Session = Depends(get_db)):
     email = normalize_email(request.email)
     nickname = request.nickname.strip()
-    password = request.password.strip()
+    password = request.password
 
-    if not email or "@" not in email or "." not in email:
+    if not EMAIL_PATTERN.fullmatch(email or ""):
         raise HTTPException(status_code=400, detail="올바른 이메일을 입력해 주세요.")
     if len(nickname) < 2:
         raise HTTPException(status_code=400, detail="닉네임은 2자 이상 입력해 주세요.")
+    # 가입 때만 공백을 지우고 로그인 때는 원문을 검증하면, 공백 섞인 비밀번호로
+    # 가입한 사용자가 영영 로그인하지 못합니다. 공백 비밀번호는 아예 거부하고
+    # 저장·검증 모두 입력 원문 그대로 사용합니다.
+    if password != password.strip():
+        raise HTTPException(status_code=400, detail="비밀번호 앞뒤에는 공백을 사용할 수 없습니다.")
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="비밀번호는 8자 이상 입력해 주세요.")
 
@@ -670,7 +918,13 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)):
         password_hash=hash_password(password),
     )
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # 같은 이메일로 거의 동시에 가입 요청이 들어온 경우(버튼 연타 등)
+        # 늦게 커밋된 쪽을 중복 가입과 동일하게 처리합니다.
+        db.rollback()
+        raise HTTPException(status_code=409, detail="이미 가입된 이메일입니다.")
     db.refresh(user)
 
     return {
@@ -683,18 +937,30 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)):
 @app.post("/auth/login", tags=["auth"])
 def login(request: LoginRequest, db: Session = Depends(get_db)):
     email = normalize_email(request.email)
+    check_login_lockout(email)
+
     user = db.query(database.User).filter(database.User.email == email).first()
 
-    if user is None or not verify_password(request.password, user.password_hash):
+    if user is None:
+        # 미가입 이메일이라도 해시 검증을 한 번 수행해 응답 시간을 맞춥니다.
+        # (시간 차이로 가입 여부를 알아내는 것을 막기 위함)
+        verify_password(request.password, DUMMY_PASSWORD_HASH)
+        record_login_failure(email)
         raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다.")
 
-    access_token = create_access_token(user, db)
+    if not verify_password(request.password, user.password_hash):
+        record_login_failure(email)
+        raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다.")
+
+    clear_login_failures(email)
+
+    raw_token, _access_token = create_access_token(user, db)
 
     return {
         "status": "success",
         "message": "로그인되었습니다.",
         "user": auth_user_response(user),
-        "access_token": access_token.token,
+        "access_token": raw_token,
         "token_type": "bearer",
         "expires_in": ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
     }
@@ -738,17 +1004,24 @@ def scan_label(
     image: UploadFile = File(...),
     raw_ocr_text: str | None = Form(default=None),
     db: Session = Depends(get_db),
+    # 스캔 1회가 곧 외부 OCR 호출 비용이므로 로그인 사용자만 허용합니다.
+    current_user: database.User = Depends(get_current_user),
 ):
     label_text = extract_label_text(image, raw_ocr_text)
     materials, care_instruction, raw_ocr_preview = parse_label_materials(label_text)
     title = "스캔한 의류"
     category = "상의"
 
+    # 라벨 일부만 읽혀 합계가 100이 아니면, 이 값 그대로는 탄소 계산이
+    # 거부되므로(99.5~100.5 검사) 부분 인식임을 응답에 명시합니다.
+    total_ratio = sum(materials.values())
+    ratio_complete = 99.5 <= total_ratio <= 100.5
+
     return {
         "status": "success",
-        "message": "라벨 인식 완료",
-        "ai_success": True,
-        "analysis_failure_reason": None,
+        "message": "라벨 인식 완료" if ratio_complete else "라벨을 일부만 인식했습니다. 비율을 확인해 주세요.",
+        "ai_success": ratio_complete,
+        "analysis_failure_reason": None if ratio_complete else "RATIO_INCOMPLETE",
         "materials": materials,
         "material_details": build_material_details(materials, db),
         "care_instruction": care_instruction,
@@ -794,14 +1067,23 @@ def calculate_carbon_range(
         max_weight_grams = request.max_weight_grams
         weight_source = "range"
 
-    if min_weight_grams <= 0 or max_weight_grams <= 0:
+    # NaN·무한대는 모든 대소 비교가 False라 그대로 통과해 이력 조회까지 500으로
+    # 망가뜨리므로 먼저 걸러내고, 상한으로 비현실적 입력도 차단합니다.
+    if (
+        not math.isfinite(min_weight_grams)
+        or not math.isfinite(max_weight_grams)
+        or min_weight_grams <= 0
+        or max_weight_grams <= 0
+        or max_weight_grams > MAX_WEIGHT_GRAMS
+    ):
         raise HTTPException(
             status_code=400,
             detail=build_error_detail(
-                "의류 무게는 0g보다 커야 합니다.",
+                f"의류 무게는 1g 이상 {MAX_WEIGHT_GRAMS:,}g 이하로 입력해 주세요.",
                 "WEIGHT_INVALID",
-                min_weight_grams=min_weight_grams,
-                max_weight_grams=max_weight_grams,
+                # NaN을 그대로 되돌려주면 JSON 직렬화가 실패합니다.
+                min_weight_grams=min_weight_grams if math.isfinite(min_weight_grams) else None,
+                max_weight_grams=max_weight_grams if math.isfinite(max_weight_grams) else None,
             ),
         )
     if min_weight_grams > max_weight_grams:

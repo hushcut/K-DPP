@@ -19,6 +19,10 @@ BACKEND/
 
 Windows 기준입니다.
 
+**Python 3.10 이상이 필요합니다.** requirements.txt의 고정 버전들이 3.9 이하에서는
+설치되지 않습니다(3.12에서 동작 확인). 여러 버전이 설치돼 있다면 `py -3.12 -m venv .venv`처럼
+버전을 지정해 주세요.
+
 ```bat
 cd C:\DEV\K-DPP\BACKEND
 python -m venv .venv

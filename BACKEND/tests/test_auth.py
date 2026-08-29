@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 import database
+import main
 
 
 def _signup_and_login(client, email="session@example.com"):
@@ -125,7 +126,7 @@ def test_expired_access_token_is_rejected(client):
     try:
         access_token = (
             db.query(database.AccessToken)
-            .filter(database.AccessToken.token == token)
+            .filter(database.AccessToken.token == main.hash_access_token(token))
             .one()
         )
         access_token.expires_at = database.utc_now() - timedelta(seconds=1)
