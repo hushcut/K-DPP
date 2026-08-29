@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>K Dpp</string>
+	<string>K-DPP</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -32,13 +32,11 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>의류 라벨을 촬영해 소재와 혼용률을 분석하기 위해 카메라 접근이 필요합니다.</string>
+	<string>의류 케어 라벨을 촬영해 소재와 혼용률을 분석하기 위해 카메라 접근이 필요합니다.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>같은 Wi-Fi에 있는 K-DPP 백엔드 서버와 연결하기 위해 로컬 네트워크 접근이 필요합니다.</string>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>촬영한 라벨 이미지를 저장하거나 불러오기 위해 사진 보관함 접근이 필요합니다.</string>
+	<string>개발 중 같은 네트워크의 K-DPP 분석 서버와 연결하기 위해 로컬 네트워크 접근이 필요합니다.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>앨범에서 의류 라벨 사진을 선택해 분석하기 위해 사진 보관함 접근이 필요합니다.</string>
+	<string>앨범에서 의류 케어 라벨 사진을 선택해 분석하기 위해 사진 보관함 접근이 필요합니다.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -69,15 +67,10 @@
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 </dict>
 </plist>

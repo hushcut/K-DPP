@@ -6,22 +6,6 @@ void main() {
     test('parses the canonical scan success payload', () {
       final result = ScanResult.fromJson({
         'materials': {'cotton': 80.0, 'polyester': 20.0},
-        'material_details': [
-          {
-            'original_name': 'cotton',
-            'standard_name': 'cotton',
-            'display_name': '면',
-            'ratio': 80,
-            'is_supported': true,
-          },
-          {
-            'original_name': 'polyester',
-            'standard_name': 'polyester',
-            'display_name': '폴리에스터',
-            'ratio': 20,
-            'is_supported': true,
-          },
-        ],
         'care_instruction': '30도 이하 물에서 중성세제로 세탁하세요.',
         'title': '홍길동 코튼 셔츠',
         'category': '상의',
@@ -34,9 +18,6 @@ void main() {
       });
 
       expect(result.materials, {'cotton': 80.0, 'polyester': 20.0});
-      expect(result.displayMaterials, {'면': 80.0, '폴리에스터': 20.0});
-      expect(result.materialDetails, hasLength(2));
-      expect(result.materialDetails.first.standardName, 'cotton');
       expect(result.careInstruction, '30도 이하 물에서 중성세제로 세탁하세요.');
       expect(result.title, '홍길동 코튼 셔츠');
       expect(result.category, '상의');
@@ -99,6 +80,44 @@ void main() {
         () => ScanResult.fromJson({'materials': 'cotton 100%'}),
         throwsFormatException,
       );
+    });
+
+    test('material_details를 파싱해 표시명 기준 소재 구성을 제공한다', () {
+      final result = ScanResult.fromJson({
+        'materials': {'cotton': 60, 'polyester': 40},
+        'material_details': [
+          {
+            'original_name': 'cotton',
+            'standard_name': 'cotton',
+            'display_name': '면(cotton)',
+            'ratio': 60,
+            'is_supported': true,
+          },
+          {
+            'original_name': 'polyester',
+            'display_name': '폴리에스터(polyester)',
+            'ratio': 40,
+            'is_supported': true,
+          },
+        ],
+      });
+
+      expect(result.materialDetails, hasLength(2));
+      expect(result.displayNameFor('cotton'), '면(cotton)');
+      expect(result.displayMaterials, {
+        '면(cotton)': 60.0,
+        '폴리에스터(polyester)': 40.0,
+      });
+    });
+
+    test('material_details가 없으면 원래 소재명을 그대로 사용한다', () {
+      final result = ScanResult.fromJson({
+        'materials': {'cotton': 100},
+      });
+
+      expect(result.materialDetails, isEmpty);
+      expect(result.displayNameFor('cotton'), 'cotton');
+      expect(result.displayMaterials, {'cotton': 100.0});
     });
   });
 }

@@ -19,10 +19,6 @@ void main() {
       materials: {'cotton': 80, 'polyester': 20},
       careInstruction: '찬물 세탁 후 자연 건조',
       carbonFootprint: 9.2,
-      carbonFootprintSource: CarbonFootprintSource.server,
-      calculationScope: 'material_production_estimate',
-      calculationSource: 'K-DPP 소재 배출계수 표',
-      calculationNote: '개발용 추정값입니다.',
     );
 
     await provider.addClothes(selected);
@@ -37,28 +33,59 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('테스트 코튼 후드'), findsOneWidget);
-    expect(
-      find.textContaining('소재 정보와 원료·소재 생산 단계 탄소 추정값을 확인하세요.'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('소재 정보와 생산·제조 탄소 추정값을 확인하세요.'), findsOneWidget);
     expect(find.text('현재 건강 상태'), findsNothing);
     expect(find.textContaining('단계별 탄소 배출량'), findsNothing);
-    expect(find.text('원료·소재 생산 단계 탄소 배출량'), findsOneWidget);
+    expect(find.text('생산·제조 탄소 배출량'), findsOneWidget);
     expect(find.text('탄소 배출량 체감'), findsOneWidget);
+    expect(find.text('계산 기준'), findsOneWidget);
+    expect(find.text('앱 임시 추정값'), findsWidgets);
+    expect(find.text('저장된 소재와 의류 유형 기준'), findsOneWidget);
     expect(find.textContaining('전체 생애주기 배출량이 아닙니다'), findsOneWidget);
     expect(find.text('자동차'), findsOneWidget);
     expect(find.text('스마트폰'), findsOneWidget);
     expect(find.text('LED 전구'), findsOneWidget);
-    expect(find.text('약 38 km'), findsOneWidget);
-    expect(find.text('약 740회 충전'), findsOneWidget);
-    expect(find.text('약 2300시간'), findsOneWidget);
-    expect(find.textContaining('미국 EPA 환산 기준'), findsOneWidget);
-    expect(find.textContaining('LED 전구는 10W 소비전력 기준'), findsOneWidget);
-    expect(find.text('계산 범위: 원료·소재 생산 단계 중심 추정'), findsOneWidget);
-    expect(find.text('계산 출처: K-DPP 소재 배출계수 표'), findsOneWidget);
     expect(find.textContaining('라벨 지침: 찬물 세탁 후 자연 건조'), findsOneWidget);
     expect(find.text('찬물 세탁 후 자연 건조'), findsOneWidget);
-    expect(find.textContaining('면 80%'), findsWidgets);
+    expect(find.textContaining('COTTON 80%'), findsWidgets);
+  });
+
+  testWidgets('상세 리포트에서 의류 이름과 세탁 지침을 수정할 수 있다', (tester) async {
+    final provider = ClosetProvider(storage: FakeClosetStorage());
+
+    final selected = Clothes(
+      title: '수정 전 셔츠',
+      category: '상의',
+      health: 82,
+      materials: {'cotton': 100},
+      careInstruction: '찬물 세탁',
+      carbonFootprint: 3.2,
+    );
+
+    await provider.addClothes(selected);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: provider,
+        child: const MaterialApp(home: Scaffold(body: ReportScreen())),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.edit_outlined));
+    await tester.pumpAndSettle();
+
+    expect(find.text('의류 정보 수정'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextFormField).first, '수정 후 셔츠');
+    await tester.enterText(find.byType(TextFormField).last, '찬물 손세탁');
+    await tester.tap(find.text('수정 완료'));
+    await tester.pumpAndSettle();
+
+    expect(provider.items.single.title, '수정 후 셔츠');
+    expect(provider.items.single.careInstruction, '찬물 손세탁');
+    expect(find.text('수정 후 셔츠'), findsOneWidget);
+    expect(find.text('의류 정보가 수정되었습니다.'), findsOneWidget);
   });
 
   testWidgets('내장 리포트에서 의류를 삭제하면 콜백으로 옷장 화면 복귀를 요청한다', (tester) async {
@@ -104,7 +131,7 @@ void main() {
     await tester.tap(find.widgetWithText(ElevatedButton, '삭제'));
     await tester.pumpAndSettle();
 
-    expect(provider.items.contains(selected), isFalse);
+    expect(provider.items, isEmpty);
     expect(deleteCallbackCount, 1);
   });
 

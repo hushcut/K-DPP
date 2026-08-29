@@ -1,17 +1,17 @@
+// 프로필 표시값, 화면 테마, 개인정보 안내와 로그아웃을 제공하는 설정 화면입니다.
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'services/auth_api_service.dart';
+import 'theme/app_palette.dart';
 import 'theme_provider.dart';
 import 'widgets/app_back_button.dart';
 
+/// 사용자·테마 상태를 읽어 설정 메뉴를 구성하고 각 설정 동작을 실행합니다.
 class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({
-    super.key,
-    this.authApiService = const AuthApiService(),
-  });
+  const SettingsScreen({super.key, this.authApiService});
 
-  final AuthApiService authApiService;
+  final AuthApiService? authApiService;
 
   String _themeModeLabel(ThemeMode mode) {
     switch (mode) {
@@ -24,74 +24,41 @@ class SettingsScreen extends StatelessWidget {
     }
   }
 
+  /// 닉네임 편집 대화상자의 결과가 달라졌을 때만 Provider와 로컬 저장소를 갱신합니다.
   Future<void> _editNickname(BuildContext context, String currentName) async {
-    final controller = TextEditingController(text: currentName);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
     final result = await showDialog<String>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('닉네임 수정'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            style: TextStyle(
-              color: isDark ? Colors.white : const Color(0xFF111111),
-            ),
-            decoration: InputDecoration(
-              hintText: '예: 홍길동',
-              hintStyle: TextStyle(
-                color: isDark
-                    ? const Color(0xFF9A9A9A)
-                    : const Color(0xFF8C8C8C),
-              ),
-              filled: true,
-              fillColor: isDark
-                  ? const Color(0xFF2A2A2E)
-                  : const Color(0xFFF1F1F4),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 18,
-                vertical: 16,
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(18),
-                borderSide: BorderSide.none,
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('취소'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(dialogContext, controller.text.trim());
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF4A4EFE),
-              ),
-              child: const Text('저장', style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        );
-      },
+      builder: (dialogContext) => _NicknameEditDialog(currentName: currentName),
     );
 
-    if (result == null || result.trim().isEmpty) return;
+    if (result == null) return;
 
     if (!context.mounted) return;
 
-    await context.read<ClosetProvider>().setUserName(result);
+    final normalizedName = result.trim();
+
+    if (normalizedName == currentName.trim()) return;
+
+    try {
+      await context.read<ClosetProvider>().setUserName(normalizedName);
+    } catch (_) {
+      // 저장 실패 시 Provider가 이전 닉네임으로 되돌리므로 재시도만 안내합니다.
+      if (!context.mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('닉네임을 저장하지 못했어요. 다시 시도해 주세요.')),
+      );
+      return;
+    }
 
     if (!context.mounted) return;
 
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(const SnackBar(content: Text('닉네임이 변경되었습니다.')));
+    ).showSnackBar(const SnackBar(content: Text('이 기기에 표시되는 닉네임이 변경되었습니다.')));
   }
 
+  /// 서버 로그아웃을 시도한 뒤 성공 여부와 관계없이 기기의 세션·사용자 상태를 정리합니다.
   Future<void> _confirmLogout(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -107,7 +74,7 @@ class SettingsScreen extends StatelessWidget {
             ElevatedButton(
               onPressed: () => Navigator.pop(dialogContext, true),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF4A4EFE),
+                backgroundColor: AppPalette.accent,
               ),
               child: const Text('로그아웃', style: TextStyle(color: Colors.white)),
             ),
@@ -126,8 +93,11 @@ class SettingsScreen extends StatelessWidget {
     bool localLogoutStorageFailed = false;
 
     if (accessToken != null) {
+      // 서버 연결 실패는 기록하되 기기에서 로그아웃하는 흐름은 계속 진행합니다.
       try {
-        await authApiService.logout(accessToken: accessToken);
+        await (authApiService ?? AuthApiService()).logout(
+          accessToken: accessToken,
+        );
       } on AuthApiException catch (error) {
         serverLogoutError = error.userMessage;
       }
@@ -163,7 +133,7 @@ class SettingsScreen extends StatelessWidget {
         return AlertDialog(
           title: Text(title),
           content: const Text(
-            '이 기능은 다음 단계에서 추가할 예정입니다.',
+            '아직 준비 중인 기능이에요. 업데이트 후 사용할 수 있어요.',
             style: TextStyle(height: 1.5),
           ),
           actions: [
@@ -174,6 +144,110 @@ class SettingsScreen extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+
+  // 카메라·앨범 사진과 임시 파일이 어떻게 사용되는지 하단 시트로 안내합니다.
+  void _showPrivacyGuide(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.of(context);
+    final backgroundColor = isDark ? const Color(0xFF121212) : Colors.white;
+    final primaryText = palette.textPrimary;
+    final secondaryText = palette.textSecondary;
+
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: backgroundColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '사진 및 권한 안내',
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                _buildPrivacyGuideRow(
+                  icon: Icons.camera_alt_outlined,
+                  text: '카메라는 스캔 화면에서만 켜지고, 다른 화면에서는 사용하지 않습니다.',
+                  textColor: secondaryText,
+                ),
+                _buildPrivacyGuideRow(
+                  icon: Icons.delete_outline,
+                  text: '카메라로 새로 촬영한 임시 파일은 분석이 끝난 뒤 정리합니다.',
+                  textColor: secondaryText,
+                ),
+                _buildPrivacyGuideRow(
+                  icon: Icons.photo_library_outlined,
+                  text: '앨범에서 선택한 원본 사진은 앱이 수정하지 않습니다.',
+                  textColor: secondaryText,
+                ),
+                _buildPrivacyGuideRow(
+                  icon: Icons.cloud_done_outlined,
+                  text: '서버 분석이 연결된 경우 이미지는 라벨 분석 요청에만 사용됩니다.',
+                  textColor: secondaryText,
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(sheetContext),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppPalette.accent,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      '확인했어요',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPrivacyGuideRow({
+    required IconData icon,
+    required String text,
+    required Color textColor,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: AppPalette.accent, size: 21),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(color: textColor, fontSize: 14, height: 1.5),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -195,7 +269,7 @@ class SettingsScreen extends StatelessWidget {
     required IconData icon,
     required String title,
     String? subtitle,
-    Color iconColor = const Color(0xFF4A4EFE),
+    Color iconColor = AppPalette.accent,
     Color textColor = const Color(0xFF111111),
     Color subtitleColor = const Color(0xFF8C8C8C),
     VoidCallback? onTap,
@@ -246,22 +320,20 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 사용자와 테마 Provider를 구독해 변경된 닉네임·화면 모드를 즉시 표시합니다.
     final userName = context.watch<ClosetProvider>().userName;
     final userEmail = context.watch<ClosetProvider>().userEmail;
     final themeMode = context.watch<ThemeProvider>().themeMode;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.of(context);
 
-    final backgroundColor = isDark
-        ? const Color(0xFF121212)
-        : const Color(0xFFF8F9FC);
-    final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final backgroundColor = palette.background;
+    final cardColor = palette.card;
     final borderColor = isDark
         ? const Color(0xFF2C2C2E)
         : const Color(0xFFEAEAEA);
-    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
-    final secondaryText = isDark
-        ? const Color(0xFFD1D1D6)
-        : const Color(0xFF8C8C8C);
+    final primaryText = palette.textPrimary;
+    final secondaryText = palette.textSecondary;
     final sectionText = isDark
         ? const Color(0xFF9A9A9A)
         : const Color(0xFF8E8E93);
@@ -312,7 +384,7 @@ class SettingsScreen extends StatelessWidget {
                   ),
                   child: const Icon(
                     Icons.person_outline,
-                    color: Color(0xFF4A4EFE),
+                    color: AppPalette.accent,
                     size: 30,
                   ),
                 ),
@@ -332,7 +404,13 @@ class SettingsScreen extends StatelessWidget {
                       const SizedBox(height: 6),
                       Text(
                         userEmail,
-                        style: TextStyle(fontSize: 14, color: secondaryText),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: secondaryText,
+                          height: 1.4,
+                        ),
                       ),
                     ],
                   ),
@@ -387,6 +465,23 @@ class SettingsScreen extends StatelessWidget {
           ),
           const SizedBox(height: 24),
 
+          _buildSectionTitle('개인정보', sectionText),
+          _buildCard(
+            [
+              _buildMenuTile(
+                icon: Icons.privacy_tip_outlined,
+                title: '사진 및 권한 안내',
+                subtitle: '스캔에 사용하는 카메라와 사진 처리 방식을 확인합니다.',
+                textColor: primaryText,
+                subtitleColor: secondaryText,
+                onTap: () => _showPrivacyGuide(context),
+              ),
+            ],
+            cardColor,
+            borderColor,
+          ),
+          const SizedBox(height: 24),
+
           _buildSectionTitle('계정 관리', sectionText),
           _buildCard(
             [
@@ -423,6 +518,102 @@ class SettingsScreen extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 닉네임을 입력받아 최소 길이를 검사하고 정규화된 문자열을 반환하는 대화상자입니다.
+class _NicknameEditDialog extends StatefulWidget {
+  const _NicknameEditDialog({required this.currentName});
+
+  final String currentName;
+
+  @override
+  State<_NicknameEditDialog> createState() => _NicknameEditDialogState();
+}
+
+class _NicknameEditDialogState extends State<_NicknameEditDialog> {
+  late final TextEditingController _controller;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.currentName);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  // 검증을 통과한 값만 Navigator 결과로 상위 설정 화면에 전달합니다.
+  void _submit() {
+    final normalizedName = _controller.text.trim();
+
+    if (normalizedName.length < 2) {
+      setState(() {
+        _errorText = '닉네임은 2자 이상 입력해 주세요.';
+      });
+      return;
+    }
+
+    Navigator.pop(context, normalizedName);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.of(context);
+
+    return AlertDialog(
+      title: const Text('닉네임 수정'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        textInputAction: TextInputAction.done,
+        autofillHints: const [AutofillHints.nickname],
+        style: TextStyle(color: palette.textPrimary),
+        decoration: InputDecoration(
+          labelText: '닉네임',
+          hintText: '예: 홍길동',
+          errorText: _errorText,
+          hintStyle: TextStyle(
+            color: isDark ? const Color(0xFF9A9A9A) : const Color(0xFF5F6368),
+          ),
+          filled: true,
+          fillColor: isDark ? const Color(0xFF2A2A2E) : const Color(0xFFF1F1F4),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 18,
+            vertical: 16,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(18),
+            borderSide: BorderSide.none,
+          ),
+        ),
+        onChanged: (_) {
+          if (_errorText == null) return;
+          setState(() {
+            _errorText = null;
+          });
+        },
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('취소'),
+        ),
+        ElevatedButton(
+          onPressed: _submit,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppPalette.accent,
+          ),
+          child: const Text('저장', style: TextStyle(color: Colors.white)),
+        ),
+      ],
     );
   }
 }

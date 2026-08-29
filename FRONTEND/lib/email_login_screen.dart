@@ -1,10 +1,15 @@
+// 이메일·비밀번호 입력을 검증하고 서버 로그인 및 로그인 후 동기화를 수행하는 화면입니다.
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'closet_provider.dart';
 import 'services/auth_api_service.dart';
+import 'services/post_login_sync_service.dart';
+import 'signup_screen.dart';
+import 'theme/app_palette.dart';
 import 'widgets/app_back_button.dart';
 
+/// 로그인 요청의 진행 상태와 비밀번호 표시 상태를 관리하는 이메일 로그인 화면입니다.
 class EmailLoginScreen extends StatefulWidget {
   const EmailLoginScreen({super.key, this.authApiService});
 
@@ -20,6 +25,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   late final AuthApiService _authApiService;
+  late final PostLoginSyncService _postLoginSyncService;
 
   bool _isLoading = false;
   bool _obscurePassword = true;
@@ -28,7 +34,10 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
   @override
   void initState() {
     super.initState();
-    _authApiService = widget.authApiService ?? const AuthApiService();
+    _authApiService = widget.authApiService ?? AuthApiService();
+    _postLoginSyncService = PostLoginSyncService(
+      authApiService: _authApiService,
+    );
   }
 
   @override
@@ -38,6 +47,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     if (_didLoadInitialEmail) return;
     _didLoadInitialEmail = true;
 
+    // 회원가입 직후 전달된 이메일이 있으면 로그인 폼에 한 번만 채웁니다.
     final args = ModalRoute.of(context)?.settings.arguments;
     if (args is String && args.trim().isNotEmpty) {
       _emailController.text = args.trim();
@@ -51,6 +61,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     super.dispose();
   }
 
+  // 제출 전에 네트워크 요청 없이 기본 입력 형식을 검사합니다.
   String? _validateEmail(String? value) {
     final text = value?.trim() ?? '';
 
@@ -79,6 +90,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     return null;
   }
 
+  /// 폼 검증 → 서버 로그인 → 세션 저장 → 서버 이력 동기화 순으로 처리합니다.
   Future<void> _handleLogin() async {
     final isValid = _formKey.currentState?.validate() ?? false;
     if (!isValid) return;
@@ -95,15 +107,26 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
 
       if (!mounted) return;
 
-      await context.read<ClosetProvider>().setAuthenticatedUser(
+      final provider = context.read<ClosetProvider>();
+      final accessToken = result.accessToken!;
+
+      await provider.setAuthenticatedUser(
         nickname: result.user.nickname,
         email: result.user.email,
-        accessToken: result.accessToken!,
+        accessToken: accessToken,
         expiresInSeconds: result.expiresInSeconds!,
       );
 
       if (!mounted) return;
 
+      await _postLoginSyncService.synchronize(
+        provider: provider,
+        accessToken: accessToken,
+      );
+
+      if (!mounted) return;
+
+      // 인증 화면으로 돌아오지 않도록 이전 경로를 모두 제거합니다.
       Navigator.pushNamedAndRemoveUntil(context, '/main', (route) => false);
     } on AuthApiException catch (error) {
       if (!mounted) return;
@@ -129,7 +152,9 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     }
   }
 
+  // 이메일과 비밀번호 입력란에 공통으로 쓰는 테마별 스타일입니다.
   InputDecoration _inputDecoration({
+    required String labelText,
     required String hintText,
     Widget? suffixIcon,
   }) {
@@ -145,8 +170,10 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
         : Colors.transparent;
 
     return InputDecoration(
+      labelText: labelText,
       hintText: hintText,
-      hintStyle: TextStyle(color: hintColor, fontSize: 16),
+      labelStyle: TextStyle(color: hintColor, fontSize: 15),
+      hintStyle: TextStyle(color: hintColor, fontSize: 15),
       filled: true,
       fillColor: fillColor,
       contentPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 22),
@@ -163,7 +190,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
-        borderSide: const BorderSide(color: Color(0xFF4A4EFE), width: 1.5),
+        borderSide: const BorderSide(color: AppPalette.accent, width: 1.5),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
@@ -180,10 +207,9 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor = isDark
-        ? const Color(0xFF121212)
-        : const Color(0xFFF8F9FC);
-    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+    final palette = AppPalette.of(context);
+    final backgroundColor = palette.background;
+    final primaryText = palette.textPrimary;
     final secondaryText = isDark
         ? const Color(0xFFD1D1D6)
         : const Color(0xFF8C8C8C);
@@ -251,26 +277,43 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                         TextFormField(
                           controller: _emailController,
                           keyboardType: TextInputType.emailAddress,
+                          textInputAction: TextInputAction.next,
+                          autofillHints: const [
+                            AutofillHints.username,
+                            AutofillHints.email,
+                          ],
+                          autocorrect: false,
                           validator: _validateEmail,
                           style: TextStyle(color: primaryText),
-                          cursorColor: const Color(0xFF4A4EFE),
-                          decoration: _inputDecoration(hintText: '이메일'),
+                          cursorColor: AppPalette.accent,
+                          decoration: _inputDecoration(
+                            labelText: '이메일',
+                            hintText: 'honggildong@example.com',
+                          ),
                         ),
                         const SizedBox(height: 16),
                         TextFormField(
                           controller: _passwordController,
                           obscureText: _obscurePassword,
+                          textInputAction: TextInputAction.done,
+                          autofillHints: const [AutofillHints.password],
+                          enableSuggestions: false,
+                          autocorrect: false,
                           validator: _validatePassword,
                           style: TextStyle(color: primaryText),
-                          cursorColor: const Color(0xFF4A4EFE),
+                          cursorColor: AppPalette.accent,
                           decoration: _inputDecoration(
-                            hintText: '비밀번호',
+                            labelText: '비밀번호',
+                            hintText: '8자 이상 입력',
                             suffixIcon: IconButton(
                               onPressed: () {
                                 setState(() {
                                   _obscurePassword = !_obscurePassword;
                                 });
                               },
+                              tooltip: _obscurePassword
+                                  ? '비밀번호 표시'
+                                  : '비밀번호 숨기기',
                               icon: Icon(
                                 _obscurePassword
                                     ? Icons.visibility_off_outlined
@@ -279,6 +322,11 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                               ),
                             ),
                           ),
+                          onFieldSubmitted: (_) {
+                            if (!_isLoading) {
+                              _handleLogin();
+                            }
+                          },
                         ),
                         const SizedBox(height: 32),
                         SizedBox(
@@ -288,19 +336,23 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                             onPressed: _isLoading ? null : _handleLogin,
                             style: ElevatedButton.styleFrom(
                               elevation: 0,
-                              backgroundColor: const Color(0xFF4A4EFE),
+                              backgroundColor: AppPalette.accent,
                               disabledBackgroundColor: const Color(0x8C4A4EFE),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(30),
                               ),
                             ),
                             child: _isLoading
-                                ? const SizedBox(
-                                    width: 22,
-                                    height: 22,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.4,
-                                      color: Colors.white,
+                                ? Semantics(
+                                    label: '로그인 처리 중',
+                                    liveRegion: true,
+                                    child: const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.4,
+                                        color: Colors.white,
+                                      ),
                                     ),
                                   )
                                 : const Text(
@@ -315,15 +367,32 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                         ),
                         const SizedBox(height: 18),
                         TextButton(
-                          onPressed: () {
-                            Navigator.pushNamed(context, '/signup');
+                          onPressed: () async {
+                            // 회원가입이 pop으로 돌아오면 이 화면을 재사용하고,
+                            // 전달된 이메일이 있으면 로그인 폼에 채웁니다.
+                            final result = await Navigator.pushNamed(
+                              context,
+                              '/signup',
+                              arguments: SignupScreen.fromEmailLoginArgument,
+                            );
+
+                            if (!mounted ||
+                                result is! String ||
+                                result.trim().isEmpty) {
+                              return;
+                            }
+
+                            _emailController.text = result.trim();
                           },
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                          ),
                           child: Text(
                             '계정이 없으신가요? 회원가입',
                             style: TextStyle(
                               color: isDark
                                   ? const Color(0xFFB8B8BE)
-                                  : const Color(0xFF9A9A9A),
+                                  : const Color(0xFF5F6368),
                               fontSize: 14,
                               decoration: TextDecoration.underline,
                             ),

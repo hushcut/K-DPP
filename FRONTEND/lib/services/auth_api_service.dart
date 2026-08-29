@@ -1,200 +1,28 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import '../config/api_environment.dart';
 import '../models/analysis_history_record.dart';
+import 'api_http.dart';
 
-enum AuthApiErrorType {
-  badRequest,
-  unauthorized,
-  conflict,
-  server,
-  network,
-  timeout,
-  invalidResponse,
-  unknown,
-}
+part 'auth_api_models.dart';
 
-class AuthApiException implements Exception {
-  const AuthApiException({
-    required this.type,
-    required this.message,
-    this.statusCode,
-  });
-
-  final AuthApiErrorType type;
-  final String message;
-  final int? statusCode;
-
-  String get userMessage {
-    switch (type) {
-      case AuthApiErrorType.badRequest:
-      case AuthApiErrorType.unauthorized:
-      case AuthApiErrorType.conflict:
-        return message;
-      case AuthApiErrorType.server:
-        return '서버에서 문제가 발생했어요. 잠시 후 다시 시도해 주세요.';
-      case AuthApiErrorType.network:
-        return '서버에 연결할 수 없어요. 네트워크 상태를 확인해 주세요.';
-      case AuthApiErrorType.timeout:
-        return '요청 시간이 너무 오래 걸렸어요. 잠시 후 다시 시도해 주세요.';
-      case AuthApiErrorType.invalidResponse:
-        return '서버 응답 형식이 올바르지 않아요. 백엔드 상태를 확인해 주세요.';
-      case AuthApiErrorType.unknown:
-        return '요청 처리 중 알 수 없는 오류가 발생했어요.';
-    }
-  }
-
-  factory AuthApiException.fromStatusCode({
-    required int statusCode,
-    required String responseBody,
-  }) {
-    final serverMessage = _extractServerMessage(responseBody);
-
-    switch (statusCode) {
-      case 400:
-      case 422:
-        return AuthApiException(
-          type: AuthApiErrorType.badRequest,
-          statusCode: statusCode,
-          message: serverMessage ?? '입력한 계정 정보를 다시 확인해 주세요.',
-        );
-      case 401:
-      case 403:
-        return AuthApiException(
-          type: AuthApiErrorType.unauthorized,
-          statusCode: statusCode,
-          message: serverMessage ?? '이메일 또는 비밀번호가 올바르지 않습니다.',
-        );
-      case 409:
-        return AuthApiException(
-          type: AuthApiErrorType.conflict,
-          statusCode: statusCode,
-          message: serverMessage ?? '이미 가입된 이메일입니다.',
-        );
-      default:
-        if (statusCode >= 500) {
-          return AuthApiException(
-            type: AuthApiErrorType.server,
-            statusCode: statusCode,
-            message: serverMessage ?? '서버 내부 오류입니다.',
-          );
-        }
-
-        return AuthApiException(
-          type: AuthApiErrorType.unknown,
-          statusCode: statusCode,
-          message: serverMessage ?? '인증 요청을 처리하지 못했습니다.',
-        );
-    }
-  }
-
-  @override
-  String toString() {
-    if (statusCode == null) {
-      return 'AuthApiException($type): $message';
-    }
-
-    return 'AuthApiException($type, statusCode: $statusCode): $message';
-  }
-
-  static String? _extractServerMessage(String responseBody) {
-    try {
-      final decoded = jsonDecode(responseBody);
-
-      if (decoded is Map<String, dynamic>) {
-        final detail = decoded['detail'];
-        final message =
-            decoded['message'] ??
-            decoded['error'] ??
-            decoded['reason'] ??
-            (detail is String ? detail : null);
-
-        if (message != null && message.toString().trim().isNotEmpty) {
-          return message.toString().trim();
-        }
-      }
-    } catch (_) {
-      return null;
-    }
-
-    return null;
-  }
-}
-
-class AuthUser {
-  const AuthUser({
-    required this.id,
-    required this.email,
-    required this.nickname,
-  });
-
-  final int id;
-  final String email;
-  final String nickname;
-
-  factory AuthUser.fromJson(Map<String, dynamic> json) {
-    final id = _parseInt(json['id']);
-    final email = json['email']?.toString().trim() ?? '';
-    final nickname = json['nickname']?.toString().trim() ?? '';
-
-    if (id == null || email.isEmpty || nickname.isEmpty) {
-      throw const FormatException('사용자 정보 응답이 올바르지 않습니다.');
-    }
-
-    return AuthUser(id: id, email: email, nickname: nickname);
-  }
-
-  static int? _parseInt(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    return int.tryParse(value?.toString() ?? '');
-  }
-}
-
-class AuthResult {
-  const AuthResult({
-    required this.user,
-    this.accessToken,
-    this.tokenType,
-    this.expiresInSeconds,
-  });
-
-  final AuthUser user;
-  final String? accessToken;
-  final String? tokenType;
-  final int? expiresInSeconds;
-}
-
-class AuthSessionSnapshot {
-  const AuthSessionSnapshot({required this.user, required this.history});
-
-  final AuthUser user;
-  final List<AnalysisHistoryRecord> history;
-}
-
+/// 회원가입, 로그인, 로그아웃, 세션 검증을 수행하는 HTTP 인증 클라이언트다.
 class AuthApiService {
-  const AuthApiService({
-    this.baseUrl = const String.fromEnvironment(
-      'AUTH_API_BASE_URL',
-      defaultValue: 'http://10.0.2.2:8000',
-    ),
-    this.requestHeaders = const {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'ngrok-skip-browser-warning': 'true',
-    },
+  AuthApiService({
+    String? baseUrl,
+    this.requestHeaders = kDefaultJsonApiHeaders,
     this.requestTimeout = const Duration(seconds: 15),
     this.client,
-  });
+  }) : baseUrl = baseUrl ?? ApiEnvironment.authBaseUrl;
 
   final String baseUrl;
   final Map<String, String> requestHeaders;
   final Duration requestTimeout;
   final http.Client? client;
 
+  /// 닉네임·이메일의 앞뒤 공백을 제거해 회원가입을 요청하고 생성된 사용자 정보를 반환한다.
   Future<AuthResult> signup({
     required String nickname,
     required String email,
@@ -207,6 +35,7 @@ class AuthApiService {
     });
   }
 
+  /// 로그인을 요청하며 응답에 유효한 액세스 토큰과 만료 시간이 반드시 있는지 검사한다.
   Future<AuthResult> login({required String email, required String password}) {
     return _post('/auth/login', {
       'email': email.trim(),
@@ -214,91 +43,76 @@ class AuthApiService {
     }, requiresAccessToken: true);
   }
 
+  /// Bearer 토큰으로 서버 세션 종료를 요청하고 통신 실패를 인증 예외로 변환한다.
   Future<void> logout({required String accessToken}) async {
-    final activeClient = client ?? http.Client();
-    final shouldCloseClient = client == null;
-
     try {
-      final response = await activeClient
-          .post(
-            _buildUri('/auth/logout'),
-            headers: {
-              ...requestHeaders,
-              'Authorization': 'Bearer $accessToken',
-            },
-          )
-          .timeout(requestTimeout);
-      final responseBody = utf8.decode(response.bodyBytes);
+      final response = await runJsonApiRequest(
+        method: 'POST',
+        uri: _buildUri('/auth/logout'),
+        headers: requestHeaders,
+        timeout: requestTimeout,
+        accessToken: accessToken,
+        client: client,
+      );
 
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (!response.isSuccess) {
         throw AuthApiException.fromStatusCode(
           statusCode: response.statusCode,
-          responseBody: responseBody,
+          responseBody: response.body,
         );
       }
     } on AuthApiException {
       rethrow;
-    } on SocketException catch (error) {
-      throw AuthApiException(
-        type: AuthApiErrorType.network,
-        message: error.message,
-      );
-    } on http.ClientException catch (error) {
-      throw AuthApiException(
-        type: AuthApiErrorType.network,
-        message: error.message,
-      );
-    } on TimeoutException {
-      throw const AuthApiException(
-        type: AuthApiErrorType.timeout,
-        message: '로그아웃 요청 시간이 초과되었습니다.',
-      );
+    } on ApiTransportException catch (error) {
+      throw _fromTransport(error, timeoutMessage: '로그아웃 요청 시간이 초과되었습니다.');
     } catch (error) {
       throw AuthApiException(
         type: AuthApiErrorType.unknown,
         message: error.toString(),
       );
-    } finally {
-      if (shouldCloseClient) {
-        activeClient.close();
-      }
     }
   }
 
+  /// 세션 스냅샷을 조회해 현재 인증된 사용자만 반환한다.
   Future<AuthUser> validateSession({required String accessToken}) async {
     final snapshot = await fetchSessionSnapshot(accessToken: accessToken);
     return snapshot.user;
   }
 
+  /// `/me/history`에서 사용자와 분석 이력을 함께 가져온다.
+  /// 형식이 잘못된 개별 이력은 건너뛰되 사용자·목록 구조 오류는 요청 실패로 처리한다.
   Future<AuthSessionSnapshot> fetchSessionSnapshot({
     required String accessToken,
   }) async {
-    final activeClient = client ?? http.Client();
-    final shouldCloseClient = client == null;
-
     try {
-      final response = await activeClient
-          .get(
-            _buildUri('/me/history'),
-            headers: {
-              ...requestHeaders,
-              'Authorization': 'Bearer $accessToken',
-            },
-          )
-          .timeout(requestTimeout);
-      final responseBody = utf8.decode(response.bodyBytes);
+      final response = await runJsonApiRequest(
+        method: 'GET',
+        uri: _buildUri('/me/history'),
+        headers: requestHeaders,
+        timeout: requestTimeout,
+        accessToken: accessToken,
+        client: client,
+      );
 
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (!response.isSuccess) {
         throw AuthApiException.fromStatusCode(
           statusCode: response.statusCode,
-          responseBody: responseBody,
+          responseBody: response.body,
         );
       }
 
-      final decoded = jsonDecode(responseBody);
+      final decoded = jsonDecode(response.body);
 
       if (decoded is! Map<String, dynamic>) {
         throw const FormatException('응답이 JSON 객체 형식이 아닙니다.');
+      }
+
+      // 2xx로 내려온 오류 봉투도 로그인·가입 파싱과 동일하게 서버 메시지를 살립니다.
+      if (decoded['success'] == false || decoded['status'] == 'error') {
+        throw AuthApiException(
+          type: AuthApiErrorType.badRequest,
+          message: decoded['message']?.toString() ?? '세션 정보를 불러오지 못했습니다.',
+        );
       }
 
       final userJson = decoded['user'];
@@ -331,21 +145,8 @@ class AuthApiService {
       );
     } on AuthApiException {
       rethrow;
-    } on SocketException catch (error) {
-      throw AuthApiException(
-        type: AuthApiErrorType.network,
-        message: error.message,
-      );
-    } on http.ClientException catch (error) {
-      throw AuthApiException(
-        type: AuthApiErrorType.network,
-        message: error.message,
-      );
-    } on TimeoutException {
-      throw const AuthApiException(
-        type: AuthApiErrorType.timeout,
-        message: '로그인 확인 시간이 초과되었습니다.',
-      );
+    } on ApiTransportException catch (error) {
+      throw _fromTransport(error, timeoutMessage: '로그인 확인 시간이 초과되었습니다.');
     } on FormatException catch (error) {
       throw AuthApiException(
         type: AuthApiErrorType.invalidResponse,
@@ -356,10 +157,6 @@ class AuthApiService {
         type: AuthApiErrorType.unknown,
         message: error.toString(),
       );
-    } finally {
-      if (shouldCloseClient) {
-        activeClient.close();
-      }
     }
   }
 
@@ -368,47 +165,31 @@ class AuthApiService {
     Map<String, String> body, {
     bool requiresAccessToken = false,
   }) async {
-    final activeClient = client ?? http.Client();
-    final shouldCloseClient = client == null;
-
     try {
-      final response = await activeClient
-          .post(
-            _buildUri(path),
-            headers: requestHeaders,
-            body: jsonEncode(body),
-          )
-          .timeout(requestTimeout);
-      final responseBody = utf8.decode(response.bodyBytes);
+      final response = await runJsonApiRequest(
+        method: 'POST',
+        uri: _buildUri(path),
+        headers: requestHeaders,
+        timeout: requestTimeout,
+        jsonBody: body,
+        client: client,
+      );
 
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (!response.isSuccess) {
         throw AuthApiException.fromStatusCode(
           statusCode: response.statusCode,
-          responseBody: responseBody,
+          responseBody: response.body,
         );
       }
 
       return _parseResult(
-        responseBody,
+        response.body,
         requiresAccessToken: requiresAccessToken,
       );
     } on AuthApiException {
       rethrow;
-    } on SocketException catch (error) {
-      throw AuthApiException(
-        type: AuthApiErrorType.network,
-        message: error.message,
-      );
-    } on http.ClientException catch (error) {
-      throw AuthApiException(
-        type: AuthApiErrorType.network,
-        message: error.message,
-      );
-    } on TimeoutException {
-      throw const AuthApiException(
-        type: AuthApiErrorType.timeout,
-        message: '인증 요청 시간이 초과되었습니다.',
-      );
+    } on ApiTransportException catch (error) {
+      throw _fromTransport(error, timeoutMessage: '인증 요청 시간이 초과되었습니다.');
     } on FormatException catch (error) {
       throw AuthApiException(
         type: AuthApiErrorType.invalidResponse,
@@ -419,11 +200,24 @@ class AuthApiService {
         type: AuthApiErrorType.unknown,
         message: error.toString(),
       );
-    } finally {
-      if (shouldCloseClient) {
-        activeClient.close();
-      }
     }
+  }
+
+  /// 공통 전송 오류를 인증 오류 유형으로 변환한다.
+  AuthApiException _fromTransport(
+    ApiTransportException error, {
+    required String timeoutMessage,
+  }) {
+    return switch (error.type) {
+      ApiTransportErrorType.network => AuthApiException(
+        type: AuthApiErrorType.network,
+        message: error.message,
+      ),
+      ApiTransportErrorType.timeout => AuthApiException(
+        type: AuthApiErrorType.timeout,
+        message: timeoutMessage,
+      ),
+    };
   }
 
   Uri _buildUri(String path) {

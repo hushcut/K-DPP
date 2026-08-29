@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../models/clothing_type_option.dart';
+import '../theme/app_palette.dart';
 
+/// 의류 종류별 예상 무게를 선택하거나 실제 무게를 직접 입력하는 바텀 시트입니다.
+///
+/// 선택 결과는 [onSelected]로 전달하며, 시트 닫기 여부는 호출한 화면이 결정합니다.
 class ClothingTypePickerSheet extends StatefulWidget {
   const ClothingTypePickerSheet({
     super.key,
@@ -10,8 +14,10 @@ class ClothingTypePickerSheet extends StatefulWidget {
     required this.onSelected,
   });
 
+  // 표시할 선택지와 현재 선택된 초기값입니다.
   final List<ClothingTypeOption> options;
   final ClothingTypeOption initialSelection;
+  /// 일반 선택 또는 검증된 직접 입력 결과를 상위 화면에 전달합니다.
   final ValueChanged<ClothingTypeOption> onSelected;
 
   @override
@@ -19,6 +25,7 @@ class ClothingTypePickerSheet extends StatefulWidget {
       _ClothingTypePickerSheetState();
 }
 
+/// 선택 목록과 직접 입력 폼 사이의 전환 및 입력 검증 상태를 관리합니다.
 class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
   final TextEditingController _directNameController = TextEditingController();
   final TextEditingController _directWeightController = TextEditingController();
@@ -48,6 +55,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
     super.dispose();
   }
 
+  // 의류명이 있고 무게가 양수인지 검증한 후 직접 무게 옵션을 onSelected로 전달합니다.
   void _submitDirectInput() {
     final name = _directNameController.text.trim();
     final weightText = _directWeightController.text.trim();
@@ -60,7 +68,8 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
       return;
     }
 
-    if (weight == null || weight <= 0) {
+    // NaN·Infinity는 저장 시 오류를 일으키므로 유한한 양수만 허용합니다.
+    if (weight == null || !weight.isFinite || weight <= 0) {
       setState(() {
         _directErrorText = '실제 무게를 g 단위로 입력해 주세요.';
       });
@@ -103,11 +112,13 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
     );
   }
 
+  // 미리 정의된 의류 옵션과 직접 입력 진입 항목을 목록으로 표시합니다.
   Widget _buildOptionListView(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final palette = AppPalette.of(context);
+    final cardColor = palette.card;
     final borderColor = isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade200;
-    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+    final primaryText = palette.textPrimary;
     final secondaryText = isDark
         ? const Color(0xFFD1D1D6)
         : const Color(0xFF777777);
@@ -137,91 +148,106 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
                     widget.initialSelection.isDirectWeightPlaceholder
               : option.label == widget.initialSelection.label;
 
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: InkWell(
-              onTap: () {
-                if (option.isDirectWeightPlaceholder) {
-                  setState(() {
-                    _isDirectInputMode = true;
-                    _directErrorText = null;
-                  });
-                  return;
-                }
+          return Semantics(
+            button: true,
+            selected: isSelected,
+            label: option.isDirectWeightPlaceholder
+                ? '직접 무게 입력'
+                : '${option.label}, ${option.category}, 예상 무게 ${option.weightRangeLabel}',
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: InkWell(
+                onTap: () {
+                  if (option.isDirectWeightPlaceholder) {
+                    setState(() {
+                      _isDirectInputMode = true;
+                      _directErrorText = null;
+                    });
+                    return;
+                  }
 
-                widget.onSelected(option);
-              },
-              borderRadius: BorderRadius.circular(14),
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? const Color(
-                          0xFF4A4EFE,
-                        ).withValues(alpha: isDark ? 0.20 : 0.10)
-                      : cardColor,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: isSelected ? const Color(0xFF4A4EFE) : borderColor,
-                    width: isSelected ? 1.5 : 1,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
+                  widget.onSelected(option);
+                },
+                borderRadius: BorderRadius.circular(14),
+                child: ExcludeSemantics(
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? AppPalette.accent.withValues(
+                              alpha: isDark ? 0.20 : 0.10,
+                            )
+                          : cardColor,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
                         color: isSelected
-                            ? const Color(0xFF4A4EFE)
-                            : (isDark
-                                  ? const Color(0xFF2A2A2E)
-                                  : const Color(0xFFF2F3F8)),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        option.icon,
-                        color: isSelected
-                            ? Colors.white
-                            : const Color(0xFF4A4EFE),
+                            ? AppPalette.accent
+                            : borderColor,
+                        width: isSelected ? 1.5 : 1,
                       ),
                     ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            option.label,
-                            style: TextStyle(
-                              color: primaryText,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                            ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? AppPalette.accent
+                                : (isDark
+                                      ? const Color(0xFF2A2A2E)
+                                      : const Color(0xFFF2F3F8)),
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                          const SizedBox(height: 4),
-                          Text(
+                          child: Icon(
+                            option.icon,
+                            color: isSelected
+                                ? Colors.white
+                                : AppPalette.accent,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                option.label,
+                                style: TextStyle(
+                                  color: primaryText,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                option.isDirectWeightPlaceholder
+                                    ? '실제 무게를 알고 있어요'
+                                    : '${option.category} · 예상 무게 ${option.weightRangeLabel}',
+                                style: TextStyle(
+                                  color: secondaryText,
+                                  fontSize: 12,
+                                  height: 1.4,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (isSelected)
+                          const Icon(
+                            Icons.check_circle,
+                            color: AppPalette.accent,
+                          )
+                        else
+                          Icon(
                             option.isDirectWeightPlaceholder
-                                ? '실제 무게를 알고 있어요'
-                                : '${option.category} · 예상 무게 ${option.weightRangeLabel}',
-                            style: TextStyle(
-                              color: secondaryText,
-                              fontSize: 12,
-                            ),
+                                ? Icons.scale_outlined
+                                : Icons.chevron_right,
+                            color: secondaryText,
                           ),
-                        ],
-                      ),
+                      ],
                     ),
-                    if (isSelected)
-                      const Icon(Icons.check_circle, color: Color(0xFF4A4EFE))
-                    else
-                      Icon(
-                        option.isDirectWeightPlaceholder
-                            ? Icons.scale_outlined
-                            : Icons.chevron_right,
-                        color: secondaryText,
-                      ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -231,11 +257,13 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
     );
   }
 
+  // 의류명, g 단위 실제 무게, 상·하의 분류를 입력받는 화면을 만듭니다.
   Widget _buildDirectInputView(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final palette = AppPalette.of(context);
+    final cardColor = palette.card;
     final borderColor = isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade300;
-    final primaryText = isDark ? Colors.white : const Color(0xFF111111);
+    final primaryText = palette.textPrimary;
     final secondaryText = isDark
         ? const Color(0xFFD1D1D6)
         : const Color(0xFF777777);
@@ -255,6 +283,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
                   _directErrorText = null;
                 });
               },
+              tooltip: '의류 종류 목록으로 돌아가기',
               icon: Icon(
                 Icons.arrow_back_ios_new_rounded,
                 color: primaryText,
@@ -368,12 +397,15 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
         ),
         if (_directErrorText != null) ...[
           const SizedBox(height: 12),
-          Text(
-            _directErrorText!,
-            style: const TextStyle(
-              color: Colors.redAccent,
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
+          Semantics(
+            liveRegion: true,
+            child: Text(
+              _directErrorText!,
+              style: const TextStyle(
+                color: Colors.redAccent,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ],
@@ -398,7 +430,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
           child: ElevatedButton(
             onPressed: _submitDirectInput,
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4A4EFE),
+              backgroundColor: AppPalette.accent,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10),
               ),
@@ -417,6 +449,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
   }
 }
 
+/// 직접 입력 의류의 분류 하나를 선택하는 내부 선택형 칩입니다.
 class _CategoryChoiceChip extends StatelessWidget {
   const _CategoryChoiceChip({
     required this.label,
@@ -432,20 +465,20 @@ class _CategoryChoiceChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final borderColor = selected
-        ? const Color(0xFF4A4EFE)
+        ? AppPalette.accent
         : const Color(0xFF8C8C8C);
     final backgroundColor = selected
-        ? const Color(0xFF4A4EFE).withValues(alpha: isDark ? 0.22 : 0.10)
+        ? AppPalette.accent.withValues(alpha: isDark ? 0.22 : 0.10)
         : Colors.transparent;
     final textColor = selected
-        ? const Color(0xFF4A4EFE)
+        ? AppPalette.accent
         : (isDark ? Colors.white : Colors.black87);
 
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Container(
-        height: 46,
+        height: 48,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: backgroundColor,

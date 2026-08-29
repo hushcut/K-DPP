@@ -26,7 +26,7 @@ void main() {
 
   group('ScanApiService configuration', () {
     test('uses the Android emulator endpoint by default', () {
-      const service = ScanApiService();
+      final service = ScanApiService();
 
       expect(service.endpoint, 'http://10.0.2.2:8000/api/scan');
     });
@@ -90,15 +90,15 @@ void main() {
       try {
         final result = await service.scanLabel(imageFile: imageFile);
 
-        expect(result.materials, {'cotton': 80.0, 'polyester': 20.0});
-        expect(result.careInstruction, '라벨 표기법에 맞춰 관리하세요.');
+        expect(result.materials, {'면': 80.0, '폴리에스터': 20.0});
+        expect(result.careInstruction, '찬물 기계세탁 가능');
         expect(result.title, '스캔한 의류');
         expect(result.category, '상의');
-        expect(result.carbonFootprint, isNull);
+        expect(result.carbonFootprint, 8.54);
         expect(result.weightGram, isNull);
         expect(result.calculationMethod, isNull);
-        expect(result.unit, isNull);
-        expect(result.savedResultId, isNull);
+        expect(result.unit, 'kg CO2eq');
+        expect(result.savedResultId, 13);
       } finally {
         client.close();
       }
@@ -168,6 +168,69 @@ void main() {
                   'message',
                   'AI OCR 모듈을 불러오지 못했습니다.',
                 ),
+          ),
+        );
+      } finally {
+        client.close();
+      }
+    });
+
+    test('이미지 파트에 image/jpeg Content-Type을 명시해 전송한다', () async {
+      late http.Request capturedRequest;
+      final client = MockClient((request) async {
+        capturedRequest = request;
+
+        return http.Response(
+          jsonEncode({
+            'status': 'success',
+            'materials': {'cotton': 100},
+            'care_instruction': '찬물 세탁',
+          }),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      });
+      final service = ScanApiService(
+        endpoint: 'https://example.ngrok-free.app/api/scan',
+        client: client,
+      );
+
+      try {
+        await service.scanLabel(imageFile: imageFile);
+
+        // 미지정 시 application/octet-stream으로 전송되어 서버가 415로
+        // 거부하므로, 멀티파트 본문의 파트 헤더를 직접 확인한다.
+        final multipartBody = String.fromCharCodes(
+          capturedRequest.bodyBytes,
+        ).toLowerCase();
+
+        expect(multipartBody, contains('content-type: image/jpeg'));
+        expect(multipartBody, isNot(contains('application/octet-stream')));
+      } finally {
+        client.close();
+      }
+    });
+
+    test('업로드 도중 끊긴 연결(ClientException)은 네트워크 오류로 분류한다', () async {
+      final client = MockClient((request) async {
+        throw http.ClientException(
+          'Connection closed before full header was received',
+        );
+      });
+      final service = ScanApiService(
+        endpoint: 'https://example.ngrok-free.app/api/scan',
+        client: client,
+      );
+
+      try {
+        await expectLater(
+          service.scanLabel(imageFile: imageFile),
+          throwsA(
+            isA<ScanApiException>().having(
+              (error) => error.type,
+              'type',
+              ScanApiErrorType.network,
+            ),
           ),
         );
       } finally {

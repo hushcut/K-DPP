@@ -19,19 +19,10 @@ void main() {
       expect(inferredType.estimatedWeightGram, 680);
     });
 
-    test('buildFromResult keeps scanned title and display material name', () {
+    test('buildFromResult keeps scanned title when it exists', () {
       final result = ScanResult(
-        title: ' 친환경 코튼 셔츠 ',
+        title: ' 홍길동 코튼 셔츠 ',
         materials: {'cotton': 100},
-        materialDetails: const [
-          ScanMaterialDetail(
-            originalName: 'cotton',
-            standardName: 'cotton',
-            displayName: '면',
-            ratio: 100,
-            isSupported: true,
-          ),
-        ],
         careInstruction: '찬물 세탁',
         health: 90,
         carbonFootprint: 4.2,
@@ -44,8 +35,8 @@ void main() {
         clothingType: ClothingTypeCatalog.defaultOption,
       );
 
-      expect(draft.title, '친환경 코튼 셔츠');
-      expect(draft.materials, {'면': 100});
+      expect(draft.title, '홍길동 코튼 셔츠');
+      expect(draft.materials, {'cotton': 100});
       expect(draft.careInstruction, '찬물 세탁');
       expect(draft.serverHealth, 90);
       expect(draft.serverCarbonFootprint, 4.2);
@@ -67,6 +58,28 @@ void main() {
       );
 
       expect(draft.title, ClothingTypeCatalog.defaultOption.defaultTitle);
+    });
+
+    test('buildFromResult는 서버 표시명을 소재 구성에 사용한다', () {
+      final result = ScanResult(
+        materials: const {'cotton': 100},
+        materialDetails: const [
+          ScanMaterialDetail(
+            originalName: 'cotton',
+            displayName: '면(cotton)',
+            ratio: 100,
+            isSupported: true,
+          ),
+        ],
+        careInstruction: '찬물 세탁',
+      );
+
+      final draft = service.buildFromResult(
+        result: result,
+        clothingType: ClothingTypeCatalog.defaultOption,
+      );
+
+      expect(draft.materials, {'면(cotton)': 100.0});
     });
 
     test('buildManual creates empty manual draft', () {

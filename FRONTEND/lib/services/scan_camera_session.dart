@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 
+/// 카메라 초기화·오류·해제를 관리하고 준비 상태 변경을 화면에 알린다.
 class ScanCameraSession extends ChangeNotifier {
   CameraController? _controller;
   bool _isInitializing = false;
@@ -16,9 +17,11 @@ class ScanCameraSession extends ChangeNotifier {
   bool get isReady => _controller?.value.isInitialized ?? false;
   bool get isTakingPicture => _controller?.value.isTakingPicture ?? false;
 
+  /// 후면 카메라를 우선 초기화하고 지원되는 경우 자동 초점과 노출을 설정한다.
+  /// 요청 번호로 오래된 비동기 초기화 결과가 새 세션을 덮어쓰지 않게 한다.
   Future<void> initialize({required bool Function() canUseCamera}) async {
     if (!canUseCamera()) return;
-    if (isReady) return;
+    if (isReady || _isInitializing) return;
 
     final requestId = ++_requestId;
 
@@ -49,6 +52,13 @@ class ScanCameraSession extends ChangeNotifier {
 
       if (!canUseCamera() || requestId != _requestId) {
         await controller.dispose();
+
+        // 더 새로운 요청이 없다면 준비 중 표시를 반드시 되돌려,
+        // 다음 초기화가 막히지 않게 합니다.
+        if (requestId == _requestId) {
+          _isInitializing = false;
+          notifyListeners();
+        }
         return;
       }
 
@@ -65,7 +75,7 @@ class ScanCameraSession extends ChangeNotifier {
       if (!canUseCamera() || requestId != _requestId) return;
 
       _isInitializing = false;
-      _errorMessage = '카메라를 불러올 수 없어요.\n카메라 권한을 확인해 주세요.';
+      _errorMessage = _buildCameraErrorMessage(e);
       notifyListeners();
     }
   }
@@ -77,10 +87,24 @@ class ScanCameraSession extends ChangeNotifier {
       await controller.setFocusPoint(const Offset(0.5, 0.5));
       await controller.setExposurePoint(const Offset(0.5, 0.5));
     } catch (_) {
-      // Some camera implementations do not support explicit focus points.
+      // Some camera implementations do not support explicit focus/exposure points.
     }
   }
 
+  String _buildCameraErrorMessage(Object error) {
+    if (error is CameraException) {
+      switch (error.code) {
+        case 'CameraAccessDenied':
+        case 'CameraAccessDeniedWithoutPrompt':
+        case 'CameraAccessRestricted':
+          return '카메라 권한이 꺼져 있어요.\n기기 설정에서 K-DPP의 카메라 권한을 허용해 주세요.';
+      }
+    }
+
+    return '카메라를 시작하지 못했어요.\n잠시 후 다시 시도해 주세요.';
+  }
+
+  /// 진행 중인 초기화를 무효화하고 현재 컨트롤러 및 오류 상태를 정리한다.
   Future<void> disposeCamera() async {
     _requestId++;
 
@@ -93,6 +117,7 @@ class ScanCameraSession extends ChangeNotifier {
     await controller?.dispose();
   }
 
+  /// 카메라가 준비되어 있고 촬영 중이 아닐 때만 사진 파일을 반환한다.
   Future<XFile?> takePicture() async {
     final controller = _controller;
 

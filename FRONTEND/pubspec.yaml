@@ -38,7 +38,8 @@ dependencies:
   image_picker: ^1.1.2
   provider: ^6.1.2
   camera: ^0.11.0+2
-  http: ^1.6.0
+  http: ^1.2.2
+  http_parser: ^4.1.2
   flutter_secure_storage: 10.3.1
 
 dev_dependencies:
@@ -62,6 +63,9 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/images/kdpp_logo.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

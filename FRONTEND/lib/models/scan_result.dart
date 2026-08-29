@@ -1,3 +1,7 @@
+/// 의류 라벨 스캔 API가 반환한 소재 구성과 분석 부가 정보를 담는 모델입니다.
+///
+/// [materials]는 생성 시 수정 불가능한 맵으로 복사되어 이후 분석 원본이
+/// 의도치 않게 바뀌지 않도록 합니다.
 class ScanResult {
   ScanResult({
     required Map<String, double> materials,
@@ -16,18 +20,13 @@ class ScanResult {
 
   static const String defaultCareInstruction = '라벨의 세탁 지침을 확인해 주세요.';
 
+  /// 인식한 소재명과 함유율(%)의 대응 관계입니다.
   final Map<String, double> materials;
-  final List<ScanMaterialDetail> materialDetails;
-  final String careInstruction;
-  final String? title;
-  final String? category;
-  final int? health;
-  final double? carbonFootprint;
-  final double? weightGram;
-  final String? calculationMethod;
-  final String? unit;
-  final int? savedResultId;
 
+  /// 서버가 정규화한 소재별 표시명·표준명·지원 여부 정보입니다.
+  final List<ScanMaterialDetail> materialDetails;
+
+  /// 소재명에 대응하는 서버 표시명을 돌려주고, 정보가 없으면 원래 이름을 씁니다.
   String displayNameFor(String materialName) {
     final normalizedName = materialName.trim().toLowerCase();
 
@@ -41,6 +40,7 @@ class ScanResult {
     return materialName;
   }
 
+  /// 화면 표기에 쓰는 표시명 기준 소재 구성입니다.
   Map<String, double> get displayMaterials {
     return Map.unmodifiable({
       for (final entry in materials.entries)
@@ -48,6 +48,20 @@ class ScanResult {
     });
   }
 
+  // 세탁·관리 지침과 화면 표시에 사용할 선택적 분석 메타데이터입니다.
+  final String careInstruction;
+  final String? title;
+  final String? category;
+  final int? health;
+  final double? carbonFootprint;
+  final double? weightGram;
+  final String? calculationMethod;
+  final String? unit;
+  final int? savedResultId;
+
+  /// 여러 버전의 서버 키 이름을 허용해 JSON을 모델로 변환합니다.
+  ///
+  /// 소재 값이 맵이나 목록 형식이 아니면 [FormatException]을 발생시킵니다.
   factory ScanResult.fromJson(Map<String, dynamic> json) {
     final rawMaterials =
         json['materials'] ?? json['material'] ?? json['composition'];
@@ -125,19 +139,6 @@ class ScanResult {
     return materials;
   }
 
-  static List<ScanMaterialDetail> _parseMaterialDetails(dynamic value) {
-    if (value is! List) return const [];
-
-    return value
-        .whereType<Map>()
-        .map(
-          (item) =>
-              ScanMaterialDetail.fromJson(Map<String, dynamic>.from(item)),
-        )
-        .where((item) => item.originalName.isNotEmpty)
-        .toList(growable: false);
-  }
-
   static double? _parsePercentage(dynamic value) {
     if (value == null) return null;
     if (value is num) return value.toDouble();
@@ -172,8 +173,22 @@ class ScanResult {
     if (value is num) return value.toDouble();
     return double.tryParse(value.toString());
   }
+
+  static List<ScanMaterialDetail> _parseMaterialDetails(dynamic value) {
+    if (value is! List) return const [];
+
+    return value
+        .whereType<Map>()
+        .map(
+          (item) =>
+              ScanMaterialDetail.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .where((item) => item.originalName.isNotEmpty)
+        .toList(growable: false);
+  }
 }
 
+/// 서버가 소재명을 정규화한 결과(원본명·표준명·표시명·지원 여부)입니다.
 class ScanMaterialDetail {
   const ScanMaterialDetail({
     required this.originalName,

@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/models/scan_result.dart';
 import 'package:k_dpp/services/scan_analysis_service.dart';
@@ -43,6 +44,12 @@ void main() {
   );
 
   test('analyzeLabel converts unexpected errors to unknown failure', () async {
+    final originalDebugPrint = debugPrint;
+    debugPrint = (String? message, {int? wrapWidth}) {};
+    addTearDown(() {
+      debugPrint = originalDebugPrint;
+    });
+
     final service = ScanAnalysisService(
       scanApiService: _FailingScanApiService(StateError('broken')),
     );
@@ -58,7 +65,10 @@ void main() {
 
 class _SuccessfulScanApiService extends ScanApiService {
   @override
-  Future<ScanResult> scanLabel({required File imageFile}) async {
+  Future<ScanResult> scanLabel({
+    required File imageFile,
+    String? accessToken,
+  }) async {
     return ScanResult(
       title: '홍길동 테스트 의류',
       category: '상의',
@@ -69,12 +79,15 @@ class _SuccessfulScanApiService extends ScanApiService {
 }
 
 class _FailingScanApiService extends ScanApiService {
-  const _FailingScanApiService(this.error);
+  _FailingScanApiService(this.error);
 
   final Object error;
 
   @override
-  Future<ScanResult> scanLabel({required File imageFile}) async {
+  Future<ScanResult> scanLabel({
+    required File imageFile,
+    String? accessToken,
+  }) async {
     throw error;
   }
 }

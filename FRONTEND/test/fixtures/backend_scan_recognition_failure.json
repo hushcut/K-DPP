@@ -1,14 +1,8 @@
 {
   "status": "error",
-  "error_code": "MATERIAL_EXTRACTION_FAILED",
   "message": "라벨에서 소재 혼용률을 찾지 못했습니다.",
   "detail": {
     "message": "라벨에서 소재 혼용률을 찾지 못했습니다.",
-    "error_code": "MATERIAL_EXTRACTION_FAILED",
-    "materials": {},
-    "partial_materials": {},
-    "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
-    "raw_ocr_preview": "CARE LABEL TEXT",
-    "ai_success": false
+    "raw_ocr_preview": "CARE LABEL TEXT"
   }
 }

@@ -1,10 +1,8 @@
 {
   "status": "error",
-  "error_code": "AI_MODULE_FAILED",
   "message": "AI OCR 모듈을 불러오지 못했습니다.",
   "detail": {
     "message": "AI OCR 모듈을 불러오지 못했습니다.",
-    "error_code": "AI_MODULE_FAILED",
-    "hint": "AI/kdpp_ai_ocr_integrated 의존성을 설치하고 다시 실행해 주세요."
+    "hint": "AI/kdpp_ai_ocr_integrated 의존성을 설치한 뒤 다시 실행하세요."
   }
 }
