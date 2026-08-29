@@ -17,7 +17,8 @@ def test_analyze_calculates_cotton_polyester(client):
     assert body["materials"] == {"cotton": 80, "polyester": 20}
     assert body["carbon_footprint"] == 8.54
     assert body["unit"] == "kg CO2eq"
-    assert body["saved_result_id"] is not None
+    # /analyze는 계산 전용으로 바뀌어 더 이상 이력을 저장하지 않습니다.
+    assert body["saved_result_id"] is None
 
 
 def test_analyze_returns_400_for_unknown_material(client):
@@ -77,14 +78,20 @@ def test_authenticated_analyze_is_visible_in_my_history(client):
     )
     token = login.json()["access_token"]
 
+    calculate = client.post(
+        "/api/carbon/calculate",
+        json={
+            "materials": {"cotton": 80, "polyester": 20},
+            "weight_grams": 200,
+            "save_history": True,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    # /analyze는 계산 전용이라 이력에 남지 않아야 합니다.
     analyze = client.post(
         "/analyze",
-        json={
-            "materials": {
-                "cotton": 80,
-                "polyester": 20,
-            },
-        },
+        json={"materials": {"cotton": 80, "polyester": 20}},
         headers={"Authorization": f"Bearer {token}"},
     )
 
@@ -94,13 +101,15 @@ def test_authenticated_analyze_is_visible_in_my_history(client):
     )
     body = history.json()
 
+    assert calculate.status_code == 200
     assert analyze.status_code == 200
     assert history.status_code == 200
     assert body["status"] == "success"
     assert body["user"]["id"] == user_id
     assert len(body["history"]) == 1
     assert body["history"][0]["user_id"] == user_id
-    assert body["history"][0]["id"] == analyze.json()["saved_result_id"]
+    # 이력의 created_at은 UTC 오프셋을 포함해야 합니다(시간대 오해 방지).
+    assert body["history"][0]["created_at"].endswith("+00:00")
 
 
 def test_my_history_requires_login(client):
@@ -263,11 +272,36 @@ def test_carbon_range_requires_login(client):
     assert response.status_code == 401
 
 
-def test_scan_returns_materials_without_saving_carbon_result(client):
+def _login_token(client, email="scan-user@example.com"):
+    client.post(
+        "/auth/signup",
+        json={"email": email, "password": "password123", "nickname": "scan-user"},
+    )
+    login = client.post(
+        "/auth/login",
+        json={"email": email, "password": "password123"},
+    )
+    return login.json()["access_token"]
+
+
+def test_scan_requires_login(client):
     response = client.post(
         "/api/scan",
         files={"image": ("label.jpg", b"test-image", "image/jpeg")},
         data={"raw_ocr_text": "COTTON 80% POLYESTER 20%"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error_code"] == "AUTH_REQUIRED"
+
+
+def test_scan_returns_materials_without_saving_carbon_result(client):
+    token = _login_token(client)
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": "COTTON 80% POLYESTER 20%"},
+        headers={"Authorization": f"Bearer {token}"},
     )
     body = response.json()
 
@@ -301,7 +335,10 @@ def test_scan_returns_materials_without_saving_carbon_result(client):
 
 
 def test_scan_requires_image_error_code(client):
-    response = client.post("/api/scan")
+    token = _login_token(client)
+    response = client.post(
+        "/api/scan", headers={"Authorization": f"Bearer {token}"}
+    )
     body = response.json()
 
     assert response.status_code == 422
@@ -310,9 +347,11 @@ def test_scan_requires_image_error_code(client):
 
 
 def test_scan_rejects_unsupported_image_type(client):
+    token = _login_token(client)
     response = client.post(
         "/api/scan",
         files={"image": ("label.txt", b"not-image", "text/plain")},
+        headers={"Authorization": f"Bearer {token}"},
     )
     body = response.json()
 
@@ -322,10 +361,12 @@ def test_scan_rejects_unsupported_image_type(client):
 
 
 def test_scan_material_failure_returns_partial_context(client):
+    token = _login_token(client)
     response = client.post(
         "/api/scan",
         files={"image": ("label.jpg", b"test-image", "image/jpeg")},
         data={"raw_ocr_text": "wash cold do not bleach dry flat"},
+        headers={"Authorization": f"Bearer {token}"},
     )
     body = response.json()
 

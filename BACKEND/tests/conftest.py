@@ -18,6 +18,8 @@ def client():
     database.Base.metadata.drop_all(bind=database.engine)
     database.Base.metadata.create_all(bind=database.engine)
     init_data.seed_materials()
+    # 로그인 잠금 카운터는 프로세스 메모리에 남으므로 테스트마다 초기화합니다.
+    main._login_failures.clear()
 
     with TestClient(main.app) as test_client:
         yield test_client

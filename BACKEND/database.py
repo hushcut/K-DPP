@@ -16,10 +16,25 @@ SQLALCHEMY_DATABASE_URL = os.getenv(
 )
 
 # 2. 엔진 및 세션 설정
+# timeout: 다른 요청이 잠금을 잡고 있을 때 바로 실패하지 않고 잠시 대기합니다.
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    connect_args={"check_same_thread": False, "timeout": 5},
 )
+
+# SQLite에서 동시 요청(로그인·계산·이력 저장이 겹치는 상황)에 대비해
+# WAL 모드를 켭니다. 읽기와 쓰기가 서로를 덜 막아 'database is locked'
+# 오류 가능성이 크게 줄어듭니다.
+if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.close()
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
