@@ -117,10 +117,6 @@ extension _ScanResultActions on _ScanScreenState {
     });
   }
 
-  /// 소재 컨트롤러 값이 바뀌면 해당 입력을 사용하는 결과 화면을 다시 그립니다.
-  void _handleMaterialInputsChanged() {
-    _updateState(() {});
-  }
 
   /// 새 스캔을 위해 이미지·폼·서버 결과와 카메라 상태를 초기화합니다.
   void _resetScan() {

@@ -35,7 +35,6 @@ class ScanResultView extends StatelessWidget {
     required this.onSelectClothingType,
     required this.onAddMaterial,
     required this.onRemoveMaterial,
-    required this.onMaterialInputsChanged,
     required this.onSubmit,
     required this.onReset,
   });
@@ -69,33 +68,19 @@ class ScanResultView extends StatelessWidget {
   final FormFieldValidator<String> validateTitle;
   final FormFieldValidator<String> validateMaterialName;
   final FormFieldValidator<String> validateMaterialValue;
-  // 선택, 소재 변경, 저장 및 초기화 동작을 상위 화면에 전달하는 콜백입니다.
+  // 선택, 소재 추가·삭제, 저장 및 초기화 동작을 상위 화면에 전달하는 콜백입니다.
+  // (소재 텍스트 변경은 materialInputs 구독으로 자체 갱신되어 콜백이 필요 없습니다)
   final VoidCallback onSelectClothingType;
   final VoidCallback onAddMaterial;
   final ValueChanged<int> onRemoveMaterial;
-  final VoidCallback onMaterialInputsChanged;
   final VoidCallback onSubmit;
   final VoidCallback onReset;
 
   @override
   Widget build(BuildContext context) {
-    final editedMaterials = materialInputs.collectEditedMaterials();
-    final calculation = ScanCalculationResolver.resolve(
-      materials: editedMaterials,
-      clothingType: selectedClothingType,
-      originalMaterials: originalMaterials,
-      serverHealth: serverHealth,
-      serverCarbonFootprint: serverCarbonFootprint,
-      serverWeightGram: serverWeightGram,
-      serverCalculationMethod: serverCalculationMethod,
-    );
-    final totalMaterials = ClothingEstimator.calculateMaterialsTotal(
-      editedMaterials,
-    );
-    final isTotalValid =
-        editedMaterials.isNotEmpty &&
-        ClothingEstimator.isMaterialsTotalValid(editedMaterials);
-
+    // 소재 입력에 반응하는 계산(합계·미리보기)은 화면 전체를 다시 그리지 않고
+    // 아래 ListenableBuilder 구역 안에서만 수행합니다. 키 입력마다 이미지
+    // 미리보기까지 통째로 리빌드되던 비용을 없애기 위함입니다.
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final palette = AppPalette.of(context);
     final backgroundColor = palette.background;
@@ -230,33 +215,51 @@ class ScanResultView extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 24),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: previewBoxColor,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: previewBorderColor),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Icon(Icons.analytics_outlined, color: Colors.green),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        '무게 기준: ${selectedClothingType.label} · ${selectedClothingType.weightDisplayText}\n'
-                        '${calculation.usesServerHealth ? '건강도' : '예상 건강도'}: ${calculation.health}%\n'
-                        '${calculation.usesServerCarbon ? '최종 탄소발자국' : '임시 예상 탄소발자국'}: ${calculation.carbonFootprint.toStringAsFixed(1)} kg CO2eq',
-                        softWrap: true,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: primaryText,
-                          height: 1.5,
-                        ),
-                      ),
+              ListenableBuilder(
+                listenable: materialInputs,
+                builder: (context, _) {
+                  final calculation = ScanCalculationResolver.resolve(
+                    materials: materialInputs.collectEditedMaterials(),
+                    clothingType: selectedClothingType,
+                    originalMaterials: originalMaterials,
+                    serverHealth: serverHealth,
+                    serverCarbonFootprint: serverCarbonFootprint,
+                    serverWeightGram: serverWeightGram,
+                    serverCalculationMethod: serverCalculationMethod,
+                  );
+
+                  return Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: previewBoxColor,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: previewBorderColor),
                     ),
-                  ],
-                ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.analytics_outlined,
+                          color: Colors.green,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            '무게 기준: ${selectedClothingType.label} · ${selectedClothingType.weightDisplayText}\n'
+                            '${calculation.usesServerHealth ? '건강도' : '예상 건강도'}: ${calculation.health}%\n'
+                            '${calculation.usesServerCarbon ? '최종 탄소발자국' : '임시 예상 탄소발자국'}: ${calculation.carbonFootprint.toStringAsFixed(1)} kg CO2eq',
+                            softWrap: true,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: primaryText,
+                              height: 1.5,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
               ),
               if (isScanFailed) ...[
                 const SizedBox(height: 16),
@@ -279,32 +282,52 @@ class ScanResultView extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              Semantics(
-                liveRegion: hasTriedSubmit && !isTotalValid,
-                child: Text(
-                  materialInputs.isEmpty
-                      ? '소재를 직접 추가해 주세요.'
-                      : '현재 소재 합계: ${totalMaterials.toStringAsFixed(1)}%',
-                  style: TextStyle(
-                    color: materialInputs.isEmpty
-                        ? secondaryText
-                        : isTotalValid
-                        ? Colors.green
-                        : Colors.redAccent,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                  ),
-                ),
+              ListenableBuilder(
+                listenable: materialInputs,
+                builder: (context, _) {
+                  final editedMaterials = materialInputs
+                      .collectEditedMaterials();
+                  final totalMaterials =
+                      ClothingEstimator.calculateMaterialsTotal(
+                        editedMaterials,
+                      );
+                  final isTotalValid =
+                      editedMaterials.isNotEmpty &&
+                      ClothingEstimator.isMaterialsTotalValid(editedMaterials);
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Semantics(
+                        liveRegion: hasTriedSubmit && !isTotalValid,
+                        child: Text(
+                          materialInputs.isEmpty
+                              ? '소재를 직접 추가해 주세요.'
+                              : '현재 소재 합계: ${totalMaterials.toStringAsFixed(1)}%',
+                          style: TextStyle(
+                            color: materialInputs.isEmpty
+                                ? secondaryText
+                                : isTotalValid
+                                ? Colors.green
+                                : Colors.redAccent,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                      if (!materialInputs.isEmpty && !isTotalValid) ...[
+                        const SizedBox(height: 8),
+                        _buildMaterialTotalHint(
+                          totalMaterials: totalMaterials,
+                          primaryText: primaryText,
+                          secondaryText: secondaryText,
+                          isDark: isDark,
+                        ),
+                      ],
+                    ],
+                  );
+                },
               ),
-              if (!materialInputs.isEmpty && !isTotalValid) ...[
-                const SizedBox(height: 8),
-                _buildMaterialTotalHint(
-                  totalMaterials: totalMaterials,
-                  primaryText: primaryText,
-                  secondaryText: secondaryText,
-                  isDark: isDark,
-                ),
-              ],
               const SizedBox(height: 12),
               Container(
                 padding: const EdgeInsets.all(16),
@@ -567,8 +590,8 @@ class ScanResultView extends StatelessWidget {
                   .take(8);
             },
             onSelected: (option) {
+              // 텍스트 변경은 materialInputs 리스너가 감지하므로 별도 알림이 필요 없습니다.
               item.nameController.text = option.nameEn;
-              onMaterialInputsChanged();
             },
             fieldViewBuilder:
                 (context, controller, focusNode, onFieldSubmitted) {
@@ -591,7 +614,6 @@ class ScanResultView extends StatelessWidget {
                         borderRadius: BorderRadius.circular(10),
                       ),
                     ),
-                    onChanged: (_) => onMaterialInputsChanged(),
                     onFieldSubmitted: (_) => onFieldSubmitted(),
                   );
                 },
@@ -668,19 +690,26 @@ class ScanResultView extends StatelessWidget {
                 borderRadius: BorderRadius.circular(10),
               ),
             ),
-            onChanged: (_) => onMaterialInputsChanged(),
           ),
         ),
         const SizedBox(width: 4),
         SizedBox(
           width: 48,
-          child: IconButton(
-            onPressed: isSaving ? null : () => onRemoveMaterial(index),
-            tooltip:
-                '${item.nameController.text.trim().isEmpty ? '소재' : item.nameController.text.trim()} 삭제',
-            icon: Icon(Icons.close, color: secondaryText, size: 20),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+          // 행 리빌드 없이도 낭독기 안내가 최신 소재명을 따라가도록,
+          // 삭제 버튼만 이름 컨트롤러를 직접 구독합니다.
+          child: ValueListenableBuilder<TextEditingValue>(
+            valueListenable: item.nameController,
+            builder: (context, nameValue, _) {
+              final trimmedName = nameValue.text.trim();
+
+              return IconButton(
+                onPressed: isSaving ? null : () => onRemoveMaterial(index),
+                tooltip: '${trimmedName.isEmpty ? '소재' : trimmedName} 삭제',
+                icon: Icon(Icons.close, color: secondaryText, size: 20),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              );
+            },
           ),
         ),
       ],

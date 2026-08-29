@@ -9,6 +9,7 @@ import 'api_http.dart';
 enum CarbonApiErrorType {
   badRequest,
   unauthorized,
+  forbidden,
   server,
   network,
   timeout,
@@ -40,6 +41,8 @@ class CarbonApiException implements Exception {
         return '입력한 소재 정보로 정확한 탄소량을 계산하지 못해 임시 추정값으로 저장했어요.';
       case CarbonApiErrorType.unauthorized:
         return '로그인 정보가 만료되어 임시 추정값으로 저장했어요. 다시 로그인해 주세요.';
+      case CarbonApiErrorType.forbidden:
+        return '탄소 계산 사용 권한이 없어 임시 추정값으로 저장했어요.';
       case CarbonApiErrorType.server:
         return '탄소 계산 서비스에 일시적인 문제가 생겨 임시 추정값으로 저장했어요.';
       case CarbonApiErrorType.network:
@@ -70,11 +73,18 @@ class CarbonApiException implements Exception {
           unknownMaterials: error.unknownMaterials,
         );
       case 401:
-      case 403:
         return CarbonApiException(
           type: CarbonApiErrorType.unauthorized,
           statusCode: statusCode,
           message: error.message ?? '로그인이 필요합니다.',
+        );
+      // 403은 재로그인으로 해결되지 않는 '권한 없음'으로 예약되어 있어
+      // 세션 만료 처리 대상에서 제외합니다.
+      case 403:
+        return CarbonApiException(
+          type: CarbonApiErrorType.forbidden,
+          statusCode: statusCode,
+          message: error.message ?? '접근 권한이 없습니다.',
         );
       default:
         if (statusCode >= 500) {

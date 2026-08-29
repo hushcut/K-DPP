@@ -9,6 +9,7 @@ import 'api_http.dart';
 enum ScanApiErrorType {
   badRequest,
   unauthorized,
+  forbidden,
   payloadTooLarge,
   unsupportedMediaType,
   ocrFailed,
@@ -38,12 +39,14 @@ class ScanApiException implements Exception {
         return '사진을 처리하지 못했어요. 다른 사진을 선택해 다시 시도해 주세요.';
       case ScanApiErrorType.unauthorized:
         return '로그인 정보가 만료되었어요. 다시 로그인한 뒤 스캔해 주세요.';
+      case ScanApiErrorType.forbidden:
+        return '이 기능을 사용할 권한이 없어요. 계속되면 관리자에게 문의해 주세요.';
       case ScanApiErrorType.payloadTooLarge:
         return '사진 용량이 너무 커요. 사진을 줄이거나 다른 사진을 선택해 주세요.';
       case ScanApiErrorType.unsupportedMediaType:
         return '이 사진 형식은 분석할 수 없어요. JPG 또는 PNG 사진을 사용해 주세요.';
       case ScanApiErrorType.ocrFailed:
-        return '사진에서 라벨 글자를 읽지 못했어요. 라벨이 선명하게 보이도록 다시 촬영하거나 직접 입력해 주세요.';
+        return '라벨을 자동으로 인식하지 못했어요. 소재와 혼용률을 직접 입력해 주세요.';
       case ScanApiErrorType.aiRecognitionFailed:
         return 'AI가 라벨 정보를 정확히 인식하지 못했어요. 소재와 혼용률을 직접 입력해 주세요.';
       case ScanApiErrorType.server:
@@ -74,11 +77,18 @@ class ScanApiException implements Exception {
           message: serverMessage ?? '잘못된 이미지 요청입니다.',
         );
       case 401:
-      case 403:
         return ScanApiException(
           type: ScanApiErrorType.unauthorized,
           statusCode: statusCode,
-          message: serverMessage ?? '인증 또는 접근 권한 오류입니다.',
+          message: serverMessage ?? '로그인이 필요합니다.',
+        );
+      // 403은 재로그인으로 해결되지 않는 '권한 없음'으로 예약되어 있어
+      // 세션을 지우지 않고 안내만 합니다.
+      case 403:
+        return ScanApiException(
+          type: ScanApiErrorType.forbidden,
+          statusCode: statusCode,
+          message: serverMessage ?? '접근 권한이 없습니다.',
         );
       case 413:
         return ScanApiException(

@@ -4,6 +4,7 @@ part of 'auth_api_service.dart';
 enum AuthApiErrorType {
   badRequest,
   unauthorized,
+  forbidden,
   conflict,
   server,
   network,
@@ -30,6 +31,8 @@ class AuthApiException implements Exception {
       case AuthApiErrorType.unauthorized:
       case AuthApiErrorType.conflict:
         return message;
+      case AuthApiErrorType.forbidden:
+        return '이 기능을 사용할 권한이 없어요. 계속되면 관리자에게 문의해 주세요.';
       case AuthApiErrorType.server:
         return '서비스에 일시적인 문제가 생겼어요. 잠시 후 다시 시도해 주세요.';
       case AuthApiErrorType.network:
@@ -59,17 +62,30 @@ class AuthApiException implements Exception {
           message: serverMessage ?? '입력한 계정 정보를 다시 확인해 주세요.',
         );
       case 401:
-      case 403:
         return AuthApiException(
           type: AuthApiErrorType.unauthorized,
           statusCode: statusCode,
           message: serverMessage ?? '이메일 또는 비밀번호가 올바르지 않습니다.',
+        );
+      // 403은 재로그인으로 해결되지 않는 '권한 없음'으로 예약합니다.
+      case 403:
+        return AuthApiException(
+          type: AuthApiErrorType.forbidden,
+          statusCode: statusCode,
+          message: serverMessage ?? '접근 권한이 없습니다.',
         );
       case 409:
         return AuthApiException(
           type: AuthApiErrorType.conflict,
           statusCode: statusCode,
           message: serverMessage ?? '이미 가입된 이메일입니다.',
+        );
+      // 로그인 시도 제한(잠금). 서버가 보내는 대기 안내를 그대로 보여줍니다.
+      case 429:
+        return AuthApiException(
+          type: AuthApiErrorType.badRequest,
+          statusCode: statusCode,
+          message: serverMessage ?? '로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.',
         );
       default:
         if (statusCode >= 500) {

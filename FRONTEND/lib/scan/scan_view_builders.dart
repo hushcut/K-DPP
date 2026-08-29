@@ -45,7 +45,6 @@ extension _ScanViewBuilders on _ScanScreenState {
       },
       onAddMaterial: _addMaterialInput,
       onRemoveMaterial: _removeMaterialInput,
-      onMaterialInputsChanged: _handleMaterialInputsChanged,
       onSubmit: () {
         _submitClothes();
       },
