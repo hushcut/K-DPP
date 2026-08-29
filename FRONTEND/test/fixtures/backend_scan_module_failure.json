@@ -1,0 +1,8 @@
+{
+  "status": "error",
+  "message": "AI OCR 모듈을 불러오지 못했습니다.",
+  "detail": {
+    "message": "AI OCR 모듈을 불러오지 못했습니다.",
+    "hint": "AI/kdpp_ai_ocr_integrated 의존성을 설치한 뒤 다시 실행하세요."
+  }
+}

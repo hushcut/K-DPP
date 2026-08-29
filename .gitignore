@@ -14,7 +14,6 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 sdist/
@@ -371,3 +370,11 @@ app.*.symbols
 .python-version
 .gclient_previous_custom_vars
 .gclient_previous_sync_commits
+
+# 파트별 전달용 협업 문서 (커밋하지 않고 직접 공유)
+docs/BACKEND_REQUESTS.md
+docs/AI_REQUESTS.md
+docs/MERGE_PLAN.md
+docs/HANDOFF.md
+docs/DECISIONS.md
+docs/REQUIREMENTS.md

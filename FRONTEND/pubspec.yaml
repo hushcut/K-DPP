@@ -28,6 +28,7 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  shared_preferences: ^2.5.5
   flutter:
     sdk: flutter
 
@@ -36,6 +37,10 @@ dependencies:
   cupertino_icons: ^1.0.8
   image_picker: ^1.1.2
   provider: ^6.1.2
+  camera: ^0.11.0+2
+  http: ^1.2.2
+  http_parser: ^4.1.2
+  flutter_secure_storage: 10.3.1
 
 dev_dependencies:
   flutter_test:
@@ -58,6 +63,9 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/images/kdpp_logo.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

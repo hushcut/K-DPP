@@ -1,0 +1,59 @@
+# push·PR마다 프론트엔드 분석·테스트를 자동 실행해 회귀를 조기에 잡습니다.
+# 백엔드 잡은 폴더가 있는 브랜치에서만 참고용으로 실행합니다(파트 확인 후 필수 전환).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  frontend:
+    name: Frontend (analyze + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: FRONTEND
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.5
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+  backend:
+    name: Backend (pytest, advisory)
+    runs-on: ubuntu-latest
+    # 백엔드 파트가 CI 환경을 확인하기 전까지는 실패해도 전체 상태를 막지 않습니다.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check backend folder
+        id: check
+        run: echo "exists=$([ -d BACKEND ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - if: steps.check.outputs.exists == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        if: steps.check.outputs.exists == 'true'
+        working-directory: BACKEND
+        run: pip install -r requirements.txt
+
+      - name: Test
+        if: steps.check.outputs.exists == 'true'
+        working-directory: BACKEND
+        run: pytest
