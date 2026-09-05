@@ -108,7 +108,9 @@ class ScanApiException implements Exception {
           statusCode: statusCode,
           message: serverMessage ?? 'AI가 라벨을 인식하지 못했습니다.',
         );
-      // 백엔드 계약상 502는 OCR 처리 실패이므로 재촬영 안내로 구분한다.
+      // 백엔드 계약상 502는 OCR 처리 실패다. 422(소재 추출 실패)와 원인이 다르므로
+      // 타입을 분리하되, 안내는 두 경우 모두 직접 입력으로 유도한다
+      // (재촬영은 화면의 '다시 촬영' 버튼으로 별도 제공).
       case 502:
         return ScanApiException(
           type: ScanApiErrorType.ocrFailed,
