@@ -31,7 +31,11 @@ ngrok 사용 시 프론트는 `ngrok-skip-browser-warning: true` 헤더를 전�
 ```http
 POST /api/scan
 Content-Type: multipart/form-data
+Authorization: Bearer <token>
 ```
+
+스캔 1회가 곧 외부 OCR 호출 비용이므로 **로그인 사용자만 호출할 수 있습니다.**
+토큰이 없거나 만료되면 401을 돌려줍니다.
 
 ### Request
 
@@ -97,10 +101,56 @@ Content-Type: multipart/form-data
 
 | HTTP | error_code | 프론트 처리 |
 | --- | --- | --- |
-| 415 | `UNSUPPORTED_IMAGE_FORMAT` | 지원하지 않는 이미지 안내 |
+| 400 | `BAD_REQUEST` | 사진 처리 실패 안내(다른 사진 선택 유도) |
+| 401 | `AUTH_REQUIRED` | **세션 만료로 판정** — 로그아웃 후 재로그인 유도 |
+| 403 | `AUTH_REQUIRED` | **권한 없음 안내만 표시(로그아웃하지 않음)** |
+| 413 | `PAYLOAD_TOO_LARGE` | 사진 용량 초과 안내 (상한 10MB) |
+| 415 | `UNSUPPORTED_IMAGE_FORMAT` | 지원하지 않는 이미지 안내 (JPEG/PNG/WebP만 허용) |
 | 422 | `MATERIAL_EXTRACTION_FAILED` | 소재 직접 입력 흐름 |
-| 502 | `OCR_FAILED` | 라벨 글자 재촬영 안내 |
+| 502 | `OCR_FAILED` | 소재 직접 입력 안내 + `다시 촬영` 버튼 제공 |
 | 503 | `AI_MODULE_FAILED` | 서버/AI 모듈 문제 안내 |
+| 그 외 5xx | — | 일시적 서버 문제 안내 |
+
+## 2-1. 인증 오류 (401 / 403)
+
+401과 403은 **의미가 다르며 프론트 동작도 다릅니다.**
+
+| 코드 | 의미 | 프론트 동작 |
+| --- | --- | --- |
+| 401 | 인증 자체가 없거나 만료됨 | 세션을 지우고 로그인 화면으로 보냄 |
+| 403 | 인증은 유효하나 권한이 없음 | 안내만 표시하고 **세션은 유지** |
+
+401만 세션 만료 경로를 타는 이유는, 403을 재로그인으로 처리하면 권한이 없는 사용자가
+로그인만 반복하게 되기 때문입니다. `scan_api_service` / `carbon_api_service` /
+`auth_api_models` 세 곳 모두 이 구분을 따릅니다.
+
+> **현재 백엔드는 403을 발생시키지 않습니다.** 관리자 기능 등 권한 구분이 생길 때를 대비한
+> 예약 코드이며, 프론트에만 처리 경로가 준비돼 있습니다. 백엔드에는 오류 코드 맵
+> (`DEFAULT_ERROR_CODES`)에만 `403: "AUTH_REQUIRED"`로 등록돼 있습니다.
+
+## 2-2. 로그인 시도 제한 (429)
+
+429는 **`POST /auth/login`에서만** 발생합니다. 스캔·탄소 계산 API는 429를 내지 않습니다.
+
+| 항목 | 값 |
+| --- | --- |
+| error_code | `TOO_MANY_ATTEMPTS` |
+| 잠금 기준 | 같은 이메일로 연속 **5회** 로그인 실패 |
+| 잠금 시간 | **60초** |
+| 실패 기록 보존 | 15분 TTL (상한 1만 건) |
+
+```json
+{
+  "status": "error",
+  "error_code": "TOO_MANY_ATTEMPTS",
+  "message": "로그인 시도가 너무 많습니다. 60초 후 다시 시도해 주세요."
+}
+```
+
+프론트는 **서버가 보내는 대기 안내 문구를 그대로 표시합니다.** 잠금 시간이 서버 설정에
+따라 달라져도 문구가 어긋나지 않게 하기 위함이며, 이 때문에 `AuthApiErrorType`에 별도
+타입을 두지 않고 서버 메시지를 그대로 통과시키는 `badRequest`로 매핑합니다
+(`auth_api_models.dart`의 `case 429`).
 
 ## 3. 탄소 계산
 
