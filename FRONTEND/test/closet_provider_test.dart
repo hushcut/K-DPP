@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
 import 'package:k_dpp/models/analysis_history_record.dart';
+import 'package:k_dpp/models/closet_sort_option.dart';
 import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/services/auth_session_storage_service.dart';
 import 'helpers/fake_auth_session_storage.dart';
@@ -720,6 +721,55 @@ void main() {
 
       expect(provider.isAuthenticated, isFalse);
       expect(provider.accessToken, isNull);
+    });
+  });
+
+  group('정렬 기준 저장', () {
+    test('기본값은 친환경 순이고 선택하면 저장소에 기록한다', () async {
+      final storage = FakeClosetStorage();
+      final provider = ClosetProvider(storage: storage);
+
+      expect(provider.closetSortOption, ClosetSortOption.eco);
+
+      await provider.setClosetSortOption(ClosetSortOption.custom);
+
+      expect(provider.closetSortOption, ClosetSortOption.custom);
+      expect(await storage.loadClosetSortOption(), ClosetSortOption.custom);
+    });
+
+    test('저장된 정렬 기준을 다음 실행에서 복원한다', () async {
+      final storage = FakeClosetStorage();
+      await storage.saveClosetSortOption(ClosetSortOption.latest);
+
+      final provider = ClosetProvider(storage: storage);
+      await provider.loadFromStorage();
+
+      expect(provider.closetSortOption, ClosetSortOption.latest);
+    });
+
+    test('저장에 실패하면 이전 기준으로 되돌린다', () async {
+      final storage = FakeClosetStorage();
+      final provider = ClosetProvider(storage: storage);
+      await provider.setClosetSortOption(ClosetSortOption.health);
+
+      storage.saveSortOptionError = Exception('저장소 오류');
+
+      // 되돌리지 않으면 화면과 다음 실행이 어긋난다.
+      await expectLater(
+        provider.setClosetSortOption(ClosetSortOption.custom),
+        throwsA(isA<Exception>()),
+      );
+      expect(provider.closetSortOption, ClosetSortOption.health);
+    });
+
+    test('같은 기준을 다시 고르면 저장하지 않는다', () async {
+      final storage = FakeClosetStorage();
+      final provider = ClosetProvider(storage: storage);
+      storage.saveSortOptionError = Exception('저장되면 안 된다');
+
+      await provider.setClosetSortOption(ClosetSortOption.eco);
+
+      expect(provider.closetSortOption, ClosetSortOption.eco);
     });
   });
 }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'closet_provider.dart';
+import 'models/closet_sort_option.dart';
 import 'models/clothes.dart';
 import 'theme/app_palette.dart';
 
@@ -10,9 +11,6 @@ part 'closet/closet_actions.dart';
 part 'closet/closet_body.dart';
 part 'closet/closet_list_views.dart';
 part 'closet/closet_sort_sheet.dart';
-
-/// 옷장 목록에 적용할 정렬 기준입니다.
-enum ClosetSortOption { eco, health, latest, custom }
 
 /// 의류를 목록으로 보여 주고 선택한 항목의 상세 리포트를 여는 화면입니다.
 class ClosetScreen extends StatefulWidget {
@@ -39,7 +37,8 @@ class _ClosetScreenState extends State<ClosetScreen> {
   static const double _bottomNavigationOverlapPadding = 26;
 
   // 다중 선택과 순서 변경은 충돌하지 않도록 서로 배타적으로 관리합니다.
-  ClosetSortOption _sortOption = ClosetSortOption.eco;
+  // 정렬 기준은 기기에 저장되므로 Provider가 복원해 둔 값에서 시작합니다.
+  late ClosetSortOption _sortOption;
   bool _reorderMode = false;
   final Set<Clothes> _selectedItems = {};
 
@@ -51,6 +50,9 @@ class _ClosetScreenState extends State<ClosetScreen> {
   @override
   void initState() {
     super.initState();
+    // 스플래시에서 loadFromStorage()가 끝난 뒤에 이 화면이 만들어지므로
+    // 저장된 정렬 기준이 첫 프레임부터 적용됩니다.
+    _sortOption = context.read<ClosetProvider>().closetSortOption;
     _searchController.addListener(_handleSearchChanged);
   }
 

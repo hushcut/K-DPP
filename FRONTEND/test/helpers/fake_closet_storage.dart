@@ -1,3 +1,4 @@
+import 'package:k_dpp/models/closet_sort_option.dart';
 import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/services/closet_storage_service.dart';
 
@@ -13,6 +14,11 @@ class FakeClosetStorage implements ClosetStorage {
 
   /// 계정별 옷장 삭제 실패를 흉내 낼 때 던질 오류입니다.
   Object? clearClothesForError;
+
+  /// 정렬 기준 저장 실패를 흉내 낼 때 던질 오류입니다.
+  Object? saveSortOptionError;
+
+  ClosetSortOption? _savedSortOption;
 
   @override
   Future<void> clearClothesList() async {
@@ -124,6 +130,20 @@ class FakeClosetStorage implements ClosetStorage {
   @override
   Future<void> saveUserEmail(String userEmail) async {
     _savedUserEmail = userEmail;
+  }
+
+  @override
+  Future<void> saveClosetSortOption(ClosetSortOption option) async {
+    if (saveSortOptionError case final error?) {
+      throw error;
+    }
+
+    _savedSortOption = option;
+  }
+
+  @override
+  Future<ClosetSortOption> loadClosetSortOption() async {
+    return _savedSortOption ?? ClosetSortOption.eco;
   }
 
   String _normalizeEmail(String value) {

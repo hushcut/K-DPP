@@ -155,7 +155,7 @@ extension _ClosetBody on _ClosetScreenState {
             _sortOption == ClosetSortOption.custom
                 ? (_reorderMode
                       ? '드래그해서 순서를 바꿔 보세요.'
-                      : '내설정순으로 정렬되어 있어요.')
+                      : '내 설정 순으로 정렬되어 있어요.')
                 : '원하는 방식으로 옷장을 정리해 보세요.',
             textAlign: TextAlign.center,
             style: TextStyle(

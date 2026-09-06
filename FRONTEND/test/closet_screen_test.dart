@@ -3,12 +3,69 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
 import 'package:k_dpp/closet_screen.dart';
+import 'package:k_dpp/models/closet_sort_option.dart';
 import 'package:k_dpp/models/clothes.dart';
 import 'package:provider/provider.dart';
 
+import 'helpers/fake_auth_session_storage.dart';
 import 'helpers/fake_closet_storage.dart';
 
 void main() {
+  testWidgets('정렬 기준을 고르면 저장되고, 다음 실행에서 그 기준으로 시작한다', (tester) async {
+    final storage = FakeClosetStorage();
+
+    Future<ClosetProvider> pumpCloset({required bool restore}) async {
+      final provider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: FakeAuthSessionStorage(),
+      );
+
+      if (restore) {
+        await provider.loadFromStorage();
+      }
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: provider,
+          child: MaterialApp(
+            home: Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      return provider;
+    }
+
+    final provider = await pumpCloset(restore: false);
+    await provider.addClothes(
+      Clothes(
+        title: '린넨 셔츠',
+        category: '상의',
+        health: 88,
+        materials: {'linen': 100},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: 2.1,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('현재 정렬: 친환경 순'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('옷장 정렬'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('내 설정 순'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('현재 정렬: 내 설정 순'), findsOneWidget);
+    expect(await storage.loadClosetSortOption(), ClosetSortOption.custom);
+
+    // 앱을 다시 연 상황: 같은 저장소로 새 Provider와 화면을 만든다.
+    await pumpCloset(restore: true);
+
+    expect(find.textContaining('현재 정렬: 내 설정 순'), findsOneWidget);
+  });
+
   testWidgets('빈 옷장에서는 스캔 탭으로 이동하는 버튼을 제공한다', (tester) async {
     final provider = ClosetProvider(storage: FakeClosetStorage());
     var didTapScan = false;
