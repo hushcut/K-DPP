@@ -18,7 +18,8 @@ class FakeClosetStorage implements ClosetStorage {
   /// 정렬 기준 저장 실패를 흉내 낼 때 던질 오류입니다.
   Object? saveSortOptionError;
 
-  ClosetSortOption? _savedSortOption;
+  // 실제 저장소처럼 문자열로 보관해 storageValue/fromStorage 매핑까지 검증합니다.
+  String? _savedSortOption;
 
   @override
   Future<void> clearClothesList() async {
@@ -138,13 +139,16 @@ class FakeClosetStorage implements ClosetStorage {
       throw error;
     }
 
-    _savedSortOption = option;
+    _savedSortOption = option.storageValue;
   }
 
   @override
   Future<ClosetSortOption> loadClosetSortOption() async {
-    return _savedSortOption ?? ClosetSortOption.eco;
+    return ClosetSortOption.fromStorage(_savedSortOption);
   }
+
+  /// 저장된 원시 문자열입니다. enum 이름이 아니라 storageValue가 기록됐는지 확인할 때 씁니다.
+  String? get savedSortOptionRaw => _savedSortOption;
 
   String _normalizeEmail(String value) {
     return value.trim().toLowerCase();

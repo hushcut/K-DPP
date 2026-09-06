@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
 import 'package:k_dpp/closet_screen.dart';
-import 'package:k_dpp/models/closet_sort_option.dart';
 import 'package:k_dpp/models/clothes.dart';
 import 'package:provider/provider.dart';
 
@@ -58,12 +57,58 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('현재 정렬: 내 설정 순'), findsOneWidget);
-    expect(await storage.loadClosetSortOption(), ClosetSortOption.custom);
+    // enum 이름이 아니라 storageValue가 기록돼야 이름을 바꿔도 값이 깨지지 않는다.
+    expect(storage.savedSortOptionRaw, 'custom');
 
-    // 앱을 다시 연 상황: 같은 저장소로 새 Provider와 화면을 만든다.
+    // 앱을 다시 연 상황을 만든다. 빈 화면을 한 번 그려 이전 State를 확실히 버려야
+    // 새 화면이 저장된 값으로 다시 시작하는지 검증할 수 있다.
+    // (같은 트리를 그대로 다시 pump하면 Element가 재사용돼 initState가 실행되지 않는다.)
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+
     await pumpCloset(restore: true);
 
     expect(find.textContaining('현재 정렬: 내 설정 순'), findsOneWidget);
+  });
+
+  testWidgets('정렬 저장에 실패하면 화면도 이전 기준으로 되돌아간다', (tester) async {
+    final storage = FakeClosetStorage();
+    final provider = ClosetProvider(
+      storage: storage,
+      authSessionStorage: FakeAuthSessionStorage(),
+    );
+    await provider.addClothes(
+      Clothes(
+        title: '린넨 셔츠',
+        category: '상의',
+        health: 88,
+        materials: {'linen': 100},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: 2.1,
+      ),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: provider,
+        child: MaterialApp(
+          home: Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    storage.saveSortOptionError = Exception('저장소 오류');
+
+    await tester.tap(find.byTooltip('옷장 정렬'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('건강도 순'));
+    await tester.pumpAndSettle();
+
+    // 화면이 Provider를 그대로 따르므로 되돌림이 즉시 보인다.
+    // 화면만 새 기준을 유지하면 나중에 화면이 재생성될 때 말없이 바뀐다.
+    expect(find.textContaining('현재 정렬: 친환경 순'), findsOneWidget);
+    expect(find.text('정렬 방식을 저장하지 못해 이전 기준으로 되돌렸어요.'), findsOneWidget);
   });
 
   testWidgets('빈 옷장에서는 스캔 탭으로 이동하는 버튼을 제공한다', (tester) async {

@@ -37,8 +37,6 @@ class _ClosetScreenState extends State<ClosetScreen> {
   static const double _bottomNavigationOverlapPadding = 26;
 
   // 다중 선택과 순서 변경은 충돌하지 않도록 서로 배타적으로 관리합니다.
-  // 정렬 기준은 기기에 저장되므로 Provider가 복원해 둔 값에서 시작합니다.
-  late ClosetSortOption _sortOption;
   bool _reorderMode = false;
   final Set<Clothes> _selectedItems = {};
 
@@ -50,11 +48,17 @@ class _ClosetScreenState extends State<ClosetScreen> {
   @override
   void initState() {
     super.initState();
-    // 스플래시에서 loadFromStorage()가 끝난 뒤에 이 화면이 만들어지므로
-    // 저장된 정렬 기준이 첫 프레임부터 적용됩니다.
-    _sortOption = context.read<ClosetProvider>().closetSortOption;
     _searchController.addListener(_handleSearchChanged);
   }
+
+  /// 정렬 기준은 Provider가 단일 출처입니다.
+  ///
+  /// 화면이 사본을 들고 있으면 저장 실패로 Provider만 되돌아갔을 때 둘이 어긋나고,
+  /// 그 어긋남이 화면 재생성(스캔 저장 후 /main 교체, 재로그인 등) 시점에
+  /// 아무 안내 없이 드러납니다. 이 화면은 이미 Provider를 구독하므로
+  /// 값이 바뀌면 그대로 다시 그려집니다.
+  ClosetSortOption get _sortOption =>
+      context.read<ClosetProvider>().closetSortOption;
 
   @override
   void dispose() {

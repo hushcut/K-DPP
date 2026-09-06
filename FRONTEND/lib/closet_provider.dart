@@ -246,8 +246,10 @@ class ClosetProvider with ChangeNotifier {
 
   /// 정렬 기준을 즉시 반영한 뒤 다음 실행을 위해 저장합니다.
   ///
-  /// 저장에 실패하면 다음 실행과 화면이 어긋나므로 이전 값으로 되돌립니다.
-  /// 되돌리는 사이 더 새로운 선택이 들어왔다면 그 선택을 덮어쓰지 않습니다.
+  /// 저장에 실패하면 이전 값으로 되돌리고 호출부에 알립니다. 다만 되돌리는 사이
+  /// 더 새로운 선택이 들어왔다면 그 선택을 덮어쓰지 않고, 호출부에도 알리지
+  /// 않습니다. 이미 버려진 선택의 실패를 사용자에게 알리면 화면에 적용된 기준과
+  /// 어긋나는 안내가 되기 때문입니다.
   Future<void> setClosetSortOption(ClosetSortOption option) async {
     if (_closetSortOption == option) return;
 
@@ -265,9 +267,8 @@ class ClosetProvider with ChangeNotifier {
       if (mutationVersion == _sortMutationVersion) {
         _closetSortOption = previousOption;
         notifyListeners();
+        rethrow;
       }
-
-      rethrow;
     }
   }
 

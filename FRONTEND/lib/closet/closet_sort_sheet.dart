@@ -73,22 +73,19 @@ extension _ClosetSortSheet on _ClosetScreenState {
 
     final provider = context.read<ClosetProvider>();
 
-    _updateState(() {
-      _sortOption = selected;
-      if (selected != ClosetSortOption.custom) {
-        _reorderMode = false;
-      }
-    });
+    if (selected != ClosetSortOption.custom) {
+      _updateState(() => _reorderMode = false);
+    }
 
-    // 저장 실패는 화면을 되돌리지 않고 안내만 합니다. 정렬은 다시 고르면 되고,
-    // 사용자가 방금 선택한 화면을 되돌리는 편이 더 혼란스럽기 때문입니다.
+    // Provider가 값을 먼저 반영하고 알리므로 화면은 곧바로 새 기준으로 그려집니다.
+    // 저장에 실패하면 Provider가 되돌리고, 화면도 같은 값을 보므로 함께 되돌아갑니다.
     try {
       await provider.setClosetSortOption(selected);
     } catch (_) {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('정렬 방식을 저장하지 못했어요. 앱을 다시 열면 이전 기준으로 돌아갑니다.')),
+        const SnackBar(content: Text('정렬 방식을 저장하지 못해 이전 기준으로 되돌렸어요.')),
       );
     }
   }
