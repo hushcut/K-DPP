@@ -11,6 +11,9 @@ class FakeClosetStorage implements ClosetStorage {
   /// 옷장 저장 실패를 흉내 낼 때 던질 오류입니다.
   Object? saveClothesError;
 
+  /// 계정별 옷장 삭제 실패를 흉내 낼 때 던질 오류입니다.
+  Object? clearClothesForError;
+
   @override
   Future<void> clearClothesList() async {
     _savedItems = null;
@@ -18,6 +21,10 @@ class FakeClosetStorage implements ClosetStorage {
 
   @override
   Future<void> clearClothesListFor(String ownerEmail) async {
+    if (clearClothesForError case final error?) {
+      throw error;
+    }
+
     _accountItems.remove(_normalizeEmail(ownerEmail));
   }
 

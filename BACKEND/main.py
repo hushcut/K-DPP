@@ -337,6 +337,17 @@ class SignupRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class WithdrawRequest(BaseModel):
+    password: str
+
+
 class AnalyzeRequest(BaseModel):
     materials: dict[str, float]
     raw_ocr_text: str | None = None
@@ -354,6 +365,19 @@ class CarbonRangeRequest(BaseModel):
 # 4. 소재명 매칭 및 탄소발자국 계산 함수
 def normalize_email(email: str) -> str:
     return email.strip().lower()
+
+
+def ensure_password_rules(password: str) -> None:
+    """가입·변경에서 같은 비밀번호 규칙을 쓰도록 한곳에 모아 둔다.
+
+    가입 때만 공백을 지우고 로그인 때는 원문을 검증하면, 공백 섞인 비밀번호로
+    가입한 사용자가 영영 로그인하지 못한다. 공백 비밀번호는 아예 거부하고
+    저장·검증 모두 입력 원문 그대로 사용한다.
+    """
+    if password != password.strip():
+        raise HTTPException(status_code=400, detail="비밀번호 앞뒤에는 공백을 사용할 수 없습니다.")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="비밀번호는 8자 이상 입력해 주세요.")
 
 
 def hash_password(password: str) -> str:
@@ -900,13 +924,7 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="올바른 이메일을 입력해 주세요.")
     if len(nickname) < 2:
         raise HTTPException(status_code=400, detail="닉네임은 2자 이상 입력해 주세요.")
-    # 가입 때만 공백을 지우고 로그인 때는 원문을 검증하면, 공백 섞인 비밀번호로
-    # 가입한 사용자가 영영 로그인하지 못합니다. 공백 비밀번호는 아예 거부하고
-    # 저장·검증 모두 입력 원문 그대로 사용합니다.
-    if password != password.strip():
-        raise HTTPException(status_code=400, detail="비밀번호 앞뒤에는 공백을 사용할 수 없습니다.")
-    if len(password) < 8:
-        raise HTTPException(status_code=400, detail="비밀번호는 8자 이상 입력해 주세요.")
+    ensure_password_rules(password)
 
     existing_user = db.query(database.User).filter(database.User.email == email).first()
     if existing_user is not None:
@@ -974,6 +992,107 @@ def logout(
     db.delete(access_token)
     db.commit()
     return {"status": "success", "message": "로그아웃되었습니다."}
+
+
+@app.post("/auth/password", tags=["auth"])
+def change_password(
+    request: ChangePasswordRequest,
+    access_token: database.AccessToken = Depends(get_current_access_token),
+    db: Session = Depends(get_db),
+):
+    """현재 비밀번호를 확인한 뒤 새 비밀번호로 바꾸고 기존 세션을 모두 끊는다.
+
+    비밀번호를 바꾸는 흔한 이유가 "남이 내 계정을 쓰는 것 같다"이므로,
+    변경에 성공하면 발급돼 있던 토큰을 전부 지우고 요청한 기기에만
+    새 토큰을 내준다. 그래야 변경이 실제로 효력을 갖는다.
+    """
+    user = db.query(database.User).filter(database.User.id == access_token.user_id).first()
+
+    if user is None:
+        # 토큰은 살아 있는데 사용자가 사라진 경우(탈퇴 직후 등)는 세션 만료로 처리한다.
+        db.delete(access_token)
+        db.commit()
+        raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
+
+    # 재인증도 로그인과 같은 잠금 카운터를 쓴다. 토큰만 탈취한 공격자가 이 경로로
+    # 비밀번호를 무제한 추측하면 로그인 잠금이 무의미해지고, 맞히는 순간 다른 세션이
+    # 모두 끊겨 계정을 통째로 빼앗기기 때문이다.
+    check_login_lockout(user.email)
+
+    # 401은 "이 세션이 더 이상 유효하지 않다"는 뜻으로만 쓴다. 프론트가 401을
+    # 세션 만료로 보고 강제 로그아웃시키므로(session_expiry_handler), 비밀번호를
+    # 한 번 잘못 친 것만으로 로그아웃되면 안 된다. 재인증 실패는 400으로 낸다.
+    if not verify_password(request.current_password, user.password_hash):
+        record_login_failure(user.email)
+        raise HTTPException(status_code=400, detail="현재 비밀번호가 올바르지 않습니다.")
+
+    clear_login_failures(user.email)
+
+    ensure_password_rules(request.new_password)
+
+    if request.new_password == request.current_password:
+        raise HTTPException(status_code=400, detail="새 비밀번호가 기존 비밀번호와 같습니다.")
+
+    user.password_hash = hash_password(request.new_password)
+    db.query(database.AccessToken).filter(
+        database.AccessToken.user_id == user.id
+    ).delete(synchronize_session=False)
+    db.commit()
+
+    # 기존 토큰을 모두 지운 뒤에 발급해야 새 토큰이 함께 삭제되지 않는다.
+    raw_token, _new_token = create_access_token(user, db)
+
+    return {
+        "status": "success",
+        "message": "비밀번호가 변경되었습니다.",
+        "user": auth_user_response(user),
+        "access_token": raw_token,
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+    }
+
+
+@app.post("/auth/withdraw", tags=["auth"])
+def withdraw(
+    request: WithdrawRequest,
+    access_token: database.AccessToken = Depends(get_current_access_token),
+    db: Session = Depends(get_db),
+):
+    """비밀번호를 확인한 뒤 계정·토큰·분석 이력을 한 트랜잭션에서 지운다.
+
+    DELETE 메서드 대신 POST를 쓰는 이유는 프론트 공용 HTTP 헬퍼가
+    GET/POST만 지원하기 때문이다(docs/SCAN_API_CONTRACT.md 참조).
+    """
+    user = db.query(database.User).filter(database.User.id == access_token.user_id).first()
+
+    if user is None:
+        db.delete(access_token)
+        db.commit()
+        raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
+
+    check_login_lockout(user.email)
+
+    # 비밀번호 변경과 같은 이유로 재인증 실패는 400으로 낸다(401은 세션 만료 전용).
+    if not verify_password(request.password, user.password_hash):
+        record_login_failure(user.email)
+        raise HTTPException(status_code=400, detail="비밀번호가 올바르지 않습니다.")
+
+    clear_login_failures(user.email)
+
+    user_id = user.id
+
+    # users 행만 지우면 analysis_results·access_tokens에 고아 행이 남는다.
+    # 외래키 ON DELETE가 걸려 있지 않으므로 애플리케이션에서 함께 지운다.
+    db.query(database.AnalysisResult).filter(
+        database.AnalysisResult.user_id == user_id
+    ).delete(synchronize_session=False)
+    db.query(database.AccessToken).filter(
+        database.AccessToken.user_id == user_id
+    ).delete(synchronize_session=False)
+    db.delete(user)
+    db.commit()
+
+    return {"status": "success", "message": "회원 탈퇴가 완료되었습니다."}
 
 
 @app.get("/", tags=["system"])
