@@ -152,6 +152,78 @@ Authorization: Bearer <token>
 타입을 두지 않고 서버 메시지를 그대로 통과시키는 `badRequest`로 매핑합니다
 (`auth_api_models.dart`의 `case 429`).
 
+## 2-3. 계정 관리 (비밀번호 변경 / 회원 탈퇴)
+
+둘 다 로그인 상태에서만 호출할 수 있고, 요청 본문에 비밀번호를 한 번 더 받아 재인증합니다.
+REST 관례상 탈퇴는 `DELETE`가 자연스럽지만, 프론트 공용 HTTP 헬퍼(`api_http.dart`의
+`runJsonApiRequest`)가 GET/POST만 지원하므로 **POST로 통일**했습니다.
+
+### POST /auth/password
+
+```http
+POST /auth/password
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{ "current_password": "...", "new_password": "..." }
+```
+
+성공하면 **그 사용자의 기존 토큰을 모두 폐기하고 새 토큰 하나를 발급**합니다.
+비밀번호를 바꾸는 흔한 이유가 계정 도용 의심이므로, 변경이 실제 효력을 갖게 하기
+위함입니다. 프론트는 응답의 `access_token`을 반드시 저장해야 하며, 저장에 실패하면
+그 기기의 세션도 더는 쓸 수 없으므로 로그인 화면으로 되돌립니다.
+
+응답은 로그인과 같은 형태입니다(`user`, `access_token`, `token_type`, `expires_in`).
+
+### POST /auth/withdraw
+
+```http
+POST /auth/withdraw
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{ "password": "..." }
+```
+
+성공하면 `users`, 그 사용자의 `access_tokens`, `analysis_results`를 **한 트랜잭션에서
+모두 삭제**합니다. 외래키에 `ON DELETE`가 걸려 있지 않아 애플리케이션이 직접 지웁니다.
+프론트는 서버 삭제가 성공한 뒤에만 기기의 계정 전용 옷장(`closet_items_account_*`)을
+지웁니다. 같은 이메일로 다시 가입할 수 있습니다.
+
+### 오류 코드
+
+| HTTP | 의미 | 프론트 처리 |
+| --- | --- | --- |
+| 400 | 재인증 실패(현재 비밀번호·탈퇴 비밀번호 불일치), 새 비밀번호 규칙 위반, 기존과 동일 | **대화상자를 닫지 않고 해당 필드에 표시**(입력 유지) |
+| 401 | 토큰이 없거나 만료됨 | 세션 정리 후 로그인 화면. **탈퇴 흐름의 401은 이미 삭제된 것으로 보고 기기 옷장까지 정리** |
+| 429 | 같은 계정으로 재인증 5회 실패 | 서버의 대기 안내 문구를 그대로 표시 |
+
+**재인증도 로그인과 같은 잠금 카운터를 씁니다**(2-2절, 5회/60초). 토큰만 탈취한 공격자가
+이 경로로 비밀번호를 무제한 추측하면 로그인 잠금이 무의미해지고, 맞히는 순간
+다른 세션이 모두 끊겨 계정을 통째로 빼앗기기 때문입니다. 실패는 `record_login_failure`로
+기록되고 성공하면 `clear_login_failures`로 지워집니다.
+
+⚠️ **재인증 실패에 401을 쓰지 않는 이유**: 이 앱은 401을 "세션 만료"로 보고
+`SessionExpiryHandler`로 강제 로그아웃합니다(2-1절). 비밀번호를 한 번 잘못 친 것만으로
+로그아웃되면 안 되므로, 재인증 실패는 400으로 내립니다. 401은 세션 유효성 판정 전용입니다.
+
+새 비밀번호 규칙은 회원가입과 동일합니다(8자 이상, 앞뒤 공백 금지 —
+`main.py`의 `ensure_password_rules`). 프론트도 같은 규칙으로 먼저 걸러
+불필요한 왕복을 줄입니다.
+
+### 알려진 한계 (탈퇴 동시성)
+
+SQLite 연결에 `PRAGMA foreign_keys`가 켜져 있지 않고 `users.id`·`analysis_results.id`가
+`AUTOINCREMENT` 없는 rowid 별칭이라, 다음 경합이 이론적으로 가능합니다.
+
+1. 기기 A의 `/api/carbon/calculate`가 토큰 검증을 통과한 직후 기기 B에서 탈퇴가 커밋되면,
+   A의 INSERT가 이미 삭제된 `user_id`로 들어가 고아 행이 남습니다.
+2. 탈퇴자가 마지막 가입자였다면 이후 가입자가 같은 `users.id`를 배정받아,
+   `/me/history`(user_id 단일 필터)가 이전 계정의 이력을 보여 줄 수 있습니다.
+
+근본 해결은 외래키 강제 + `AUTOINCREMENT` 마이그레이션이라 이번 작업 범위에서 제외했습니다.
+개발 단계에서 실제로 재현하려면 두 기기가 1초 이내로 겹쳐야 합니다.
+
 ## 3. 탄소 계산
 
 ```http

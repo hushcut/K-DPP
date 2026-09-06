@@ -169,6 +169,40 @@ class ClosetProvider with ChangeNotifier {
     }
   }
 
+  /// 회원 탈퇴 뒤 이 기기에 남은 계정 전용 옷장까지 지우고 로그아웃 상태로 되돌립니다.
+  ///
+  /// 로그아웃은 다시 로그인할 것을 전제로 계정별 옷장을 남겨 두므로,
+  /// 탈퇴에서는 그 데이터까지 지워야 다른 사람이 같은 기기를 써도 남지 않습니다.
+  ///
+  /// 옷장 삭제가 실패해도 **세션 정리는 반드시 끝냅니다.** 삭제된 계정의 토큰이
+  /// 기기에 남으면 다음 실행에서 이미 없는 계정으로 복원을 시도하기 때문입니다.
+  /// 실패는 호출부가 사용자에게 알릴 수 있도록 마지막에 다시 던집니다.
+  Future<void> purgeAccountData() async {
+    // logout()이 이메일을 기본값으로 되돌리기 때문에 먼저 읽어 둡니다.
+    final ownerEmail = _closetOwnerEmail ?? _normalizeEmail(_userEmail);
+
+    Object? closetClearError;
+    StackTrace? closetClearStackTrace;
+
+    if (ownerEmail.isNotEmpty) {
+      try {
+        await _storageService.clearClothesListFor(ownerEmail);
+      } catch (error, stackTrace) {
+        closetClearError = error;
+        closetClearStackTrace = stackTrace;
+      }
+    }
+
+    await logout();
+
+    if (closetClearError != null) {
+      Error.throwWithStackTrace(
+        closetClearError,
+        closetClearStackTrace ?? StackTrace.current,
+      );
+    }
+  }
+
   /// 메모리의 사용자·옷장 상태와 기기에 저장된 인증 정보를 초기화합니다.
   Future<void> logout() async {
     _mutationVersion++;

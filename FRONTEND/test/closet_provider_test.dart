@@ -676,4 +676,50 @@ void main() {
       expect(restoredProvider.items.single.title, '홍길동 코튼 티셔츠');
     });
   });
+
+  group('purgeAccountData', () {
+    test('계정 전용 옷장과 세션을 함께 지운다', () async {
+      final storage = FakeClosetStorage();
+      final provider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: FakeAuthSessionStorage(),
+      );
+      await provider.setAuthenticatedUser(
+        nickname: '홍길동',
+        email: 'honggildong@example.com',
+        accessToken: 'access-token',
+        expiresInSeconds: 3600,
+      );
+      await storage.saveClothesListFor('honggildong@example.com', const []);
+
+      await provider.purgeAccountData();
+
+      expect(provider.isAuthenticated, isFalse);
+      expect(
+        await storage.hasSavedClothesListFor('honggildong@example.com'),
+        isFalse,
+      );
+    });
+
+    test('옷장 삭제가 실패해도 세션은 반드시 정리하고 오류를 전달한다', () async {
+      final storage = FakeClosetStorage();
+      final provider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: FakeAuthSessionStorage(),
+      );
+      await provider.setAuthenticatedUser(
+        nickname: '홍길동',
+        email: 'honggildong@example.com',
+        accessToken: 'access-token',
+        expiresInSeconds: 3600,
+      );
+      storage.clearClothesForError = Exception('저장소 오류');
+
+      // 삭제된 계정의 토큰이 기기에 남으면 다음 실행에서 없는 계정으로 복원을 시도한다.
+      await expectLater(provider.purgeAccountData(), throwsA(isA<Exception>()));
+
+      expect(provider.isAuthenticated, isFalse);
+      expect(provider.accessToken, isNull);
+    });
+  });
 }

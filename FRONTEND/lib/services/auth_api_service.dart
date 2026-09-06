@@ -8,7 +8,7 @@ import 'api_http.dart';
 
 part 'auth_api_models.dart';
 
-/// 회원가입, 로그인, 로그아웃, 세션 검증을 수행하는 HTTP 인증 클라이언트다.
+/// 회원가입, 로그인, 로그아웃, 비밀번호 변경, 회원 탈퇴, 세션 검증을 수행하는 HTTP 인증 클라이언트다.
 class AuthApiService {
   AuthApiService({
     String? baseUrl,
@@ -65,6 +65,58 @@ class AuthApiService {
       rethrow;
     } on ApiTransportException catch (error) {
       throw _fromTransport(error, timeoutMessage: '로그아웃 요청 시간이 초과되었습니다.');
+    } catch (error) {
+      throw AuthApiException(
+        type: AuthApiErrorType.unknown,
+        message: error.toString(),
+      );
+    }
+  }
+
+  /// 현재 비밀번호를 확인해 새 비밀번호로 바꾸고, 이 기기가 계속 쓸 새 토큰을 받는다.
+  ///
+  /// 서버가 기존 토큰을 모두 폐기하므로 응답의 access_token을 반드시 저장해야 한다.
+  Future<AuthResult> changePassword({
+    required String accessToken,
+    required String currentPassword,
+    required String newPassword,
+  }) {
+    return _post(
+      '/auth/password',
+      {'current_password': currentPassword, 'new_password': newPassword},
+      requiresAccessToken: true,
+      accessToken: accessToken,
+    );
+  }
+
+  /// 비밀번호를 확인한 뒤 계정과 서버 데이터 삭제를 요청한다.
+  ///
+  /// 성공 응답에는 사용자 정보가 없으므로 로그아웃과 같은 방식으로 성공 여부만 확인한다.
+  Future<void> withdraw({
+    required String accessToken,
+    required String password,
+  }) async {
+    try {
+      final response = await runJsonApiRequest(
+        method: 'POST',
+        uri: _buildUri('/auth/withdraw'),
+        headers: requestHeaders,
+        timeout: requestTimeout,
+        jsonBody: {'password': password},
+        accessToken: accessToken,
+        client: client,
+      );
+
+      if (!response.isSuccess) {
+        throw AuthApiException.fromStatusCode(
+          statusCode: response.statusCode,
+          responseBody: response.body,
+        );
+      }
+    } on AuthApiException {
+      rethrow;
+    } on ApiTransportException catch (error) {
+      throw _fromTransport(error, timeoutMessage: '회원 탈퇴 요청 시간이 초과되었습니다.');
     } catch (error) {
       throw AuthApiException(
         type: AuthApiErrorType.unknown,
@@ -164,6 +216,7 @@ class AuthApiService {
     String path,
     Map<String, String> body, {
     bool requiresAccessToken = false,
+    String? accessToken,
   }) async {
     try {
       final response = await runJsonApiRequest(
@@ -172,6 +225,7 @@ class AuthApiService {
         headers: requestHeaders,
         timeout: requestTimeout,
         jsonBody: body,
+        accessToken: accessToken,
         client: client,
       );
 
