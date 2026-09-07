@@ -99,17 +99,45 @@ Authorization: Bearer <token>
 
 프론트 주요 분기:
 
+> **이 표가 스캔 오류 계약의 단일 출처입니다** (2026-09-08 지정).
+> `BACKEND/API_CONTRACT.md`의 error_code 목록은 백엔드 내부 참고용이며, 두 문서가
+> 어긋나면 이 표가 우선합니다.
+>
+> **`error_code` 열은 백엔드 내부 규약이고 프론트 동작의 근거가 아닙니다.**
+> `FRONTEND/lib`·`test` 전체에서 `error_code`/`errorCode` 검색 결과가 0건입니다.
+> 프론트가 응답 본문에서 읽는 것은 `message`/`detail`/`error`/`reason`뿐이고,
+> 그마저 화면 문구로 쓰이지 않습니다(`userMessage`는 enum 고정 문자열).
+> **프론트 동작을 가르는 유일한 축은 HTTP 상태코드입니다.**
+
 | HTTP | error_code | 프론트 처리 |
 | --- | --- | --- |
 | 400 | `BAD_REQUEST` | 사진 처리 실패 안내(다른 사진 선택 유도) |
 | 401 | `AUTH_REQUIRED` | **세션 만료로 판정** — 로그아웃 후 재로그인 유도 |
 | 403 | `AUTH_REQUIRED` | **권한 없음 안내만 표시(로그아웃하지 않음)** |
 | 413 | `PAYLOAD_TOO_LARGE` | 사진 용량 초과 안내 (상한 10MB) |
-| 415 | `UNSUPPORTED_IMAGE_FORMAT` | 지원하지 않는 이미지 안내 (JPEG/PNG/WebP만 허용) |
+| 415 | `UNSUPPORTED_IMAGE_FORMAT` | 지원하지 않는 이미지 안내 (JPEG/PNG/WebP만 허용) ※ |
 | 422 | `MATERIAL_EXTRACTION_FAILED` | 소재 직접 입력 흐름 |
 | 502 | `OCR_FAILED` | 소재 직접 입력 안내 + `다시 촬영` 버튼 제공 |
-| 503 | `AI_MODULE_FAILED` | 서버/AI 모듈 문제 안내 |
-| 그 외 5xx | — | 일시적 서버 문제 안내 |
+| 503 | `AI_MODULE_FAILED` | **전용 분기 없음** — 아래 '그 외 5xx'와 같게 처리됨 |
+| 500 · 504 · 그 외 5xx | — | 일시적 서버 문제 안내 (`statusCode >= 500` 폴백) |
+
+**503에 대한 주의**: 프론트에 503 전용 case가 없어 `statusCode >= 500` 폴백을 타고
+500·504와 **똑같은 문구**가 나옵니다. 이전 판에 적혀 있던 "서버/AI 모듈 문제 안내"는
+구현되지 않은 내용이었습니다(2026-09-08 정정).
+
+**503이 실제로 나는 경우**: 서버 기동 시 `from apps.text...` import 실패 한 가지뿐입니다
+(`BACKEND/main.py:882`, `:938`). OCR 미설정·한도 초과·Vision 장애는 전부 **502 `OCR_FAILED`**로
+나갑니다(`:922-932`가 `run_ocr` 실행 중 모든 예외를 `except Exception`으로 잡음).
+
+**504는 현재 백엔드가 내지 않습니다.** AI 계층에는 타임아웃이 있으나(`ksw/ai-ocr-enhancement`의
+`OCR_TIMEOUT_SECONDS = 20`) develop에는 없고, 프론트 상한은 35초입니다.
+AI 브랜치 처리가 결정되면 `case 504:`를 추가합니다 — 후속 흐름이 502·503과 같으므로
+새 enum은 필요 없습니다.
+
+※ **415의 WebP 허용은 백엔드 상수(`main.py:52`) 기준입니다.** AI 계층은 JPEG/PNG만 받습니다
+(`ksw/ai-ocr-enhancement`의 `SUPPORTED_IMAGE_FORMATS`). 현재는 백엔드가 OCR 텍스트를
+직접 다루므로 문제되지 않지만, HTTP 서비스로 전환하면 정합이 필요합니다
+(`docs/AI_REQUESTS.md` F-6).
 
 ## 2-1. 인증 오류 (401 / 403)
 
