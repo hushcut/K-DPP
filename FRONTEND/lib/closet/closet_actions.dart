@@ -23,7 +23,7 @@ extension _ClosetActions on _ClosetScreenState {
       case ClosetSortOption.latest:
         return '최신 등록 순';
       case ClosetSortOption.custom:
-        return '내설정순';
+        return '내 설정 순';
     }
   }
 

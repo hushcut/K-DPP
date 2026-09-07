@@ -1,3 +1,4 @@
+import 'package:k_dpp/models/closet_sort_option.dart';
 import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/services/closet_storage_service.dart';
 
@@ -13,6 +14,12 @@ class FakeClosetStorage implements ClosetStorage {
 
   /// 계정별 옷장 삭제 실패를 흉내 낼 때 던질 오류입니다.
   Object? clearClothesForError;
+
+  /// 정렬 기준 저장 실패를 흉내 낼 때 던질 오류입니다.
+  Object? saveSortOptionError;
+
+  // 실제 저장소처럼 문자열로 보관해 storageValue/fromStorage 매핑까지 검증합니다.
+  String? _savedSortOption;
 
   @override
   Future<void> clearClothesList() async {
@@ -125,6 +132,23 @@ class FakeClosetStorage implements ClosetStorage {
   Future<void> saveUserEmail(String userEmail) async {
     _savedUserEmail = userEmail;
   }
+
+  @override
+  Future<void> saveClosetSortOption(ClosetSortOption option) async {
+    if (saveSortOptionError case final error?) {
+      throw error;
+    }
+
+    _savedSortOption = option.storageValue;
+  }
+
+  @override
+  Future<ClosetSortOption> loadClosetSortOption() async {
+    return ClosetSortOption.fromStorage(_savedSortOption);
+  }
+
+  /// 저장된 원시 문자열입니다. enum 이름이 아니라 storageValue가 기록됐는지 확인할 때 씁니다.
+  String? get savedSortOptionRaw => _savedSortOption;
 
   String _normalizeEmail(String value) {
     return value.trim().toLowerCase();

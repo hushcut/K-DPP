@@ -56,7 +56,7 @@ extension _ClosetSortSheet on _ClosetScreenState {
                   secondaryText: secondaryText,
                 ),
                 _buildSortOptionTile(
-                  label: '내설정순',
+                  label: '내 설정 순',
                   value: ClosetSortOption.custom,
                   primaryText: primaryText,
                   secondaryText: secondaryText,
@@ -71,12 +71,23 @@ extension _ClosetSortSheet on _ClosetScreenState {
     // 시트가 닫히는 사이 화면이 사라졌을 수 있으므로 상태 갱신 전에 확인합니다.
     if (selected == null || !mounted) return;
 
-    _updateState(() {
-      _sortOption = selected;
-      if (selected != ClosetSortOption.custom) {
-        _reorderMode = false;
-      }
-    });
+    final provider = context.read<ClosetProvider>();
+
+    if (selected != ClosetSortOption.custom) {
+      _updateState(() => _reorderMode = false);
+    }
+
+    // Provider가 값을 먼저 반영하고 알리므로 화면은 곧바로 새 기준으로 그려집니다.
+    // 저장에 실패하면 Provider가 되돌리고, 화면도 같은 값을 보므로 함께 되돌아갑니다.
+    try {
+      await provider.setClosetSortOption(selected);
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('정렬 방식을 저장하지 못해 이전 기준으로 되돌렸어요.')),
+      );
+    }
   }
 
   /// 정렬 시트의 한 옵션과 현재 선택 상태를 표시합니다.

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'models/analysis_history_record.dart';
+import 'models/closet_sort_option.dart';
 import 'models/clothes.dart';
 import 'services/auth_session_storage_service.dart';
 import 'services/closet_storage_service.dart';
@@ -26,6 +27,11 @@ class ClosetProvider with ChangeNotifier {
   bool _isUserNameCustomized = false;
   String _userEmail = 'honggildong@kdpp.com';
   String? _closetOwnerEmail;
+  ClosetSortOption _closetSortOption = ClosetSortOption.eco;
+
+  // 정렬 기준은 목록·선택 상태와 무관하므로 별도 카운터를 씁니다.
+  // _mutationVersion을 함께 올리면 진행 중이던 옷장 저장의 롤백이 건너뛰어집니다.
+  int _sortMutationVersion = 0;
   AuthSession? _authSession;
 
   ClosetProvider({
@@ -70,6 +76,10 @@ class ClosetProvider with ChangeNotifier {
   String get userEmail => _userEmail;
 
   String? get accessToken => _authSession?.accessToken;
+
+  /// 옷장 목록에 적용 중인 정렬 기준입니다. 기기 단위 표시 설정이라
+  /// 계정을 바꾸거나 로그아웃해도 유지됩니다.
+  ClosetSortOption get closetSortOption => _closetSortOption;
 
   bool get isAuthenticated => _authSession != null && !_authSession!.isExpired;
 
@@ -234,15 +244,50 @@ class ClosetProvider with ChangeNotifier {
     return total / _items.length;
   }
 
+  /// 정렬 기준을 즉시 반영한 뒤 다음 실행을 위해 저장합니다.
+  ///
+  /// 저장에 실패하면 이전 값으로 되돌리고 호출부에 알립니다. 다만 되돌리는 사이
+  /// 더 새로운 선택이 들어왔다면 그 선택을 덮어쓰지 않고, 호출부에도 알리지
+  /// 않습니다. 이미 버려진 선택의 실패를 사용자에게 알리면 화면에 적용된 기준과
+  /// 어긋나는 안내가 되기 때문입니다.
+  Future<void> setClosetSortOption(ClosetSortOption option) async {
+    if (_closetSortOption == option) return;
+
+    final mutationVersion = ++_sortMutationVersion;
+    final previousOption = _closetSortOption;
+    _closetSortOption = option;
+    notifyListeners();
+
+    try {
+      await _storageService.saveClosetSortOption(option);
+    } catch (error, stackTrace) {
+      debugPrint('정렬 기준을 저장하지 못했습니다: $error');
+      debugPrintStack(stackTrace: stackTrace);
+
+      if (mutationVersion == _sortMutationVersion) {
+        _closetSortOption = previousOption;
+        notifyListeners();
+        rethrow;
+      }
+    }
+  }
+
   /// 저장된 프로필과 세션을 복원하고 유효한 계정의 전용 옷장을 불러옵니다.
   Future<void> loadFromStorage() async {
     // 서로 독립적인 저장소 읽기는 병렬로 실행해 시작 시간을 줄입니다.
-    final (savedUserName, savedUserEmail, savedNameCustomized) =
-        await (
-          _storageService.loadUserName(),
-          _storageService.loadUserEmail(),
-          _storageService.loadUserNameCustomized(),
-        ).wait;
+    final (
+      savedUserName,
+      savedUserEmail,
+      savedNameCustomized,
+      savedSortOption,
+    ) = await (
+      _storageService.loadUserName(),
+      _storageService.loadUserEmail(),
+      _storageService.loadUserNameCustomized(),
+      _storageService.loadClosetSortOption(),
+    ).wait;
+
+    _closetSortOption = savedSortOption;
     AuthSession? savedAuthSession;
 
     try {

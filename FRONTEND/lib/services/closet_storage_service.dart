@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/closet_sort_option.dart';
 import '../models/clothes.dart';
 
 /// 옷장 목록과 사용자 이름·이메일을 영구 저장하기 위한 추상 인터페이스다.
@@ -46,6 +47,11 @@ abstract class ClosetStorage {
   Future<String?> loadUserEmail();
   /// 저장된 사용자 이메일을 삭제한다.
   Future<void> clearUserEmail();
+
+  /// 옷장 목록의 정렬 기준을 저장한다.
+  Future<void> saveClosetSortOption(ClosetSortOption option);
+  /// 저장된 정렬 기준을 불러온다. 저장된 값이 없으면 기본값을 반환한다.
+  Future<ClosetSortOption> loadClosetSortOption();
 }
 
 /// [SharedPreferencesAsync]에 옷장 JSON과 사용자 이름·이메일을 저장한다.
@@ -57,6 +63,7 @@ class ClosetStorageService implements ClosetStorage {
   static const String _userNameKey = 'user_name';
   static const String _userNameCustomizedKey = 'user_name_customized';
   static const String _userEmailKey = 'user_email';
+  static const String _closetSortOptionKey = 'closet_sort_option';
 
   final SharedPreferencesAsync _prefs = SharedPreferencesAsync();
 
@@ -168,6 +175,18 @@ class ClosetStorageService implements ClosetStorage {
   @override
   Future<void> clearUserEmail() async {
     await _prefs.remove(_userEmailKey);
+  }
+
+  @override
+  Future<void> saveClosetSortOption(ClosetSortOption option) async {
+    await _prefs.setString(_closetSortOptionKey, option.storageValue);
+  }
+
+  @override
+  Future<ClosetSortOption> loadClosetSortOption() async {
+    return ClosetSortOption.fromStorage(
+      await _prefs.getString(_closetSortOptionKey),
+    );
   }
 
   String _accountClosetKey(String ownerEmail) {
