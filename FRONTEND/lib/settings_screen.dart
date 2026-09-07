@@ -1,5 +1,7 @@
 // 프로필 표시값, 화면 테마, 개인정보 안내와 계정 관리(로그아웃·비밀번호 변경·회원 탈퇴)를
 // 제공하는 설정 화면입니다.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
@@ -94,6 +96,29 @@ class SettingsScreen extends StatelessWidget {
     String? serverLogoutError;
     bool localLogoutStorageFailed = false;
 
+    // 서버 로그아웃은 최대 15초까지 걸립니다. 그동안 설정 화면이 그대로 눌리면
+    // 사용자가 로그아웃을 다시 누르거나, 곧 폐기될 토큰으로 회원 탈퇴를 시작할 수
+    // 있습니다. 그 탈퇴 요청은 401을 받는데 탈퇴 흐름은 401을 '이미 삭제됨'으로
+    // 해석하므로, 계정이 남아 있는데 탈퇴됐다고 안내하게 됩니다.
+    final navigator = Navigator.of(context);
+    var isProgressVisible = true;
+
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => const _BlockingProgressDialog(
+          message: '로그아웃 중이에요…',
+        ),
+      ),
+    );
+
+    void dismissProgress() {
+      if (!isProgressVisible) return;
+      isProgressVisible = false;
+      navigator.pop();
+    }
+
     if (accessToken != null) {
       // 서버 연결 실패는 기록하되 기기에서 로그아웃하는 흐름은 계속 진행합니다.
       try {
@@ -112,6 +137,8 @@ class SettingsScreen extends StatelessWidget {
       debugPrint('로그아웃 정보 정리 중 오류가 발생했습니다: $error');
       debugPrintStack(stackTrace: stackTrace);
     }
+
+    dismissProgress();
 
     if (!context.mounted) return;
 
@@ -1038,6 +1065,36 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
                 : const Text('탈퇴', style: TextStyle(color: Colors.white)),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 되돌릴 수 없는 요청이 진행되는 동안 화면 조작을 막는 대화상자입니다.
+///
+/// 로그아웃처럼 대화상자 밖에서 수행되는 요청은 이걸로 덮어야 대기 중에
+/// 다른 계정 작업이 시작되는 것을 막을 수 있습니다.
+class _BlockingProgressDialog extends StatelessWidget {
+  const _BlockingProgressDialog({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      child: AlertDialog(
+        content: Row(
+          children: [
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 16),
+            Expanded(child: Text(message)),
+          ],
+        ),
       ),
     );
   }

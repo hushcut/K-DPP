@@ -157,9 +157,14 @@ extension _ScanSaveActions on _ScanScreenState {
           ).showSnackBar(SnackBar(content: Text(fallbackMessage)));
         }
 
-        Navigator.pushReplacementNamed(
+        // pushReplacement는 이 화면이 아니라 **맨 위 라우트**를 교체합니다.
+        // 저장을 기다리는 동안 설정 화면을 열어 두면 그 설정이 교체돼 사라지고
+        // /main이 두 겹으로 쌓여, 뒤로가기로 이미 저장된 스캔 폼에 되돌아갈 수 있습니다.
+        // 스택을 통째로 정리해 항상 한 겹만 남깁니다.
+        Navigator.pushNamedAndRemoveUntil(
           context,
           '/main',
+          (route) => false,
           arguments: MainScreenArguments(initialIndex: 1, showReport: true),
         );
     }

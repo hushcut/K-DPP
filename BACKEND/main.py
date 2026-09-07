@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -7,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StringConstraints
 import json
 import math
 import re
@@ -308,13 +309,21 @@ async def request_validation_error_code_handler(
             message = "이미지 파일을 첨부해 주세요."
             break
 
+    # exc.errors()의 각 항목에는 거부된 입력 원문이 통째로 들어 있습니다.
+    # 그대로 돌려주면 큰 요청 하나가 그만큼 큰 응답으로 되돌아와(증폭) 오히려
+    # 부담이 되므로, 위치와 사유만 남기고 개수도 제한합니다.
+    safe_errors = [
+        {key: value for key, value in error.items() if key in ("loc", "msg", "type")}
+        for error in exc.errors()[:20]
+    ]
+
     return JSONResponse(
         status_code=422,
         content={
             "status": "error",
             "error_code": error_code,
             "message": message,
-            "detail": exc.errors(),
+            "detail": safe_errors,
         },
     )
 
@@ -348,19 +357,38 @@ class WithdrawRequest(BaseModel):
     password: str
 
 
+# 소재 계산은 입력 소재 수에 비례해 반복되므로 개수·길이를 제한하지 않으면
+# 요청 1건으로 워커를 오래 점유시킬 수 있습니다. 실제 케어 라벨의 소재는
+# 많아야 몇 개이고, 오류 응답이 입력을 되돌려주는 경로도 있어 상한이 곧 응답 크기 상한입니다.
+MAX_MATERIAL_ENTRIES = 20
+MAX_MATERIAL_NAME_LENGTH = 64
+# 라벨 OCR 원문은 수천 자를 넘을 이유가 없습니다. 상한이 없으면 요청 1건이
+# 본문 상한(11MB)만큼을 그대로 DB에 적재합니다.
+MAX_RAW_OCR_TEXT_LENGTH = 4000
+# 이력 조회는 전건을 한 번에 올리므로 상한을 둡니다. 넘치면 has_more로 알립니다.
+MAX_HISTORY_ITEMS = 200
+
+MaterialName = Annotated[str, StringConstraints(max_length=MAX_MATERIAL_NAME_LENGTH)]
+MaterialRatios = Annotated[
+    dict[MaterialName, float],
+    Field(max_length=MAX_MATERIAL_ENTRIES),
+]
+RawOcrText = Annotated[str, StringConstraints(max_length=MAX_RAW_OCR_TEXT_LENGTH)]
+
+
 class AnalyzeRequest(BaseModel):
-    materials: dict[str, float]
-    raw_ocr_text: str | None = None
+    materials: MaterialRatios
+    raw_ocr_text: RawOcrText | None = None
 
 
 class CarbonRangeRequest(BaseModel):
-    materials: dict[str, float]
+    materials: MaterialRatios
     min_weight_grams: float | None = None
     max_weight_grams: float | None = None
     weight_grams: float | None = None
     clothing_type: str | None = None
     category: str | None = None
-    raw_ocr_text: str | None = None
+    raw_ocr_text: RawOcrText | None = None
 
 # 4. 소재명 매칭 및 탄소발자국 계산 함수
 def normalize_email(email: str) -> str:
@@ -595,8 +623,25 @@ def load_aliases(material: database.Material) -> list[str]:
     return [str(alias).strip().lower() for alias in aliases]
 
 
-def find_material(db: Session, name: str):
-    material_name = name.strip().lower()
+# 같은 요청 안에서 소재 표를 반복해서 읽지 않도록 Session에 색인을 캐시합니다.
+_MATERIAL_INDEX_KEY = "material_index"
+
+
+def load_material_index(db: Session) -> dict[str, database.Material]:
+    """별칭 → 소재 사전을 만들어 Session에 캐시한다.
+
+    이전에는 소재 이름 하나마다 전체 표를 다시 조회해 비용이
+    (입력 소재 수 × 전체 소재 행)으로 곱해졌다. 한 요청에서
+    validate_materials·build_emission_factors·build_material_details가
+    각각 같은 순회를 반복하던 것도 이 캐시로 한 번에 줄어든다.
+    Session은 요청마다 새로 만들어지므로(get_db) 캐시도 함께 사라진다.
+    """
+    cached = db.info.get(_MATERIAL_INDEX_KEY)
+
+    if cached is not None:
+        return cached
+
+    index: dict[str, database.Material] = {}
 
     for material in db.query(database.Material).all():
         candidates = {
@@ -605,10 +650,18 @@ def find_material(db: Session, name: str):
             *load_aliases(material),
         }
 
-        if material_name in candidates:
-            return material
+        for candidate in candidates:
+            # 먼저 등록된 소재가 이깁니다. 전체 순회에서 첫 일치를 반환하던
+            # 이전 동작과 결과가 같도록 setdefault를 씁니다.
+            index.setdefault(candidate, material)
 
-    return None
+    db.info[_MATERIAL_INDEX_KEY] = index
+
+    return index
+
+
+def find_material(db: Session, name: str):
+    return load_material_index(db).get(name.strip().lower())
 
 
 def validate_materials(
@@ -1293,17 +1346,23 @@ def get_user_history_response(
     current_user: database.User,
     db: Session,
 ) -> dict:
+    # 상한보다 1건 더 읽어, 잘렸는지를 추가 조회 없이 판단합니다.
     results = (
         db.query(database.AnalysisResult)
         .filter(database.AnalysisResult.user_id == current_user.id)
         .order_by(database.AnalysisResult.id.desc())
+        .limit(MAX_HISTORY_ITEMS + 1)
         .all()
     )
+
+    has_more = len(results) > MAX_HISTORY_ITEMS
+    results = results[:MAX_HISTORY_ITEMS]
 
     return {
         "status": "success",
         "user": auth_user_response(current_user),
         "history": [serialize_analysis_result(result) for result in results],
+        "has_more": has_more,
     }
 
 @app.get("/materials", tags=["v1-carbon"])

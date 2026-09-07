@@ -80,5 +80,7 @@ Future<void> _confirmDelete(
     return;
   }
 
-  Navigator.pushReplacementNamed(context, '/main', arguments: 2);
+  // 스캔 저장 경로와 같은 이유로 스택을 정리합니다.
+  // (현재 셸은 항상 onDeleted를 넘기므로 도달하지 않지만, 단독 라우트로 열릴 때를 위한 대비입니다.)
+  Navigator.pushNamedAndRemoveUntil(context, '/main', (route) => false, arguments: 2);
 }
