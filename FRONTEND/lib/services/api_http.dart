@@ -103,8 +103,9 @@ Future<ApiHttpResponse> runJsonApiRequest({
 }
 
 /// 이미지 파일을 multipart로 업로드합니다.
-/// send()는 응답 헤더가 오면 완료되므로, 본문 수신이 중간에 멈춰도
-/// 무한 대기하지 않도록 헤더와 본문 읽기 모두에 [timeout]을 적용합니다.
+/// send()는 응답 헤더가 오면 완료되므로 본문 수신이 중간에 멈추면 무한 대기가 됩니다.
+/// 그래서 전송부터 본문 수신까지를 하나로 묶어 [timeout]을 **한 번만** 적용합니다.
+/// 두 단계에 각각 걸면 실제 상한이 [timeout]의 두 배가 됩니다.
 Future<ApiHttpResponse> runImageUploadRequest({
   required Uri uri,
   required Map<String, String> headers,
@@ -131,12 +132,15 @@ Future<ApiHttpResponse> runImageUploadRequest({
   }
 
   try {
-    final streamedResponse = await (client ?? _sharedApiClient)
-        .send(request)
-        .timeout(timeout);
-    final body = await streamedResponse.stream.bytesToString().timeout(timeout);
+    return await Future(() async {
+      final streamedResponse = await (client ?? _sharedApiClient).send(request);
+      final body = await streamedResponse.stream.bytesToString();
 
-    return ApiHttpResponse(statusCode: streamedResponse.statusCode, body: body);
+      return ApiHttpResponse(
+        statusCode: streamedResponse.statusCode,
+        body: body,
+      );
+    }).timeout(timeout);
   } on SocketException catch (error) {
     throw ApiTransportException(
       type: ApiTransportErrorType.network,

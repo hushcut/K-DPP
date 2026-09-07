@@ -92,49 +92,59 @@ void main() {
     addTearDown(materialInputs.dispose);
     addTearDown(titleController.dispose);
 
-    var parentBuildCount = 0;
-
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: Builder(
-            builder: (context) {
-              parentBuildCount++;
-              return ScanResultView(
-                formKey: GlobalKey<FormState>(),
-                hasTriedSubmit: false,
-                isSaving: false,
-                isScanFailed: false,
-                titleController: titleController,
-                selectedClothingType: ClothingTypeCatalog.defaultOption,
-                materialInputs: materialInputs,
-                scannedCare: '찬물 세탁',
-                originalMaterials: const {'cotton': 70},
-                validateTitle: (_) => null,
-                validateMaterialName: (_) => null,
-                validateMaterialValue: (_) => null,
-                onSelectClothingType: () {},
-                onAddMaterial: () {},
-                onRemoveMaterial: (_) {},
-                onSubmit: () {},
-                onReset: () {},
-              );
-            },
+          body: ScanResultView(
+            formKey: GlobalKey<FormState>(),
+            hasTriedSubmit: false,
+            isSaving: false,
+            isScanFailed: false,
+            titleController: titleController,
+            selectedClothingType: ClothingTypeCatalog.defaultOption,
+            materialInputs: materialInputs,
+            scannedCare: '찬물 세탁',
+            originalMaterials: const {'cotton': 70},
+            validateTitle: (_) => null,
+            validateMaterialName: (_) => null,
+            validateMaterialValue: (_) => null,
+            onSelectClothingType: () {},
+            onAddMaterial: () {},
+            onRemoveMaterial: (_) {},
+            onSubmit: () {},
+            onReset: () {},
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    final buildsAfterFirstFrame = parentBuildCount;
     expect(find.text('현재 소재 합계: 70.0%'), findsOneWidget);
 
-    // 함유율 필드에 입력하면 합계 표시는 바뀌지만 상위 빌드는 늘지 않아야 합니다.
+    // 격리는 ScanResultView.build 안의 ListenableBuilder 두 구역으로 되어 있습니다.
+    // 그 바깥 노드를 붙잡아 두고, 입력 뒤에도 같은 인스턴스인지 봅니다.
+    // 상위 build가 다시 돌면 const가 아닌 Text가 새 인스턴스로 만들어져 깨집니다.
+    //
+    // 이전에는 ScanResultView **위**에 Builder를 두고 그 빌드 횟수를 셌는데,
+    // 하위 리빌드는 상위 Element를 dirty로 만들지 않으므로 그 값은 격리가
+    // 완전히 깨져도 늘지 않습니다. 즉 구조상 절대 실패할 수 없는 단언이었습니다.
+    final headerBefore = tester.widget<Text>(find.text('스캔 완료!'));
+    final sectionBefore = tester.widget<Text>(find.text('소재 및 혼용률'));
+
     await tester.enterText(find.text('70'), '100');
     await tester.pumpAndSettle();
 
     expect(find.text('현재 소재 합계: 100.0%'), findsOneWidget);
-    expect(parentBuildCount, buildsAfterFirstFrame);
+    expect(
+      identical(tester.widget<Text>(find.text('스캔 완료!')), headerBefore),
+      isTrue,
+      reason: '소재 입력이 ListenableBuilder 구역 밖 헤더까지 다시 그리면 안 됩니다.',
+    );
+    expect(
+      identical(tester.widget<Text>(find.text('소재 및 혼용률')), sectionBefore),
+      isTrue,
+      reason: '소재 입력이 섹션 제목까지 다시 그리면 격리가 깨진 것입니다.',
+    );
   });
   testWidgets('소재명을 바꾸면 삭제 버튼 안내 문구도 즉시 따라간다', (tester) async {
     final materialInputs = MaterialInputCollection()
