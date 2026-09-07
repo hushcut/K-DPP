@@ -319,3 +319,124 @@ def test_login_failure_entries_are_capped(client, monkeypatch):
     with main._login_failures_lock:
         # 새 항목 1개가 더해지기 전 기준으로 상한을 정리하므로 상한+1 이하입니다.
         assert len(main._login_failures) <= 6
+
+
+# --- 입력 상한과 조회 상한 (2026-09-07 개선 조사에서 확정) ---------------------
+
+
+def test_analyze_rejects_too_many_materials_without_echoing_input(client):
+    """소재 개수 제한이 없으면 무인증 요청 1건으로 워커를 오래 점유할 수 있었다.
+
+    거부 응답이 입력을 되돌려주면 큰 요청이 큰 응답으로 증폭되므로 그것도 함께 막는다.
+    """
+    materials = {f"material{i}": 100.0 / 5000 for i in range(5000)}
+
+    response = client.post("/analyze", json={"materials": materials})
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "VALIDATION_ERROR"
+    # 입력이 5,000개여도 응답은 짧게 유지돼야 한다.
+    assert len(response.content) < 2000
+
+
+def test_analyze_rejects_overlong_material_name(client):
+    response = client.post(
+        "/analyze",
+        json={"materials": {"a" * (main.MAX_MATERIAL_NAME_LENGTH + 1): 100}},
+    )
+
+    assert response.status_code == 422
+
+
+def test_carbon_calculate_rejects_overlong_raw_ocr_text(client):
+    token = _login_token(client, "ocrlimit@example.com")
+
+    over_limit = client.post(
+        "/api/carbon/calculate",
+        json={
+            "materials": {"cotton": 100},
+            "weight_grams": 200,
+            "raw_ocr_text": "x" * (main.MAX_RAW_OCR_TEXT_LENGTH + 1),
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    within_limit = client.post(
+        "/api/carbon/calculate",
+        json={
+            "materials": {"cotton": 100},
+            "weight_grams": 200,
+            "raw_ocr_text": "x" * main.MAX_RAW_OCR_TEXT_LENGTH,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert over_limit.status_code == 422
+    assert within_limit.status_code == 200
+
+
+def test_normal_material_input_still_calculates(client):
+    """상한을 넣으면서 정상 입력의 계산 결과가 달라지면 안 된다."""
+    response = client.post(
+        "/analyze",
+        json={"materials": {"cotton": 60, "polyester": 40}},
+    )
+
+    assert response.status_code == 200
+    # cotton 8.3 * 0.6 + polyester 9.5 * 0.4
+    assert response.json()["carbon_footprint"] == 8.78
+
+
+def test_material_lookup_reads_the_table_once_per_request(client):
+    """소재 이름마다 전체 표를 다시 읽던 구조라 비용이 곱해졌다."""
+    session = database.SessionLocal()
+    try:
+        index = main.load_material_index(session)
+        # 별칭까지 모두 색인돼야 이전의 순회 검색과 결과가 같다.
+        assert index["cotton"].name_en == "cotton"
+        assert index["면"].name_en == "cotton"
+        # 두 번째 호출은 같은 객체를 그대로 돌려준다(요청당 1회 조회).
+        assert main.load_material_index(session) is index
+    finally:
+        session.close()
+
+
+def test_me_history_is_capped_and_reports_more(client):
+    token = _login_token(client, "historylimit@example.com")
+    session = database.SessionLocal()
+    try:
+        user = (
+            session.query(database.User)
+            .filter(database.User.email == "historylimit@example.com")
+            .first()
+        )
+        session.add_all(
+            database.AnalysisResult(
+                user_id=user.id,
+                materials='{"cotton": 100.0}',
+                carbon_footprint=1.46,
+                unit="kg CO2eq",
+                unknown_materials="[]",
+            )
+            for _ in range(main.MAX_HISTORY_ITEMS + 5)
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.get("/me/history", headers={"Authorization": f"Bearer {token}"})
+    body = response.json()
+
+    assert response.status_code == 200
+    assert len(body["history"]) == main.MAX_HISTORY_ITEMS
+    assert body["has_more"] is True
+
+
+def test_me_history_reports_no_more_when_under_the_cap(client):
+    token = _login_token(client, "historysmall@example.com")
+
+    response = client.get("/me/history", headers={"Authorization": f"Bearer {token}"})
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["history"] == []
+    assert body["has_more"] is False

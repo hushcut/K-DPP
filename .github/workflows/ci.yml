@@ -32,28 +32,24 @@ jobs:
         run: flutter test
 
   backend:
-    name: Backend (pytest, advisory)
+    name: Backend (pytest)
     runs-on: ubuntu-latest
-    # 백엔드 파트가 CI 환경을 확인하기 전까지는 실패해도 전체 상태를 막지 않습니다.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
+      # BACKEND는 모노레포에 항상 있어야 합니다. 없으면 스킵이 통과로 보이지 않도록
+      # 여기서 바로 실패시킵니다.
       - name: Check backend folder
-        id: check
-        run: echo "exists=$([ -d BACKEND ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+        run: test -d BACKEND
 
-      - if: steps.check.outputs.exists == 'true'
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Install dependencies
-        if: steps.check.outputs.exists == 'true'
         working-directory: BACKEND
         run: pip install -r requirements.txt
 
       - name: Test
-        if: steps.check.outputs.exists == 'true'
         working-directory: BACKEND
         run: pytest
