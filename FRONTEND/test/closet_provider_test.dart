@@ -428,6 +428,43 @@ void main() {
       expect(secondSync, 0);
     });
 
+    test('서버 이력 동기화 저장이 실패하면 이전 값으로 되돌린다', () async {
+      final storage = FakeClosetStorage();
+      final provider = ClosetProvider(storage: storage);
+      final clothes = Clothes(
+        title: '홍길동 동기화 셔츠',
+        category: '상의',
+        health: 85,
+        materials: {'cotton': 100.0},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: 12.0,
+        carbonFootprintSource: CarbonFootprintSource.server,
+        carbonFootprintMin: 11.0,
+        carbonFootprintMax: 13.0,
+        savedResultId: 42,
+      );
+      await provider.addClothes(clothes);
+
+      storage.saveClothesError = Exception('저장소 오류');
+
+      const record = AnalysisHistoryRecord(
+        id: 42,
+        materials: {'cotton': 100.0},
+        carbonFootprint: 9.9,
+      );
+
+      // 되돌리지 않으면 메모리에는 서버 값이, 저장소에는 옛 값이 남아
+      // 다음 실행에서 아무 안내 없이 옛 값으로 돌아간다.
+      await expectLater(
+        provider.synchronizeServerHistory([record]),
+        throwsA(isA<Exception>()),
+      );
+
+      expect(provider.items.single.carbonFootprint, 12.0);
+      expect(provider.items.single.carbonFootprintMin, 11.0);
+      expect(provider.items.single.carbonFootprintMax, 13.0);
+    });
+
     test('removeClothes는 같은 인스턴스가 없어도 저장 ID로 삭제하고 결과를 알려준다', () async {
       final provider = ClosetProvider(storage: FakeClosetStorage());
       final saved = Clothes(

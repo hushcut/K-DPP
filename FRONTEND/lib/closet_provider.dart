@@ -422,6 +422,11 @@ class ClosetProvider with ChangeNotifier {
     final recordsById = {for (final record in history) record.id: record};
     var updatedCount = 0;
 
+    // 저장 실패 시 되돌릴 상태입니다. 첫 변경이 일어날 때 붙잡아 둡니다.
+    List<Clothes>? previousItems;
+    Clothes? previousSelected;
+    var mutationVersion = _mutationVersion;
+
     for (var index = 0; index < _items.length; index++) {
       final current = _items[index];
       final savedResultId = current.savedResultId;
@@ -460,7 +465,9 @@ class ClosetProvider with ChangeNotifier {
       );
 
       if (updatedCount == 0) {
-        _mutationVersion++;
+        previousItems = List<Clothes>.from(_items);
+        previousSelected = _selectedClothes;
+        mutationVersion = ++_mutationVersion;
       }
 
       _items[index] = updated;
@@ -474,7 +481,25 @@ class ClosetProvider with ChangeNotifier {
 
     if (updatedCount > 0) {
       notifyListeners();
-      await _persist();
+
+      try {
+        await _persist();
+      } catch (_) {
+        // 다른 변경 경로(추가·삭제·수정)는 모두 저장 실패 시 되돌리는데 이 경로만
+        // 빠져 있었습니다. 되돌리지 않으면 메모리에는 서버 값이, 저장소에는 옛 값이
+        // 남아 다음 실행에서 아무 안내 없이 옛 값으로 돌아갑니다.
+        final snapshot = previousItems;
+
+        if (mutationVersion == _mutationVersion && snapshot != null) {
+          _items
+            ..clear()
+            ..addAll(snapshot);
+          _selectedClothes = previousSelected;
+          notifyListeners();
+        }
+
+        rethrow;
+      }
     }
 
     return updatedCount;

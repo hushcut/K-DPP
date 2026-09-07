@@ -18,13 +18,32 @@ class SessionExpiryHandler {
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
 
-    await provider.logout();
+    // 저장소 정리가 실패해도 화면 이동과 안내는 반드시 수행합니다.
+    // logout()은 메모리 상태를 먼저 비우므로, 여기서 예외가 그대로 올라가면
+    // 사용자는 옷장만 사라진 채 로그인된 듯한 화면에 갇힙니다.
+    var storageCleanupFailed = false;
+
+    try {
+      await provider.logout();
+    } catch (error, stackTrace) {
+      storageCleanupFailed = true;
+      debugPrint('세션 만료 처리 중 저장 정보 정리에 실패했습니다: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
 
     if (!context.mounted) return;
 
     navigator.pushNamedAndRemoveUntil('/login', (route) => false);
     messenger
       ..clearSnackBars()
-      ..showSnackBar(SnackBar(content: Text(message)));
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            storageCleanupFailed
+                ? '$message (저장된 로그인 정보 정리는 완료하지 못했습니다)'
+                : message,
+          ),
+        ),
+      );
   }
 }
