@@ -78,6 +78,34 @@ Authorization: Bearer <token>
 
 스캔 API는 탄소배출량을 계산하거나 저장하지 않습니다. 최종 계산은 사용자가 의류 종류 또는 직접 무게를 선택한 뒤 `/api/carbon/calculate`에서 수행합니다.
 
+### `material_details`의 프론트 사용 (2026-09-08 추가)
+
+프론트는 `materials`의 키가 아니라 **`material_details[].display_name`(한글명)**을 편집 폼의
+소재 키로 씁니다(`scan_result.dart` `displayMaterials` → `scan_draft_service.dart`).
+그 키는 화면 표기뿐 아니라 **저장 전 프리뷰 탄소값**과 **옷장에 저장되는 건강도**를
+구하는 데도 쓰이고, 저장 시 `/api/carbon/calculate`로 그대로 전송됩니다.
+
+| 필드 | 프론트 사용처 |
+| --- | --- |
+| `display_name` | 편집 폼 소재명 · 로컬 계수/건강도 조회 키 · 저장 요청의 `materials` 키 |
+| `standard_name` | 표시명 역조회에만 사용 (`displayNameFor`) |
+| `original_name` | 표시명 역조회 기준 |
+| `is_supported` | 현재 미사용 |
+
+따라서 **`display_name` 값은 서버 소재 표(`BACKEND/init_data.py`의 `MATERIAL_SEEDS`)의
+`name_ko`·`aliases` 안에 있어야 합니다.** 여기 없는 이름을 내려보내면 저장 요청이
+400 `MATERIAL_NOT_FOUND`로 거부됩니다.
+
+프론트의 로컬 추정기(`clothing_estimator.dart`)는 영문 표준명 기준의 계수표를 갖고 있어
+한글 표시명을 되돌리는 별칭 표를 함께 둡니다. 이 표가 서버 시드를 따라오지 못하면
+해당 소재가 기본계수 10.0으로 계산되고 잘못된 건강도가 옷장에 남습니다
+(2026-09-08 이전의 실제 동작). **`BACKEND/tests/test_material_name_contract.py`가
+두 표를 맞대어 검사**하므로 시드에 소재를 추가할 때는 프론트 별칭 표도 함께 갱신해야 합니다.
+
+⚠️ 프론트 계수표의 **숫자**는 아직 서버 시드와 다릅니다(예: 울 25.0 vs 서버 13.9).
+위 별칭 표는 이름 대응만 맞춘 것이라, 프리뷰 값과 저장 후 서버 값은 여전히 벌어집니다.
+계수 정본을 어디에 둘지는 미결(`NEXT_WORK.md` D08).
+
 ## 2. 스캔 오류
 
 ```json
@@ -119,7 +147,8 @@ Authorization: Bearer <token>
 | 422 | `MATERIAL_EXTRACTION_FAILED` | 소재 직접 입력 흐름 |
 | 502 | `OCR_FAILED` | 소재 직접 입력 안내 + `다시 촬영` 버튼 제공 |
 | 503 | `AI_MODULE_FAILED` | **전용 분기 없음** — 아래 '그 외 5xx'와 같게 처리됨 |
-| 500 · 504 · 그 외 5xx | — | 일시적 서버 문제 안내 (`statusCode >= 500` 폴백) |
+| 504 | `OCR_TIMEOUT` | 시간 초과 안내 + 직접 입력 유도 (**백엔드 미구현, 프론트만 준비됨**) |
+| 500 · 그 외 5xx | — | 일시적 서버 문제 안내 (`statusCode >= 500` 폴백) |
 
 **503에 대한 주의**: 프론트에 503 전용 case가 없어 `statusCode >= 500` 폴백을 타고
 500·504와 **똑같은 문구**가 나옵니다. 이전 판에 적혀 있던 "서버/AI 모듈 문제 안내"는
@@ -129,10 +158,43 @@ Authorization: Bearer <token>
 (`BACKEND/main.py:882`, `:938`). OCR 미설정·한도 초과·Vision 장애는 전부 **502 `OCR_FAILED`**로
 나갑니다(`:922-932`가 `run_ocr` 실행 중 모든 예외를 `except Exception`으로 잡음).
 
-**504는 현재 백엔드가 내지 않습니다.** AI 계층에는 타임아웃이 있으나(`ksw/ai-ocr-enhancement`의
-`OCR_TIMEOUT_SECONDS = 20`) develop에는 없고, 프론트 상한은 35초입니다.
-AI 브랜치 처리가 결정되면 `case 504:`를 추가합니다 — 후속 흐름이 502·503과 같으므로
-새 enum은 필요 없습니다.
+**504는 현재 백엔드가 내지 않고, 프론트에만 처리 경로가 있습니다**(403과 같은 형태).
+AI 계층에는 타임아웃이 있으나(`ksw/ai-ocr-enhancement`의 `OCR_TIMEOUT_SECONDS = 20`)
+develop에는 없고, 프론트 상한은 35초입니다.
+
+`AI_REQUESTS.md` F-4 요청에 따라 2026-09-08에 프론트에 `case 504:`를 추가했습니다
+(`scan_api_service.dart`, 브랜치 `jw/scan-partial-prefill`). 예고대로 새 enum은 만들지
+않고 기존 `ScanApiErrorType.timeout`을 재사용하므로, 통신 시간 초과와 같은 문구
+("분석이 예상보다 오래 걸렸어요. 다시 시도하거나 직접 입력해 주세요.")가 나갑니다.
+즉 502·503과 후속 흐름은 같고 문구만 시간 초과에 맞게 달라집니다.
+
+### 422 `detail`의 프론트 사용 (2026-09-08 추가)
+
+직접 입력 폼은 `detail`의 아래 세 필드를 초기값으로 씁니다
+(`scan_api_service.dart` → `scan_draft_service.dart` → `scan_result_view.dart`).
+
+| 필드 | 폼 반영 | 현재 실제로 오는 값 |
+| --- | --- | --- |
+| `partial_materials` | 소재·혼용률 입력 줄 | **항상 `{}`** |
+| `care_instruction` | 관리 지침 문구 | 항상 상수 `'라벨 표기법에 맞춰 관리하세요.'` |
+| `raw_ocr_preview` | '인식된 라벨 원문' 카드 | AI가 읽어낸 라벨 글자 (상한 220자) |
+
+**`partial_materials`는 이 경로에서 채워질 수 없습니다.** 422는 `materials`가 비었을
+때만 나고(`main.py:951`), 실패 응답을 만드는 AI `failed_response`도 `materials`·`parts`를
+`{}`로 고정합니다(develop·enhancement 공통). 즉 오늘 이 필드로 프리필되는 값은 없습니다.
+프론트는 값이 오면 그대로 채우도록 배선만 해 뒀으므로, AI 파서가 부분 인식 결과를
+실패 응답에 담기 시작하면 프론트 변경 없이 동작합니다.
+
+`care_instruction`도 마찬가지로 지금은 상수입니다 — develop `failed_response`에는
+`care_text` 키 자체가 없습니다. enhancement는 실패 시에도 `parse_care()`를 돌려 실제
+지침을 담지만 키 이름이 `care_instruction`이라, 백엔드가 두 키를 모두 읽도록 함께
+고쳤습니다(`main.py:950-956`).
+
+**실제로 부분 인식이 일어나는 경로는 422가 아니라 200입니다.** 소재를 찾았으나 합계가
+100이 아니면 `ai_success: false` + `analysis_failure_reason: "RATIO_INCOMPLETE"`로
+**200**이 나가고, 프론트는 이미 그 소재를 폼에 채웁니다. 다만 프론트가 `ai_success`를
+읽지 않아 화면에는 "스캔 완료!"로 표시되고, 저장 단계에서야 합계 경고를 만납니다
+(미해결, 백로그).
 
 ※ **415의 WebP 허용은 백엔드 상수(`main.py:52`) 기준입니다.** AI 계층은 JPEG/PNG만 받습니다
 (`ksw/ai-ocr-enhancement`의 `SUPPORTED_IMAGE_FORMATS`). 현재는 백엔드가 OCR 텍스트를
