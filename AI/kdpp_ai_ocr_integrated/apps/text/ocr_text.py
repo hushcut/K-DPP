@@ -1,3 +1,9 @@
+"""이미지 검증, Google Vision OCR, 후보 선택을 담당하는 OCR 경계.
+
+원본 OCR을 우선 사용하고, 파서 신뢰도가 낮을 때만 전처리 후보를 추가로
+요청한다. 비용과 지연을 제한하면서 흐림·작은 글자 라벨의 인식률을 보완한다.
+"""
+
 from __future__ import annotations
 
 import math
@@ -124,6 +130,8 @@ def validate_image_bytes(
     *,
     declared_content_type: str | None = None,
 ) -> ValidatedImage:
+    """OCR 호출 전에 파일 형식·용량·해상도를 검증한다."""
+
     if not content:
         raise InvalidImageError("이미지 파일이 비어 있습니다.")
     if len(content) > MAX_IMAGE_BYTES:
@@ -173,12 +181,15 @@ def validate_image_bytes(
 
 
 def preprocess_image_bytes(content: bytes) -> bytes:
+    """회전 보정, 적정 크기 조절, 대비·선명도 보정을 적용한 OCR 후보를 만든다."""
+
     try:
         with Image.open(BytesIO(content)) as image:
             image = ImageOps.exif_transpose(image).convert("RGB")
             width, height = image.size
             _validate_image_dimensions(width, height)
 
+            # 작은 글자는 키우되, 큰 이미지가 메모리를 과도하게 쓰지 않도록 상한을 둔다.
             scale = 1.0
             if width < MIN_OCR_WIDTH:
                 scale = MIN_OCR_WIDTH / width
@@ -236,6 +247,12 @@ def _score_candidate(
     ratio_total_before_normalization: float | None,
     warning_count: int,
 ) -> tuple[int, int, float, int, int, int]:
+    """파서 성공 여부를 최우선으로 OCR 후보를 정렬할 점수를 만든다.
+
+    같은 품질이면 혼용률 합계가 100에 가까운 결과, 경고가 적은 결과,
+    명시적 퍼센트가 많은 결과, 마지막으로 원본 OCR 순서로 선택한다.
+    """
+
     total = (
         ratio_total_before_normalization
         if ratio_total_before_normalization is not None
@@ -421,6 +438,8 @@ def run_ocr_bytes(
     offline: bool = False,
     cache_label: str = "",
 ) -> OcrResult:
+    """한 이미지에서 원본/전처리 OCR 후보 중 파서 관점의 최선 결과를 반환한다."""
+
     validated = validate_image_bytes(
         content,
         declared_content_type=declared_content_type,
@@ -432,6 +451,7 @@ def run_ocr_bytes(
 
     def run_candidate_ocr(source: str, candidate_content: bytes) -> str:
         nonlocal client
+        # QA 재실행에서 동일 이미지에 대한 외부 OCR 호출과 비용을 피한다.
         if ocr_cache is not None and not refresh_ocr_cache:
             cached_text = ocr_cache.get(candidate_content)
             if cached_text is not None:
@@ -464,9 +484,8 @@ def run_ocr_bytes(
     ]
     processing_warnings: list[str] = []
 
-    # A second paid OCR request is made only when the original is not a
-    # high-confidence composition. This improves difficult photos without
-    # doubling every request's latency and cost.
+    # 원본 파싱이 충분히 신뢰할 만할 때는 전처리 OCR 호출을 생략한다.
+    # 어려운 사진만 재시도해 비용과 지연을 제한한다.
     original = candidates[0]
     if original.parser_status != "success" or original.parser_confidence != "high":
         try:

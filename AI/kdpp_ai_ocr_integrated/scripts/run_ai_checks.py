@@ -35,29 +35,41 @@ def main() -> None:
     )
     parser.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR))
     parser.add_argument("--skip-leakage", action="store_true")
+    parser.add_argument("--skip-tests", action="store_true")
+    parser.add_argument(
+        "--qa-image-dir",
+        help="OCR QA 이미지 폴더. --qa-answer-key와 함께 지정해야 합니다.",
+    )
+    parser.add_argument(
+        "--qa-answer-key",
+        help="OCR QA 정답 CSV. --qa-image-dir와 함께 지정해야 합니다.",
+    )
     args = parser.parse_args()
 
-    run_check(
-        "Python compile",
-        [
-            sys.executable,
-            "-m",
-            "compileall",
-            "-q",
-            "apps",
-            "scripts",
-            "tests",
-        ],
-    )
-    run_check("Regression tests", [sys.executable, "-m", "pytest"])
+    run_check("Syntax check", [sys.executable, "-B", "-m", "scripts.check_python_syntax"])
+    if args.skip_tests:
+        print("[Regression tests] SKIP: --skip-tests was requested.")
+    else:
+        run_check("Regression tests", [sys.executable, "-m", "pytest"])
 
-    if args.skip_leakage:
-        print(
-            "\n[Split leakage]\nSKIP: --skip-leakage was supplied.",
-            flush=True,
+    if bool(args.qa_image_dir) != bool(args.qa_answer_key):
+        raise SystemExit(
+            "--qa-image-dir와 --qa-answer-key는 함께 지정해야 합니다."
         )
-        return
-
+    if args.qa_image_dir and args.qa_answer_key:
+        run_check(
+            "OCR QA dataset audit",
+            [
+                sys.executable,
+                "-m",
+                "scripts.audit_ocr_qa_dataset",
+                "--image-dir",
+                args.qa_image_dir,
+                "--answer-key",
+                args.qa_answer_key,
+                "--strict",
+            ],
+        )
     data_dir = Path(args.data_dir).expanduser().resolve()
     splits = available_splits(data_dir)
     if not splits:
@@ -72,17 +84,18 @@ def main() -> None:
             "Dataset is incomplete: train and valid _classes.csv are required."
         )
 
-    run_check(
-        "Split leakage",
-        [
-            sys.executable,
-            "scripts/check_split_leakage.py",
-            "--data-dir",
-            str(data_dir),
-            "--splits",
-            *splits,
-        ],
-    )
+    dataset_audit_command = [
+        sys.executable,
+        "-m",
+        "scripts.audit_symbol_dataset",
+        "--data-dir",
+        str(data_dir),
+        "--splits",
+        *splits,
+    ]
+    if args.skip_leakage:
+        dataset_audit_command.append("--skip-leakage")
+    run_check("Dataset audit", dataset_audit_command)
 
 
 if __name__ == "__main__":

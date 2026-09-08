@@ -15,7 +15,11 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
-from apps.symbol.data_quality import assert_no_split_leakage
+from apps.symbol.data_quality import (
+    assert_no_split_leakage,
+    assert_train_class_coverage,
+    audit_dataset,
+)
 from apps.symbol.dataset_csv import SymbolCsvDataset
 from apps.symbol.metrics import (
     apply_thresholds,
@@ -252,6 +256,17 @@ def main() -> None:
         leakage_splits.append("test")
     print("[Hard gate] split leakage check")
     assert_no_split_leakage(data_dir, tuple(leakage_splits))
+
+    dataset_audit = audit_dataset(data_dir, tuple(leakage_splits))
+    assert_train_class_coverage(dataset_audit)
+    print(
+        "[Dataset audit] "
+        f"task_type={dataset_audit.task_type}, "
+        + ", ".join(
+            f"{split.split}={split.sample_count}"
+            for split in dataset_audit.splits
+        )
+    )
 
     train_transform, evaluation_transform = build_transforms()
     train_dataset = SymbolCsvDataset(

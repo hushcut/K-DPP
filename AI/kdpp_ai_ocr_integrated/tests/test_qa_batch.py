@@ -6,6 +6,7 @@ from scripts import run_qa_batch
 from scripts.run_qa_batch import (
     AnswerKeyError,
     analyze_label_image_cached,
+    classify_failure,
     compare_materials,
     parse_answer_materials,
 )
@@ -111,3 +112,26 @@ def test_cached_qa_calls_ocr_only_once(monkeypatch, tmp_path) -> None:
     assert second_hit is True
     assert api_calls == 1
 
+
+def test_failure_categories_distinguish_parser_and_material_errors() -> None:
+    parser_failure = classify_failure(
+        result={"status": "failed", "error_code": "composition_not_found"},
+        exception="",
+        judgment="failed",
+        failure_reason="no_predicted_materials",
+    )
+    material_failure = classify_failure(
+        result={"status": "success"},
+        exception="",
+        judgment="failed",
+        failure_reason="missing=polyester | extra=acrylic",
+    )
+
+    assert parser_failure == "composition_not_found"
+    assert material_failure == "material_missing_and_extra"
+    assert classify_failure(
+        result={"status": "failed"},
+        exception="",
+        judgment="not_compared",
+        failure_reason="answer_missing",
+    ) == "not_compared"

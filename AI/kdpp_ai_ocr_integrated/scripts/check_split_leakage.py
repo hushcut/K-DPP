@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
-
-from apps.symbol.data_quality import find_split_leakage
-
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_DIR = BASE_DIR / "data"
+
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+from apps.symbol.data_quality import find_split_leakage
 
 
 def main() -> None:

@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from apps.service import main as service_main
-from apps.symbol.model_io import ModelCheckpointError
 from apps.text.ocr_text import (
     OcrConfigurationError,
     OcrQuotaExceededError,
@@ -123,19 +122,26 @@ def test_analyze_label_maps_specific_ocr_failures(
 
 
 def test_analyze_symbol_returns_versioned_success_contract(monkeypatch) -> None:
+    class InvalidCheckpointError(Exception):
+        pass
+
     monkeypatch.setattr(
         service_main,
-        "predict_symbol_bytes",
-        lambda *_args, **_kwargs: {
-            "symbols": [
-                {
-                    "class": "wash_30",
-                    "label_ko": "30도 세탁",
-                    "confidence": 0.91,
-                }
-            ],
-            "model_scope": "cropped_care_symbol_only",
-        },
+        "load_symbol_runtime",
+        lambda: (
+            InvalidCheckpointError,
+            "models/symbol.pt",
+            lambda *_args, **_kwargs: {
+                "symbols": [
+                    {
+                        "class": "wash_30",
+                        "label_ko": "30도 세탁",
+                        "confidence": 0.91,
+                    }
+                ],
+                "model_scope": "cropped_care_symbol_only",
+            },
+        ),
     )
 
     response = client.post(
@@ -149,10 +155,17 @@ def test_analyze_symbol_returns_versioned_success_contract(monkeypatch) -> None:
 
 
 def test_analyze_symbol_maps_invalid_checkpoint_to_503(monkeypatch) -> None:
-    def fail(*_args, **_kwargs):
-        raise ModelCheckpointError("checkpoint architecture mismatch")
+    class InvalidCheckpointError(Exception):
+        pass
 
-    monkeypatch.setattr(service_main, "predict_symbol_bytes", fail)
+    def fail(*_args, **_kwargs):
+        raise InvalidCheckpointError("checkpoint architecture mismatch")
+
+    monkeypatch.setattr(
+        service_main,
+        "load_symbol_runtime",
+        lambda: (InvalidCheckpointError, "models/symbol.pt", fail),
+    )
     response = client.post(
         "/v1/analyze-symbol",
         files={"file": ("symbol.png", image_bytes(), "image/png")},
@@ -160,3 +173,17 @@ def test_analyze_symbol_maps_invalid_checkpoint_to_503(monkeypatch) -> None:
 
     assert response.status_code == 503
     assert response.json()["error_code"] == "symbol_model_invalid"
+
+
+def test_analyze_symbol_isolated_when_optional_runtime_is_missing(monkeypatch) -> None:
+    def unavailable_runtime():
+        raise ModuleNotFoundError("No module named 'torchvision'", name="torchvision")
+
+    monkeypatch.setattr(service_main, "load_symbol_runtime", unavailable_runtime)
+    response = client.post(
+        "/v1/analyze-symbol",
+        files={"file": ("symbol.png", image_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error_code"] == "symbol_feature_unavailable"

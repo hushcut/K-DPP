@@ -1,10 +1,16 @@
+"""고정 QA 이미지셋으로 OCR·소재 파서 결과를 재현 가능하게 측정하는 도구.
+
+기본 동작은 OCR 캐시를 재사용한다. 따라서 파서 규칙을 수정한 뒤에는 외부
+OCR 비용 없이 같은 원문 기준으로 결과를 비교할 수 있다.
+"""
+
 from __future__ import annotations
 
 import argparse
 import csv
 import json
-import math
 import sys
+from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -19,12 +25,16 @@ from apps.text.ocr_cache import (
     OcrTextCache,
 )
 from apps.text.ocr_text import OcrError, read_image_bytes, run_ocr_bytes
+from apps.text.qa_dataset import (
+    QaDatasetError,
+    load_qa_answer_key,
+    parse_answer_materials as parse_qa_answer_materials,
+)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
 
-class AnswerKeyError(ValueError):
-    pass
+AnswerKeyError = QaDatasetError
 
 
 @dataclass
@@ -40,6 +50,7 @@ class QaSummary:
     material_micro_f1: float
     matched_material_ratio_mae: float | None
     exception_count: int
+    failure_category_counts: dict[str, int]
 
 
 def csv_safe(value: Any) -> Any:
@@ -50,98 +61,30 @@ def csv_safe(value: Any) -> Any:
     return value
 
 
-def _parse_ratio(value: str, *, row_number: int) -> float:
-    try:
-        ratio = float(value.strip())
-    except ValueError as exc:
-        raise AnswerKeyError(
-            f"{row_number}행에 숫자가 아닌 혼용률이 있습니다: {value!r}"
-        ) from exc
-    if not math.isfinite(ratio) or ratio <= 0 or ratio > 100:
-        raise AnswerKeyError(
-            f"{row_number}행 혼용률은 0 초과 100 이하여야 합니다: {ratio}"
-        )
-    return ratio
+def parse_answer_materials(
+    row: dict[str, str],
+    *,
+    row_number: int,
+) -> dict[str, float]:
+    """Backward-compatible access to the shared QA annotation parser."""
 
-
-def parse_answer_materials(row: dict[str, str], *, row_number: int) -> dict[str, float]:
-    direct = (row.get("answer_materials") or "").strip()
-    if not direct:
-        raise AnswerKeyError(f"{row_number}행 answer_materials가 비어 있습니다.")
-
-    result: dict[str, float] = {}
-    if ":" in direct:
-        items = [item.strip() for item in direct.split(";") if item.strip()]
-        for item in items:
-            if ":" not in item:
-                raise AnswerKeyError(
-                    f"{row_number}행 소재:비율 형식이 올바르지 않습니다: {item!r}"
-                )
-            material, raw_ratio = item.split(":", 1)
-            material = material.strip().lower()
-            if not material or material in result:
-                raise AnswerKeyError(
-                    f"{row_number}행 소재명이 비었거나 중복되었습니다: {material!r}"
-                )
-            result[material] = _parse_ratio(raw_ratio, row_number=row_number)
-    else:
-        materials = [
-            item.strip().lower()
-            for item in direct.split(";")
-            if item.strip()
-        ]
-        ratios = [
-            item.strip()
-            for item in (row.get("answer_ratios") or "").split(";")
-            if item.strip()
-        ]
-        if len(materials) != len(ratios):
-            raise AnswerKeyError(
-                f"{row_number}행 소재 {len(materials)}개와 비율 "
-                f"{len(ratios)}개의 개수가 다릅니다."
-            )
-        if len(set(materials)) != len(materials):
-            raise AnswerKeyError(f"{row_number}행 소재명이 중복되었습니다.")
-        result = {
-            material: _parse_ratio(ratio, row_number=row_number)
-            for material, ratio in zip(materials, ratios)
-        }
-
-    total = sum(result.values())
-    if abs(total - 100.0) > 0.5:
-        raise AnswerKeyError(
-            f"{row_number}행 정답 혼용률 합계가 100이 아닙니다: {total:g}"
-        )
-    return result
+    return parse_qa_answer_materials(row, row_number=row_number)
 
 
 def load_answer_key(path: Path) -> dict[str, dict[str, Any]]:
-    if not path.is_file():
-        raise FileNotFoundError(f"정답지 CSV가 없습니다: {path}")
+    """Load canonical answers plus optional capture-condition metadata."""
 
-    answers: dict[str, dict[str, Any]] = {}
-    with path.open("r", encoding="utf-8-sig", newline="") as file:
-        reader = csv.DictReader(file)
-        required = {"file_name", "answer_materials", "answer_ratios"}
-        missing = required - set(reader.fieldnames or [])
-        if missing:
-            raise AnswerKeyError(
-                "정답지 필수 열이 없습니다: " + ", ".join(sorted(missing))
-            )
-        for row_number, row in enumerate(reader, start=2):
-            file_name = (row.get("file_name") or "").strip()
-            if not file_name:
-                raise AnswerKeyError(f"{row_number}행 file_name이 비어 있습니다.")
-            if file_name in answers:
-                raise AnswerKeyError(f"중복 file_name입니다: {file_name}")
-            answers[file_name] = {
-                **row,
-                "_materials": parse_answer_materials(
-                    row,
-                    row_number=row_number,
-                ),
-            }
-    return answers
+    answers = load_qa_answer_key(path)
+    return {
+        file_name: {
+            "_materials": answer.materials,
+            "split": answer.split or "",
+            "source_group": answer.source_group or "",
+            "capture_condition": answer.capture_condition or "",
+            "label_layout": answer.label_layout or "",
+        }
+        for file_name, answer in answers.items()
+    }
 
 
 def image_files(folder: Path) -> list[Path]:
@@ -162,6 +105,8 @@ def analyze_label_image_cached(
     refresh_cache: bool = False,
     offline: bool = False,
 ) -> tuple[dict[str, Any], bool]:
+    """이미지 하나를 분석하고, 이번 결과가 OCR 캐시만 사용했는지 함께 반환한다."""
+
     content = read_image_bytes(image_path)
     writes_before = cache.write_count
     ocr_result = run_ocr_bytes(
@@ -188,6 +133,8 @@ def compare_materials(
     predicted: dict[str, float],
     tolerance: float,
 ) -> tuple[str, str]:
+    """정답과 예측의 소재 집합·혼용률을 비교해 사람이 읽을 실패 이유를 만든다."""
+
     answer = normalize_values(answer)
     predicted = normalize_values(predicted)
 
@@ -212,10 +159,42 @@ def compare_materials(
     return ("failed", " | ".join(reasons)) if reasons else ("success", "")
 
 
+def classify_failure(
+    *,
+    result: dict[str, Any],
+    exception: str,
+    judgment: str,
+    failure_reason: str,
+) -> str:
+    """Return one stable failure category for QA trend analysis."""
+
+    if judgment == "not_compared":
+        return "not_compared"
+    if exception:
+        return "ocr_or_pipeline_exception"
+    if result.get("status") != "success":
+        return str(result.get("error_code") or "parser_failed")
+    if judgment == "success":
+        return "success"
+    if failure_reason == "no_predicted_materials":
+        return "parser_returned_no_materials"
+    if "missing=" in failure_reason and "extra=" in failure_reason:
+        return "material_missing_and_extra"
+    if "missing=" in failure_reason:
+        return "material_missing"
+    if "extra=" in failure_reason:
+        return "material_extra"
+    if "ratio_diff=" in failure_reason:
+        return "ratio_mismatch"
+    return "composition_mismatch"
+
+
 def build_summary(
     rows: list[dict[str, Any]],
     answers: dict[str, dict[str, Any]],
 ) -> QaSummary:
+    """정확 일치와 소재 단위 precision/recall/F1을 함께 계산한다."""
+
     compared = [row for row in rows if row["judgment"] in {"success", "failed"}]
     true_positive = false_positive = false_negative = 0
     ratio_errors: list[float] = []
@@ -269,6 +248,15 @@ def build_summary(
             else None
         ),
         exception_count=sum(bool(row["exception"]) for row in rows),
+        failure_category_counts=dict(
+            sorted(
+                Counter(
+                    row["failure_category"]
+                    for row in rows
+                    if row["failure_category"] not in {"success", "not_compared"}
+                ).items()
+            )
+        ),
     )
 
 
@@ -381,6 +369,12 @@ def main() -> None:
             if answer
             else ("not_compared", "answer_missing")
         )
+        failure_category = classify_failure(
+            result=result,
+            exception=exception,
+            judgment=judgment,
+            failure_reason=failure_reason,
+        )
         confidence = result.get("confidence", {})
         ocr = result.get("ocr", {})
         row = {
@@ -389,6 +383,7 @@ def main() -> None:
             "error_code": result.get("error_code", ""),
             "judgment": judgment,
             "failure_reason": failure_reason,
+            "failure_category": failure_category,
             "answer_materials": json.dumps(
                 answer,
                 ensure_ascii=False,
@@ -410,6 +405,10 @@ def main() -> None:
             ),
             "raw_ocr_preview": result.get("raw_ocr_preview", ""),
             "exception": exception,
+            "split": answers.get(image_path.name, {}).get("split", ""),
+            "source_group": answers.get(image_path.name, {}).get("source_group", ""),
+            "capture_condition": answers.get(image_path.name, {}).get("capture_condition", ""),
+            "label_layout": answers.get(image_path.name, {}).get("label_layout", ""),
         }
         rows.append({key: csv_safe(value) for key, value in row.items()})
 
@@ -449,6 +448,8 @@ def main() -> None:
         f"{summary.material_micro_recall:.3f}/"
         f"{summary.material_micro_f1:.3f}"
     )
+    if summary.failure_category_counts:
+        print("Failure categories: " + json.dumps(summary.failure_category_counts, ensure_ascii=False))
     if missing_answers:
         print(f"Warning: answers missing for {len(missing_answers)} images")
     if missing_images:
