@@ -189,4 +189,123 @@ void main() {
     expect(find.byTooltip('wool 삭제'), findsOneWidget);
     expect(find.byTooltip('cotton 삭제'), findsNothing);
   });
+
+  testWidgets('직접 입력 모드에서 인식된 라벨 원문을 보여 준다', (tester) async {
+    final materialInputs = MaterialInputCollection()..addEmpty();
+    final titleController = TextEditingController(text: '새로 스캔한 의류');
+    addTearDown(materialInputs.dispose);
+    addTearDown(titleController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ScanResultView(
+            formKey: GlobalKey<FormState>(),
+            hasTriedSubmit: false,
+            isSaving: false,
+            isScanFailed: true,
+            scanFailureMessage: 'AI가 라벨을 정확히 인식하지 못했어요.',
+            titleController: titleController,
+            selectedClothingType: ClothingTypeCatalog.defaultOption,
+            materialInputs: materialInputs,
+            scannedCare: '라벨의 세탁 지침을 확인해 주세요.',
+            rawOcrPreview: 'COTTON 60% WOOL 15%',
+            originalMaterials: const {},
+            validateTitle: (_) => null,
+            validateMaterialName: (_) => null,
+            validateMaterialValue: (_) => null,
+            onSelectClothingType: () {},
+            onAddMaterial: () {},
+            onRemoveMaterial: (_) {},
+            onSubmit: () {},
+            onReset: () {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    // 사진을 다시 열지 않고도 AI가 무엇을 읽었는지 확인할 수 있어야 합니다.
+    expect(find.text('인식된 라벨 원문'), findsOneWidget);
+    expect(find.text('COTTON 60% WOOL 15%'), findsOneWidget);
+  });
+
+  testWidgets('라벨 원문이 없으면 빈 안내 카드를 만들지 않는다', (tester) async {
+    final materialInputs = MaterialInputCollection()..addEmpty();
+    final titleController = TextEditingController(text: '새로 스캔한 의류');
+    addTearDown(materialInputs.dispose);
+    addTearDown(titleController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ScanResultView(
+            formKey: GlobalKey<FormState>(),
+            hasTriedSubmit: false,
+            isSaving: false,
+            isScanFailed: true,
+            scanFailureMessage: 'AI가 라벨을 정확히 인식하지 못했어요.',
+            titleController: titleController,
+            selectedClothingType: ClothingTypeCatalog.defaultOption,
+            materialInputs: materialInputs,
+            scannedCare: '라벨의 세탁 지침을 확인해 주세요.',
+            rawOcrPreview: '   ',
+            originalMaterials: const {},
+            validateTitle: (_) => null,
+            validateMaterialName: (_) => null,
+            validateMaterialValue: (_) => null,
+            onSelectClothingType: () {},
+            onAddMaterial: () {},
+            onRemoveMaterial: (_) {},
+            onSubmit: () {},
+            onReset: () {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('인식된 라벨 원문'), findsNothing);
+  });
+
+  testWidgets('자동 인식에 성공한 화면에는 라벨 원문을 끼워 넣지 않는다', (tester) async {
+    final materialInputs = MaterialInputCollection()
+      ..setFromMaterials({'cotton': 100});
+    final titleController = TextEditingController(text: '새로 스캔한 의류');
+    addTearDown(materialInputs.dispose);
+    addTearDown(titleController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ScanResultView(
+            formKey: GlobalKey<FormState>(),
+            hasTriedSubmit: false,
+            isSaving: false,
+            isScanFailed: false,
+            titleController: titleController,
+            selectedClothingType: ClothingTypeCatalog.defaultOption,
+            materialInputs: materialInputs,
+            scannedCare: '찬물 세탁',
+            rawOcrPreview: 'COTTON 100%',
+            originalMaterials: const {'cotton': 100},
+            validateTitle: (_) => null,
+            validateMaterialName: (_) => null,
+            validateMaterialValue: (_) => null,
+            onSelectClothingType: () {},
+            onAddMaterial: () {},
+            onRemoveMaterial: (_) {},
+            onSubmit: () {},
+            onReset: () {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('인식된 라벨 원문'), findsNothing);
+  });
 }

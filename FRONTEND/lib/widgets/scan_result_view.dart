@@ -24,6 +24,7 @@ class ScanResultView extends StatelessWidget {
     required this.materialInputs,
     this.materialCatalog = const [],
     required this.scannedCare,
+    this.rawOcrPreview = '',
     required this.originalMaterials,
     this.serverHealth,
     this.serverCarbonFootprint,
@@ -58,6 +59,11 @@ class ScanResultView extends StatelessWidget {
 
   // 원본 스캔의 관리 지침과 소재 구성입니다.
   final String scannedCare;
+
+  /// 서버가 인식한 라벨 원문입니다. 직접 입력 모드에서만, 값이 있을 때만
+  /// 참고용으로 표시합니다.
+  final String rawOcrPreview;
+
   final Map<String, double> originalMaterials;
   // 소재 동일성 및 값·무게·계산 방식 검증을 통과할 때 활용하는 서버 계산 정보입니다.
   final int? serverHealth;
@@ -271,6 +277,15 @@ class ScanResultView extends StatelessWidget {
                   borderColor: borderColor,
                   cardColor: cardColor,
                 ),
+                if (rawOcrPreview.trim().isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _buildOcrPreview(
+                    primaryText: primaryText,
+                    secondaryText: secondaryText,
+                    borderColor: borderColor,
+                    cardColor: cardColor,
+                  ),
+                ],
               ],
               const SizedBox(height: 24),
               Text(
@@ -491,6 +506,54 @@ class ScanResultView extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 소재를 못 읽었어도 AI가 읽어낸 라벨 글자는 남아 있습니다. 사용자가 사진을
+  // 다시 열어 보지 않고도 무엇이 읽혔는지 확인하고 직접 입력할 수 있게 보여 줍니다.
+  Widget _buildOcrPreview({
+    required Color primaryText,
+    required Color secondaryText,
+    required Color borderColor,
+    required Color cardColor,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.text_snippet_outlined, size: 18, color: secondaryText),
+              const SizedBox(width: 8),
+              Text(
+                '인식된 라벨 원문',
+                style: TextStyle(
+                  color: primaryText,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SelectableText(
+            rawOcrPreview.trim(),
+            maxLines: 6,
+            style: TextStyle(
+              color: secondaryText,
+              fontSize: 13,
+              height: 1.5,
             ),
           ),
         ],

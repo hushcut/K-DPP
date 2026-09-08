@@ -27,11 +27,25 @@ class ScanApiException implements Exception {
     required this.type,
     required this.message,
     this.statusCode,
+    this.partialMaterials = const {},
+    this.careInstruction,
+    this.rawOcrPreview,
   });
 
   final ScanApiErrorType type;
   final String message;
   final int? statusCode;
+
+  /// 서버가 오류 본문(detail)에 함께 실어 보낸 부분 인식 결과다.
+  /// 자동 분석이 실패해도 직접 입력 폼을 처음부터 채우지 않도록 보존한다.
+  /// 서버가 보내지 않으면 비어 있으며, 그때는 기존 빈 폼과 동작이 같다.
+  final Map<String, double> partialMaterials;
+
+  /// 서버가 라벨에서 읽어낸 관리 지침이다. 값이 없으면 null이다.
+  final String? careInstruction;
+
+  /// 서버가 인식한 라벨 원문 미리보기다. 값이 없으면 null이다.
+  final String? rawOcrPreview;
 
   String get userMessage {
     switch (type) {
@@ -63,74 +77,70 @@ class ScanApiException implements Exception {
   }
 
   /// 실패한 HTTP 상태와 서버 메시지를 대응하는 오류 유형으로 변환한다.
+  ///
+  /// 오류 본문에 부분 인식 결과가 실려 있으면 함께 보존해, 직접 입력 흐름이
+  /// 이미 인식된 값을 버리지 않도록 한다.
   factory ScanApiException.fromStatusCode({
     required int statusCode,
     required String responseBody,
   }) {
-    final serverMessage = _extractServerMessage(responseBody);
+    final decoded = _decodeResponseBody(responseBody);
+    final detail = _extractErrorDetail(decoded);
+    final serverMessage = _extractServerMessage(decoded);
+
+    ScanApiException build(ScanApiErrorType type, String fallbackMessage) {
+      return ScanApiException(
+        type: type,
+        statusCode: statusCode,
+        message: serverMessage ?? fallbackMessage,
+        partialMaterials: _extractPartialMaterials(detail),
+        careInstruction: _readDetailText(detail, const [
+          'care_instruction',
+          'careInstruction',
+        ]),
+        rawOcrPreview: _readDetailText(detail, const [
+          'raw_ocr_preview',
+          'rawOcrPreview',
+        ]),
+      );
+    }
 
     switch (statusCode) {
       case 400:
-        return ScanApiException(
-          type: ScanApiErrorType.badRequest,
-          statusCode: statusCode,
-          message: serverMessage ?? '잘못된 이미지 요청입니다.',
-        );
+        return build(ScanApiErrorType.badRequest, '잘못된 이미지 요청입니다.');
       case 401:
-        return ScanApiException(
-          type: ScanApiErrorType.unauthorized,
-          statusCode: statusCode,
-          message: serverMessage ?? '로그인이 필요합니다.',
-        );
+        return build(ScanApiErrorType.unauthorized, '로그인이 필요합니다.');
       // 403은 재로그인으로 해결되지 않는 '권한 없음'으로 예약되어 있어
       // 세션을 지우지 않고 안내만 합니다.
       case 403:
-        return ScanApiException(
-          type: ScanApiErrorType.forbidden,
-          statusCode: statusCode,
-          message: serverMessage ?? '접근 권한이 없습니다.',
-        );
+        return build(ScanApiErrorType.forbidden, '접근 권한이 없습니다.');
       case 413:
-        return ScanApiException(
-          type: ScanApiErrorType.payloadTooLarge,
-          statusCode: statusCode,
-          message: serverMessage ?? '이미지 용량이 너무 큽니다.',
-        );
+        return build(ScanApiErrorType.payloadTooLarge, '이미지 용량이 너무 큽니다.');
       case 415:
-        return ScanApiException(
-          type: ScanApiErrorType.unsupportedMediaType,
-          statusCode: statusCode,
-          message: serverMessage ?? '지원하지 않는 이미지 형식입니다.',
+        return build(
+          ScanApiErrorType.unsupportedMediaType,
+          '지원하지 않는 이미지 형식입니다.',
         );
       case 422:
-        return ScanApiException(
-          type: ScanApiErrorType.aiRecognitionFailed,
-          statusCode: statusCode,
-          message: serverMessage ?? 'AI가 라벨을 인식하지 못했습니다.',
+        return build(
+          ScanApiErrorType.aiRecognitionFailed,
+          'AI가 라벨을 인식하지 못했습니다.',
         );
       // 백엔드 계약상 502는 OCR 처리 실패다. 422(소재 추출 실패)와 원인이 다르므로
       // 타입을 분리하되, 안내는 두 경우 모두 직접 입력으로 유도한다
       // (재촬영은 화면의 '다시 촬영' 버튼으로 별도 제공).
       case 502:
-        return ScanApiException(
-          type: ScanApiErrorType.ocrFailed,
-          statusCode: statusCode,
-          message: serverMessage ?? 'AI OCR 처리에 실패했습니다.',
-        );
+        return build(ScanApiErrorType.ocrFailed, 'AI OCR 처리에 실패했습니다.');
+      // AI 파트가 요청한 504 OCR_TIMEOUT 대응이다. 백엔드는 아직 504를 내지
+      // 않지만, 내기 시작하면 일반 서버 오류가 아니라 시간 초과 안내로 보낸다.
+      case 504:
+        return build(ScanApiErrorType.timeout, '분석 요청 시간이 초과되었습니다.');
       default:
         if (statusCode >= 500) {
-          return ScanApiException(
-            type: ScanApiErrorType.server,
-            statusCode: statusCode,
-            message: serverMessage ?? '서버 내부 오류입니다.',
-          );
+          return build(ScanApiErrorType.server, '서버 내부 오류입니다.');
         }
 
-        return ScanApiException(
-          type: ScanApiErrorType.unknown,
-          statusCode: statusCode,
-          message: serverMessage ?? '알 수 없는 서버 오류입니다.',
-        );
+        return build(ScanApiErrorType.unknown, '알 수 없는 서버 오류입니다.');
     }
   }
 
@@ -143,23 +153,86 @@ class ScanApiException implements Exception {
     return 'ScanApiException($type, statusCode: $statusCode): $message';
   }
 
-  static String? _extractServerMessage(String responseBody) {
+  static Map<String, dynamic>? _decodeResponseBody(String responseBody) {
     try {
       final decoded = jsonDecode(responseBody);
 
-      if (decoded is Map<String, dynamic>) {
-        final message =
-            decoded['message'] ??
-            decoded['detail'] ??
-            decoded['error'] ??
-            decoded['reason'];
-
-        if (message != null && message.toString().trim().isNotEmpty) {
-          return message.toString().trim();
-        }
-      }
+      return decoded is Map<String, dynamic> ? decoded : null;
     } catch (_) {
       return null;
+    }
+  }
+
+  /// 백엔드 공통 오류 처리기는 원본을 detail에 담고 message만 위로 올린다.
+  /// detail이 없거나 문자열이면 본문 자체에서 읽는다.
+  static Map<String, dynamic> _extractErrorDetail(
+    Map<String, dynamic>? decoded,
+  ) {
+    if (decoded == null) return const {};
+
+    final detail = decoded['detail'];
+
+    return detail is Map<String, dynamic> ? detail : decoded;
+  }
+
+  static String? _extractServerMessage(Map<String, dynamic>? decoded) {
+    if (decoded == null) return null;
+
+    final detail = decoded['detail'];
+    final candidates = <dynamic>[
+      decoded['message'],
+      if (detail is Map) detail['message'] else detail,
+      decoded['error'],
+      decoded['reason'],
+    ];
+
+    for (final candidate in candidates) {
+      final text = candidate?.toString().trim();
+
+      if (text != null && text.isNotEmpty) {
+        return text;
+      }
+    }
+
+    return null;
+  }
+
+  /// 비율이 숫자가 아니거나 음수인 항목은 폼에서 고칠 수 없는 값이므로 버린다.
+  /// (백엔드는 NaN 비율을 null로 바꿔 돌려주므로 그 경우도 여기서 걸러진다.)
+  static Map<String, double> _extractPartialMaterials(
+    Map<String, dynamic> detail,
+  ) {
+    final rawMaterials =
+        detail['partial_materials'] ?? detail['partialMaterials'];
+
+    if (rawMaterials is! Map) return const {};
+
+    final materials = <String, double>{};
+
+    rawMaterials.forEach((key, value) {
+      final name = key.toString().trim();
+      final ratio = value is num
+          ? value.toDouble()
+          : double.tryParse(value.toString().replaceAll('%', '').trim());
+
+      if (name.isEmpty || ratio == null || !ratio.isFinite || ratio < 0) return;
+
+      materials[name] = ratio;
+    });
+
+    return Map.unmodifiable(materials);
+  }
+
+  static String? _readDetailText(
+    Map<String, dynamic> detail,
+    List<String> keys,
+  ) {
+    for (final key in keys) {
+      final text = detail[key]?.toString().trim();
+
+      if (text != null && text.isNotEmpty) {
+        return text;
+      }
     }
 
     return null;

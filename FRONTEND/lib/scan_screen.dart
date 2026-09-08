@@ -56,6 +56,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   // 촬영 이미지와 분석·서버 응답 원본을 보관합니다.
   File? _selectedImage;
   String _scannedCare = '';
+  String _scannedOcrPreview = '';
   String? _scanFailureMessage;
   Map<String, double> _originalScannedMaterials = const {};
   int? _serverHealth;
