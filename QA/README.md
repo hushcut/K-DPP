@@ -15,6 +15,23 @@ images 폴더
 
 앱 화면 흐름 검증은 대표 사진 10~20장만 직접 앱에서 테스트하고, AI 정확도 측정은 이 배치 테스트로 진행한다.
 
+## OCR QA와의 공통 기준
+
+이 도구는 `AI/kdpp_ai_ocr_integrated/scripts/run_qa_batch.py`와 정답
+CSV의 핵심 열, 소재 별칭 표준화, `failure_category` 실패 코드를 공유한다.
+예를 들어 `면`, `elastane`은 각각 `cotton`, `spandex`로 정규화한다.
+
+두 도구의 점수는 같은 정확도로 섞어 비교하지 않는다.
+
+```text
+AI/scripts/run_qa_batch.py : OCR + 소재 파서 자체 품질, 기본 허용 오차 ±3%p
+QA/run_qa_batch.py         : /api/scan 통합 품질, 기본 허용 오차 ±5%p
+```
+
+같은 정답 CSV를 쓸 수 있다. 복합/부위별 라벨은 대표 소재 기준 값을
+`normalized_materials`, `normalized_ratios`에 기록하거나
+`include_in_accuracy=FALSE`로 지정한다.
+
 ## 폴더 예시
 
 ```text
@@ -68,7 +85,7 @@ QA002,QA002.jpg,cotton,100,일반 라벨,TRUE,,,바닥에 두고,실내 조명,�
 ```text
 일반 라벨:
 - 소재/혼용률 합계가 95~105% 범위
-- 일반 정확도 계산에 포함
+- 일반 정확도 계산에 포함하며, 비교 전에는 AI 파서와 같은 방식으로 100%로 정규화
 
 복합/부위별 라벨:
 - 겉감, 안감, 충전재, 배색, 퍼 등 부위별 표기가 섞여 합계가 100%를 크게 초과
@@ -145,6 +162,10 @@ python QA\run_qa_batch.py --api-url http://127.0.0.1:8000/api/scan --answers C:\
 서버/API 실패: 백엔드 요청 실패 또는 오류 응답
 정확도 제외: 복합/부위별 라벨 등 현재 일반 정확도 계산 대상이 아닌 케이스
 ```
+
+`failure_category`는 결과를 모아 분석하기 위한 공통 코드다. 예를 들어
+소재 누락과 추가가 함께 있으면 `material_missing_and_extra`, 혼용률만
+다르면 `ratio_mismatch`, 서버 요청 문제는 `server_or_api_failure`로 기록한다.
 
 허용 오차를 바꾸려면:
 

@@ -95,6 +95,12 @@ python -m venv .venv
 
 ## OCR QA 정답지 형식
 
+`scripts/run_qa_batch.py`는 OCR과 소재 파서 자체를 측정한다. 백엔드
+`/api/scan`까지 포함한 통합 QA는 저장소 루트의 `QA/run_qa_batch.py`를
+사용한다. 두 도구는 정답 CSV의 핵심 열, 소재 별칭 표준화, 실패 코드를
+공유하지만 기본 허용 오차가 각각 `±3%p`, `±5%p`이므로 점수를 합치거나
+직접 비교하지 않는다.
+
 OCR QA 정답 CSV의 필수 열은 다음과 같습니다.
 
 ```text
@@ -108,6 +114,11 @@ file_name, answer_materials, answer_ratios
 cotton;polyester       / 80;20
 cotton:80;polyester:20
 ```
+
+정확도에 포함하는 일반 라벨의 원문 혼용률 합계는 `95~105%`를 허용합니다.
+이 범위의 값은 실제 파서와 동일하게 100% 기준으로 정규화해 비교합니다.
+범위를 벗어나거나 복합/부위별 표기인 라벨은 대표 소재 정답을 별도로 적거나
+`include_in_accuracy=FALSE`로 제외합니다.
 
 원인별 실패를 분석하려면 다음 열도 기록하는 것을 권장합니다.
 

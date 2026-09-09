@@ -20,6 +20,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from apps.service.label_analysis import analyze_ocr_result
+from apps.text.qa_comparison import compare_material_compositions
 from apps.text.ocr_cache import (
     OcrCacheError,
     OcrTextCache,
@@ -78,6 +79,8 @@ def load_answer_key(path: Path) -> dict[str, dict[str, Any]]:
     return {
         file_name: {
             "_materials": answer.materials,
+            "_original_materials": answer.original_materials,
+            "include_in_accuracy": answer.include_in_accuracy,
             "split": answer.split or "",
             "source_group": answer.source_group or "",
             "capture_condition": answer.capture_condition or "",
@@ -120,14 +123,6 @@ def analyze_label_image_cached(
     return analyze_ocr_result(ocr_result), cache.write_count == writes_before
 
 
-def normalize_values(values: dict[str, float]) -> dict[str, float]:
-    return {
-        key.lower(): round(float(value), 4)
-        for key, value in values.items()
-        if value is not None
-    }
-
-
 def compare_materials(
     answer: dict[str, float],
     predicted: dict[str, float],
@@ -135,28 +130,14 @@ def compare_materials(
 ) -> tuple[str, str]:
     """정답과 예측의 소재 집합·혼용률을 비교해 사람이 읽을 실패 이유를 만든다."""
 
-    answer = normalize_values(answer)
-    predicted = normalize_values(predicted)
-
     if not predicted:
         return "failed", "no_predicted_materials"
-
-    missing = sorted(set(answer) - set(predicted))
-    extra = sorted(set(predicted) - set(answer))
-    ratio_diffs = [
-        f"{key}:{predicted[key] - answer[key]:+.1f}"
-        for key in sorted(set(answer) & set(predicted))
-        if abs(predicted[key] - answer[key]) > tolerance
-    ]
-
-    reasons = []
-    if missing:
-        reasons.append("missing=" + ";".join(missing))
-    if extra:
-        reasons.append("extra=" + ";".join(extra))
-    if ratio_diffs:
-        reasons.append("ratio_diff=" + ";".join(ratio_diffs))
-    return ("failed", " | ".join(reasons)) if reasons else ("success", "")
+    comparison = compare_material_compositions(
+        answer,
+        predicted,
+        tolerance=tolerance,
+    )
+    return comparison.judgment, comparison.failure_reason
 
 
 def classify_failure(
@@ -335,7 +316,9 @@ def main() -> None:
     cache_hit_count = 0
     cache_miss_count = 0
     for image_path in images:
-        answer = answers.get(image_path.name, {}).get("_materials", {})
+        answer_metadata = answers.get(image_path.name, {})
+        answer = answer_metadata.get("_materials", {})
+        include_in_accuracy = bool(answer_metadata.get("include_in_accuracy", True))
         result: dict[str, Any] = {
             "status": "failed",
             "error_code": "pipeline_exception",
@@ -364,11 +347,12 @@ def main() -> None:
             exception = f"{type(exc).__name__}: {exc}"
 
         predicted = result.get("materials", {})
-        judgment, failure_reason = (
-            compare_materials(answer, predicted, args.tolerance)
-            if answer
-            else ("not_compared", "answer_missing")
-        )
+        if not answer:
+            judgment, failure_reason = "not_compared", "answer_missing"
+        elif not include_in_accuracy:
+            judgment, failure_reason = "not_compared", "excluded_by_annotation"
+        else:
+            judgment, failure_reason = compare_materials(answer, predicted, args.tolerance)
         failure_category = classify_failure(
             result=result,
             exception=exception,
@@ -379,6 +363,8 @@ def main() -> None:
         ocr = result.get("ocr", {})
         row = {
             "file_name": image_path.name,
+            "qa_scope": "ocr_parser",
+            "include_in_accuracy": include_in_accuracy,
             "status": result.get("status", "failed"),
             "error_code": result.get("error_code", ""),
             "judgment": judgment,
@@ -405,10 +391,10 @@ def main() -> None:
             ),
             "raw_ocr_preview": result.get("raw_ocr_preview", ""),
             "exception": exception,
-            "split": answers.get(image_path.name, {}).get("split", ""),
-            "source_group": answers.get(image_path.name, {}).get("source_group", ""),
-            "capture_condition": answers.get(image_path.name, {}).get("capture_condition", ""),
-            "label_layout": answers.get(image_path.name, {}).get("label_layout", ""),
+            "split": answer_metadata.get("split", ""),
+            "source_group": answer_metadata.get("source_group", ""),
+            "capture_condition": answer_metadata.get("capture_condition", ""),
+            "label_layout": answer_metadata.get("label_layout", ""),
         }
         rows.append({key: csv_safe(value) for key, value in row.items()})
 

@@ -14,12 +14,32 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from apps.service.label_analysis import analyze_label_image
-from apps.symbol.predict_symbol import DEFAULT_MODEL_PATH, predict_symbol
 from apps.text.ocr_text import OcrError
 
 DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = BASE_DIR / "outputs"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+
+
+def load_symbol_runtime():
+    """Load the optional classifier only for cropped-symbol batch runs."""
+
+    from apps.symbol.predict_symbol import DEFAULT_MODEL_PATH, predict_symbol
+
+    return DEFAULT_MODEL_PATH, predict_symbol
+
+
+def configure_symbol_runtime(
+    *,
+    include_symbol_crops: bool,
+    requested_model_path: str,
+) -> tuple[Any | None, str]:
+    """Return no symbol dependency unless the explicit symbol option is enabled."""
+
+    if not include_symbol_crops:
+        return None, ""
+    default_model_path, predict_symbol = load_symbol_runtime()
+    return predict_symbol, requested_model_path or str(default_model_path)
 
 
 def image_files(folder: Path) -> list[Path]:
@@ -128,9 +148,17 @@ def main() -> None:
     )
     parser.add_argument(
         "--symbol-model",
-        default=str(DEFAULT_MODEL_PATH),
+        default="",
+        help="Optional checkpoint path. Used only with --include-symbol-crops.",
     )
     args = parser.parse_args()
+
+    # A full care label follows the OCR path only. Importing Torch here would
+    # make that path depend on an unrelated experimental classifier.
+    predict_symbol, symbol_model_path = configure_symbol_runtime(
+        include_symbol_crops=args.include_symbol_crops,
+        requested_model_path=args.symbol_model,
+    )
 
     input_dir = (
         Path(args.image_dir).expanduser().resolve()
@@ -173,11 +201,11 @@ def main() -> None:
 
         symbol: dict[str, Any] = {"status": "not_run", "symbols": []}
         symbol_error = ""
-        if args.include_symbol_crops:
+        if predict_symbol is not None:
             try:
                 symbol = predict_symbol(
                     str(image_path),
-                    model_path=args.symbol_model,
+                    model_path=symbol_model_path,
                 )
             except Exception as exc:
                 symbol = {"status": "failed", "symbols": []}

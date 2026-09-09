@@ -14,10 +14,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from apps.text.qa_comparison import QaComparisonError, canonical_material_name
+from apps.text.parse_label import normalize_percentages
 from apps.text.rules import MATERIAL_ALIASES
 
 # 이 세 열만으로도 정답 구성비 비교는 가능하다.
 QA_REQUIRED_COLUMNS = frozenset({"file_name", "answer_materials", "answer_ratios"})
+# 데이터 품질 감사에서 빠짐을 보고할 핵심 메타데이터다. 통합 QA 전용 열은
+# 선택적으로 읽되, 이 네 열이 없다는 이유만으로 정답지를 부적합 처리하지 않는다.
 QA_OPTIONAL_COLUMNS = frozenset(
     {"split", "source_group", "capture_condition", "label_layout"}
 )
@@ -33,6 +37,8 @@ class QaDatasetError(ValueError):
 class QaAnswer:
     file_name: str
     materials: dict[str, float]
+    original_materials: dict[str, float]
+    include_in_accuracy: bool
     split: str | None
     source_group: str | None
     capture_condition: str | None
@@ -84,16 +90,30 @@ def _parse_ratio(value: str, *, row_number: int) -> float:
 
 
 def _canonical_material(value: str, *, row_number: int) -> str:
-    material = value.strip().casefold()
-    if not material:
-        raise QaDatasetError(f"{row_number}행 소재명이 비어 있습니다.")
-    if material not in CANONICAL_MATERIALS:
+    try:
+        return canonical_material_name(value, allow_unknown=False)
+    except QaComparisonError as exc:
         supported = ", ".join(sorted(CANONICAL_MATERIALS))
         raise QaDatasetError(
-            f"{row_number}행의 소재명이 표준 키가 아닙니다: {material!r}. "
+            f"{row_number}행의 소재명이 표준 키 또는 별칭이 아닙니다: {value!r}. "
             f"허용 키: {supported}"
+        ) from exc
+
+
+def _normalize_evaluation_materials(
+    materials: dict[str, float],
+    *,
+    row_number: int,
+) -> dict[str, float]:
+    """Match the parser's 95~105% acceptance and 100% normalization policy."""
+
+    normalized = normalize_percentages(materials)
+    if not normalized:
+        total = sum(materials.values())
+        raise QaDatasetError(
+            f"{row_number}행 정확도 비교용 혼용률 합계는 95~105 범위여야 합니다: {total:g}"
         )
-    return material
+    return {material: float(ratio) for material, ratio in normalized.items()}
 
 
 def parse_answer_materials(
@@ -147,12 +167,69 @@ def parse_answer_materials(
             for material, ratio in zip(material_values, ratio_values)
         }
 
-    total = sum(materials.values())
-    if abs(total - 100.0) > 0.5:
-        raise QaDatasetError(
-            f"{row_number}행 정답 혼용률 합계가 100이 아닙니다: {total:g}"
+    return _normalize_evaluation_materials(materials, row_number=row_number)
+
+
+def _parse_annotation_materials(
+    row: dict[str, str],
+    *,
+    materials_column: str,
+    ratios_column: str,
+    row_number: int,
+    require_total: bool,
+) -> dict[str, float]:
+    """Parse one material/ratio column pair, optionally allowing multi-part totals."""
+
+    materials_text = (row.get(materials_column) or "").strip()
+    ratios_text = (row.get(ratios_column) or "").strip()
+    # OCR 단위 QA에서 허용하던 `cotton:80;polyester:20` 축약형도 유지한다.
+    if ":" in materials_text:
+        if ratios_text:
+            raise QaDatasetError(
+                f"{row_number}행 소재:비율 축약형에는 {ratios_column}을 함께 쓰지 않습니다."
+            )
+        return parse_answer_materials(
+            {"answer_materials": materials_text},
+            row_number=row_number,
         )
-    return materials
+    if not materials_text and not ratios_text:
+        return {}
+    if not materials_text or not ratios_text:
+        raise QaDatasetError(
+            f"{row_number}행 {materials_column}/{ratios_column} 중 하나가 비어 있습니다."
+        )
+    materials = [
+        _canonical_material(item, row_number=row_number)
+        for item in materials_text.split(";")
+        if item.strip()
+    ]
+    ratios = [item.strip() for item in ratios_text.split(";") if item.strip()]
+    if len(materials) != len(ratios):
+        raise QaDatasetError(
+            f"{row_number}행 소재 {len(materials)}개와 비율 {len(ratios)}개의 개수가 다릅니다."
+        )
+    if len(set(materials)) != len(materials):
+        raise QaDatasetError(f"{row_number}행 소재명이 중복되었습니다.")
+    parsed = {
+        material: _parse_ratio(ratio, row_number=row_number)
+        for material, ratio in zip(materials, ratios)
+    }
+    return (
+        _normalize_evaluation_materials(parsed, row_number=row_number)
+        if require_total
+        else parsed
+    )
+
+
+def _parse_bool(value: str | None, *, default: bool) -> bool:
+    if value is None or not value.strip():
+        return default
+    normalized = value.strip().casefold()
+    if normalized in {"true", "yes", "y", "1", "include", "포함", "예"}:
+        return True
+    if normalized in {"false", "no", "n", "0", "exclude", "제외", "아니오"}:
+        return False
+    raise QaDatasetError(f"include_in_accuracy 값이 올바르지 않습니다: {value!r}")
 
 
 def _optional_value(row: dict[str, str], column: str) -> str | None:
@@ -191,9 +268,37 @@ def load_qa_answer_key(path: str | Path) -> dict[str, QaAnswer]:
                     f"{row_number}행 split은 train, valid, test 중 하나여야 합니다: {split!r}"
                 )
 
+            include_in_accuracy = _parse_bool(
+                row.get("include_in_accuracy"),
+                default=True,
+            )
+            original_materials = _parse_annotation_materials(
+                row,
+                materials_column="answer_materials",
+                ratios_column="answer_ratios",
+                row_number=row_number,
+                require_total=False,
+            )
+            normalized_materials = _parse_annotation_materials(
+                row,
+                materials_column="normalized_materials",
+                ratios_column="normalized_ratios",
+                row_number=row_number,
+                require_total=True,
+            )
+            if include_in_accuracy:
+                materials = normalized_materials or _normalize_evaluation_materials(
+                    original_materials,
+                    row_number=row_number,
+                )
+            else:
+                materials = normalized_materials or original_materials
+
             answers[file_name] = QaAnswer(
                 file_name=file_name,
-                materials=parse_answer_materials(row, row_number=row_number),
+                materials=materials,
+                original_materials=original_materials,
+                include_in_accuracy=include_in_accuracy,
                 split=split,
                 source_group=_optional_value(row, "source_group"),
                 capture_condition=_optional_value(row, "capture_condition"),
@@ -217,9 +322,9 @@ def audit_qa_answer_key(
     source_group_splits: dict[str, set[str]] = {}
 
     for answer in answers.values():
-        # 소재별 등장 샘플 수다. 혼용률 합계가 아니라 키만 센다.
-        material_counts.update(answer.materials.keys())
-        cardinality_counts[len(answer.materials)] += 1
+        # 데이터 감사는 대표 소재로 축소하기 전의 원문 조성 기준으로 센다.
+        material_counts.update(answer.original_materials.keys())
+        cardinality_counts[len(answer.original_materials)] += 1
         if answer.split:
             split_counts[answer.split] += 1
         else:

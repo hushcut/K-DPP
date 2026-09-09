@@ -28,6 +28,59 @@ def test_answer_key_requires_canonical_material_keys() -> None:
         )
 
 
+def test_answer_key_accepts_parser_aliases_but_returns_canonical_keys() -> None:
+    assert parse_answer_materials(
+        {"answer_materials": "면;elastane", "answer_ratios": "95;5"},
+        row_number=2,
+    ) == {"cotton": 95.0, "spandex": 5.0}
+
+
+def test_answer_key_matches_parser_ratio_normalization_policy() -> None:
+    assert parse_answer_materials(
+        {"answer_materials": "cotton;spandex", "answer_ratios": "96;5"},
+        row_number=2,
+    ) == {"cotton": 95.0, "spandex": 5.0}
+
+
+def test_loader_uses_normalized_composition_for_an_included_complex_label(tmp_path) -> None:
+    path = write_answer_key(
+        tmp_path,
+        [
+            {
+                "file_name": "QA001.jpg",
+                "answer_materials": "polyester;acrylic",
+                "answer_ratios": "100;60",
+                "include_in_accuracy": "TRUE",
+                "normalized_materials": "polyester",
+                "normalized_ratios": "100",
+            },
+            {
+                "file_name": "QA002.jpg",
+                "answer_materials": "nylon;polyester;down;feather",
+                "answer_ratios": "100;100;90;10",
+                "include_in_accuracy": "FALSE",
+            },
+        ],
+        [
+            "file_name",
+            "answer_materials",
+            "answer_ratios",
+            "include_in_accuracy",
+            "normalized_materials",
+            "normalized_ratios",
+        ],
+    )
+
+    answers = load_qa_answer_key(path)
+
+    assert answers["QA001.jpg"].materials == {"polyester": 100.0}
+    assert answers["QA001.jpg"].original_materials == {
+        "polyester": 100.0,
+        "acrylic": 60.0,
+    }
+    assert answers["QA002.jpg"].include_in_accuracy is False
+
+
 def test_audit_reports_condition_coverage_and_source_group_leakage(tmp_path) -> None:
     path = write_answer_key(
         tmp_path,

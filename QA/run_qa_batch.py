@@ -21,6 +21,20 @@ from typing import Any
 from urllib import error, request
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+AI_ROOT = REPOSITORY_ROOT / "AI" / "kdpp_ai_ocr_integrated"
+if str(AI_ROOT) not in sys.path:
+    # QA는 AI 정답지 계약을 재사용하되, API 호출 책임은 이 파일에 남긴다.
+    sys.path.insert(0, str(AI_ROOT))
+
+from apps.text.qa_comparison import (
+    QaComparisonError,
+    compare_material_compositions,
+    normalize_material_mapping,
+)
+from apps.text.qa_dataset import load_qa_answer_key
+
+
 DEFAULT_API_URL = "http://127.0.0.1:8000/api/scan"
 DEFAULT_TIMEOUT_SECONDS = 60
 DEFAULT_TOLERANCE = 5.0
@@ -82,82 +96,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def normalize_material_name(value: str) -> str:
-    aliases = {
-        "면": "cotton",
-        "코튼": "cotton",
-        "cotton": "cotton",
-        "폴리에스터": "polyester",
-        "폴리": "polyester",
-        "poly": "polyester",
-        "polyester": "polyester",
-        "폴리우레탄": "polyurethane",
-        "pu": "polyurethane",
-        "polyurethane": "polyurethane",
-        "스판": "spandex",
-        "스판덱스": "spandex",
-        "spandex": "spandex",
-        "나일론": "nylon",
-        "nylon": "nylon",
-        "레이온": "rayon",
-        "rayon": "rayon",
-        "울": "wool",
-        "모": "wool",
-        "wool": "wool",
-        "린넨": "linen",
-        "linen": "linen",
-        "마": "linen",
-        "비스코스": "viscose",
-        "viscose": "viscose",
-        "실크": "silk",
-        "silk": "silk",
-        "모달": "modal",
-        "modal": "modal",
-        "아크릴": "acrylic",
-        "acrylic": "acrylic",
-        "arylic": "acrylic",
-        "캐시미어": "cashmere",
-        "cashmere": "cashmere",
-        "리오셀": "lyocell",
-        "lyocell": "lyocell",
-        "큐프로": "cupro",
-        "cupro": "cupro",
-        "elastane": "spandex",
-        "span": "spandex",
-    }
-
-    key = value.strip().lower().replace("%", "")
-    return aliases.get(key, key)
-
-
-def parse_materials(materials_text: str, ratios_text: str) -> dict[str, float]:
-    materials = [item.strip() for item in materials_text.split(";") if item.strip()]
-    ratios = [item.strip() for item in ratios_text.split(";") if item.strip()]
-
-    if not materials:
-        return {}
-
-    parsed: dict[str, float] = {}
-    for index, material in enumerate(materials):
-        ratio = 0.0
-        if index < len(ratios):
-            try:
-                ratio = float(ratios[index].replace("%", "").strip())
-            except ValueError:
-                ratio = 0.0
-
-        parsed[normalize_material_name(material)] = ratio
-
-    return parsed
-
-
-def parse_bool(value: str, default: bool = True) -> bool:
-    text = value.strip().lower()
-    if not text:
-        return default
-    return text in {"true", "yes", "y", "1", "include", "포함", "예"}
-
-
 def format_materials(materials: dict[str, float]) -> str:
     if not materials:
         return ""
@@ -168,6 +106,7 @@ def format_materials(materials: dict[str, float]) -> str:
 
 
 def read_answer_cases(path: Path) -> list[AnswerCase]:
+    canonical_answers = load_qa_answer_key(path)
     cases: list[AnswerCase] = []
 
     with path.open("r", encoding="utf-8-sig", newline="") as file:
@@ -185,27 +124,17 @@ def read_answer_cases(path: Path) -> list[AnswerCase]:
             if not case_id or not file_name:
                 raise ValueError(f"row {row_number}: id and file_name are required")
 
-            original_materials = parse_materials(
-                row.get("answer_materials", ""),
-                row.get("answer_ratios", ""),
-            )
-            normalized_materials = parse_materials(
-                row.get("normalized_materials", ""),
-                row.get("normalized_ratios", ""),
-            )
+            answer = canonical_answers[file_name]
 
             cases.append(
                 AnswerCase(
                     row=row,
                     case_id=case_id,
                     file_name=file_name,
-                    original_materials=original_materials,
-                    normalized_materials=normalized_materials or original_materials,
+                    original_materials=answer.original_materials,
+                    normalized_materials=answer.materials,
                     case_type=(row.get("case_type") or "일반 라벨").strip(),
-                    include_in_accuracy=parse_bool(
-                        row.get("include_in_accuracy", ""),
-                        default=True,
-                    ),
+                    include_in_accuracy=answer.include_in_accuracy,
                 )
             )
 
@@ -262,15 +191,11 @@ def parse_api_materials(payload: dict[str, Any]) -> dict[str, float]:
     if not isinstance(raw, dict):
         return {}
 
-    materials: dict[str, float] = {}
-    for key, value in raw.items():
-        try:
-            ratio = float(value)
-        except (TypeError, ValueError):
-            ratio = 0.0
-        materials[normalize_material_name(str(key))] = ratio
-
-    return materials
+    try:
+        return normalize_material_mapping(raw, allow_unknown=True)
+    except QaComparisonError:
+        # API 응답이 계약을 위반해도 전체 QA를 중단하지 않고 실패 행으로 남긴다.
+        return {}
 
 
 def classify_result(
@@ -279,48 +204,24 @@ def classify_result(
     status_code: int | None,
     error_message: str,
     tolerance: float,
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
     if status_code is None:
-        return "서버/API 실패", error_message or "request_failed"
+        return "서버/API 실패", error_message or "request_failed", "server_or_api_failure"
 
     if status_code < 200 or status_code >= 300:
         if status_code == 422:
-            return "OCR 실패", "AI 인식 실패 또는 소재/혼용률 추출 실패"
-        return "서버/API 실패", f"HTTP {status_code}: {error_message}"
+            return "OCR 실패", "AI 인식 실패 또는 소재/혼용률 추출 실패", "ocr_or_parser_failure"
+        return "서버/API 실패", f"HTTP {status_code}: {error_message}", "server_or_api_failure"
 
     if not actual:
-        return "OCR 실패", "AI 결과 소재 없음"
+        return "OCR 실패", "AI 결과 소재 없음", "parser_returned_no_materials"
 
-    answer_keys = set(answer)
-    actual_keys = set(actual)
-    missing = sorted(answer_keys - actual_keys)
-    extra = sorted(actual_keys - answer_keys)
-
-    if missing or extra:
-        reasons = []
-        if missing:
-            reasons.append(f"누락 소재: {';'.join(missing)}")
-        if extra:
-            reasons.append(f"추가 소재: {';'.join(extra)}")
-        return "소재 실패", " / ".join(reasons)
-
-    ratio_errors = {
-        key: actual[key] - answer[key]
-        for key in sorted(answer_keys)
-        if abs(actual[key] - answer[key]) > tolerance
-    }
-
-    if not ratio_errors:
-        return "완전 성공", "없음"
-
-    if answer_keys == actual_keys:
-        detail = "; ".join(
-            f"{key} 오차 {error_value:+.1f}%p"
-            for key, error_value in ratio_errors.items()
-        )
-        return "소재 성공/비율 실패", detail
-
-    return "부분 성공", "주요 소재 일부 일치"
+    comparison = compare_material_compositions(answer, actual, tolerance=tolerance)
+    if comparison.judgment == "success":
+        return "완전 성공", "없음", comparison.failure_category
+    if comparison.missing or comparison.extra:
+        return "소재 실패", comparison.failure_reason, comparison.failure_category
+    return "소재 성공/비율 실패", comparison.failure_reason, comparison.failure_category
 
 
 def extract_error_message(payload: dict[str, Any], raw: str) -> str:
@@ -355,7 +256,7 @@ def build_result_row(
     ai_materials = parse_api_materials(payload)
     error_message = exception_text or extract_error_message(payload, raw_response)
     if case.include_in_accuracy:
-        judgment, failure_reason = classify_result(
+        judgment, failure_reason, failure_category = classify_result(
             answer=case.normalized_materials,
             actual=ai_materials,
             status_code=status_code,
@@ -365,9 +266,11 @@ def build_result_row(
     else:
         judgment = "정확도 제외"
         failure_reason = "복합/부위별 라벨 또는 현재 일반 정확도 계산 대상 제외"
+        failure_category = "not_compared"
 
     row = {
         "id": case.case_id,
+        "qa_scope": "integration_api",
         "file_name": case.file_name,
         "case_type": case.case_type,
         "include_in_accuracy": "TRUE" if case.include_in_accuracy else "FALSE",
@@ -381,6 +284,7 @@ def build_result_row(
         "normalized_answer_materials": format_materials(case.normalized_materials),
         "ai_materials": format_materials(ai_materials),
         "judgment": judgment,
+        "failure_category": failure_category,
         "http_status": status_code if status_code is not None else "",
         "failure_reason": failure_reason,
         "error_message": error_message,
@@ -397,6 +301,7 @@ def write_results(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "id",
+        "qa_scope",
         "file_name",
         "case_type",
         "include_in_accuracy",
@@ -410,6 +315,7 @@ def write_results(path: Path, rows: list[dict[str, Any]]) -> None:
         "normalized_answer_materials",
         "ai_materials",
         "judgment",
+        "failure_category",
         "http_status",
         "failure_reason",
         "error_message",
@@ -469,6 +375,7 @@ def main() -> int:
             rows.append(
                 {
                     "id": case.case_id,
+                    "qa_scope": "integration_api",
                     "file_name": case.file_name,
                     "case_type": case.case_type,
                     "include_in_accuracy": "TRUE" if case.include_in_accuracy else "FALSE",
@@ -482,6 +389,7 @@ def main() -> int:
                     "normalized_answer_materials": format_materials(case.normalized_materials),
                     "ai_materials": "",
                     "judgment": "서버/API 실패",
+                    "failure_category": "server_or_api_failure",
                     "http_status": "",
                     "failure_reason": "이미지 파일 없음",
                     "error_message": str(image_path),
