@@ -9,22 +9,28 @@ import numpy as np
 @dataclass(frozen=True)
 class MultiLabelMetrics:
     sample_count: int
+    class_count: int
+    supported_class_count: int
     exact_match: float
     hamming_accuracy: float
     micro_precision: float
     micro_recall: float
     micro_f1: float
+    macro_f1_all_classes: float
     macro_f1_observed: float
     per_class: tuple[dict[str, float | int], ...]
 
     def to_dict(self) -> dict:
         return {
             "sample_count": self.sample_count,
+            "class_count": self.class_count,
+            "supported_class_count": self.supported_class_count,
             "exact_match": self.exact_match,
             "hamming_accuracy": self.hamming_accuracy,
             "micro_precision": self.micro_precision,
             "micro_recall": self.micro_recall,
             "micro_f1": self.micro_f1,
+            "macro_f1_all_classes": self.macro_f1_all_classes,
             "macro_f1_observed": self.macro_f1_observed,
             "per_class": list(self.per_class),
         }
@@ -86,6 +92,8 @@ def compute_multilabel_metrics(
 
     per_class: list[dict[str, float | int]] = []
     observed_f1: list[float] = []
+    all_class_f1: list[float] = []
+    supported_class_count = 0
     for class_index in range(truth.shape[1]):
         precision = _safe_divide(
             float(tp[class_index]),
@@ -98,8 +106,11 @@ def compute_multilabel_metrics(
         f1 = _safe_divide(2.0 * precision * recall, precision + recall)
         support = int(tp[class_index] + fn[class_index])
         predicted_positive = int(tp[class_index] + fp[class_index])
+        if support:
+            supported_class_count += 1
         if support or predicted_positive:
             observed_f1.append(f1)
+        all_class_f1.append(f1)
         per_class.append(
             {
                 "tp": int(tp[class_index]),
@@ -126,6 +137,8 @@ def compute_multilabel_metrics(
 
     return MultiLabelMetrics(
         sample_count=truth.shape[0],
+        class_count=truth.shape[1],
+        supported_class_count=supported_class_count,
         exact_match=float(np.mean(np.all(truth == predicted, axis=1))),
         # This number is diagnostic only. It is dominated by true negatives
         # when the class set is sparse and must not be used as headline accuracy.
@@ -133,6 +146,7 @@ def compute_multilabel_metrics(
         micro_precision=micro_precision,
         micro_recall=micro_recall,
         micro_f1=micro_f1,
+        macro_f1_all_classes=float(np.mean(all_class_f1)),
         macro_f1_observed=(
             float(np.mean(observed_f1)) if observed_f1 else 0.0
         ),

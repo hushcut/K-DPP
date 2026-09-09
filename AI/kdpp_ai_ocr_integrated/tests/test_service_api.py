@@ -1,3 +1,4 @@
+import asyncio
 from io import BytesIO
 
 import pytest
@@ -5,6 +6,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from apps.service import main as service_main
+from apps.service.response_contract import LABEL_RESPONSE_DEFAULTS
 from apps.text.ocr_text import (
     OcrConfigurationError,
     OcrQuotaExceededError,
@@ -21,6 +23,32 @@ def image_bytes() -> bytes:
     buffer = BytesIO()
     Image.new("RGB", (80, 60), "white").save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def assert_failure_contract(response, *, status_code: int, error_code: str) -> None:
+    assert response.status_code == status_code
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["error_code"] == error_code
+    assert payload["api_version"] == service_main.API_VERSION
+    assert set(LABEL_RESPONSE_DEFAULTS).issubset(payload)
+
+
+def test_read_upload_closes_file_when_read_fails() -> None:
+    class FailingUpload:
+        closed = False
+
+        async def read(self, _size: int) -> bytes:
+            raise RuntimeError("read failed")
+
+        async def close(self) -> None:
+            self.closed = True
+
+    upload = FailingUpload()
+    with pytest.raises(RuntimeError, match="read failed"):
+        asyncio.run(service_main.read_upload(upload))
+
+    assert upload.closed is True
 
 
 def test_health_endpoint() -> None:
@@ -45,6 +73,59 @@ def test_parse_text_success_and_failure_contract() -> None:
     assert failure.status_code == 422
     assert failure.json()["status"] == "failed"
     assert failure.json()["error_code"] == "composition_not_found"
+
+
+@pytest.mark.parametrize(
+    ("path", "request_kwargs"),
+    [
+        ("/v1/parse-text", {"json": {"text": ""}}),
+        (
+            "/v1/parse-text",
+            {
+                "content": b'{"text":',
+                "headers": {"content-type": "application/json"},
+            },
+        ),
+        ("/v1/analyze-label", {}),
+    ],
+)
+def test_request_validation_errors_use_failure_contract(path, request_kwargs) -> None:
+    response = client.post(path, **request_kwargs)
+
+    assert_failure_contract(
+        response,
+        status_code=422,
+        error_code="invalid_request",
+    )
+
+
+def test_http_error_uses_failure_contract() -> None:
+    response = client.get("/v1/not-found")
+
+    assert_failure_contract(
+        response,
+        status_code=404,
+        error_code="http_error",
+    )
+
+
+def test_unexpected_service_error_uses_failure_contract(monkeypatch) -> None:
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("unexpected implementation detail")
+
+    monkeypatch.setattr(service_main, "analyze_label_image_bytes", fail)
+    isolated_client = TestClient(service_main.app, raise_server_exceptions=False)
+    response = isolated_client.post(
+        "/v1/analyze-label",
+        files={"file": ("label.png", image_bytes(), "image/png")},
+    )
+
+    assert_failure_contract(
+        response,
+        status_code=500,
+        error_code="internal_error",
+    )
+    assert "unexpected implementation detail" not in response.text
 
 
 def test_analyze_label_returns_consistent_success_contract(monkeypatch) -> None:

@@ -10,8 +10,10 @@ import os
 from typing import Any
 
 from fastapi import FastAPI, File, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from apps.service.label_analysis import (
     API_VERSION,
@@ -82,9 +84,45 @@ def failure_response(
         ),
     )
 
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(_request, _exc: RequestValidationError):
+    """Return the label schema even when FastAPI rejects the request body."""
+
+    return failure_response(
+        status_code=422,
+        error_code="invalid_request",
+        message="요청 형식이 올바르지 않습니다.",
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(_request, exc: StarletteHTTPException):
+    """Keep framework-generated HTTP errors in the public response contract."""
+
+    return failure_response(
+        status_code=exc.status_code,
+        error_code="http_error",
+        message="요청을 처리할 수 없습니다.",
+    )
+
+
+@app.exception_handler(Exception)
+async def unexpected_exception_handler(_request, _exc: Exception):
+    """Avoid leaking implementation details through an unhandled error body."""
+
+    return failure_response(
+        status_code=500,
+        error_code="internal_error",
+        message="AI 서비스 처리 중 내부 오류가 발생했습니다.",
+    )
+
+
 async def read_upload(file: UploadFile) -> bytes:
-    content = await file.read(MAX_IMAGE_BYTES + 1)
-    await file.close()
+    try:
+        content = await file.read(MAX_IMAGE_BYTES + 1)
+    finally:
+        await file.close()
     if len(content) > MAX_IMAGE_BYTES:
         raise ImageTooLargeError(
             f"이미지 파일은 {MAX_IMAGE_BYTES // (1024 * 1024)}MB 이하여야 합니다."

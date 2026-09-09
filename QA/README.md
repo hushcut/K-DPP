@@ -32,6 +32,18 @@ QA/run_qa_batch.py         : /api/scan 통합 품질, 기본 허용 오차 ±5%p
 `normalized_materials`, `normalized_ratios`에 기록하거나
 `include_in_accuracy=FALSE`로 지정한다.
 
+### 통합 QA 판정 원칙
+
+`include_in_accuracy=FALSE`는 일반 정확도 분모에서만 제외한다는 뜻입니다.
+이 케이스에서도 API 연결 오류, 잘못된 응답 형식, 서버 오류는 `서버/API 실패`로
+결과 CSV에 기록합니다. 복합 라벨을 정확도 수치에 섞지 않으면서 운영 장애를
+숨기지 않기 위한 기준입니다.
+
+사용 시점도 구분합니다. OCR과 소재 파서 규칙만 빠르게 확인할 때는
+`AI/kdpp_ai_ocr_integrated/scripts/run_qa_batch.py`를 사용하고, 백엔드
+`/api/scan` 요청·응답까지 확인할 때는 이 폴더의 `run_qa_batch.py`를 사용합니다.
+두 도구는 허용 오차와 측정 범위가 달라 정확도를 하나의 숫자로 합치지 않습니다.
+
 ## 폴더 예시
 
 ```text
@@ -149,6 +161,18 @@ C:\DEV\K-DPP\BACKEND\.venv\Scripts\python.exe QA\run_qa_batch.py --answers C:\DE
 ```powershell
 python QA\run_qa_batch.py --api-url http://127.0.0.1:8000/api/scan --answers C:\DEV\K-DPP-QA-DATASET\answer_key.csv --images C:\DEV\K-DPP-QA-DATASET\images --output C:\DEV\K-DPP-QA-DATASET\results\qa_result.csv
 ```
+
+요청별 설정은 한 실행 단위로 함께 관리합니다. 필요할 때만 아래 옵션으로 제한을
+바꿉니다.
+
+```powershell
+python QA\run_qa_batch.py --timeout 60 --max-image-bytes 10485760 --max-response-bytes 1048576 --max-raw-response-chars 4000 --answers ... --images ... --output ...
+```
+
+`--max-response-bytes`는 네트워크에서 읽을 수 있는 응답 자체의 상한이고,
+`--max-raw-response-chars`는 결과 CSV에 남길 응답 미리보기의 상한입니다. 후자가
+잘리면 `raw_response_truncated=TRUE`가 기록되므로, 오류 분석 시 원문이 일부만
+저장됐다는 점을 알 수 있습니다.
 
 ## 결과 판정 기준
 

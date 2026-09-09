@@ -232,9 +232,25 @@ def verify_dataset_contract(
 
 def metric_summary(metrics: dict) -> str:
     return (
-        f"macro_f1={metrics['macro_f1_observed']:.4f}, "
+        f"macro_f1_all={metrics['macro_f1_all_classes']:.4f}, "
+        f"class_coverage={metrics['supported_class_count']}"
+        f"/{metrics['class_count']}, "
+        f"macro_f1_observed={metrics['macro_f1_observed']:.4f}, "
         f"micro_f1={metrics['micro_f1']:.4f}, "
         f"exact={metrics['exact_match']:.4f}"
+    )
+
+
+def metric_selection_rank(
+    metrics: dict, valid_loss: float
+) -> tuple[float, float, float, float]:
+    """Rank checkpoints without excluding classes absent from validation."""
+
+    return (
+        round(metrics["macro_f1_all_classes"], 12),
+        round(metrics["micro_f1"], 12),
+        round(metrics["exact_match"], 12),
+        -valid_loss,
     )
 
 
@@ -387,19 +403,14 @@ def main() -> None:
             apply_thresholds(valid_probabilities, thresholds),
         ).to_dict()
 
-        scheduler.step(valid_metrics["macro_f1_observed"])
+        scheduler.step(valid_metrics["macro_f1_all_classes"])
         print(
             f"Epoch {epoch:02d}/{args.epochs} | "
             f"train_loss={train_loss:.4f}, {metric_summary(train_metrics)} | "
             f"valid_loss={valid_loss:.4f}, {metric_summary(valid_metrics)}"
         )
 
-        rank = (
-            round(valid_metrics["macro_f1_observed"], 12),
-            round(valid_metrics["micro_f1"], 12),
-            round(valid_metrics["exact_match"], 12),
-            -valid_loss,
-        )
+        rank = metric_selection_rank(valid_metrics, valid_loss)
         if rank > best_rank:
             best_rank = rank
             best_epoch = epoch
@@ -419,7 +430,7 @@ def main() -> None:
                         "dropout": args.dropout,
                         "seed": args.seed,
                         "task": "multi_label",
-                        "selection_metric": "macro_f1_observed",
+                        "selection_metric": "macro_f1_all_classes",
                     },
                     "epoch": epoch,
                 },
@@ -431,14 +442,14 @@ def main() -> None:
             if epochs_without_improvement >= args.patience:
                 print(
                     f"Early stopping: {args.patience} epochs without "
-                    "macro-F1 improvement."
+                    "all-class macro-F1 improvement."
                 )
                 break
 
     print(f"Best epoch: {best_epoch}")
     print(
         "Best validation: "
-        f"macro_f1={best_rank[0]:.4f}, "
+        f"macro_f1_all={best_rank[0]:.4f}, "
         f"micro_f1={best_rank[1]:.4f}, "
         f"exact={best_rank[2]:.4f}"
     )

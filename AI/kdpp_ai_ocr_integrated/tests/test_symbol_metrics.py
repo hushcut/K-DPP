@@ -21,6 +21,18 @@ def test_multilabel_metrics_do_not_hide_errors_behind_true_negatives() -> None:
     assert metrics.micro_f1 == pytest.approx(2 / 3)
 
 
+def test_all_class_macro_f1_includes_validation_absent_classes() -> None:
+    truth = np.array([[1, 0], [1, 0]], dtype=np.uint8)
+    predicted = np.array([[1, 0], [1, 0]], dtype=np.uint8)
+
+    metrics = compute_multilabel_metrics(truth, predicted)
+
+    assert metrics.macro_f1_observed == pytest.approx(1.0)
+    assert metrics.macro_f1_all_classes == pytest.approx(0.5)
+    assert metrics.class_count == 2
+    assert metrics.supported_class_count == 1
+
+
 def test_threshold_application_validates_class_count() -> None:
     with pytest.raises(ValueError):
         apply_thresholds([[0.5, 0.6]], [0.5])

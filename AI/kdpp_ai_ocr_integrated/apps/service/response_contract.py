@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field
+
 # API 응답에서 항상 제공하는 기본 키. 값이 없을 때도 타입은 유지한다.
 LABEL_RESPONSE_DEFAULTS: dict[str, Any] = {
     "error_code": "",
@@ -26,6 +28,32 @@ LABEL_RESPONSE_DEFAULTS: dict[str, Any] = {
 }
 
 
+class LabelResponseContract(BaseModel):
+    """Stable fields that consumers may rely on in every label response.
+
+    Extra fields remain allowed because OCR and parser evidence deliberately
+    evolve independently of this boundary contract.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    api_version: str
+    status: str = ""
+    error_code: str = ""
+    message: str = ""
+    materials: dict[str, float] = Field(default_factory=dict)
+    materials_korean: str = ""
+    raw_ocr_preview: str = ""
+    confidence: dict[str, str] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    care_instruction: str = ""
+    care_instructions: list[str] = Field(default_factory=list)
+    selected_part: str = ""
+    parts: dict[str, Any] = Field(default_factory=dict)
+    parse_evidence: dict[str, Any] = Field(default_factory=dict)
+    ocr: dict[str, Any] = Field(default_factory=dict)
+
+
 def normalize_label_response(
     payload: dict[str, Any],
     *,
@@ -35,15 +63,38 @@ def normalize_label_response(
 
     # 얕은 병합 뒤 중첩 컬렉션은 별도로 복사해 호출자가 기본값을 변경하지 못하게 한다.
     result = {"api_version": api_version, **LABEL_RESPONSE_DEFAULTS, **payload}
-    result["confidence"] = {
-        **LABEL_RESPONSE_DEFAULTS["confidence"],
-        **dict(payload.get("confidence", {})),
-    }
-    result["warnings"] = list(payload.get("warnings", []))
-    result["care_instructions"] = list(payload.get("care_instructions", []))
-    result["parts"] = dict(payload.get("parts", {}))
-    result["parse_evidence"] = dict(payload.get("parse_evidence", {}))
-    result["ocr"] = dict(payload.get("ocr", {}))
+    raw_confidence = payload.get("confidence", {})
+    raw_warnings = payload.get("warnings", [])
+    raw_care_instructions = payload.get("care_instructions", [])
+    raw_parts = payload.get("parts", {})
+    raw_parse_evidence = payload.get("parse_evidence", {})
+    raw_ocr = payload.get("ocr", {})
+
+    result["confidence"] = (
+        {
+            **LABEL_RESPONSE_DEFAULTS["confidence"],
+            **raw_confidence,
+        }
+        if isinstance(raw_confidence, dict)
+        else raw_confidence
+    )
+    result["warnings"] = raw_warnings
+    result["care_instructions"] = raw_care_instructions
+    result["parts"] = raw_parts
+    result["parse_evidence"] = raw_parse_evidence
+    result["ocr"] = raw_ocr
+
+    # Validate the boundary without serializing through Pydantic. Returning the
+    # original values keeps existing API JSON representation unchanged.
+    LabelResponseContract.model_validate(result)
+
+    # Copy validated mutable values so callers cannot mutate the shared defaults.
+    result["confidence"] = dict(result["confidence"])
+    result["warnings"] = list(result["warnings"])
+    result["care_instructions"] = list(result["care_instructions"])
+    result["parts"] = dict(result["parts"])
+    result["parse_evidence"] = dict(result["parse_evidence"])
+    result["ocr"] = dict(result["ocr"])
     return result
 
 

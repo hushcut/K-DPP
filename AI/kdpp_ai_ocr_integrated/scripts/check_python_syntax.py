@@ -5,14 +5,18 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 SOURCE_DIRECTORIES = ("apps", "scripts", "tests")
+QA_DIRECTORY = BASE_DIR.parents[1] / "QA"
 
 
 def python_files() -> list[Path]:
-    return [
+    files = [
         path
         for directory in SOURCE_DIRECTORIES
         for path in (BASE_DIR / directory).rglob("*.py")
     ]
+    if QA_DIRECTORY.is_dir():
+        files.extend(QA_DIRECTORY.rglob("*.py"))
+    return files
 
 
 def main() -> None:
