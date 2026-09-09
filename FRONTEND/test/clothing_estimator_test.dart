@@ -214,6 +214,39 @@ void main() {
       expect(ClothingEstimator.estimateInitialHealth({'모달': 100}), 88);
     });
 
+    // 사용자가 스캔이 채운 '면' 행 옆에 자동완성으로 'cotton' 행을 더할 수 있다.
+    // 개수를 원문 키로 세면 100% 면인데 2종으로 계산돼 단일 소재 가점(+8)을 잃는다.
+    // 서버는 둘 다 cotton으로 풀어 저장을 통과시키므로 어긋난 건강도만 남는다.
+    test('같은 소재를 두 이름으로 적어도 한 종으로 센다', () {
+      expect(
+        ClothingEstimator.estimateInitialHealth({'면': 50, 'cotton': 50}),
+        ClothingEstimator.estimateInitialHealth({'cotton': 100}),
+      );
+      expect(
+        ClothingEstimator.estimateInitialHealth({'면': 50, 'cotton': 50}),
+        93,
+      );
+      // 서로 다른 소재는 그대로 2종으로 센다.
+      expect(
+        ClothingEstimator.estimateInitialHealth({'면': 50, '폴리에스터': 50}),
+        85,
+      );
+      // 3종 감점도 표준명 기준이다.
+      expect(
+        ClothingEstimator.estimateInitialHealth({
+          '면': 40,
+          'cotton': 20,
+          '울': 20,
+          '나일론': 20,
+        }),
+        ClothingEstimator.estimateInitialHealth({
+          'cotton': 60,
+          'wool': 20,
+          'nylon': 20,
+        }),
+      );
+    });
+
     test('앞뒤 공백과 대문자 표기를 정리한 뒤 찾는다', () {
       expect(
         ClothingEstimator.estimateCarbonFootprint({' 면 ': 100}, clothingType),

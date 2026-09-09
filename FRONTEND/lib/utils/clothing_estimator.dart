@@ -1,9 +1,11 @@
 import '../models/clothing_type_option.dart';
+import 'material_name.dart';
 
 /// 소재 비율과 의류의 추정 무게를 이용해 저장 전 기본 지표를 계산한다.
 ///
-/// 아래 두 표(`_standardNamesByAlias`·`_emissionFactorsByStandardName`)는
-/// **서버 소재 표(`BACKEND/init_data.py`의 `MATERIAL_SEEDS`)를 그대로 옮긴 사본**이다.
+/// 아래 `_emissionFactorsByStandardName`는 **서버 소재 표
+/// (`BACKEND/init_data.py`의 `MATERIAL_SEEDS`)의 `carbon_factor`를 그대로 옮긴 사본**이다.
+/// 소재명을 표준명으로 되돌리는 표는 [MaterialName]에 있다(리포트·홈 화면도 같은 것을 쓴다).
 /// 두 표가 서버와 어긋나면 `BACKEND/tests/test_material_name_contract.py`가 실패한다.
 ///
 /// ⚠️ **이 동기화는 임시다.** 서버 시드의 `carbon_factor`는 그 파일 주석대로
@@ -71,10 +73,15 @@ class ClothingEstimator {
     if (materials.isEmpty) return 80;
 
     double score = 80.0;
-    final keys = materials.keys.map(_standardizeMaterialName).toList();
+    // 개수도 표준명 기준으로 센다. 원문 키로 세면 사용자가 같은 소재를 두 이름으로
+    // 적었을 때('면' 50 + 'cotton' 50) 100% 단일 소재인데 2종으로 계산돼
+    // 단일 소재 가점을 못 받는다. 서버는 둘 다 cotton으로 풀어 저장을 통과시키므로
+    // 어긋난 건강도만 조용히 남는다.
+    final keys = MaterialName.standardizeAll(materials.keys);
+    final distinctMaterialCount = keys.toSet().length;
 
-    if (materials.length == 1) score += 8;
-    if (materials.length >= 3) score -= 8;
+    if (distinctMaterialCount == 1) score += 8;
+    if (distinctMaterialCount >= 3) score -= 8;
 
     if (keys.any((e) => e.contains('cotton') || e.contains('linen'))) {
       score += 5;
@@ -91,63 +98,6 @@ class ClothingEstimator {
     final clamped = score.round().clamp(60, 95);
     return clamped.toInt();
   }
-
-  /// 서버 소재 표가 쓰는 한글명과 별칭을 영문 표준명으로 되돌린다.
-  ///
-  /// 스캔이 성공하면 서버가 `material_details.display_name`으로 내려준 **한글명**이
-  /// 그대로 편집 폼의 소재 키가 된다(`ScanDraftService.buildFromResult`).
-  /// 아래 계수·건강도 조회는 영문 표준명 기준이므로, 이 표가 없으면 스캔한 옷은
-  /// 소재와 무관하게 기본계수로 계산되고 건강도도 소재 가·감점을 받지 못한다.
-  /// 탄소값은 저장 단계에서 서버 계산으로 덮이지만 **건강도는 덮이지 않아**
-  /// 잘못된 값이 옷장·홈 평균에 그대로 남는다.
-  ///
-  /// **완전 일치로만 찾는다.** 서버 별칭에는 '모'(wool)·'마'(linen)처럼 다른
-  /// 소재명의 부분 문자열인 것이 있어, 부분 일치를 쓰면 '모달'(modal)이 울로 잡힌다.
-  static const Map<String, String> _standardNamesByAlias = {
-    '면': 'cotton',
-    '코튼': 'cotton',
-    '폴리에스터': 'polyester',
-    'poly': 'polyester',
-    '레이온': 'rayon',
-    '나일론': 'nylon',
-    'polyamide': 'nylon',
-    '울': 'wool',
-    '모': 'wool',
-    '아크릴': 'acrylic',
-    'polyacryl': 'acrylic',
-    '스판덱스': 'spandex',
-    '엘라스테인': 'spandex',
-    'elastane': 'spandex',
-    'lycra': 'spandex',
-    '린넨': 'linen',
-    '리넨': 'linen',
-    '마': 'linen',
-    '비스코스': 'viscose',
-    'viskose': 'viscose',
-    '실크': 'silk',
-    '견': 'silk',
-    '모달': 'modal',
-    '캐시미어': 'cashmere',
-    'kashmir': 'cashmere',
-    '폴리우레탄': 'polyurethane',
-    'pu': 'polyurethane',
-    '가죽': 'leather',
-    '라미': 'ramie',
-    '리오셀': 'lyocell',
-    '텐셀': 'lyocell',
-    'tencel': 'lyocell',
-    '다운': 'down',
-    '우모': 'down',
-    '오리솜털': 'down',
-    '거위솜털': 'down',
-    '깃털': 'feather',
-    '오리깃털': 'feather',
-    '거위깃털': 'feather',
-    '야크': 'yak',
-    '모헤어': 'mohair',
-    '대나무': 'bamboo',
-    '큐프로': 'cupro',
-  };
 
   /// 소재별 배출계수(kg CO2eq/kg textile). **서버 시드의 `carbon_factor`와 1:1이다.**
   ///
@@ -188,15 +138,8 @@ class ClothingEstimator {
     'cupro': 6.0,
   };
 
-  /// 소재명을 계수·건강도 조회에 쓸 영문 표준명으로 바꾼다.
-  /// 표에 없는 이름은 소문자로만 정리해 그대로 돌려준다.
-  static String _standardizeMaterialName(String material) {
-    final normalized = material.trim().toLowerCase();
-    return _standardNamesByAlias[normalized] ?? normalized;
-  }
-
   static double _findMaterialEmissionFactor(String material) {
-    return _emissionFactorsByStandardName[_standardizeMaterialName(material)] ??
+    return _emissionFactorsByStandardName[MaterialName.standardize(material)] ??
         defaultEmissionFactor;
   }
 }

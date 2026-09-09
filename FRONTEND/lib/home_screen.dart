@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'models/clothes.dart';
 import 'theme/app_palette.dart';
+import 'utils/material_name.dart';
 
 /// [ClosetProvider]의 집계값을 카드 형태로 표시하고 주요 탭 이동 콜백을 제공합니다.
 class HomeScreen extends StatelessWidget {
@@ -293,9 +294,11 @@ class HomeScreen extends StatelessWidget {
       iconData = Icons.warning_amber_rounded;
       iconColor = Colors.redAccent;
       iconBgColor = isDark ? const Color(0xFF3A2222) : Colors.red.shade50;
-    } else if (latestItem.materials.keys.any(
-      (e) => e.toLowerCase().contains('cotton'),
-    )) {
+    } else if (MaterialName.matchesAny(latestItem.materials.keys, const [
+      'cotton',
+    ])) {
+      // 소재명을 서버 표준명으로 되돌린 뒤 맞춘다. 스캔으로 등록한 면 옷의 소재 키는
+      // 서버 표시명 '면'이라, 표준화 없이 'cotton'만 찾으면 이 분기에 절대 걸리지 않는다.
       tipTitle = '코튼 소재 관리 팁';
       tipBody =
           '${latestItem.title}은(는) 면 소재가 포함되어 있어요. 미지근한 물 세탁과 자연 건조가 잘 어울립니다.';

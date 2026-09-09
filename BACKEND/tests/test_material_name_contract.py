@@ -1,10 +1,15 @@
 """소재 계층 계약: 서버 시드와 프론트 사본이 어긋나지 않는지 확인한다.
 
-프론트 `FRONTEND/lib/utils/clothing_estimator.dart`는 서버 소재 표
-(`init_data.py`의 `MATERIAL_SEEDS`)를 두 벌로 옮겨 갖고 있다.
+프론트는 서버 소재 표(`init_data.py`의 `MATERIAL_SEEDS`)를 두 벌로 옮겨 갖고 있다.
 
-1. `_standardNamesByAlias` — 한글명·별칭 → 영문 표준명
-2. `_emissionFactorsByStandardName` — 영문 표준명 → carbon_factor
+1. `FRONTEND/lib/utils/material_name.dart`의 `_standardNamesByAlias`
+   — 한글명·별칭 → 영문 표준명
+2. `FRONTEND/lib/utils/clothing_estimator.dart`의 `_emissionFactorsByStandardName`
+   — 영문 표준명 → carbon_factor
+
+별칭 표가 따로 있는 이유는 계산 말고도 쓰는 곳이 있기 때문이다. 리포트의 관리·보관
+안내와 홈의 소재 팁도 소재명을 문자열로 판별하는데, 각자 사본을 두면 같은 결함이
+계속 재발한다(실제로 세 곳에서 났다).
 
 프론트가 이 사본을 갖는 이유는 저장 **전** 프리뷰 탄소값과, 옷장에 영구 저장되는
 건강도를 서버 왕복 없이 계산하기 때문이다. 사본이 어긋나면 두 가지가 조용히 깨진다.
@@ -32,7 +37,9 @@ import init_data
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ESTIMATOR_PATH = REPO_ROOT / "FRONTEND" / "lib" / "utils" / "clothing_estimator.dart"
+_FRONTEND_UTILS = REPO_ROOT / "FRONTEND" / "lib" / "utils"
+ALIAS_PATH = _FRONTEND_UTILS / "material_name.dart"
+FACTOR_PATH = _FRONTEND_UTILS / "clothing_estimator.dart"
 
 # `'면': 'cotton',` 꼴
 _ALIAS_ENTRY = re.compile(r"'([^']+)'\s*:\s*'([^']+)'\s*,")
@@ -105,20 +112,18 @@ def parse_dart_map(source: str, marker: str, pattern: re.Pattern):
     return pattern.findall(code[start + len(marker) : end])
 
 
-def _read_dart_map(marker: str, pattern: re.Pattern):
-    if not ESTIMATOR_PATH.exists():
+def _read_dart_map(path: Path, marker: str, pattern: re.Pattern):
+    if not path.exists():
         pytest.fail(
-            f"프론트 소재 표를 찾지 못했습니다: {ESTIMATOR_PATH}. "
-            "모노레포 구조가 바뀌었다면 이 테스트의 경로도 함께 고쳐야 합니다."
+            f"프론트 소재 표를 찾지 못했습니다: {path}. "
+            "파일이 옮겨졌다면 이 테스트의 경로도 함께 고쳐야 합니다."
         )
 
-    entries = parse_dart_map(
-        ESTIMATOR_PATH.read_text(encoding="utf-8"), marker, pattern
-    )
+    entries = parse_dart_map(path.read_text(encoding="utf-8"), marker, pattern)
 
     if entries is None:
         pytest.fail(
-            f"{ESTIMATOR_PATH.name}에서 {marker!r} 표를 찾지 못했거나 표가 닫히지 않았습니다. "
+            f"{path.name}에서 {marker!r} 표를 찾지 못했거나 표가 닫히지 않았습니다. "
             "이름이 바뀌었다면 이 테스트도 함께 고쳐야 합니다."
         )
 
@@ -126,7 +131,7 @@ def _read_dart_map(marker: str, pattern: re.Pattern):
     # 전건 통과한다. 로더에서 막아 개별 테스트의 방어에 기대지 않는다.
     if not entries:
         pytest.fail(
-            f"{ESTIMATOR_PATH.name}의 {marker!r} 표가 비어 있습니다. "
+            f"{path.name}의 {marker!r} 표가 비어 있습니다. "
             "표가 통째로 주석 처리됐거나 형식이 바뀌었습니다."
         )
 
@@ -137,7 +142,7 @@ def load_frontend_alias_map() -> dict[str, str]:
     return {
         alias.strip().lower(): standard_name.strip().lower()
         for alias, standard_name in _read_dart_map(
-            "_standardNamesByAlias = {", _ALIAS_ENTRY
+            ALIAS_PATH, "_standardNamesByAlias = {", _ALIAS_ENTRY
         )
     }
 
@@ -146,7 +151,7 @@ def load_frontend_factor_map() -> dict[str, float]:
     return {
         name.strip().lower(): float(factor)
         for name, factor in _read_dart_map(
-            "_emissionFactorsByStandardName = {", _FACTOR_ENTRY
+            FACTOR_PATH, "_emissionFactorsByStandardName = {", _FACTOR_ENTRY
         )
     }
 
@@ -187,9 +192,9 @@ def test_frontend_alias_map_covers_every_server_alias():
     )
 
     assert not missing, (
-        "서버 시드에는 있으나 프론트 ClothingEstimator가 모르는 소재 이름입니다: "
-        f"{missing}. 이대로 두면 이 이름으로 스캔된 의류가 기본계수로 계산되고 "
-        "잘못된 건강도가 옷장에 저장됩니다."
+        "서버 시드에는 있으나 프론트 MaterialName이 모르는 소재 이름입니다: "
+        f"{missing}. 이대로 두면 이 이름으로 스캔된 의류가 기본계수로 계산되고, 잘못된 건강도가 "
+        "옷장에 저장되며, 리포트·홈의 소재별 안내도 빗나갑니다."
     )
 
 

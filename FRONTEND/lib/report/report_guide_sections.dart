@@ -1,11 +1,12 @@
 // 소재별 관리 팁, 폐기 안내와 관리 정보 UI를 구성합니다.
 part of '../report_screen.dart';
 
+// 소재명을 먼저 서버 표준명으로 되돌린 뒤 키워드를 맞춘다.
+// 스캔으로 등록한 옷의 소재 키는 서버 표시명(한글 '면','울')이라, 표준화 없이
+// 영문 키워드만 맞추면 아래 안내가 **스캔한 옷에서만 전부 빗나간다**
+// (자동완성으로 고른 옷은 `option.nameEn`이 들어가 영문 키라 정상이었다).
 bool _hasMaterial(Clothes item, List<String> keywords) {
-  final lowerKeys = item.materials.keys.map((e) => e.toLowerCase()).toList();
-  return lowerKeys.any(
-    (key) => keywords.any((keyword) => key.contains(keyword)),
-  );
+  return MaterialName.matchesAny(item.materials.keys, keywords);
 }
 
 // 소재 키워드와 라벨 지침을 조합해 의류별 세탁·관리 문구를 만듭니다.
