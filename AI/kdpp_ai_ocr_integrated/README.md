@@ -1,208 +1,84 @@
-# K-DPP AI OCR Integrated
+# K-DPP AI OCR 통합 모듈
 
-This is the AI module for the `kyh/ai` branch, based on
-`ksw/ai-ocr-enhancement`. Text OCR/parsing and care-symbol classification
-remain separate because they use different input assumptions and evaluation
-criteria.
+이 폴더는 K-DPP의 AI 기능을 모아 둔 모듈입니다. 현재 `kyh/ai` 브랜치는
+`ksw/ai-ocr-enhancement`를 기반으로 하며, OCR 소재 분석의 안정성과 QA
+검증 도구를 보강합니다.
 
-## Goals
+## 현재 서비스 범위
 
-- Keep symbol recognition and text OCR/parsing separate.
-- Reuse the richer material alias idea from `feat/ai-ocr`.
-- Fix the parser/result shape mismatch.
-- Add a more reliable training loop for overfitting checks.
-- Save experiment models separately from the current model.
-- Provide evaluation output beyond a single accuracy number.
-- Keep the current DPP flow limited to OCR material analysis; symbol classification remains experimental.
+현재 DPP 서비스 흐름에서 사용하는 기능은 의류 라벨의 **소재명과 혼용률
+추출**입니다.
 
-## Suggested Layout
+```text
+라벨 이미지 -> Google Vision OCR -> 소재/혼용률 파서 -> 소재 분석 결과
+```
+
+`apps/symbol/`의 ResNet18 세탁기호 분류기는 별도 실험 기능입니다. 이 모델은
+전체 라벨에서 세탁기호 위치를 찾지 못하며, 이미 잘라낸 단일 세탁기호 이미지만
+입력으로 받습니다. 따라서 현재 탄소배출량 계산 흐름에는 연결되어 있지 않습니다.
+
+## 폴더 구조
 
 ```text
 kdpp_ai_ocr_integrated/
   apps/
-    symbol/
-      class_map.py
-      dataset_csv.py
-      evaluate_symbol.py
-      predict_symbol.py
-      train_symbol_experiment.py
-    text/
-      ocr_text.py
-      parse_label.py
-      qa_dataset.py
-      rules.py
+    service/                 # FastAPI 서비스 경계와 응답 형식
+    text/                    # 이미지 검증, OCR, 소재/혼용률 파싱, OCR QA 계약
+    symbol/                  # 세탁기호 ResNet18 실험 코드
   scripts/
-    audit_ocr_qa_dataset.py
-    audit_symbol_dataset.py
-    check_split_leakage.py
-    run_ai_checks.py
-    run_combined_batch.py
-  data/
-    train/
-    valid/
-    test/
-  models/
-    symbol/
-  outputs/
+    audit_ocr_qa_dataset.py  # OCR QA 정답지 품질 감사
+    audit_symbol_dataset.py  # 세탁기호 데이터셋 품질 감사
+    check_split_leakage.py   # train/valid/test 누수 검사
+    run_ai_checks.py         # 문법, 테스트, 데이터 검사 실행 도구
+    run_combined_batch.py    # 이미지 폴더 일괄 분석 도구
+    run_qa_batch.py          # OCR/파서 단위 QA 도구
+  data/                      # 로컬 세탁기호 학습 데이터 위치, Git 추적 제외
+  models/                    # 로컬 모델 가중치 위치, Git 추적 제외
+  outputs/                   # QA·평가 결과와 OCR 캐시 위치, Git 추적 제외
 ```
 
-## Data
+## 설치와 기본 검증
 
-Copy your Roboflow-style folders into:
-
-```text
-data/train
-data/valid
-data/test
-```
-
-Each split should contain `_classes.csv` and the referenced image files.
-
-### Dataset contract before training
-
-`_classes.csv` must have a `filename` column followed by binary `0`/`1` class
-columns in exactly the same order for every split. A row may have multiple
-positive class columns, so the current symbol model is multi-label. A row with
-all zeros is retained as a valid negative example.
-
-Use group-aware splitting: keep an original image and all of its augmented or
-near-duplicate derivatives in the same split. The project does not silently
-create a split because the correct ratio depends on the available groups.
-For a new dataset, start with approximately 70% train, 15% validation, and
-15% test by source-image group; document any justified deviation.
-
-Before training, run the read-only dataset audit:
+가상환경을 만든 뒤 의존성을 설치합니다. 자격증명 파일, 모델 가중치, 실제
+데이터셋은 저장소에 포함하지 않습니다.
 
 ```bash
-python -m scripts.audit_symbol_dataset --data-dir data
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.venv\Scripts\python.exe -m pytest -q
 ```
 
-The audit reports split ratios, per-class positive counts, all-negative rows,
-the number of multi-positive rows, and whether the CSV is structurally
-multi-label. It also blocks source-name and byte-identical leakage across
-splits. Training additionally rejects a declared class with no positive train
-sample, since that class cannot be learned.
+`GOOGLE_APPLICATION_CREDENTIALS` 또는 `--credentials`에 지정하는 Google Vision
+서비스 계정 JSON은 개인 로컬 경로에서만 사용해야 하며, 저장소에 추가하면 안 됩니다.
 
-Do not use test data to select thresholds, augmentation settings, or model
-architecture. Those decisions use validation data; test data is used once for
-the final report.
+## OCR 소재 분석
 
-## Train
+### 처리 방식
 
-```bash
-python -m apps.symbol.train_symbol_experiment
-```
+1. 업로드 이미지의 형식, 크기, 해상도를 먼저 검증합니다.
+2. 원본 이미지를 Google Vision OCR로 읽습니다.
+3. 파서 신뢰도가 낮을 때만 회전 보정·대비 보정·선명화한 전처리 후보를 추가로 OCR합니다.
+4. 후보별 소재 구성, 혼용률 합계, 경고 수를 비교해 더 신뢰할 만한 결과를 선택합니다.
+5. 파서는 소재명·혼용률·의류 부위·세탁 지침을 구조화된 응답으로 반환합니다.
 
-The training command runs split-leakage and train-class-coverage checks before
-loading the model. Its headline validation metrics are macro-F1, micro-F1, and
-exact match; Hamming accuracy is diagnostic only because sparse multi-label
-data can make it look artificially high.
+원본 OCR 결과가 충분히 신뢰할 만하면 전처리 OCR을 생략합니다. 불필요한 외부 API
+호출 비용과 지연을 줄이기 위한 정책입니다.
 
-The experiment model is saved to:
-
-```text
-models/symbol/best_symbol_model_exp.pt
-```
-
-## Evaluate
-
-```bash
-python -m apps.symbol.evaluate_symbol --model models/symbol/best_symbol_model_exp.pt --split valid
-```
-
-Outputs include overall accuracy, class accuracy, confusion matrix CSV, and wrong predictions CSV.
-
-## Current service scope
-
-The DPP integration currently uses only material OCR and parsing:
-
-```text
-label image -> Google Vision OCR -> material/ratio parser -> material result
-```
-
-`apps/symbol/` is a separate ResNet18 experiment for an **already-cropped**
-care symbol. It does not detect symbols in a full label image and is not part
-of the current DPP material/carbon calculation path. Its dataset, split, and
-model-comparison results must therefore be reported separately.
-
-## OCR QA data contract
-
-The OCR QA answer CSV requires these columns:
-
-```text
-file_name, answer_materials, answer_ratios
-```
-
-Use canonical material keys such as `cotton`, `polyester`, `spandex`, and
-`polyurethane`. `answer_materials` may be `cotton;polyester` with matching
-`answer_ratios` (`80;20`), or a self-contained form such as
-`cotton:80;polyester:20`.
-
-For an analysis that can explain failures by capture condition, add these
-recommended columns to every QA row:
-
-```text
-split, source_group, capture_condition, label_layout
-```
-
-- `split`: `train`, `valid`, or `test` when QA cases are used for rule tuning.
-- `source_group`: one original image and all derived/near-duplicate images
-  share a group, so the audit can detect cross-split leakage.
-- `capture_condition`: for example `indoor`, `night`, `reflection`, `blur`,
-  or `wrinkle`.
-- `label_layout`: for example `same_line`, `alternating_lines`, `stacked`, or
-  `multi_part`.
-
-Run this command before changing parsing rules. It only reads the dataset and
-never calls Google Vision:
-
-```bash
-python -m scripts.audit_ocr_qa_dataset \
-  --image-dir "C:\K-DPP-QA-DATASET\images" \
-  --answer-key "C:\K-DPP-QA-DATASET\answer_key.csv" \
-  --strict
-```
-
-The report shows material coverage, label cardinality, capture-condition
-coverage, missing metadata, unmatched images/answers, and `source_group`
-leakage. It does not claim that the dataset is sufficient; that judgment must
-be made from the resulting counts and the intended deployment conditions.
-## Combined Batch
-
-Requires Google Vision credentials:
-
-```bash
-python -m scripts.run_combined_batch --split valid --credentials key.json
-```
-
-
-
-## Accuracy Improvement Version
-
-This copy adds a more robust material parser for real QA images.
-
-### What changed
-
-- Parses material composition by line instead of only adjacent tokens.
-- Detects garment sections such as outer fabric, lining, filling, rib, sleeve, and pocket.
-- Uses outer/generic material as the representative `materials` result while preserving detailed `parts`.
-- Avoids blindly normalizing unrelated sections into one 100% total.
-- Adds Japanese/Chinese/Korean material aliases and common OCR corrections.
-- Adds a QA batch script for comparing OCR results against an answer key CSV.
-
-### Expected response shape
+### 응답 예시
 
 ```json
 {
+  "api_version": "1.0",
   "status": "success",
   "materials": {
     "cotton": 80,
     "polyester": 20
   },
-  "materials_korean": "? 80%, ????? 20%",
+  "materials_korean": "면 80%, 폴리에스터 20%",
   "raw_ocr_preview": "COTTON 80% POLYESTER 20%",
   "confidence": {
-    "ocr": "high"
+    "ocr": "high",
+    "parser": "high"
   },
   "selected_part": "outer",
   "parts": {
@@ -214,28 +90,134 @@ This copy adds a more robust material parser for real QA images.
 }
 ```
 
-### QA batch test
+소재 구성을 신뢰할 수 없으면 임의의 100% 소재를 만들지 않고 `status: "failed"`와
+오류 코드를 반환합니다. 프론트엔드는 이 경우 사용자 수동 입력 흐름을 제공해야 합니다.
 
-```bash
-python -m scripts.run_qa_batch --image-dir "C:\K-DPP-QA-DATASET\images" --answer-key "C:\K-DPP-QA-DATASET\answer_key.csv" --credentials "C:\secure\vision-key.json"
-```
+## OCR QA 정답지 형식
 
-Output:
+OCR QA 정답 CSV의 필수 열은 다음과 같습니다.
 
 ```text
-outputs/qa_batch_results.csv
-outputs/qa_batch_results.summary.json
-outputs/qa_ocr_cache.json
+file_name, answer_materials, answer_ratios
 ```
 
-The first run stores every raw Vision response that was actually requested
-(original and, when needed, preprocessed candidates). Later parser and
-candidate-selection changes can be evaluated without another Vision request:
+소재명에는 `cotton`, `polyester`, `spandex`, `polyurethane`처럼 표준 영문 키를
+사용합니다. 아래 두 형식을 지원합니다.
+
+```text
+cotton;polyester       / 80;20
+cotton:80;polyester:20
+```
+
+원인별 실패를 분석하려면 다음 열도 기록하는 것을 권장합니다.
+
+```text
+split, source_group, capture_condition, label_layout
+```
+
+- `split`: `train`, `valid`, `test` 중 하나입니다.
+- `source_group`: 같은 원본 라벨 또는 그 파생 이미지에 공통으로 부여하는 그룹입니다.
+- `capture_condition`: `indoor`, `night`, `reflection`, `blur`, `wrinkle` 등의 촬영 조건입니다.
+- `label_layout`: `same_line`, `alternating_lines`, `stacked`, `multi_part` 등의 라벨 배치입니다.
+
+규칙을 변경하기 전에는 정답지 형식과 누수를 먼저 점검합니다. 이 명령은 데이터를
+읽기만 하며 Google Vision을 호출하지 않습니다.
 
 ```bash
-python -m scripts.run_qa_batch --image-dir "C:\K-DPP-QA-DATASET\images" --answer-key "C:\K-DPP-QA-DATASET\answer_key.csv" --offline
+python -m scripts.audit_ocr_qa_dataset ^
+  --image-dir "C:\K-DPP-QA-DATASET\images" ^
+  --answer-key "C:\K-DPP-QA-DATASET\answer_key.csv" ^
+  --strict
 ```
 
-Use `--refresh-ocr-cache` only when OCR preprocessing itself changes and a new
-Vision result is intentionally required. The cache can contain label text, is
-stored under the ignored `outputs/` directory, and must not be committed.
+OCR·파서 자체의 회귀 확인에는 다음 도구를 사용합니다.
+
+```bash
+python -m scripts.run_qa_batch ^
+  --image-dir "C:\K-DPP-QA-DATASET\images" ^
+  --answer-key "C:\K-DPP-QA-DATASET\answer_key.csv" ^
+  --credentials "C:\secure\vision-key.json" ^
+  --strict-coverage
+```
+
+첫 실행에서 저장된 OCR 캐시를 사용하면, 파서 규칙만 변경했을 때 Google Vision을
+다시 호출하지 않고 비교할 수 있습니다.
+
+```bash
+python -m scripts.run_qa_batch ^
+  --image-dir "C:\K-DPP-QA-DATASET\images" ^
+  --answer-key "C:\K-DPP-QA-DATASET\answer_key.csv" ^
+  --offline ^
+  --strict-coverage
+```
+
+`--refresh-ocr-cache`는 OCR 전처리 자체를 변경해 새 OCR 결과가 필요할 때만 사용합니다.
+`outputs/`의 OCR 캐시에는 라벨 텍스트가 포함될 수 있으므로 커밋하지 않습니다.
+
+## 세탁기호 ResNet18 실험
+
+### 데이터 계약
+
+로컬 데이터셋은 아래 형태로 둡니다.
+
+```text
+data/
+  train/
+  valid/
+  test/
+```
+
+각 split에는 `_classes.csv`와 CSV가 참조하는 이미지 파일이 있어야 합니다.
+`_classes.csv`는 `filename` 열 뒤에 0 또는 1 값의 클래스 열을 같은 순서로 가져야 합니다.
+모든 클래스 값이 0인 행도 정상적인 음성 샘플이므로 삭제하지 않습니다.
+
+새 데이터셋은 원본 이미지와 증강·중복 이미지를 같은 split에 유지하는 그룹 기반 분할을
+권장합니다. 권장 시작 비율은 train 70%, valid 15%, test 15%이며, 실제 데이터 구조에
+따라 달라질 수 있습니다.
+
+학습 전에는 다음 감사를 실행합니다.
+
+```bash
+python -m scripts.audit_symbol_dataset --data-dir data
+```
+
+이 도구는 split별 수량·비율, 클래스별 양성 샘플, 음성 샘플, 멀티라벨 행,
+원본명·SHA-256 기준 누수를 확인합니다. 학습도 양성 샘플이 없는 선언 클래스가 있으면
+중단합니다.
+
+### 학습과 평가
+
+```bash
+python -m apps.symbol.train_symbol_experiment
+python -m apps.symbol.evaluate_symbol ^
+  --model models/symbol/best_symbol_model_exp.pt ^
+  --split valid
+```
+
+검증 지표는 macro-F1, micro-F1, exact match를 함께 확인합니다. 희귀 클래스가 있는
+멀티라벨 데이터에서는 Hamming accuracy만으로 모델을 선택하지 않습니다.
+
+현재 기본 체크포인트 경로는 `models/symbol/best_symbol_model_exp.pt` 하나입니다.
+실험별 체크포인트·설정·지표를 별도 폴더로 보존하는 버저닝과 다중 백본 비교는 아직
+완료되지 않았습니다.
+
+## 현재 확인되지 않은 사항
+
+저장소에는 실제 `data/` 폴더와 모델 가중치가 포함되어 있지 않습니다. 따라서 아래
+정보는 현재 코드만으로 확인할 수 없습니다.
+
+- 데이터 출처와 라이선스
+- 총 이미지 수와 클래스별 분포
+- 실제 train/valid/test 분할 결과와 누수 검사 결과
+- 증강 방식과 라벨링·검수 기준
+- ResNet18 및 다른 백본의 실제 성능 비교 결과
+
+이 정보는 실제 데이터셋 경로가 준비된 뒤 감사 결과와 함께 데이터 카드로 작성합니다.
+
+## 알려진 한계와 다음 작업
+
+- 세탁기호 모델은 전체 라벨에서 기호 위치를 검출하지 않습니다.
+- 현재 DPP 사용자 흐름은 소재 OCR 분석만 사용합니다.
+- AI 단위 QA와 서버 `/api/scan` 통합 QA는 목적과 허용오차가 달라, 결과를 하나의
+  정확도 수치로 직접 비교하면 안 됩니다. 다음 단계에서 기준을 문서화하고 정리합니다.
+- GitHub Actions 기반 자동 검증은 아직 구성되지 않았습니다.
