@@ -24,7 +24,7 @@ MATERIAL_NAMES = {
     "linen": {"en": "LINEN", "ko": "\ub9b0\ub128", "ja": "\u9ebb", "zh": "\u4e9a\u9ebb"},
     "rayon": {"en": "RAYON", "ko": "\ub808\uc774\uc628", "ja": "\u30ec\u30fc\u30e8\u30f3", "zh": "\u4eba\u9020\u4e1d"},
     "viscose": {"en": "VISCOSE", "ko": "\ube44\uc2a4\ucf54\uc2a4", "ja": "\u30d3\u30b9\u30b3\u30fc\u30b9", "zh": "\u7c98\u80f6\u7ea4\u7ef4"},
-    "acrylic": {"en": "ACRYLIC", "ko": "\uc544\ud06c\ub9b4", "ja": "\u30a2\u30af\u30ea\u30eb", "zh": "\u8168\u7eb6"},
+    "acrylic": {"en": "ACRYLIC", "ko": "\uc544\ud06c\ub9b4", "ja": "\u30a2\u30af\u30ea\u30eb", "zh": "\u8148\u7eb6"},
     "silk": {"en": "SILK", "ko": "\uc2e4\ud06c", "ja": "\u7d79", "zh": "\u8695\u4e1d"},
     "cashmere": {"en": "CASHMERE", "ko": "\uce90\uc2dc\ubbf8\uc5b4", "ja": "\u30ab\u30b7\u30df\u30e4", "zh": "\u7f8a\u7ed2"},
     "modal": {"en": "MODAL", "ko": "\ubaa8\ub2ec", "ja": "\u30e2\u30c0\u30fc\u30eb", "zh": "\u83ab\u4ee3\u5c14"},

@@ -1,6 +1,6 @@
 {
   "dataset_name": "synthetic_v1_pilot",
-  "generator_version": "1.0.0",
+  "generator_version": "1.0.1",
   "seed": 20260909,
   "base_label_count": 20,
   "variants_per_label": 4,

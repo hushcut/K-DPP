@@ -4,6 +4,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from PIL import ImageDraw
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -74,6 +77,40 @@ class SyntheticLabelGeneratorTests(unittest.TestCase):
                     return [row["image_sha256"] for row in csv.DictReader(stream)]
 
             self.assertEqual(hashes(first), hashes(second))
+
+    def test_chinese_acrylic_uses_correct_spelling_in_image_and_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "dataset"
+            config = test_config(output)
+            config.update({
+                "base_label_count": 1,
+                "variants_per_label": 1,
+                "languages": ["zh"],
+                "materials": ["acrylic"],
+                "part_label_probability": 0,
+                "conditions": ["clean"],
+            })
+            drawn_text = []
+            original_draw_text = ImageDraw.ImageDraw.text
+
+            def record_text(draw, xy, text, *args, **kwargs):
+                drawn_text.append(text)
+                return original_draw_text(draw, xy, text, *args, **kwargs)
+
+            with patch.object(ImageDraw.ImageDraw, "text", new=record_text):
+                generate_dataset(config)
+
+            with (output / "manifest.csv").open("r", encoding="utf-8-sig", newline="") as stream:
+                rows = list(csv.DictReader(stream))
+
+            self.assertEqual(len(rows), 1)
+            row = rows[0]
+            self.assertEqual(row["answer_materials"], "acrylic")
+            self.assertEqual(row["answer_ratios"], "100")
+            self.assertIn("腈纶  100%", row["original_text"].splitlines())
+            self.assertIn("腈纶  100%", drawn_text)
+            self.assertNotIn("腨纶", row["original_text"])
+            self.assertTrue((output / "images" / row["file_name"]).is_file())
 
     def test_refuses_to_write_into_non_empty_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

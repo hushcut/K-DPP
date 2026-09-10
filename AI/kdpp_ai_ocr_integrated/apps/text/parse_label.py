@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -6,11 +7,11 @@ from apps.text.rules import CARE_RULES, MATERIAL_ALIASES, MATERIAL_KOREAN, OCR_C
 
 
 PART_PATTERNS = {
-    "outer": ["\uac89\uac10", "\uac89 \uac10", "\uc678\ud53c", "\ud45c\uba74", "\ubcf8\uccb4", "\ubab8\ud310", "\ubcf8\ud53c", "shell", "outshell", "outer", "face", "main fabric", "\u672c\u4f53", "\u9762\u6599"],
+    "outer": ["\uac89\uac10", "\uac89 \uac10", "\uc678\ud53c", "\ud45c\uba74", "\ubcf8\uccb4", "\ubab8\ud310", "\ubcf8\ud53c", "shell", "outshell", "outer", "face", "main fabric", "\u672c\u4f53", "\u9762\u6599", "表地"],
     "lining": ["\uc548\uac10", "\uc548 \uac10", "\ub0b4\ud53c", "lining", "lning", "uning", "un ing", "\u88cf\u5730", "\u91cc\u6599", "\u88e1\u6599"],
     "filling": ["\ucda9\uc804\uc7ac", "\ucda9\uc804\uc81c", "\ucda9\uc804", "\uc19c", "filling", "fill", "\u4e2d\u308f\u305f", "\u586b\u5145"],
     "pocket": ["\uc8fc\uba38\ub2c8\uac10", "\uc8fc\uba38\ub2c8", "pocket"],
-    "rib": ["\ub9bd", "\ub9ac\ube0c", "rib"],
+    "rib": ["\ub9bd", "\ub9ac\ube0c", "rib", "リブ", "螺纹"],
     "sleeve": ["\uc18c\ub9e4", "sleeve"],
     "color_block": ["\ubc30\uc0c9", "contrast", "\u914d\u8272"],
 }
@@ -35,7 +36,8 @@ class LineInfo:
 def normalize_text(text: str) -> str:
     if not text:
         return ""
-    normalized = text.lower()
+    # OCR can return full-width digits/letters and half-width Katakana.
+    normalized = unicodedata.normalize("NFKC", text).lower()
     normalized = normalized.replace("\uff1a", ":").replace("\uff05", "%")
     normalized = normalized.replace("\u00b7", " ").replace("/", " ")
     normalized = re.sub(r"\s+", " ", normalized).strip()
@@ -52,12 +54,15 @@ def clean_ocr_preview(text: str, max_len: int = 220) -> str:
 
 
 def find_material_key(word: str) -> str | None:
-    token = word.lower().strip(" .,:;/()[]{}<>|+-_=*\"'")
+    token = unicodedata.normalize("NFKC", word).lower().strip(" .,:;/()[]{}<>|+-_=*\"'")
     token = OCR_CORRECTIONS.get(token, token)
 
     if not token:
         return None
     if token in NOISE_WORDS:
+        return None
+    # Imitation/style descriptions do not establish fiber composition.
+    if token.startswith("仿") or token.endswith(("風", "調")):
         return None
     if len(token) < 2 and token.isascii():
         return None
@@ -125,14 +130,30 @@ def extract_materials(line: str) -> list[str]:
 def build_line_infos(text: str) -> list[LineInfo]:
     infos = []
     current_part = "generic"
-    prepared = text or ""
+    prepared = unicodedata.normalize("NFKC", text or "")
     split_markers = [
         "shell", "outshell", "lining", "lning", "uning", "outer",
         "\uac89\uac10", "\uc548\uac10", "\uc678\ud53c", "\ub0b4\ud53c", "\ucda9\uc804\uc7ac", "\ucda9\uc804\uc81c",
         "\u672c\u4f53", "\u9762\u6599", "\u91cc\u6599", "\u88e1\u6599",
+        "表地", "裏地", "リブ", "螺纹",
     ]
+    cjk_markers = [marker for marker in split_markers if re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", marker)]
+    # Keep an OCR-reordered leading ratio with its part, e.g. 95%面料棉5%氨纶.
+    # Restrict this to a ratio-only line prefix so completed parts stay separate.
+    cjk_pattern = "|".join(re.escape(marker) for marker in sorted(cjk_markers, key=len, reverse=True))
+    prepared = re.sub(
+        rf"(?m)^([ \t]*[0-9]{{1,3}}[ \t]*%[ \t]*)({cjk_pattern})",
+        r"\2\1",
+        prepared,
+    )
     for marker in split_markers:
-        prepared = re.sub(rf"(?i)(?<!^)\b({re.escape(marker)})\b", r"\n\1", prepared)
+        # Japanese/Chinese headers may touch the material name (e.g. 表地綿).
+        # Unicode word boundaries would miss both the header and the next part.
+        if marker in cjk_markers:
+            prepared = re.sub(rf"({re.escape(marker)})", r"\n\1\n", prepared)
+        else:
+            pattern = rf"(?i)(?<!^)\b({re.escape(marker)})\b"
+            prepared = re.sub(pattern, r"\n\1", prepared)
     raw_lines = prepared.replace("\r", "\n").split("\n")
 
     for idx, raw in enumerate(raw_lines):

@@ -50,3 +50,25 @@ be mistaken for the real-photo QA score.
 3. Run OCR and parser experiments separately, reporting OCR failure and parsing failure.
 4. Keep the real-photo QA score separate from the synthetic-data score.
 5. Scale only after the 80-image pilot passes these checks.
+
+## Parser-only regression evaluation
+
+```powershell
+python scripts/evaluate_synthetic_parser.py --manifest outputs/synthetic/synthetic_v1_pilot/manifest.csv --output outputs/synthetic/parser_alias_review/after.json
+```
+
+This reads `original_text` only; it does not open images or call Google Vision.
+It reports exact material/ratio matches and selected-part matches separately,
+both per image row and per unique `source_group`. All original rows remain in
+the denominator, including known label-generation errors. Use `--parser-root`
+to compare a separate baseline checkout with the same evaluator.
+
+The unchanged v1.0.0 pilot improved from 60/80 to 72/80 material matches after
+Japanese/Chinese parser updates. The remaining two source groups contain the
+incorrect Chinese acrylic spelling `腨纶`; source 0020 also exposes the generator's
+ambiguous `氨纶` mapping to both spandex and polyurethane. Generator v1.0.1 fixes
+the acrylic spelling to `腈纶` for future runs. Existing images and answers are
+preserved. Resolve the elastic-fiber label/answer policy before generating a
+replacement pilot or expanding to 400 images.
+
+See [the parser review](PARSER_ALIAS_REVIEW.md) for results, limitations, and next steps.
