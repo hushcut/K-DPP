@@ -8,9 +8,6 @@ extension _ClosetSortSheet on _ClosetScreenState {
     final palette = AppPalette.of(context);
     final primaryText = palette.textPrimary;
     final sheetColor = isDark ? const Color(0xFF121212) : Colors.white;
-    final secondaryText = isDark
-        ? const Color(0xFFD1D1D6)
-        : const Color(0xFF8C8C8C);
 
     final selected = await showModalBottomSheet<ClosetSortOption>(
       context: context,
@@ -41,25 +38,21 @@ extension _ClosetSortSheet on _ClosetScreenState {
                   label: '친환경 순',
                   value: ClosetSortOption.eco,
                   primaryText: primaryText,
-                  secondaryText: secondaryText,
                 ),
                 _buildSortOptionTile(
                   label: '건강도 순',
                   value: ClosetSortOption.health,
                   primaryText: primaryText,
-                  secondaryText: secondaryText,
                 ),
                 _buildSortOptionTile(
                   label: '최신 등록 순',
                   value: ClosetSortOption.latest,
                   primaryText: primaryText,
-                  secondaryText: secondaryText,
                 ),
                 _buildSortOptionTile(
                   label: '내 설정 순',
                   value: ClosetSortOption.custom,
                   primaryText: primaryText,
-                  secondaryText: secondaryText,
                 ),
               ],
             ),
@@ -95,13 +88,12 @@ extension _ClosetSortSheet on _ClosetScreenState {
     required String label,
     required ClosetSortOption value,
     required Color primaryText,
-    required Color secondaryText,
   }) {
     final isSelected = _sortOption == value;
 
-    // 네 항목 중 하나만 고르는 자리라 테마 선택 타일(display_settings_screen.dart)과
-    // 같은 라디오 타일로 맞춥니다. 선택된 항목만 체크 표시를 쓰면 나머지 빈 원과
-    // 짝이 맞지 않아, 고르는 자리인지 켜고 끄는 자리인지가 흐려집니다.
+    // 넷 중 하나를 고르는 자리이므로 선택한 항목에만 체크를 두고 나머지는 비웁니다.
+    // 체크와 빈 원을 섞으면 짝이 맞지 않고, 전부 라디오 원으로 맞추면 목록이
+    // 입력 폼처럼 번잡해 보여 팀 검토에서 체크 방식으로 정했습니다(2026-09-10).
     // 선택 상태를 색·아이콘으로만 알리면 낭독기에서는 네 항목이 구분되지 않으므로
     // Semantics로 함께 전달하고, 내부 표현은 중복 낭독을 막습니다.
     return Semantics(
@@ -127,12 +119,11 @@ extension _ClosetSortSheet on _ClosetScreenState {
                     ),
                   ),
                 ),
-                Icon(
-                  isSelected
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_off,
-                  color: isSelected ? AppPalette.accent : secondaryText,
-                ),
+                // 선택되지 않은 줄에도 아이콘 크기만큼 자리를 두어 네 줄의 높이를 같게 맞춥니다.
+                if (isSelected)
+                  const Icon(Icons.check, color: AppPalette.accent)
+                else
+                  const SizedBox(width: 24, height: 24),
               ],
             ),
           ),
