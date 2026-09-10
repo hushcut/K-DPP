@@ -325,4 +325,45 @@ void main() {
 
     expect(find.textContaining('현재 정렬: 건강도 순'), findsOneWidget);
   });
+
+  testWidgets('정렬 시트는 하나만 고르는 자리이므로 라디오 한 쌍으로 표시한다', (tester) async {
+    final semanticsHandle = tester.ensureSemantics();
+    final provider = ClosetProvider(
+      storage: FakeClosetStorage(),
+      authSessionStorage: FakeAuthSessionStorage(),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: provider,
+        child: MaterialApp(
+          home: Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('옷장 정렬'));
+    await tester.pumpAndSettle();
+
+    // 선택된 항목만 Icons.check이고 나머지는 빈 원이면 짝이 맞지 않아,
+    // 고르는 자리인지 켜고 끄는 자리인지가 흐려진다.
+    expect(find.byIcon(Icons.radio_button_checked), findsOneWidget);
+    expect(find.byIcon(Icons.radio_button_off), findsNWidgets(3));
+    expect(find.byIcon(Icons.check), findsNothing);
+
+    // 색과 아이콘만으로 알리면 낭독기에서는 네 항목이 구분되지 않는다.
+    expect(find.bySemanticsLabel('친환경 순 정렬'), findsOneWidget);
+    expect(find.bySemanticsLabel('내 설정 순 정렬'), findsOneWidget);
+    expect(
+      tester.getSemantics(find.bySemanticsLabel('친환경 순 정렬')),
+      isSemantics(isSelected: true, isButton: true),
+    );
+    expect(
+      tester.getSemantics(find.bySemanticsLabel('내 설정 순 정렬')),
+      isSemantics(isSelected: false),
+    );
+
+    semanticsHandle.dispose();
+  });
 }

@@ -99,28 +99,43 @@ extension _ClosetSortSheet on _ClosetScreenState {
   }) {
     final isSelected = _sortOption == value;
 
-    return InkWell(
-      onTap: () => Navigator.pop(context, value),
-      borderRadius: BorderRadius.circular(14),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 18,
-                  color: isSelected ? AppPalette.accent : primaryText,
-                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+    // 네 항목 중 하나만 고르는 자리라 테마 선택 타일(display_settings_screen.dart)과
+    // 같은 라디오 타일로 맞춥니다. 선택된 항목만 체크 표시를 쓰면 나머지 빈 원과
+    // 짝이 맞지 않아, 고르는 자리인지 켜고 끄는 자리인지가 흐려집니다.
+    // 선택 상태를 색·아이콘으로만 알리면 낭독기에서는 네 항목이 구분되지 않으므로
+    // Semantics로 함께 전달하고, 내부 표현은 중복 낭독을 막습니다.
+    return Semantics(
+      label: '$label 정렬',
+      button: true,
+      selected: isSelected,
+      child: InkWell(
+        onTap: () => Navigator.pop(context, value),
+        borderRadius: BorderRadius.circular(14),
+        child: ExcludeSemantics(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 18,
+                      color: isSelected ? AppPalette.accent : primaryText,
+                      fontWeight:
+                          isSelected ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
                 ),
-              ),
+                Icon(
+                  isSelected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
+                  color: isSelected ? AppPalette.accent : secondaryText,
+                ),
+              ],
             ),
-            Icon(
-              isSelected ? Icons.check : Icons.radio_button_unchecked,
-              color: isSelected ? AppPalette.accent : secondaryText,
-            ),
-          ],
+          ),
         ),
       ),
     );
