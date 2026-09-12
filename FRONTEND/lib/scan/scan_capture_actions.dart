@@ -65,7 +65,7 @@ extension _ScanCaptureActions on _ScanScreenState {
       // 무게 범위와 분류를 확정할 수 있도록 분석 유형을 사용자에게 확인받습니다.
       final selectedType = await _showClothingTypePicker(
         initialSelection: inferredType,
-        canDismiss: false,
+        discardPrompt: ClothingTypePickerDiscardPrompt.analysisResult,
       );
 
       if (!mounted) return;
@@ -110,7 +110,7 @@ extension _ScanCaptureActions on _ScanScreenState {
 
     final selectedType = await _showClothingTypePicker(
       initialSelection: _selectedClothingType,
-      canDismiss: false,
+      discardPrompt: ClothingTypePickerDiscardPrompt.manualAfterFailure,
     );
 
     if (!mounted) return;

@@ -62,33 +62,16 @@ extension _ScanResultActions on _ScanScreenState {
     });
   }
 
+  /// [discardPrompt]를 주면 선택을 건너뛸 수 없고, '다시 촬영' 확인 후에만 null을 반환합니다.
   Future<ClothingTypeOption?> _showClothingTypePicker({
     required ClothingTypeOption initialSelection,
-    bool canDismiss = true,
+    ClothingTypePickerDiscardPrompt? discardPrompt,
   }) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final sheetColor = isDark ? const Color(0xFF121212) : Colors.white;
-
-    return showModalBottomSheet<ClothingTypeOption>(
+    return showClothingTypePickerSheet(
       context: context,
-      isScrollControlled: true,
-      isDismissible: canDismiss,
-      enableDrag: true,
-      showDragHandle: true,
-      backgroundColor: sheetColor,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      builder: (sheetContext) {
-        return ClothingTypePickerSheet(
-          options: ClothingTypeCatalog.options,
-          initialSelection: initialSelection,
-          onSelected: (option) {
-            Navigator.pop(sheetContext, option);
-          },
-        );
-      },
+      options: ClothingTypeCatalog.options,
+      initialSelection: initialSelection,
+      discardPrompt: discardPrompt,
     );
   }
 
