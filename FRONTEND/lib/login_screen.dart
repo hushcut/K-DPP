@@ -31,7 +31,7 @@ class LoginScreen extends StatelessWidget {
                   child: Column(
                     children: [
                       const Spacer(flex: 2),
-                      const KdppLogoMark(size: 96, borderRadius: 28),
+                      const KdppLogoMark(size: 96, semanticLabel: null),
                       const SizedBox(height: 24),
                       Text(
                         'K-DPP',

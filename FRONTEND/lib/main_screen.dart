@@ -260,7 +260,7 @@ class _MainScreenState extends State<MainScreen>
               icon: Icon(Icons.arrow_back, color: appBarIconColor),
             )
           : null,
-      title: const KdppLogoMark(size: 34, borderRadius: 10),
+      title: const KdppLogoMark(size: 34),
       actions: [
         IconButton(
           onPressed: _openSettings,

@@ -2,53 +2,70 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_palette.dart';
 
-/// 지정한 정사각형 크기로 K-DPP 로고 자산을 표시하는 공용 위젯입니다.
-///
-/// 자산을 불러오지 못하면 동일한 영역에 브랜드 색상의 친환경 아이콘을 표시합니다.
+/// 배경 없이 택과 잎을 표시합니다. 인접한 제목이 있으면 semanticLabel을 null로 둡니다.
 class KdppLogoMark extends StatelessWidget {
-  const KdppLogoMark({super.key, this.size = 34, this.borderRadius});
+  const KdppLogoMark({super.key, this.size = 34, this.semanticLabel = 'K-DPP'});
 
-  /// 앱 번들에 포함된 로고 이미지 경로입니다.
   static const String assetPath = 'assets/images/kdpp_logo.png';
 
-  // 로고의 가로·세로 크기와 선택적 모서리 반경입니다.
   final double size;
-  final double? borderRadius;
+  final String? semanticLabel;
 
   @override
   Widget build(BuildContext context) {
-    final radius = borderRadius ?? size * 0.28;
-
-    return Semantics(
-      label: 'K-DPP',
-      image: true,
-      child: ExcludeSemantics(
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(radius),
-          child: Image.asset(
-            assetPath,
-            width: size,
-            height: size,
-            fit: BoxFit.cover,
-            filterQuality: FilterQuality.high,
-            errorBuilder: (context, error, stackTrace) {
-              return Container(
-                width: size,
-                height: size,
-                decoration: BoxDecoration(
-                  color: AppPalette.accent,
-                  borderRadius: BorderRadius.circular(radius),
-                ),
-                child: Icon(
-                  Icons.eco_outlined,
-                  color: Colors.white,
-                  size: size * 0.58,
-                ),
-              );
-            },
-          ),
-        ),
+    final image = Image.asset(
+      assetPath,
+      width: size,
+      height: size,
+      fit: BoxFit.contain,
+      filterQuality: FilterQuality.high,
+      excludeFromSemantics: true,
+      errorBuilder: (context, error, stackTrace) => CustomPaint(
+        size: Size.square(size),
+        painter: const _KdppLogoPainter(),
       ),
     );
+
+    if (semanticLabel == null) return ExcludeSemantics(child: image);
+    return Semantics(
+      label: semanticLabel,
+      image: true,
+      child: ExcludeSemantics(child: image),
+    );
   }
+}
+
+/// assets/images/kdpp_logo_mark.svg와 같은 100×100 좌표계의 폴백입니다.
+/// 자산 로드 실패 중에도 투명 배경과 택/잎 색상을 유지합니다.
+class _KdppLogoPainter extends CustomPainter {
+  const _KdppLogoPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.scale(size.width / 100, size.height / 100);
+    final tag = Path()
+      ..fillType = PathFillType.evenOdd
+      ..moveTo(41, 11)
+      ..lineTo(59, 11)
+      ..lineTo(77, 29)
+      ..lineTo(77, 82)
+      ..quadraticBezierTo(77, 89, 70, 89)
+      ..lineTo(30, 89)
+      ..quadraticBezierTo(23, 89, 23, 82)
+      ..lineTo(23, 29)
+      ..close()
+      ..addOval(Rect.fromCircle(center: const Offset(50, 28), radius: 5.5));
+    canvas.drawPath(tag, Paint()..color = AppPalette.accent);
+    final leaf = Path()
+      ..moveTo(37, 72)
+      ..cubicTo(33, 54, 43, 45, 63, 44)
+      ..cubicTo(66, 62, 54, 76, 37, 72)
+      ..close();
+    canvas.drawPath(leaf, Paint()..color = const Color(0xFF63D68B));
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _KdppLogoPainter oldDelegate) => false;
 }

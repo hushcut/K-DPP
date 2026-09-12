@@ -69,6 +69,7 @@ flutter:
   uses-material-design: true
 
   assets:
+    # PNG 2.0x/3.0x variants are resolved automatically; SVG sources stay out of the bundle.
     - assets/images/kdpp_logo.png
 
   # To add assets to your application, add an assets section, like this:
