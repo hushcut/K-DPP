@@ -22,7 +22,8 @@ void main() {
       expect(success.clothes.title, '홍길동 코튼 셔츠');
       expect(success.clothes.category, '상의');
       expect(success.clothes.health, 93);
-      expect(success.clothes.carbonFootprint, 1.4);
+      // 서버 시드 cotton 8.3 × 0.18kg(반팔 티셔츠 대표 무게) = 1.494
+      expect(success.clothes.carbonFootprint, 1.5);
       expect(success.clothes.minWeightGram, 100);
       expect(success.clothes.maxWeightGram, 250);
     });

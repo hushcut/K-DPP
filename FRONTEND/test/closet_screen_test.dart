@@ -325,4 +325,62 @@ void main() {
 
     expect(find.textContaining('현재 정렬: 건강도 순'), findsOneWidget);
   });
+
+  testWidgets('정렬 시트는 선택한 항목에만 체크를 두고 나머지는 비운다', (tester) async {
+    final semanticsHandle = tester.ensureSemantics();
+    final provider = ClosetProvider(
+      storage: FakeClosetStorage(),
+      authSessionStorage: FakeAuthSessionStorage(),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: provider,
+        child: MaterialApp(
+          home: Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('옷장 정렬'));
+    await tester.pumpAndSettle();
+
+    // 넷 중 하나를 고르는 자리다. 체크와 빈 원을 섞으면 짝이 맞지 않고,
+    // 전부 라디오 원으로 맞추면 입력 폼처럼 번잡해 체크 방식으로 정했다.
+    expect(find.byIcon(Icons.check), findsOneWidget);
+    expect(find.byIcon(Icons.radio_button_unchecked), findsNothing);
+    expect(find.byIcon(Icons.radio_button_off), findsNothing);
+    expect(find.byIcon(Icons.radio_button_checked), findsNothing);
+
+    // 체크는 현재 기준(기본값 친환경 순) 줄에 있어야 한다.
+    expect(
+      find.descendant(
+        of: find.widgetWithText(InkWell, '친환경 순'),
+        matching: find.byIcon(Icons.check),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.widgetWithText(InkWell, '내 설정 순'),
+        matching: find.byIcon(Icons.check),
+      ),
+      findsNothing,
+    );
+
+    // 색과 아이콘만으로 알리면 낭독기에서는 네 항목이 구분되지 않는다.
+    expect(find.bySemanticsLabel('친환경 순 정렬'), findsOneWidget);
+    expect(find.bySemanticsLabel('내 설정 순 정렬'), findsOneWidget);
+    expect(
+      tester.getSemantics(find.bySemanticsLabel('친환경 순 정렬')),
+      isSemantics(isSelected: true, isButton: true),
+    );
+    expect(
+      tester.getSemantics(find.bySemanticsLabel('내 설정 순 정렬')),
+      isSemantics(isSelected: false),
+    );
+
+    semanticsHandle.dispose();
+  });
 }

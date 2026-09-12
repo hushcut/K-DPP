@@ -12,6 +12,9 @@ void main() {
     icon: Icons.checkroom_outlined,
   );
   const originalMaterials = {'cotton': 80.0, 'polyester': 20.0};
+  // 아래 로컬 추정값은 ClothingEstimator의 계수표를 쓰고, 그 표는
+  // 서버 시드(BACKEND/init_data.py)의 carbon_factor 사본이다
+  // (cotton 8.3 · polyester 9.5).
 
   test('uses server values when materials and weight still match', () {
     final result = ScanCalculationResolver.resolve(
@@ -40,7 +43,7 @@ void main() {
     );
 
     expect(result.health, 91);
-    expect(result.carbonFootprint, 4.6);
+    expect(result.carbonFootprint, 4.4);
     expect(result.usesServerHealth, isTrue);
     expect(result.usesServerCarbon, isFalse);
   });
@@ -54,7 +57,7 @@ void main() {
       serverWeightGram: 520,
     );
 
-    expect(result.carbonFootprint, 4.6);
+    expect(result.carbonFootprint, 4.4);
     expect(result.usesServerCarbon, isFalse);
   });
 
@@ -70,7 +73,7 @@ void main() {
     );
 
     expect(result.health, 93);
-    expect(result.carbonFootprint, 4.2);
+    expect(result.carbonFootprint, 4.3);
     expect(result.usesServerHealth, isFalse);
     expect(result.usesServerCarbon, isFalse);
   });
@@ -96,7 +99,7 @@ void main() {
     );
 
     expect(result.health, 91);
-    expect(result.carbonFootprint, 5.3);
+    expect(result.carbonFootprint, 5.1);
     expect(result.usesServerHealth, isTrue);
     expect(result.usesServerCarbon, isFalse);
   });

@@ -102,7 +102,16 @@ POST /api/carbon/calculate
   소재/혼용률 + 최소/최대 무게 -> DB 계수 계산 -> 사용자 이력 저장
 ```
 
-프런트엔드는 자체 소재별 탄소계수를 갖지 않으며, 최종 탄소배출량은 백엔드 응답만 사용합니다.
+**최종** 탄소배출량은 백엔드 응답만 사용합니다. 다만 프런트엔드는 저장 **전** 프리뷰와
+옷장에 저장되는 건강도를 서버 왕복 없이 계산하므로, 이 표의 사본을 **두 파일**에 갖고 있습니다.
+
+| 프런트엔드 파일 | 사본 |
+| --- | --- |
+| `FRONTEND/lib/utils/material_name.dart` | 한글명·별칭 → 영문 표준명 |
+| `FRONTEND/lib/utils/clothing_estimator.dart` | 영문 표준명 → `carbon_factor` |
+
+`init_data.py`의 `MATERIAL_SEEDS`를 고칠 때는 **두 파일을 함께** 갱신해야 합니다.
+어긋나면 `tests/test_material_name_contract.py`가 실패합니다.
 
 ## 환경 파일
 
