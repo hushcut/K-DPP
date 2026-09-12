@@ -1,5 +1,5 @@
-# push·PR마다 프론트엔드 분석·테스트를 자동 실행해 회귀를 조기에 잡습니다.
-# 백엔드 잡은 폴더가 있는 브랜치에서만 참고용으로 실행합니다(파트 확인 후 필수 전환).
+# push·PR마다 프론트엔드·백엔드 분석·테스트를 자동 실행해 회귀를 조기에 잡습니다.
+# 두 잡 모두 필수입니다(2026-09-07 백엔드 continue-on-error 제거).
 name: CI
 
 on:
@@ -49,6 +49,14 @@ jobs:
       - name: Install dependencies
         working-directory: BACKEND
         run: pip install -r requirements.txt
+
+      # BACKEND/main.py는 AI 모듈 import 실패를 try/except로 삼켜 run_ocr=None으로 둡니다.
+      # 그러면 실사진 스캔이 전부 503(AI_MODULE_FAILED)이 되는데, pytest는 raw_ocr_text를
+      # 보내거나 스텁을 쓰기 때문에 이 경로에 들어가지 않아 전건 초록입니다.
+      # BACKEND/requirements.txt만 설치된 상태(=배포 런타임과 동일)에서 결합을 직접 확인합니다.
+      - name: AI module wiring check
+        working-directory: BACKEND
+        run: python check_ai_wiring.py
 
       - name: Test
         working-directory: BACKEND
