@@ -96,14 +96,17 @@ extension _ScanCaptureActions on _ScanScreenState {
         return;
       }
 
-      await _showManualFallback(outcome.userMessage);
+      await _showManualFallback(outcome.exception);
     }
   }
 
   /// 자동 분석에 실패해도 유형과 소재를 직접 입력할 수 있는 초안을 만듭니다.
+  /// 서버가 오류 본문에 부분 인식 결과를 실어 보냈다면 초기값으로 채웁니다.
   /// _isScanning은 유형 선택이 끝날 때까지 유지해 카메라 재초기화를 막습니다.
-  Future<void> _showManualFallback(String message) async {
+  Future<void> _showManualFallback(ScanApiException exception) async {
     if (!mounted) return;
+
+    final message = exception.userMessage;
 
     final selectedType = await _showClothingTypePicker(
       initialSelection: _selectedClothingType,
@@ -118,7 +121,12 @@ extension _ScanCaptureActions on _ScanScreenState {
     }
 
     _applyScanDraft(
-      _scanDraftService.buildManual(clothingType: selectedType),
+      _scanDraftService.buildManual(
+        clothingType: selectedType,
+        partialMaterials: exception.partialMaterials,
+        careInstruction: exception.careInstruction,
+        rawOcrPreview: exception.rawOcrPreview,
+      ),
       isScanFailed: true,
       failureMessage: message,
     );
@@ -138,6 +146,7 @@ extension _ScanCaptureActions on _ScanScreenState {
       _isScanComplete = false;
       _isScanFailed = false;
       _scannedCare = '';
+      _scannedOcrPreview = '';
       _scanFailureMessage = null;
       _originalScannedMaterials = const {};
       _serverHealth = null;

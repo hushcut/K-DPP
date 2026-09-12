@@ -32,6 +32,7 @@ extension _ScanViewBuilders on _ScanScreenState {
       materialInputs: _materialInputs,
       materialCatalog: _materialCatalog,
       scannedCare: _scannedCare,
+      rawOcrPreview: _scannedOcrPreview,
       originalMaterials: _originalScannedMaterials,
       serverHealth: _serverHealth,
       serverCarbonFootprint: _serverCarbonFootprint,

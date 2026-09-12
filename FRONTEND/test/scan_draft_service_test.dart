@@ -91,5 +91,55 @@ void main() {
       expect(draft.title, ClothingTypeCatalog.defaultOption.defaultTitle);
       expect(draft.isManualMaterialMode, isTrue);
     });
+
+    test('buildManual은 서버가 보낸 부분 인식 결과를 초기값으로 쓴다', () {
+      final draft = service.buildManual(
+        clothingType: ClothingTypeCatalog.defaultOption,
+        partialMaterials: const {'cotton': 60, 'wool': 15},
+        careInstruction: '손세탁; 표백 금지',
+        rawOcrPreview: '  COTTON 60% WOOL 15%  ',
+      );
+
+      expect(draft.materials, {'cotton': 60.0, 'wool': 15.0});
+      expect(draft.careInstruction, '손세탁; 표백 금지');
+      expect(draft.rawOcrPreview, 'COTTON 60% WOOL 15%');
+      expect(draft.isManualMaterialMode, isTrue);
+    });
+
+    test('buildManual은 서버 값이 비어 있으면 기존 기본값을 유지한다', () {
+      final draft = service.buildManual(
+        clothingType: ClothingTypeCatalog.defaultOption,
+        careInstruction: '   ',
+        rawOcrPreview: '   ',
+      );
+
+      expect(draft.materials, isEmpty);
+      expect(draft.careInstruction, ScanResult.defaultCareInstruction);
+      expect(draft.rawOcrPreview, isEmpty);
+    });
+
+    test('buildManual은 폼에서 고칠 수 없는 소재 항목을 걸러낸다', () {
+      final draft = service.buildManual(
+        clothingType: ClothingTypeCatalog.defaultOption,
+        partialMaterials: {
+          ' cotton ': 60,
+          '': 30,
+          'linen': -5,
+          'silk': double.nan,
+        },
+      );
+
+      expect(draft.materials, {'cotton': 60.0});
+    });
+
+    test('buildManual은 지나치게 긴 라벨 원문을 잘라 낸다', () {
+      final draft = service.buildManual(
+        clothingType: ClothingTypeCatalog.defaultOption,
+        rawOcrPreview: 'A' * 400,
+      );
+
+      expect(draft.rawOcrPreview.length, 303);
+      expect(draft.rawOcrPreview.endsWith('...'), isTrue);
+    });
   });
 }

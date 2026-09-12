@@ -1,3 +1,6 @@
+import main
+
+
 def test_analyze_calculates_cotton_polyester(client):
     response = client.post(
         "/analyze",
@@ -374,5 +377,78 @@ def test_scan_material_failure_returns_partial_context(client):
     assert body["status"] == "error"
     assert body["error_code"] == "MATERIAL_EXTRACTION_FAILED"
     assert body["detail"]["error_code"] == "MATERIAL_EXTRACTION_FAILED"
+    # 프론트 직접 입력 폼이 읽는 필드입니다. 이 네 개가 계약이며,
+    # AI 브랜치를 머지하면서 detail을 줄이면 폼 프리필이 조용히 사라집니다.
     assert body["detail"]["partial_materials"] == {}
+    assert body["detail"]["ai_success"] is False
+    assert body["detail"]["care_instruction"]
     assert "raw_ocr_preview" in body["detail"]
+
+
+def test_scan_accepts_either_care_key_from_parser(client, monkeypatch):
+    """AI 파서 버전에 따라 care_text/care_instruction 중 하나만 온다."""
+    token = _login_token(client)
+
+    monkeypatch.setattr(
+        main,
+        "parse_label",
+        lambda text: {
+            "materials": {"cotton": 100},
+            "care_instruction": "손세탁; 표백 금지",
+            "raw_ocr_preview": "COTTON 100%",
+        },
+    )
+
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": "COTTON 100%"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["care_instruction"] == "손세탁; 표백 금지"
+
+
+def test_scan_material_failure_keeps_parser_care_instruction(client, monkeypatch):
+    token = _login_token(client)
+
+    monkeypatch.setattr(
+        main,
+        "parse_label",
+        lambda text: {
+            "materials": {},
+            "care_instruction": "손세탁; 표백 금지",
+            "raw_ocr_preview": "CARE ONLY",
+        },
+    )
+
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": "CARE ONLY"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["care_instruction"] == "손세탁; 표백 금지"
+
+
+def test_scan_ocr_failure_does_not_leak_exception_text(client, monkeypatch):
+    """OCR 예외 원문에는 서버 경로·계정 식별자가 섞일 수 있어 응답에 넣지 않는다."""
+    token = _login_token(client)
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("C:/secret/key.json 자격 증명 오류")
+
+    monkeypatch.setattr(main, "run_ocr", _raise)
+
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 502
+    assert "secret" not in response.text
+    assert "key.json" not in response.text

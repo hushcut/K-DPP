@@ -21,6 +21,7 @@ extension _ScanResultActions on _ScanScreenState {
       _isScanComplete = true;
       _isScanFailed = isScanFailed;
       _scannedCare = draft.careInstruction;
+      _scannedOcrPreview = draft.rawOcrPreview;
       _scanFailureMessage = failureMessage;
       _originalScannedMaterials = Map.unmodifiable(draft.materials);
       _serverHealth = draft.serverHealth;

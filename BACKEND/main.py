@@ -947,7 +947,14 @@ def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
     parsed = parse_label(label_text)
     materials = parsed.get("materials") or {}
     raw_ocr_preview = parsed.get("raw_ocr_preview", "")
-    care_instruction = parsed.get("care_text") or "라벨 표기법에 맞춰 관리하세요."
+    # AI 파서는 버전마다 관리 지침 키가 다릅니다(develop: care_text,
+    # ksw/ai-ocr-enhancement: care_instruction). 한쪽만 읽으면 AI 모듈을
+    # 교체하는 순간 실제 지침이 조용히 사라지고 아래 기본 문구만 남습니다.
+    care_instruction = (
+        parsed.get("care_text")
+        or parsed.get("care_instruction")
+        or "라벨 표기법에 맞춰 관리하세요."
+    )
 
     if not materials:
         raise HTTPException(
