@@ -8,7 +8,8 @@ extension _ScanResultActions on _ScanScreenState {
     bool isScanFailed = false,
     String? failureMessage,
   }) {
-    unawaited(_loadMaterialCatalog());
+    // 결과 편집에 쓰는 소재 목록은 처음 한 번만 받고, 실패했으면 이때 다시 요청합니다.
+    unawaited(_materialCatalog.load());
     _setMaterialInputs(draft.materials);
 
     if (draft.isManualMaterialMode && draft.materials.isEmpty) {

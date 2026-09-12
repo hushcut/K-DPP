@@ -1,9 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/utils/material_name.dart';
 
-/// 같은 소재가 등록 경로에 따라 다른 문자열로 저장된다 —
-/// 스캔은 서버 표시명(한글 '면'), 자동완성은 `option.nameEn`(영문 'cotton').
-/// 소재를 문자열로 판별하는 코드가 한쪽만 알아보면 스캔한 옷에서만 기능이 죽는다.
+/// 같은 소재가 등록 경로와 시점에 따라 다른 문자열로 저장된다 —
+/// 스캔·소재 선택창·자동완성(2026-09-13 이후)은 한글 '면', 영문 직접 입력과
+/// 그 이전 자동완성(`option.nameEn`)은 영문 'cotton'.
+/// 소재를 문자열로 판별하는 코드가 한쪽만 알아보면 다른 쪽 옷에서만 기능이 죽는다.
 void main() {
   group('standardize', () {
     test('서버 시드의 한글명·별칭을 영문 표준명으로 되돌린다', () {

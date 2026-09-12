@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:k_dpp/services/material_catalog_api_service.dart';
+import 'package:k_dpp/services/material_catalog_controller.dart';
 import 'package:k_dpp/utils/clothing_type_catalog.dart';
+import 'package:k_dpp/utils/scan_form_validator.dart';
 import 'package:k_dpp/widgets/material_input_collection.dart';
 import 'package:k_dpp/widgets/scan_result_view.dart';
 
@@ -308,4 +312,247 @@ void main() {
 
     expect(find.text('인식된 라벨 원문'), findsNothing);
   });
+
+  testWidgets('목록 아이콘으로 고른 소재는 그 행에 한글 이름으로 들어가고, 닫힌 뒤 입력란이 다시 포커스를 받지 않는다', (
+    tester,
+  ) async {
+    _usePhoneView(tester);
+    final materialInputs = MaterialInputCollection()
+      ..setFromMaterials({'코': 100});
+    addTearDown(materialInputs.dispose);
+    final catalog = await _loadedCatalog();
+    addTearDown(catalog.dispose);
+    await _pumpResultView(
+      tester,
+      materialInputs: materialInputs,
+      materialCatalog: catalog,
+    );
+
+    final row = materialInputs[0];
+    final nameField = find.widgetWithText(TextFormField, '코');
+    await tester.ensureVisible(nameField);
+    await tester.tap(nameField);
+    await tester.pump();
+    expect(row.nameFocusNode.hasFocus, isTrue);
+
+    await tester.tap(find.byTooltip('목록에서 소재 고르기'));
+    await tester.pumpAndSettle();
+    expect(find.text('소재 선택'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(ListTile, '면'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('소재 선택'), findsNothing);
+    expect(row.nameController.text, '면');
+    // 포커스가 돌아오면 키보드와 추천 목록이 다시 뜬다.
+    expect(row.nameFocusNode.hasFocus, isFalse);
+  });
+
+  testWidgets('선택창이 열린 동안 그 행이 지워지면 고른 소재를 쓰지 않는다', (tester) async {
+    _usePhoneView(tester);
+    final materialInputs = MaterialInputCollection()
+      ..setFromMaterials({'면': 60, '코': 40});
+    addTearDown(materialInputs.dispose);
+    final catalog = await _loadedCatalog();
+    addTearDown(catalog.dispose);
+    final rebuildView = await _pumpResultView(
+      tester,
+      materialInputs: materialInputs,
+      materialCatalog: catalog,
+    );
+
+    final pickerButtons = find.byTooltip('목록에서 소재 고르기');
+    await tester.ensureVisible(pickerButtons.at(1));
+    await tester.tap(pickerButtons.at(1));
+    await tester.pumpAndSettle();
+
+    rebuildView(() => materialInputs.removeAt(1));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(ListTile, '비스코스'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(materialInputs.length, 1);
+    expect(materialInputs[0].nameController.text, '면');
+  });
+
+  testWidgets('선택창이 열린 동안 앞 행이 지워져도 고른 소재는 원래 행에 들어간다', (tester) async {
+    _usePhoneView(tester);
+    final materialInputs = MaterialInputCollection()
+      ..setFromMaterials({'면': 60, '코': 40});
+    addTearDown(materialInputs.dispose);
+    final catalog = await _loadedCatalog();
+    addTearDown(catalog.dispose);
+    final rebuildView = await _pumpResultView(
+      tester,
+      materialInputs: materialInputs,
+      materialCatalog: catalog,
+    );
+
+    final targetRow = materialInputs[1];
+    final pickerButtons = find.byTooltip('목록에서 소재 고르기');
+    await tester.ensureVisible(pickerButtons.at(1));
+    await tester.tap(pickerButtons.at(1));
+    await tester.pumpAndSettle();
+
+    rebuildView(() => materialInputs.removeAt(0));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(ListTile, '비스코스'));
+    await tester.pumpAndSettle();
+
+    expect(materialInputs.length, 1);
+    expect(identical(materialInputs[0], targetRow), isTrue);
+    expect(targetRow.nameController.text, '비스코스');
+  });
+
+  testWidgets('소재명 오류 문구는 좁은 화면에서도 한 줄로 잘리지 않는다', (tester) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final materialInputs = MaterialInputCollection()..addEmpty();
+    addTearDown(materialInputs.dispose);
+
+    await _pumpResultView(
+      tester,
+      materialInputs: materialInputs,
+      hasTriedSubmit: true,
+      validateMaterialName: ScanFormValidator.validateMaterialName,
+    );
+
+    const message = '소재명을 입력해 주세요.';
+    expect(find.text(message), findsOneWidget);
+    expect(
+      tester.renderObject<RenderParagraph>(find.text(message)).didExceedMaxLines,
+      isFalse,
+    );
+  });
+
+  testWidgets('입력란에 글자를 치면 기존 추천 목록이 뜨고, 고르면 한글 이름이 들어간다', (tester) async {
+    _usePhoneView(tester);
+    final materialInputs = MaterialInputCollection()..addEmpty();
+    addTearDown(materialInputs.dispose);
+    final catalog = await _loadedCatalog();
+    addTearDown(catalog.dispose);
+    await _pumpResultView(
+      tester,
+      materialInputs: materialInputs,
+      materialCatalog: catalog,
+    );
+
+    final nameField = find.widgetWithText(TextFormField, '소재명');
+    await tester.ensureVisible(nameField);
+    await tester.enterText(nameField, '코');
+    await tester.pumpAndSettle();
+
+    expect(find.text('면 (cotton)'), findsOneWidget);
+
+    await tester.tap(find.text('면 (cotton)'));
+    await tester.pumpAndSettle();
+
+    expect(materialInputs[0].nameController.text, '면');
+  });
+
+  testWidgets('저장 중에는 소재 선택창 아이콘을 누를 수 없고, 카탈로그가 없으면 아이콘이 없다', (
+    tester,
+  ) async {
+    _usePhoneView(tester);
+    final materialInputs = MaterialInputCollection()
+      ..setFromMaterials({'면': 100});
+    addTearDown(materialInputs.dispose);
+    final catalog = await _loadedCatalog();
+    addTearDown(catalog.dispose);
+
+    await _pumpResultView(
+      tester,
+      materialInputs: materialInputs,
+      materialCatalog: catalog,
+      isSaving: true,
+    );
+    final pickerButton = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.format_list_bulleted_rounded),
+    );
+    expect(pickerButton.onPressed, isNull);
+
+    await _pumpResultView(tester, materialInputs: materialInputs);
+    expect(find.byTooltip('목록에서 소재 고르기'), findsNothing);
+  });
+}
+
+const _catalogItems = [
+  MaterialCatalogItem(id: 1, nameKo: '면', nameEn: 'cotton', aliases: ['코튼']),
+  MaterialCatalogItem(id: 2, nameKo: '비스코스', nameEn: 'viscose', aliases: []),
+  MaterialCatalogItem(id: 3, nameKo: '울', nameEn: 'wool', aliases: ['모']),
+];
+
+Future<MaterialCatalogController> _loadedCatalog() async {
+  final catalog = MaterialCatalogController(
+    fetchMaterials: () async => _catalogItems,
+  );
+  await catalog.load();
+  return catalog;
+}
+
+void _usePhoneView(WidgetTester tester) {
+  tester.view.physicalSize = const Size(1080, 2400);
+  tester.view.devicePixelRatio = 2.625;
+  addTearDown(tester.view.reset);
+}
+
+/// 소재 선택창 테스트용으로 결과 화면을 띄웁니다.
+/// 앱처럼 행을 지운 뒤 화면을 다시 그릴 수 있게 상태 갱신 함수를 돌려줍니다.
+Future<StateSetter> _pumpResultView(
+  WidgetTester tester, {
+  required MaterialInputCollection materialInputs,
+  MaterialCatalogController? materialCatalog,
+  bool isSaving = false,
+  bool hasTriedSubmit = false,
+  FormFieldValidator<String>? validateMaterialName,
+}) async {
+  final titleController = TextEditingController(text: '새로 스캔한 의류');
+  addTearDown(titleController.dispose);
+  final formKey = GlobalKey<FormState>();
+  late StateSetter rebuildView;
+
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(
+        body: StatefulBuilder(
+          builder: (context, setState) {
+            rebuildView = setState;
+
+            return ScanResultView(
+              formKey: formKey,
+              hasTriedSubmit: hasTriedSubmit,
+              isSaving: isSaving,
+              isScanFailed: false,
+              titleController: titleController,
+              selectedClothingType: ClothingTypeCatalog.defaultOption,
+              materialInputs: materialInputs,
+              materialCatalog: materialCatalog,
+              scannedCare: '찬물 세탁',
+              originalMaterials: const {},
+              validateTitle: (_) => null,
+              validateMaterialName: validateMaterialName ?? ((_) => null),
+              validateMaterialValue: (_) => null,
+              onSelectClothingType: () {},
+              onAddMaterial: () {},
+              onRemoveMaterial: (_) {},
+              onSubmit: () {},
+              onReset: () {},
+            );
+          },
+        ),
+      ),
+    ),
+  );
+
+  // 저장 중에는 진행 표시가 계속 돌아 pumpAndSettle이 끝나지 않는다.
+  if (isSaving) {
+    await tester.pump();
+  } else {
+    await tester.pumpAndSettle();
+  }
+  return rebuildView;
 }

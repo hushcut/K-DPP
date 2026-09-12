@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../models/clothing_type_option.dart';
 import '../services/material_catalog_api_service.dart';
+import '../services/material_catalog_controller.dart';
 import '../theme/app_palette.dart';
 import '../utils/clothing_estimator.dart';
 import '../utils/scan_calculation_resolver.dart';
+import 'material_edit_controller.dart';
 import 'material_input_collection.dart';
+import 'material_picker_sheet.dart';
 
 /// 스캔한 의류 정보를 검토·수정하고 옷장 저장을 요청하는 결과 폼입니다.
 ///
@@ -22,7 +25,7 @@ class ScanResultView extends StatelessWidget {
     required this.titleController,
     required this.selectedClothingType,
     required this.materialInputs,
-    this.materialCatalog = const [],
+    this.materialCatalog,
     required this.scannedCare,
     this.rawOcrPreview = '',
     required this.originalMaterials,
@@ -54,8 +57,9 @@ class ScanResultView extends StatelessWidget {
   final TextEditingController titleController;
   final ClothingTypeOption selectedClothingType;
   final MaterialInputCollection materialInputs;
-  /// 소재명 자동 완성에 사용하는 서버 소재 카탈로그입니다.
-  final List<MaterialCatalogItem> materialCatalog;
+  /// 소재명 추천 목록과 소재 선택창이 함께 쓰는 서버 소재 카탈로그입니다.
+  /// 없으면 추천 목록이 뜨지 않고 선택창 아이콘도 보이지 않습니다.
+  final MaterialCatalogController? materialCatalog;
 
   // 원본 스캔의 관리 지침과 소재 구성입니다.
   final String scannedCare;
@@ -626,7 +630,34 @@ class ScanResultView extends StatelessWidget {
     return value.toStringAsFixed(1);
   }
 
-  // 소재명 자동 완성과 함유율 입력, 항목 삭제 버튼으로 한 편집 행을 만듭니다.
+  // 소재 선택창에서 고른 소재를 그 행의 소재명에 넣습니다.
+  Future<void> _pickMaterialFromCatalog(
+    BuildContext context,
+    MaterialEditController item,
+  ) async {
+    final catalog = materialCatalog;
+    if (catalog == null) return;
+
+    // 열기 전에 키보드를 내립니다. 그대로 두면 선택창이 닫힐 때 포커스가
+    // 입력란으로 돌아와 키보드와 추천 목록이 다시 뜹니다.
+    FocusManager.instance.primaryFocus?.unfocus();
+
+    final picked = await showMaterialPickerSheet(
+      context: context,
+      catalog: catalog,
+      initialQuery: item.nameController.text,
+    );
+
+    // 선택창이 열린 동안 이 행이 지워졌다면 컨트롤러가 이미 해제됐으므로 쓰지 않습니다.
+    // 앞 행만 지워져 위치가 바뀐 경우에는 같은 행에 그대로 씁니다.
+    if (picked == null || !materialInputs.contains(item)) return;
+
+    // 스캔으로 채워진 행과 같은 한글 표시명으로 넣습니다.
+    // 계산·건강도는 MaterialName이 한글명도 표준명으로 바꿔 인식합니다.
+    item.nameController.text = picked.nameKo;
+  }
+
+  // 소재명 입력(추천 목록·선택창 아이콘)과 함유율 입력, 항목 삭제 버튼으로 한 편집 행을 만듭니다.
   Widget _buildMaterialRow(
     int index, {
     required Color primaryText,
@@ -642,19 +673,22 @@ class ScanResultView extends StatelessWidget {
           child: RawAutocomplete<MaterialCatalogItem>(
             textEditingController: item.nameController,
             focusNode: item.nameFocusNode,
-            displayStringForOption: (option) => option.nameEn,
+            displayStringForOption: (option) => option.nameKo,
             optionsBuilder: (textEditingValue) {
-              if (materialCatalog.isEmpty) {
+              final catalogItems = materialCatalog?.items ?? const [];
+
+              if (catalogItems.isEmpty) {
                 return const Iterable<MaterialCatalogItem>.empty();
               }
 
-              return materialCatalog
+              return catalogItems
                   .where((option) => option.matches(textEditingValue.text))
                   .take(8);
             },
             onSelected: (option) {
+              // 선택창과 같이 한글 표시명으로 넣습니다.
               // 텍스트 변경은 materialInputs 리스너가 감지하므로 별도 알림이 필요 없습니다.
-              item.nameController.text = option.nameEn;
+              item.nameController.text = option.nameKo;
             },
             fieldViewBuilder:
                 (context, controller, focusNode, onFieldSubmitted) {
@@ -668,11 +702,29 @@ class ScanResultView extends StatelessWidget {
                       filled: true,
                       fillColor: inputFillColor,
                       labelText: '소재명',
-                      hintText: '예: cotton',
+                      hintText: '예: 면',
                       labelStyle: TextStyle(color: secondaryText),
                       hintStyle: TextStyle(color: secondaryText),
                       isDense: true,
                       contentPadding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+                      // 좁은 화면에서 오류 문구가 한 줄로 잘리지 않게 합니다.
+                      errorMaxLines: 2,
+                      suffixIcon: materialCatalog == null
+                          ? null
+                          : IconButton(
+                              onPressed: isSaving
+                                  ? null
+                                  : () => _pickMaterialFromCatalog(
+                                      context,
+                                      item,
+                                    ),
+                              tooltip: '목록에서 소재 고르기',
+                              icon: Icon(
+                                Icons.format_list_bulleted_rounded,
+                                color: secondaryText,
+                                size: 20,
+                              ),
+                            ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10),
                       ),
@@ -749,6 +801,7 @@ class ScanResultView extends StatelessWidget {
               suffixStyle: TextStyle(color: secondaryText),
               isDense: true,
               contentPadding: const EdgeInsets.fromLTRB(8, 12, 8, 10),
+              errorMaxLines: 2,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
               ),

@@ -11,6 +11,7 @@ import 'models/clothing_type_option.dart';
 import 'models/main_screen_arguments.dart';
 import 'services/carbon_api_service.dart';
 import 'services/material_catalog_api_service.dart';
+import 'services/material_catalog_controller.dart';
 import 'services/scan_analysis_service.dart';
 import 'services/scan_api_service.dart';
 import 'services/scan_camera_lifecycle_service.dart';
@@ -51,7 +52,6 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   bool _isScanFailed = false;
   bool _hasTriedSubmit = false;
   bool _isSaving = false;
-  bool _hasRequestedMaterialCatalog = false;
 
   // 촬영 이미지와 분석·서버 응답 원본을 보관합니다.
   File? _selectedImage;
@@ -63,13 +63,14 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   double? _serverCarbonFootprint;
   double? _serverWeightGram;
   String? _serverCalculationMethod;
-  List<MaterialCatalogItem> _materialCatalog = const [];
 
   // 분석, 촬영, 초안 생성, 계산, 저장 책임은 전용 서비스에 위임합니다.
   final ScanAnalysisService _scanAnalysisService = ScanAnalysisService();
   final CarbonApiService _carbonApiService = CarbonApiService();
-  final MaterialCatalogApiService _materialCatalogApiService =
-      MaterialCatalogApiService();
+  // 결과 화면의 소재 추천 목록과 소재 선택창이 함께 쓰는 소재 목록입니다.
+  final MaterialCatalogController _materialCatalog = MaterialCatalogController(
+    fetchMaterials: MaterialCatalogApiService().fetchMaterials,
+  );
   final ScanCaptureService _scanCaptureService = ScanCaptureService();
   final ScanDraftService _scanDraftService = const ScanDraftService();
   final ScanSaveService _scanSaveService = const ScanSaveService();
@@ -129,6 +130,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
     _cameraSession.removeListener(_handleCameraSessionChanged);
     _cameraSession.dispose();
     _materialInputs.dispose();
+    _materialCatalog.dispose();
     _titleController.dispose();
     super.dispose();
   }
