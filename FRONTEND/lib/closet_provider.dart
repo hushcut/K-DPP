@@ -682,13 +682,16 @@ class ClosetProvider with ChangeNotifier {
   /// 사용자가 재배치한 전체 순서를 적용하고 계정별 옷장에 저장합니다.
   /// 저장이 실패하면 다음 실행과 어긋나지 않도록 이전 순서로 되돌립니다.
   Future<void> setCustomOrder(List<Clothes> newOrder) async {
+    // 방어적 복사: newOrder가 items 게터(살아 있는 UnmodifiableListView)이면
+    // clear() 시점에 원본도 함께 비어 addAll이 아무것도 넣지 못한다.
+    final order = List<Clothes>.of(newOrder);
     final mutationVersion = ++_mutationVersion;
     final previousOrder = List<Clothes>.from(_items);
     final previousSelected = _selectedClothes;
 
     _items
       ..clear()
-      ..addAll(newOrder);
+      ..addAll(order);
 
     if (_items.isEmpty) {
       _selectedClothes = null;

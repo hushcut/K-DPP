@@ -93,6 +93,38 @@ void main() {
       expect(provider.items.last.title, reversed.last.title);
     });
 
+    test('setCustomOrder에 items 게터(살아 있는 뷰)를 그대로 넘겨도 목록이 비지 않는다', () async {
+      final provider = ClosetProvider(storage: FakeClosetStorage());
+      final first = Clothes(
+        title: '첫 번째 셔츠',
+        category: '상의',
+        health: 80,
+        materials: {'cotton': 100},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: 6.0,
+      );
+      final second = Clothes(
+        title: '두 번째 바지',
+        category: '하의',
+        health: 75,
+        materials: {'cotton': 98, 'polyurethane': 2},
+        careInstruction: '단독 세탁',
+        carbonFootprint: 9.0,
+      );
+
+      await provider.addClothes(first);
+      await provider.addClothes(second);
+      provider.selectClothes(second);
+
+      // items는 UnmodifiableListView(_items)라 setCustomOrder 내부의
+      // _items.clear()가 이 인자도 함께 비운다. 방어적 복사가 없으면
+      // addAll(newOrder)가 빈 목록에 아무것도 추가하지 못한다.
+      await provider.setCustomOrder(provider.items);
+
+      expect(provider.items.length, 2);
+      expect(provider.selectedClothes, isNotNull);
+    });
+
     test('구버전에 저장된 샘플 의류만 제거하고 사용자 의류는 유지한다', () async {
       final storage = FakeClosetStorage();
       final authStorage = FakeAuthSessionStorage()
