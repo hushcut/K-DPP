@@ -58,6 +58,49 @@ class SyntheticParserEvaluationTests(unittest.TestCase):
         report = evaluate_manifest(self.path, lambda _: {"materials": predicted, "selected_part": "outer"}, lambda _: predicted)
         self.assertEqual(report["metrics"]["image_rows"]["parse_materials_exact"]["passed"], 0)
 
+    def test_policy_metadata_is_recorded_without_remapping_expected_answers(self):
+        row = self.row(
+            material_label_policy="kdpp-fiber-labels-v1",
+            source_parts_json=json.dumps({"outer": {"acrylic": 60, "spandex": 40}}),
+            answer_materials="acrylic;polyurethane", normalized_materials="acrylic;polyurethane",
+            parts_json=json.dumps({"outer": {"acrylic": 60, "polyurethane": 40}}),
+        )
+        self.write_rows([row])
+        predicted = {"acrylic": 60, "spandex": 40}
+        report = evaluate_manifest(self.path, lambda _: {"materials": predicted, "selected_part": "outer"}, lambda _: predicted)
+        self.assertEqual(report["metrics"]["image_rows"]["parse_materials_exact"]["passed"], 0)
+        self.assertEqual(report["source_results"][0]["source_parts"]["outer"]["spandex"], 40)
+
+        predicted = {"acrylic": 60, "polyurethane": 40}
+        report = evaluate_manifest(self.path, lambda _: {"materials": predicted, "selected_part": "outer"}, lambda _: predicted)
+        self.assertEqual(report["metrics"]["image_rows"]["parse_materials_exact"]["passed"], 1)
+        self.assertEqual(report["label_issue_sources"], [])
+        self.assertEqual(report["source_results"][0]["notes"][0]["kind"], "material_key_convention")
+
+    def test_incomplete_or_inconsistent_source_provenance_is_rejected(self):
+        cases = [
+            {"material_label_policy": "kdpp-fiber-labels-v1"},
+            {"source_parts_json": self.row()["parts_json"]},
+            {"material_label_policy": "kdpp-fiber-labels-v1", "source_parts_json": "[]"},
+            {"material_label_policy": "kdpp-fiber-labels-v1", "source_parts_json": '{"lining":{"cotton":100}}'},
+            {"material_label_policy": "kdpp-fiber-labels-v1", "source_parts_json": '{"outer":{"cotton":90}}'},
+            {"material_label_policy": "kdpp-fiber-labels-v1", "source_parts_json": '{"outer":{"cotton":100}}'},
+            {"material_label_policy": "unknown", "source_parts_json": self.row()["parts_json"]},
+        ]
+        for changes in cases:
+            with self.subTest(changes=changes):
+                self.write_rows([self.row(**changes)])
+                with self.assertRaises(ValueError):
+                    load_manifest(self.path)
+        first = self.row("1", material_label_policy="kdpp-fiber-labels-v1",
+                         source_parts_json=self.row()["parts_json"],
+                         answer_materials="acrylic;polyurethane", normalized_materials="acrylic;polyurethane",
+                         parts_json='{"outer":{"acrylic":60,"polyurethane":40}}')
+        second = dict(first, id="2", file_name="2.jpg", source_parts_json='{"outer":{"acrylic":60,"polyurethane":40}}')
+        self.write_rows([first, second])
+        with self.assertRaisesRegex(ValueError, "inconsistent"):
+            load_manifest(self.path)
+
     def test_inconsistent_source_group_is_rejected_before_parsing(self):
         self.write_rows([self.row("1"), self.row("2", original_text="different source text")])
         def forbidden(_):

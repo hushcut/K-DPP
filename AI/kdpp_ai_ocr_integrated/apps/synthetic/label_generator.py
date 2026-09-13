@@ -11,6 +11,8 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
+from apps.synthetic.material_policy import MATERIAL_LABEL_POLICY, normalize_label_parts
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -88,6 +90,8 @@ MANIFEST_FIELDS = [
     "image_sha256",
     "generator_version",
     "seed",
+    "material_label_policy",
+    "source_parts_json",
 ]
 
 
@@ -98,6 +102,7 @@ class LabelSpec:
     layout: str
     theme: str
     parts: dict[str, dict[str, int]]
+    source_parts: dict[str, dict[str, int]] | None = None
 
     @property
     def selected_part(self) -> str:
@@ -150,6 +155,8 @@ def _validate_config(config: dict[str, Any]) -> None:
         raise ValueError("themes contains an unsupported theme")
     if not config["materials"] or not set(config["materials"]).issubset(MATERIAL_NAMES):
         raise ValueError("materials contains an unsupported material key")
+    if config.get("material_label_policy", MATERIAL_LABEL_POLICY) != MATERIAL_LABEL_POLICY:
+        raise ValueError("Unsupported material_label_policy")
 
 
 def _font_candidates(language: str) -> list[Path]:
@@ -229,7 +236,8 @@ def _make_spec(index: int, config: dict[str, Any], rng: random.Random) -> LabelS
         language=language,
         layout=layout,
         theme=theme,
-        parts=parts,
+        parts=normalize_label_parts(parts, language),
+        source_parts=parts,
     )
 
 
@@ -493,6 +501,11 @@ def generate_dataset(config: dict[str, Any], output_dir: str | Path | None = Non
                 "image_sha256": _sha256(image_path),
                 "generator_version": str(config["generator_version"]),
                 "seed": str(sample_seed),
+                "material_label_policy": MATERIAL_LABEL_POLICY,
+                "source_parts_json": json.dumps(
+                    spec.source_parts if spec.source_parts is not None else spec.parts,
+                    ensure_ascii=False, sort_keys=True,
+                ),
             }
             rows.append(row)
             serial += 1
@@ -504,6 +517,7 @@ def generate_dataset(config: dict[str, Any], output_dir: str | Path | None = Non
         writer.writerows(rows)
 
     resolved_config = dict(config)
+    resolved_config["material_label_policy"] = MATERIAL_LABEL_POLICY
     resolved_config["output_dir"] = str(resolved_output)
     with (resolved_output / "config_resolved.json").open("w", encoding="utf-8") as stream:
         json.dump(resolved_config, stream, ensure_ascii=False, indent=2)
@@ -511,6 +525,7 @@ def generate_dataset(config: dict[str, Any], output_dir: str | Path | None = Non
     summary = {
         "dataset_name": config["dataset_name"],
         "generator_version": config["generator_version"],
+        "material_label_policy": MATERIAL_LABEL_POLICY,
         "seed": seed,
         "base_labels": len(specs),
         "variants_per_label": variants,

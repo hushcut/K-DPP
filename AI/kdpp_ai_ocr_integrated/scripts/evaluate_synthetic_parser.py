@@ -32,6 +32,9 @@ METRICS = (
     "parse_label_materials_exact", "parse_materials_exact",
     "selected_part_exact", "parse_label_materials_and_part_exact",
 )
+# Frozen answer contracts are checked independently of the generator and the
+# selected --parser-root, which may be a historical checkout without this policy.
+MATERIAL_POLICIES = {"kdpp-fiber-labels-v1": {"zh": {"spandex": "polyurethane"}}}
 
 
 def _ratio(value, context):
@@ -110,10 +113,35 @@ def load_manifest(path):
                 raise ValueError(f"{context}: invalid parts_json: {exc}") from exc
             if parts.get(row["selected_part"]) != expected:
                 raise ValueError(f"{context}: selected_part composition disagrees with answer")
+            policy = row.get("material_label_policy", "")
+            source_parts_text = row.get("source_parts_json", "")
+            source_parts = None
+            if policy or source_parts_text:
+                if not policy or not source_parts_text:
+                    raise ValueError(f"{context}: material policy and source parts must be provided together")
+                raw_source = json.loads(source_parts_text, object_pairs_hook=_unique_object,
+                                        parse_float=Decimal)
+                if not isinstance(raw_source, dict) or set(raw_source) != set(parts):
+                    raise ValueError(f"{context}: source and displayed part names disagree")
+                source_parts = {part: _composition(values, f"{context} source part {part}")
+                                for part, values in raw_source.items()}
+                if policy not in MATERIAL_POLICIES:
+                    raise ValueError(f"{context}: unsupported material label policy {policy!r}")
+                mapping = MATERIAL_POLICIES[policy].get(row["label_language"], {})
+                contracted_parts = {}
+                for part, composition in source_parts.items():
+                    contracted = {}
+                    for material, ratio in composition.items():
+                        key = mapping.get(material, material)
+                        contracted[key] = contracted.get(key, Decimal(0)) + ratio
+                    contracted_parts[part] = contracted
+                if contracted_parts != parts:
+                    raise ValueError(f"{context}: source parts violate the declared material label policy")
             source = {
                 "source_group": row["source_group"], "language": row["label_language"],
                 "original_text": row["original_text"], "expected_materials": expected,
                 "expected_selected_part": row["selected_part"], "parts": parts,
+                "material_label_policy": policy, "source_parts": source_parts,
             }
             key = row["source_group"]
             if key not in groups:
@@ -170,13 +198,16 @@ def evaluate_manifest(manifest, parse_label, parse_materials):
             notes.append({"kind": "invalid_label_spelling",
                           "message": "Generated text contains 腨纶 (U+8168); the standard acrylic spelling is 腈纶 (U+8148). Original text and answer remain unchanged."})
         if "氨纶" in text:
-            notes.append({"kind": "ambiguous_material_label",
-                          "message": "The generator uses 氨纶 for both spandex and polyurethane. Strict scores preserve the manifest material key without remapping or excluding this source."})
+            versioned = source["material_label_policy"] == "kdpp-fiber-labels-v1"
+            notes.append({"kind": "material_key_convention" if versioned else "ambiguous_material_label",
+                          "message": "K-DPP uses the legacy polyurethane API key for 氨纶 on fiber labels. The original unversioned generator also used spandex for this text. Strict scores preserve every manifest key without remapping, regardless of policy metadata."})
         results.append({
             "source_group": source["source_group"], "language": source["language"],
             "image_rows": len(source["rows"]), "rows": source["rows"],
             "original_text": text, "expected_materials": expected,
             "expected_selected_part": source["expected_selected_part"],
+            "material_label_policy": source["material_label_policy"],
+            "source_parts": source["source_parts"],
             "parse_label": label, "parse_materials": materials,
             "parse_label_materials_exact": bool(label_exact),
             "parse_materials_exact": not materials["error"] and materials["materials"] == expected,
@@ -208,7 +239,9 @@ def evaluate_manifest(manifest, parse_label, parse_materials):
                        "unique_source_groups": _metrics(items, False)}
             for language, items in sorted(languages.items())},
         "source_failures": [item for item in results if not all(item[key] for key in METRICS)],
-        "label_issue_sources": [item["source_group"] for item in results if item["notes"]],
+        "label_issue_sources": [item["source_group"] for item in results
+                                if any(note["kind"] != "material_key_convention"
+                                       for note in item["notes"])],
         "source_results": results,
     }
 
