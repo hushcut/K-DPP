@@ -14,7 +14,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/
 lib64/
 parts/
 sdist/
@@ -373,9 +373,24 @@ app.*.symbols
 .gclient_previous_sync_commits
 
 BACKEND/k_dpp.db
+BACKEND/.pytest_k_dpp.db
 BACKEND/*.db-journal
 BACKEND/*.db-wal
 BACKEND/*.db-shm
 BACKEND/__pycache__/
+AI/**/key.json
+**/key.json
 venv/
 
+# 파트별 전달용 협업 문서 (커밋하지 않고 직접 공유)
+docs/BACKEND_REQUESTS.md
+docs/AI_REQUESTS.md
+docs/MERGE_PLAN.md
+docs/HANDOFF.md
+docs/DECISIONS.md
+docs/REQUIREMENTS.md
+docs/AI_INTEGRATION_NOTES.md
+docs/NEXT_WORK.md
+
+# Claude Code 워크트리 (기계 로컬 — 저장소 사본이 통째로 들어 있어 커밋되면 사고)
+**/.claude/worktrees/

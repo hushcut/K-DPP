@@ -38,11 +38,20 @@ dependencies:
   image_picker: ^1.1.2
   provider: ^6.1.2
   camera: ^0.11.0+2
-  http: ^1.6.0
+  http: ^1.2.2
+  http_parser: ^4.1.2
+  flutter_secure_storage: 10.3.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
+  # 실제 ClosetStorageService를 테스트하려면 SharedPreferencesAsync의 플랫폼 구현을
+  # 인메모리로 바꿔야 합니다(InMemorySharedPreferencesAsync).
+  shared_preferences_platform_interface: ^2.4.1
+
+  # ScanCameraSession을 테스트하려면 CameraPlatform을 가짜 구현으로 바꿔야 합니다.
+  camera_platform_interface: ^2.13.0
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -61,6 +70,10 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    # PNG 2.0x/3.0x variants are resolved automatically; SVG sources stay out of the bundle.
+    - assets/images/kdpp_logo.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

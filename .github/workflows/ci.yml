@@ -1,0 +1,63 @@
+# push·PR마다 프론트엔드·백엔드 분석·테스트를 자동 실행해 회귀를 조기에 잡습니다.
+# 두 잡 모두 필수입니다(2026-09-07 백엔드 continue-on-error 제거).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  frontend:
+    name: Frontend (analyze + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: FRONTEND
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.5
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # BACKEND는 모노레포에 항상 있어야 합니다. 없으면 스킵이 통과로 보이지 않도록
+      # 여기서 바로 실패시킵니다.
+      - name: Check backend folder
+        run: test -d BACKEND
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        working-directory: BACKEND
+        run: pip install -r requirements.txt
+
+      # BACKEND/main.py는 AI 모듈 import 실패를 try/except로 삼켜 run_ocr=None으로 둡니다.
+      # 그러면 실사진 스캔이 전부 503(AI_MODULE_FAILED)이 되는데, pytest는 raw_ocr_text를
+      # 보내거나 스텁을 쓰기 때문에 이 경로에 들어가지 않아 전건 초록입니다.
+      # BACKEND/requirements.txt만 설치된 상태(=배포 런타임과 동일)에서 결합을 직접 확인합니다.
+      - name: AI module wiring check
+        working-directory: BACKEND
+        run: python check_ai_wiring.py
+
+      - name: Test
+        working-directory: BACKEND
+        run: pytest
