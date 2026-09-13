@@ -41,6 +41,9 @@ Widget _buildReportBody(
   final item =
       _resolveDisplayItem(closetProvider, passedItem) ??
       closetProvider.currentReportItem;
+  final materialNameDisplay = context
+      .watch<MaterialNameDisplayProvider>()
+      .display;
 
   final isDark = Theme.of(context).brightness == Brightness.dark;
   final palette = AppPalette.of(context);
@@ -59,14 +62,19 @@ Widget _buildReportBody(
     );
   }
 
-  final materialsText = item.materials.entries
-      .map((e) => '${e.key.toUpperCase()} ${_formatMaterialValue(e.value)}%')
+  // 같은 소재가 '면'·'cotton' 두 키로 들어 있어도 한 항목으로 합친 뒤 설정 언어로 표시합니다.
+  final materialEntries = MaterialName.displayEntries(
+    item.materials,
+    materialNameDisplay,
+  );
+  final materialsText = materialEntries
+      .map((e) => '${e.key} ${_formatMaterialValue(e.value)}%')
       .join(', ');
 
   final careTips = _buildCareTips(item);
   final storageTip = _buildStorageTip(item);
   final disposalGuide = _buildDisposalGuide(item);
-  final mainMaterial = _mainMaterialLabel(item);
+  final mainMaterial = _mainMaterialLabel(materialEntries);
 
   return Container(
     color: backgroundColor,

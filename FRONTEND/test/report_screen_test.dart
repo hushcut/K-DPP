@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
+import 'package:k_dpp/material_name_display_provider.dart';
 import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/report_screen.dart';
 import 'package:provider/provider.dart';
@@ -24,8 +25,11 @@ void main() {
     await provider.addClothes(selected);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: provider,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
         child: const MaterialApp(home: Scaffold(body: ReportScreen())),
       ),
     );
@@ -47,7 +51,8 @@ void main() {
     expect(find.text('LED 전구'), findsOneWidget);
     expect(find.textContaining('라벨 지침: 찬물 세탁 후 자연 건조'), findsOneWidget);
     expect(find.text('찬물 세탁 후 자연 건조'), findsOneWidget);
-    expect(find.textContaining('COTTON 80%'), findsWidgets);
+    // 소재 이름의 기본 표시 언어는 한글이다(D16). 영문 키로 저장된 옷도 한글명으로 보인다.
+    expect(find.textContaining('면 80%'), findsWidgets);
   });
 
   testWidgets('상세 리포트에서 의류 이름과 세탁 지침을 수정할 수 있다', (tester) async {
@@ -65,8 +70,11 @@ void main() {
     await provider.addClothes(selected);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: provider,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
         child: const MaterialApp(home: Scaffold(body: ReportScreen())),
       ),
     );
@@ -103,8 +111,11 @@ void main() {
     await provider.addClothes(selected);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: provider,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
         child: MaterialApp(
           home: Scaffold(
             body: ReportScreen(
@@ -156,8 +167,11 @@ void main() {
     await provider.addClothes(selected);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: provider,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
         child: const MaterialApp(
           home: MediaQuery(
             data: MediaQueryData(textScaler: TextScaler.linear(1.6)),

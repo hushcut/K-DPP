@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:k_dpp/models/material_name_display.dart';
 import 'package:k_dpp/utils/material_name.dart';
 
 /// 같은 소재가 등록 경로와 시점에 따라 다른 문자열로 저장된다 —
@@ -144,6 +145,105 @@ void main() {
         isTrue,
       );
       expect(MaterialName.matchesAny([], ['cotton']), isFalse);
+    });
+  });
+
+  group('displayName', () {
+    test('서버 표에 있는 소재는 저장 키가 한글이든 영문이든 같은 이름으로 보인다', () {
+      for (final key in ['면', 'cotton', 'COTTON', ' 코튼 ']) {
+        expect(
+          MaterialName.displayName(key, MaterialNameDisplay.korean),
+          '면',
+          reason: key,
+        );
+        expect(
+          MaterialName.displayName(key, MaterialNameDisplay.english),
+          'COTTON',
+          reason: key,
+        );
+        expect(
+          MaterialName.displayName(key, MaterialNameDisplay.koreanAndEnglish),
+          '면 (COTTON)',
+          reason: key,
+        );
+      }
+    });
+
+    test('별칭으로 저장된 소재도 서버 한글명으로 보이고, 모달은 울이 되지 않는다', () {
+      expect(MaterialName.displayName('모', MaterialNameDisplay.korean), '울');
+      expect(MaterialName.displayName('텐셀', MaterialNameDisplay.korean), '리오셀');
+      expect(
+        MaterialName.displayName('lycra', MaterialNameDisplay.koreanAndEnglish),
+        '스판덱스 (SPANDEX)',
+      );
+      expect(MaterialName.displayName('모달', MaterialNameDisplay.english), 'MODAL');
+    });
+
+    test('서버 표에 없는 이름은 설정과 무관하게 번역하지 않는다', () {
+      for (final display in MaterialNameDisplay.values) {
+        expect(
+          MaterialName.displayName('Organic Cotton', display),
+          'ORGANIC COTTON',
+          reason: display.name,
+        );
+        expect(
+          MaterialName.displayName('오가닉 면', display),
+          '오가닉 면',
+          reason: display.name,
+        );
+      }
+    });
+  });
+
+  group('displayEntries', () {
+    // MapEntry에는 값 비교가 없어 레코드로 바꿔 비교한다.
+    List<(String, double)> pairs(List<MapEntry<String, double>> entries) {
+      return [for (final entry in entries) (entry.key, entry.value)];
+    }
+
+    test("한 옷에 '면'과 'cotton' 키가 섞여 있으면 한 항목으로 합친다", () {
+      final entries = MaterialName.displayEntries(const {
+        '면': 50,
+        'cotton': 50,
+      }, MaterialNameDisplay.korean);
+
+      expect(pairs(entries), [('면', 100.0)]);
+    });
+
+    test('처음 나온 순서를 지키고, 표에 없는 이름은 대소문자만 다르면 합친다', () {
+      final entries = MaterialName.displayEntries(const {
+        'polyester': 20,
+        '면': 30,
+        'Organic Cotton': 10,
+        'cotton': 30,
+        'organic cotton': 10,
+      }, MaterialNameDisplay.english);
+
+      expect(pairs(entries), [
+        ('POLYESTER', 20.0),
+        ('COTTON', 60.0),
+        ('ORGANIC COTTON', 20.0),
+      ]);
+    });
+
+    test('저장된 소재 맵은 바꾸지 않는다', () {
+      final materials = {'면': 50.0, 'cotton': 50.0};
+
+      MaterialName.displayEntries(materials, MaterialNameDisplay.english);
+
+      expect(materials, {'면': 50.0, 'cotton': 50.0});
+    });
+  });
+
+  group('searchNames', () {
+    test('서버 표에 있는 소재는 저장 키에 한글명·영문 표준명을 더한다', () {
+      expect(MaterialName.searchNames('cotton'), containsAll(['cotton', '면']));
+      expect(MaterialName.searchNames('면'), containsAll(['면', 'cotton']));
+      expect(MaterialName.searchNames('모'), containsAll(['모', '울', 'wool']));
+    });
+
+    test('표에 없는 이름은 저장 키만 돌려준다', () {
+      expect(MaterialName.searchNames('오가닉 면'), ['오가닉 면']);
     });
   });
 }

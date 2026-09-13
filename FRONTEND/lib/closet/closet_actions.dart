@@ -79,7 +79,9 @@ extension _ClosetActions on _ClosetScreenState {
       item.title,
       item.category,
       item.careInstruction,
-      ...item.materials.keys,
+      // 저장 키만 비교하면 리포트에 '면'으로 보이는 'cotton' 키 옷이 '면'으로 검색되지 않습니다.
+      // 서버 표에 있는 소재는 표시 설정과 무관하게 한글명·영문명으로도 찾습니다.
+      ...item.materials.keys.expand(MaterialName.searchNames),
     ];
 
     return searchTargets.any(

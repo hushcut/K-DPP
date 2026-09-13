@@ -1,11 +1,13 @@
 """소재 계층 계약: 서버 시드와 프론트 사본이 어긋나지 않는지 확인한다.
 
-프론트는 서버 소재 표(`init_data.py`의 `MATERIAL_SEEDS`)를 두 벌로 옮겨 갖고 있다.
+프론트는 서버 소재 표(`init_data.py`의 `MATERIAL_SEEDS`)를 세 벌로 옮겨 갖고 있다.
 
 1. `FRONTEND/lib/utils/material_name.dart`의 `_standardNamesByAlias`
    — 한글명·별칭 → 영문 표준명
 2. `FRONTEND/lib/utils/clothing_estimator.dart`의 `_emissionFactorsByStandardName`
    — 영문 표준명 → carbon_factor
+3. `FRONTEND/lib/utils/material_name.dart`의 `_koreanNamesByStandardName`
+   — 영문 표준명 → 한글명(`name_ko`), 리포트의 소재 이름 표시용
 
 별칭 표가 따로 있는 이유는 계산 말고도 쓰는 곳이 있기 때문이다. 리포트의 관리·보관
 안내와 홈의 소재 팁도 소재명을 문자열로 판별하는데, 각자 사본을 두면 같은 결함이
@@ -18,6 +20,8 @@
   기본계수로 계산되고, 잘못된 건강도가 옷장에 남는다(탄소와 달리 건강도는 서버가
   덮어쓰지 않는다).
 - 숫자가 어긋나면: 저장 전후로 같은 옷의 탄소값이 달라진다.
+- 한글명이 어긋나면: 리포트가 서버·스캔 결과와 다른 이름을 보여주고, 빠진 소재는
+  한글 설정에서도 영문 대문자로 남는다.
 
 이 결함은 양쪽 어느 한 계층의 테스트로도 잡히지 않는다. 서버는 자기 시드만,
 프론트는 자기 표만 보기 때문이다. 그래서 여기서 두 파일을 맞대어 본다.
@@ -41,7 +45,7 @@ _FRONTEND_UTILS = REPO_ROOT / "FRONTEND" / "lib" / "utils"
 ALIAS_PATH = _FRONTEND_UTILS / "material_name.dart"
 FACTOR_PATH = _FRONTEND_UTILS / "clothing_estimator.dart"
 
-# `'면': 'cotton',` 꼴
+# `'면': 'cotton',` 꼴 (한글명 표 `'cotton': '면',`도 같은 꼴)
 _ALIAS_ENTRY = re.compile(r"'([^']+)'\s*:\s*'([^']+)'\s*,")
 # `'cotton': 8.3,` 꼴
 _FACTOR_ENTRY = re.compile(r"'([^']+)'\s*:\s*(\d+(?:\.\d+)?)\s*,")
@@ -156,6 +160,15 @@ def load_frontend_factor_map() -> dict[str, float]:
     }
 
 
+def load_frontend_korean_name_map() -> dict[str, str]:
+    return {
+        standard_name.strip().lower(): korean_name.strip()
+        for standard_name, korean_name in _read_dart_map(
+            ALIAS_PATH, "_koreanNamesByStandardName = {", _ALIAS_ENTRY
+        )
+    }
+
+
 def iter_seed_aliases():
     """(별칭, 영문 표준명) 쌍을 돌려준다. 영문 표준명 자체는 제외한다."""
 
@@ -176,6 +189,13 @@ def iter_seed_aliases():
 def seed_factors() -> dict[str, float]:
     return {
         seed["name_en"].strip().lower(): float(seed["carbon_factor"])
+        for seed in init_data.MATERIAL_SEEDS
+    }
+
+
+def seed_korean_names() -> dict[str, str]:
+    return {
+        seed["name_en"].strip().lower(): seed["name_ko"].strip()
         for seed in init_data.MATERIAL_SEEDS
     }
 
@@ -273,6 +293,49 @@ def test_frontend_factor_map_has_no_unknown_materials():
     assert not unknown, (
         f"서버 소재 표에 없는 소재가 프론트 계수표에 있습니다: {unknown}. "
         "프리뷰에는 값이 뜨는데 저장은 400으로 거부됩니다."
+    )
+
+
+# --- 한글 표시명 ------------------------------------------------------------
+
+
+def test_frontend_korean_names_cover_every_seed_material():
+    frontend_names = load_frontend_korean_name_map()
+
+    missing = sorted(set(seed_korean_names()) - set(frontend_names))
+
+    assert not missing, (
+        f"프론트 한글 표시명 표에 없는 서버 소재입니다: {missing}. "
+        "빠진 소재는 서버 표에 있는데도 리포트에서 번역되지 않고 영문 대문자로 남습니다."
+    )
+
+
+def test_frontend_korean_names_match_the_seed():
+    frontend_names = load_frontend_korean_name_map()
+    server = seed_korean_names()
+
+    mismatched = sorted(
+        (name, frontend_names[name], korean_name)
+        for name, korean_name in server.items()
+        if name in frontend_names and frontend_names[name] != korean_name
+    )
+
+    assert not mismatched, (
+        "프론트 한글 표시명이 서버 name_ko와 다릅니다 (소재, 프론트, 서버): "
+        f"{mismatched}. 같은 옷이 스캔 결과와 리포트에서 다른 이름으로 보입니다."
+    )
+
+
+def test_frontend_korean_names_have_no_unknown_materials():
+    """서버에 없는 소재를 프론트가 '표에 있는 소재'로 번역하지 않는지 확인한다."""
+
+    frontend_names = load_frontend_korean_name_map()
+
+    unknown = sorted(set(frontend_names) - set(seed_korean_names()))
+
+    assert not unknown, (
+        f"서버 소재 표에 없는 소재가 프론트 한글 표시명 표에 있습니다: {unknown}. "
+        "서버가 모르는 이름을 번역해 보여주면 저장이 거부되는 소재가 정상 소재처럼 보입니다."
     )
 
 

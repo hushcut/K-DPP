@@ -12,6 +12,7 @@ import 'settings_screen.dart';
 import 'theme/app_palette.dart';
 import 'theme_provider.dart';
 import 'display_settings_screen.dart';
+import 'material_name_display_provider.dart';
 
 /// Flutter 바인딩과 화면 방향을 설정한 뒤 앱 전역 Provider를 주입합니다.
 Future<void> main() async {
@@ -20,13 +21,16 @@ Future<void> main() async {
 
   final closetProvider = ClosetProvider();
   final themeProvider = ThemeProvider();
+  final materialNameDisplayProvider = MaterialNameDisplayProvider();
   await themeProvider.loadThemeMode();
+  await materialNameDisplayProvider.load();
 
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: closetProvider),
         ChangeNotifierProvider.value(value: themeProvider),
+        ChangeNotifierProvider.value(value: materialNameDisplayProvider),
       ],
       child: const MyApp(),
     ),

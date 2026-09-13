@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
+import 'material_name_display_provider.dart';
 import 'services/auth_api_service.dart';
 import 'theme/app_palette.dart';
 import 'theme_provider.dart';
@@ -458,6 +459,9 @@ class SettingsScreen extends StatelessWidget {
     final userName = context.watch<ClosetProvider>().userName;
     final userEmail = context.watch<ClosetProvider>().userEmail;
     final themeMode = context.watch<ThemeProvider>().themeMode;
+    final materialNameDisplay = context
+        .watch<MaterialNameDisplayProvider>()
+        .display;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final palette = AppPalette.of(context);
 
@@ -586,7 +590,8 @@ class SettingsScreen extends StatelessWidget {
               _buildMenuTile(
                 icon: Icons.dark_mode_outlined,
                 title: '화면 설정',
-                subtitle: _themeModeLabel(themeMode),
+                subtitle:
+                    '${_themeModeLabel(themeMode)} · 소재 이름 ${materialNameDisplay.label}',
                 textColor: primaryText,
                 subtitleColor: secondaryText,
                 onTap: () {

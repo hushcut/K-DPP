@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
 import 'package:k_dpp/main_screen.dart';
+import 'package:k_dpp/material_name_display_provider.dart';
 import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/models/main_screen_arguments.dart';
 import 'package:provider/provider.dart';
@@ -23,8 +24,11 @@ void main() {
     await provider.addClothes(clothes);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: provider,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
         child: const MaterialApp(home: MainScreen()),
       ),
     );
@@ -54,8 +58,11 @@ void main() {
     await provider.addClothes(clothes);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: provider,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
         child: const MaterialApp(home: MainScreen()),
       ),
     );
@@ -88,8 +95,11 @@ void main() {
     await provider.addClothes(clothes);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: provider,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
         child: MaterialApp(
           home: const MainScreen(
             initialArguments: MainScreenArguments(
@@ -122,8 +132,11 @@ void main() {
     await provider.addClothes(clothes);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: provider,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
         child: const MaterialApp(
           home: MainScreen(
             initialArguments: MainScreenArguments(showReport: true),
@@ -163,8 +176,11 @@ void main() {
     await provider.addClothes(clothes);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: provider,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
         child: const MaterialApp(
           home: MainScreen(
             initialArguments: MainScreenArguments(showReport: true),

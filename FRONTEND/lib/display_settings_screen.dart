@@ -1,11 +1,14 @@
-// 블랙·화이트·시스템 화면 테마를 선택하고 미리 보는 설정 화면입니다.
+// 블랙·화이트·시스템 화면 테마와 소재 이름 표시 언어를 선택하는 설정 화면입니다.
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'material_name_display_provider.dart';
+import 'models/material_name_display.dart';
 import 'theme/app_palette.dart';
 import 'theme_provider.dart';
+import 'utils/material_name.dart';
 import 'widgets/app_back_button.dart';
 
-/// [ThemeProvider]의 현재 모드를 표시하고 사용자의 테마 선택을 전달합니다.
+/// [ThemeProvider]·[MaterialNameDisplayProvider]의 현재 값을 표시하고 사용자의 선택을 전달합니다.
 class DisplaySettingsScreen extends StatelessWidget {
   const DisplaySettingsScreen({super.key});
 
@@ -26,6 +29,25 @@ class DisplaySettingsScreen extends StatelessWidget {
     }
   }
 
+  // 저장 실패를 사용자에게 알리고 표시 언어는 Provider가 이전 값으로 되돌립니다.
+  Future<void> _applyMaterialNameDisplay(
+    BuildContext context,
+    MaterialNameDisplayProvider materialNameDisplayProvider,
+    MaterialNameDisplay display,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+
+    try {
+      await materialNameDisplayProvider.setDisplay(display);
+    } catch (_) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('소재 이름 표시 설정을 저장하지 못했어요. 다시 시도해 주세요.'),
+        ),
+      );
+    }
+  }
+
   String _modeLabel(ThemeMode mode) {
     switch (mode) {
       case ThemeMode.dark:
@@ -41,6 +63,9 @@ class DisplaySettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final themeProvider = context.watch<ThemeProvider>();
     final currentMode = themeProvider.themeMode;
+    final materialNameDisplayProvider = context
+        .watch<MaterialNameDisplayProvider>();
+    final currentMaterialNameDisplay = materialNameDisplayProvider.display;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final palette = AppPalette.of(context);
 
@@ -112,6 +137,45 @@ class DisplaySettingsScreen extends StatelessWidget {
               style: TextStyle(color: secondaryText, fontSize: 14, height: 1.6),
             ),
           ),
+          const SizedBox(height: 28),
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 10),
+            child: Text(
+              '소재 이름 표시',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: secondaryText,
+              ),
+            ),
+          ),
+          for (final display in MaterialNameDisplay.values) ...[
+            _MaterialNameDisplayTile(
+              title: display.label,
+              // 예시는 실제 리포트와 같은 변환 함수로 만들어 설정 화면과 리포트가 어긋나지 않게 합니다.
+              example: '${MaterialName.displayName('cotton', display)} 80%',
+              selected: currentMaterialNameDisplay == display,
+              onTap: () => _applyMaterialNameDisplay(
+                context,
+                materialNameDisplayProvider,
+                display,
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: borderColor),
+            ),
+            child: Text(
+              '리포트에 보이는 소재 이름에 적용되고, 저장된 옷 정보는 바뀌지 않아요.\n서버 소재 표에 없는 이름은 번역하지 않고 그대로 보여 줘요.',
+              style: TextStyle(color: secondaryText, fontSize: 14, height: 1.6),
+            ),
+          ),
         ],
       ),
     );
@@ -170,6 +234,87 @@ class _ThemeModeTile extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                       color: primaryText,
                     ),
+                  ),
+                ),
+                Icon(
+                  selected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
+                  color: selected
+                      ? AppPalette.accent
+                      : const Color(0xFF5F6368),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 소재 이름 표시 언어와 표시 예시, 선택 상태, 접근성 정보를 함께 제공하는 선택 항목입니다.
+class _MaterialNameDisplayTile extends StatelessWidget {
+  final String title;
+  final String example;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _MaterialNameDisplayTile({
+    required this.title,
+    required this.example,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.of(context);
+
+    final cardColor = palette.card;
+    final borderColor = selected
+        ? AppPalette.accent
+        : (isDark ? const Color(0xFF2C2C2E) : const Color(0xFFEAEAEA));
+
+    return Semantics(
+      label: '소재 이름 $title, 예: $example',
+      button: true,
+      selected: selected,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: ExcludeSemantics(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: borderColor, width: selected ? 1.6 : 1),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: palette.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        example,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: palette.textSecondary,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 Icon(
