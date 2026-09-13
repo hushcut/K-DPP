@@ -135,7 +135,7 @@ class _SplashScreenState extends State<SplashScreen>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const KdppLogoMark(size: 84, borderRadius: 24),
+                const KdppLogoMark(size: 84, semanticLabel: null),
                 const SizedBox(height: 20),
                 Text(
                   'K-DPP',
