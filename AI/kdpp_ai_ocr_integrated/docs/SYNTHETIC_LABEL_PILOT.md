@@ -90,3 +90,12 @@ additional parser-performance gain. Image OCR has not been evaluated yet.
 See [the parser review](PARSER_ALIAS_REVIEW.md) for results, limitations, and next steps.
 See [the pilot correction review](PILOT_CORRECTION_REVIEW.md) for the contract, exact changes,
 preservation checks, and reproduction commands.
+
+## Subsequent material-evidence validation
+
+The parser now requires explicit material/ratio correspondence and a complete 100% composition.
+It preserves decimal ratios, rejects missing or contradictory evidence, and keeps a failed outer
+part from being replaced with a valid lining. The corrected pilot remains 80/80; its images and
+answers are unchanged. The original typo-bearing 8 rows now return failure with empty materials.
+See [the material-evidence review](MATERIAL_EVIDENCE_REVIEW.md) for the regression cases,
+API behavior, validation, and limits of this conservative policy.

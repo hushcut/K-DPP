@@ -106,7 +106,7 @@ def test_expired_token_returns_401_instead_of_anonymous_save(client):
     assert response.status_code == 401
 
 
-def test_scan_flags_partial_ratio(client):
+def test_scan_rejects_incomplete_ratio(client):
     token = _login_token(client)
     response = client.post(
         "/api/scan",
@@ -116,9 +116,68 @@ def test_scan_flags_partial_ratio(client):
     )
     body = response.json()
 
+    assert response.status_code == 422
+    assert body["status"] == "error"
+    assert body["error_code"] == "MATERIAL_EXTRACTION_FAILED"
+    assert body["detail"]["materials"] == {}
+    assert body["detail"]["partial_materials"] == {}
+    assert body["detail"]["ai_success"] is False
+
+
+def test_scan_preserves_decimal_material_ratios(client):
+    token = _login_token(client)
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": "COTTON 92.5% SPANDEX 7.5%"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    body = response.json()
+
     assert response.status_code == 200
-    assert body["ai_success"] is False
-    assert body["analysis_failure_reason"] == "RATIO_INCOMPLETE"
+    assert body["ai_success"] is True
+    assert body["materials"] == {"cotton": 92.5, "spandex": 7.5}
+    assert {
+        item["original_name"]: item["ratio"]
+        for item in body["material_details"]
+    } == {"cotton": 92.5, "spandex": 7.5}
+
+
+def test_scan_rejects_unsupported_material_inferences(client):
+    token = _login_token(client)
+    for raw_text in (
+        "섬유 혼용률 100%",
+        "RAYON 60% UNKNOWN 40%",
+        "COTTON 80% POLYESTER 80%",
+    ):
+        response = client.post(
+            "/api/scan",
+            files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+            data={"raw_ocr_text": raw_text},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        body = response.json()
+
+        assert response.status_code == 422, raw_text
+        assert body["error_code"] == "MATERIAL_EXTRACTION_FAILED", raw_text
+        assert body["detail"]["materials"] == {}, raw_text
+        assert body["detail"]["ai_success"] is False, raw_text
+
+
+def test_scan_does_not_replace_incomplete_outer_with_lining(client):
+    token = _login_token(client)
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": "겉감 면 60%\n안감 폴리에스터 100%"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    body = response.json()
+
+    assert response.status_code == 422
+    assert body["error_code"] == "MATERIAL_EXTRACTION_FAILED"
+    assert body["detail"]["materials"] == {}
+    assert body["detail"]["ai_success"] is False
 
 
 def test_scan_rejects_missing_content_type(client):

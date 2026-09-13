@@ -2,6 +2,7 @@ import re
 import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 
 from apps.text.rules import CARE_RULES, MATERIAL_ALIASES, MATERIAL_KOREAN, OCR_CORRECTIONS
 
@@ -30,7 +31,8 @@ class LineInfo:
     normalized: str
     part: str
     materials: list[str]
-    numbers: list[float]
+    numbers: list[Decimal]
+    invalid: bool = False
 
 
 def normalize_text(text: str) -> str:
@@ -90,41 +92,81 @@ def detect_part(line: str, current_part: str) -> str:
     return current_part
 
 
-def extract_numbers(line: str, allow_plain_numbers: bool) -> list[float]:
-    nums = []
-    for match in re.finditer(r"(?<![a-z0-9])([0-9]{1,3})(?:\s*%)", line):
-        value = float(match.group(1))
-        if 0 < value <= 100:
-            nums.append(value)
+# Capture the whole numeric token, including malformed decimals and signs.
+# Never recover a valid-looking suffix from 1000%, -5%, or 92..5%.
+NUMBER_CANDIDATE = re.compile(r"[+-]?(?:[0-9][0-9.,]*|[.,][0-9][0-9.,]*)(?:\s*%)?")
+NUMBER_VALUE = re.compile(r"(?:[0-9]+(?:[.,][0-9]+)?|[.,][0-9]+)")
+NON_COMPOSITION = re.compile(
+    r"\b(?:size|style|model|sku|lot|item|date|price|wash|iron|dry|bleach|rn|ca|made)\b"
+    r"|사이즈|치수|품번|호칭|제조|세탁|가슴둘레|허리둘레|身長|身丈|尺码|尺寸"
+)
+MEASUREMENT_UNIT = re.compile(
+    r"\s*(?:°|℃|℉|\b(?:g|kg|mg|lb|lbs|oz|cm|mm|m|c|f)\b|호|년|월|일|번|원|円|元|도)"
+)
+INEXACT_SIGN = "+-−±∓‐‑‒–—<>≤≥≦≧~≈≃∼"
+MATERIAL_WORD = re.compile(r"[a-zA-Z]+|[\uac00-\ud7a3]+|[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff]+")
+LABEL_CONTEXT_WORDS = {
+    "fiber", "fibre", "fibers", "fibres", "content", "composition", "fabric", "material", "materials",
+    "섬유", "혼용률", "혼용율", "섬유혼용률", "섬유혼용율", "소재", "함량", "조성",
+    "組成", "組成表示", "纤维", "成分", "纤维成分",
+}
+LABEL_CONTEXT_WORDS.update(
+    token for aliases in PART_PATTERNS.values() for alias in aliases
+    for token in MATERIAL_WORD.findall(alias.lower())
+)
 
-    if nums:
-        return nums
 
-    if not allow_plain_numbers:
-        return []
+def _read_numbers(line: str, allow_plain_numbers: bool) -> tuple[list[Decimal], bool]:
+    numbers = []
+    invalid = False
+    consumed_percent_signs = 0
+    for match in NUMBER_CANDIDATE.finditer(line):
+        token = match.group().strip()
+        has_percent = token.endswith("%")
+        consumed_percent_signs += int(has_percent)
+        if not has_percent and not allow_plain_numbers:
+            continue
+        value_text = token.removesuffix("%").strip()
+        # Units, exponents and dates are not fiber ratios. Numeric tokens on
+        # metadata-only lines are filtered separately in build_line_infos.
+        suffix = line[match.end():]
+        prefix = line[:match.start()]
+        preceding = prefix.rstrip()
+        if (not NUMBER_VALUE.fullmatch(value_text)
+                or re.match(r"[0-9.,%]", suffix)
+                or (not has_percent and re.match(r"[a-z]", suffix))
+                or re.match(r"\s*%", suffix)
+                or MEASUREMENT_UNIT.match(suffix)
+                or (prefix and prefix[-1] in "0123456789.,")
+                or (preceding and preceding[-1] in INEXACT_SIGN)
+                or (suffix.strip() and suffix.strip()[0] in "±∓<>≤≥~≈≃∼")):
+            invalid = True
+            continue
+        try:
+            value = Decimal(value_text.replace(",", "."))
+        except InvalidOperation:
+            invalid = True
+            continue
+        if not value.is_finite() or not 0 < value <= 100:
+            invalid = True
+            continue
+        numbers.append(value)
+    return numbers, invalid or line.count("%") != consumed_percent_signs
 
-    for match in re.finditer(r"(?<![a-z0-9])([0-9]{1,3})(?!\s*(?:cm|mm|kg|\ud638|\ub144|\uc6d4|\uc77c|\ubc88|[a-z0-9]))", line):
-        value = float(match.group(1))
-        if 0 < value <= 100:
-            nums.append(value)
 
-    # OCR often turns 100% into 10086, 10090, 10000, or cotton 2000.
-    if not nums:
-        if re.search(r"(?<![0-9])100[0-9]{2}(?![0-9])", line):
-            nums.append(100.0)
-        elif re.search(r"(?<![0-9])2000(?![0-9])", line):
-            nums.append(100.0)
-    return nums
+def extract_numbers(line: str, allow_plain_numbers: bool) -> list[Decimal]:
+    numbers, invalid = _read_numbers(line, allow_plain_numbers)
+    return [] if invalid else numbers
 
 
 def extract_materials(line: str) -> list[str]:
-    tokens = re.findall(r"[a-zA-Z]+|[\uac00-\ud7a3]+|[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff]+", line)
+    tokens = MATERIAL_WORD.findall(line)
     found = []
     for token in tokens:
         material = find_material_key(token)
         if material:
             found.append(material)
-    return list(dict.fromkeys(found))
+    return found
 
 
 def build_line_infos(text: str) -> list[LineInfo]:
@@ -142,7 +184,7 @@ def build_line_infos(text: str) -> list[LineInfo]:
     # Restrict this to a ratio-only line prefix so completed parts stay separate.
     cjk_pattern = "|".join(re.escape(marker) for marker in sorted(cjk_markers, key=len, reverse=True))
     prepared = re.sub(
-        rf"(?m)^([ \t]*[0-9]{{1,3}}[ \t]*%[ \t]*)({cjk_pattern})",
+        rf"(?m)^([ \t]*(?:[0-9]+(?:[.,][0-9]+)?|[.,][0-9]+)[ \t]*%[ \t]*)({cjk_pattern})",
         r"\2\1",
         prepared,
     )
@@ -162,242 +204,132 @@ def build_line_infos(text: str) -> list[LineInfo]:
             continue
         current_part = detect_part(normalized, current_part)
         materials = extract_materials(normalized)
-        allow_plain = bool(materials) or current_part != "generic"
-        numbers = extract_numbers(normalized, allow_plain_numbers=allow_plain)
-        infos.append(LineInfo(idx, raw.strip(), normalized, current_part, materials, numbers))
+        # Bare numbers are usable only next to named fibers or in a numeric
+        # column. A size/year elsewhere on a label must not become a percentage.
+        numeric_column = bool(re.fullmatch(r"[0-9.,%+\-\s]+", normalized))
+        allow_plain = bool(materials) or numeric_column
+        numbers, invalid = _read_numbers(normalized, allow_plain_numbers=allow_plain)
+        if NON_COMPOSITION.search(normalized):
+            numbers = []
+            invalid = bool(materials)
+        elif numbers or invalid:
+            # A missing/unknown fiber name must not shift another fiber's ratio
+            # merely because the overall number and recognized-name counts match.
+            invalid = invalid or any(
+                token not in LABEL_CONTEXT_WORDS and find_material_key(token) is None
+                for token in MATERIAL_WORD.findall(normalized)
+            )
+        infos.append(LineInfo(idx, raw.strip(), normalized, current_part, materials, numbers, invalid))
     return infos
 
 
-def _as_pair_dict(materials: list[str], numbers: list[float]) -> dict[str, float]:
-    pair = defaultdict(float)
-    if len(materials) == len(numbers):
-        for material, number in zip(materials, numbers):
-            pair[material] += number
-    elif len(materials) == 1 and numbers:
-        pair[materials[0]] += numbers[0]
-    elif len(numbers) > 1:
-        for material, number in zip(materials, numbers):
-            pair[material] += number
-    return dict(pair)
+def parse_parts(text: str) -> dict[str, dict[str, Decimal]]:
+    """Read explicit, complete compositions without guessing missing evidence.
 
-
-def _is_duplicate_composition(existing: dict[str, float], candidate: dict[str, float]) -> bool:
-    if not existing or not candidate:
-        return False
-    if set(existing) != set(candidate):
-        return False
-    existing_total = sum(existing.values())
-    candidate_total = sum(candidate.values())
-    if not (90 <= existing_total <= 110 and 90 <= candidate_total <= 110):
-        return False
-    for key in candidate:
-        existing_ratio = existing[key] * 100 / existing_total
-        candidate_ratio = candidate[key] * 100 / candidate_total
-        if abs(existing_ratio - candidate_ratio) > 15:
-            return False
-    return True
-
-
-def add_pairs(result: dict[str, defaultdict[str, float]], part: str, materials: list[str], numbers: list[float]) -> bool:
-    if not materials or not numbers:
-        return False
-
-    pair = _as_pair_dict(materials, numbers)
-    if not pair:
-        return False
-    if any(value <= 0 or value > 100 for value in pair.values()):
-        return False
-
-    if _is_duplicate_composition(dict(result[part]), pair):
-        return True
-
-    for material, number in pair.items():
-        result[part][material] += number
-    return True
-
-
-def parse_parts(text: str) -> dict[str, dict[str, float]]:
+    Pair only the same line or adjacent single-direction material/ratio columns
+    within one part. Each completed 100% block must agree with any repeated
+    translation. Empty values preserve a mentioned but invalid part so it cannot
+    silently be replaced by a lower-priority lining or filling.
+    """
     infos = build_line_infos(text)
-    result: dict[str, defaultdict[str, float]] = defaultdict(lambda: defaultdict(float))
+    mentioned = {
+        info.part for info in infos
+        if info.part != "generic" or info.materials or info.numbers or info.invalid
+    }
+    partial = {part: defaultdict(Decimal) for part in mentioned}
+    completed = {}
+    invalid_parts = set()
 
-    used = set()
-    for pos, info in enumerate(infos):
-        if add_pairs(result, info.part, info.materials, info.numbers):
-            used.add(pos)
+    def add_explicit_pairs(part, materials, numbers):
+        if not materials or len(materials) != len(numbers):
+            invalid_parts.add(part)
+            return
+        for material, number in zip(materials, numbers):
+            partial[part][material] += number
+            total = sum(partial[part].values(), Decimal(0))
+            if total > 100:
+                invalid_parts.add(part)
+            elif total == 100:
+                composition = dict(partial[part])
+                if part in completed and completed[part] != composition:
+                    invalid_parts.add(part)
+                else:
+                    completed[part] = composition
+                partial[part].clear()
 
-    # Column layout: material names can be stacked first, followed by stacked ratios.
-    # Example: "polyester / polyurethane / 94% / 6%".
-    for pos, info in enumerate(infos):
-        if pos in used or not info.materials or info.numbers:
+    pos = 0
+    while pos < len(infos):
+        info = infos[pos]
+        if info.invalid:
+            invalid_parts.add(info.part)
+            pos += 1
             continue
-        material_block = []
-        material_positions = []
+        if info.materials and info.numbers:
+            add_explicit_pairs(info.part, info.materials, info.numbers)
+            pos += 1
+            continue
+        if not info.materials and not info.numbers:
+            pos += 1
+            continue
+
+        # Material-first and ratio-first columns are symmetric. A header,
+        # unrelated line, already paired row or part boundary stops the block.
+        materials_first = bool(info.materials)
+        materials, numbers = [], []
         cursor = pos
-        while cursor < len(infos):
-            cur = infos[cursor]
-            if cursor in used or cur.part != info.part or cur.numbers or not cur.materials:
-                break
-            material_block.extend(cur.materials)
-            material_positions.append(cursor)
-            cursor += 1
-        number_block = []
-        number_positions = []
-        while cursor < len(infos):
-            cur = infos[cursor]
-            if cursor in used or cur.part != info.part or cur.materials or not cur.numbers:
-                break
-            number_block.extend(cur.numbers)
-            number_positions.append(cursor)
-            cursor += 1
-        if len(material_block) > 1 and len(material_block) == len(number_block):
-            if add_pairs(result, info.part, material_block, number_block):
-                used.update(material_positions)
-                used.update(number_positions)
-
-    for pos, info in enumerate(infos):
-        if pos in used or not info.materials:
-            continue
-        near_numbers = []
-        for next_pos in range(pos + 1, min(pos + 4, len(infos))):
-            nxt = infos[next_pos]
-            if nxt.materials and nxt.part != info.part:
-                break
-            if nxt.numbers:
-                near_numbers.extend(nxt.numbers)
-                used.add(next_pos)
-                if len(near_numbers) >= len(info.materials):
+        for first_block in (True, False):
+            want_materials = materials_first if first_block else not materials_first
+            while cursor < len(infos):
+                current = infos[cursor]
+                if current.part != info.part or current.invalid:
                     break
-        if add_pairs(result, info.part, info.materials, near_numbers):
-            used.add(pos)
+                if want_materials:
+                    if not current.materials or current.numbers:
+                        break
+                    materials.extend(current.materials)
+                else:
+                    if not current.numbers or current.materials:
+                        break
+                    numbers.extend(current.numbers)
+                cursor += 1
+        add_explicit_pairs(info.part, materials, numbers)
+        pos = cursor
 
-    for pos, info in enumerate(infos):
-        if pos in used or not info.numbers:
-            continue
-        near_materials = []
-        for next_pos in range(pos + 1, min(pos + 4, len(infos))):
-            nxt = infos[next_pos]
-            if nxt.numbers and nxt.part != info.part:
-                break
-            if nxt.materials:
-                near_materials.extend(nxt.materials)
-                used.add(next_pos)
-                if len(near_materials) >= len(info.numbers):
-                    break
-        if add_pairs(result, info.part, near_materials, info.numbers):
-            used.add(pos)
-
-    return {part: dict(values) for part, values in result.items() if values}
+    return {
+        part: completed.get(part, {}) if part not in invalid_parts and not partial[part] else {}
+        for part in mentioned
+    }
 
 
 def normalize_percentages(materials: dict[str, float]) -> dict[str, float | int]:
+    """Validate an explicit 100% composition, preserving every supplied ratio.
+
+    Decimal arithmetic avoids a business tolerance or a rescaling step. The
+    historical function name is retained for callers; it no longer repairs data.
+    """
     if not materials:
         return {}
-
-    total = sum(float(value) for value in materials.values())
-    normalized_values = dict(materials)
-
-    if len(normalized_values) == 1 and 50 <= total <= 100:
-        only_key = next(iter(normalized_values))
-        normalized_values[only_key] = 100.0
-    elif len(normalized_values) == 2 and total < 30:
-        keys = list(normalized_values.keys())
-        values = [float(normalized_values[key]) for key in keys]
-        if 0 < values[1] <= 15:
-            normalized_values[keys[0]] = 100.0 - values[1]
-        elif 0 < values[0] <= 15:
-            normalized_values[keys[1]] = 100.0 - values[0]
-    elif 95 <= total <= 105 or total > 100:
-        normalized_values = {key: float(value) * 100 / total for key, value in normalized_values.items()}
-
-    normalized = {}
-    for key, value in normalized_values.items():
-        if value <= 0:
-            continue
-        rounded = round(float(value), 1)
-        normalized[key] = int(rounded) if float(rounded).is_integer() else rounded
-    return normalized
+    try:
+        values = {key: Decimal(str(value)) for key, value in materials.items()}
+    except (InvalidOperation, ValueError):
+        return {}
+    if (any(not value.is_finite() or not 0 < value <= 100 for value in values.values())
+            or sum(values.values(), Decimal(0)) != 100):
+        return {}
+    return {key: int(value) if value == value.to_integral_value() else float(value)
+            for key, value in values.items()}
 
 
 def choose_representative_materials(parts: dict[str, dict[str, float]]) -> tuple[str, dict[str, float | int]]:
-    if not parts:
-        return "", {}
-
     priority = ["outer", "generic", "lining", "filling", "pocket", "rib", "sleeve", "color_block"]
     for part in priority:
         if part in parts:
-            normalized = normalize_percentages(parts[part])
-            if normalized:
-                return part, normalized
-
-    best_part = min(parts, key=lambda name: abs(sum(parts[name].values()) - 100))
-    return best_part, normalize_percentages(parts[best_part])
-
-
-
-def infer_materials_from_context(text: str) -> tuple[str, dict[str, float | int]]:
-    text_n = normalize_text(text)
-    if not text_n:
-        return "", {}
-
-    found_materials = []
-    for line in text_n.split("\n"):
-        found_materials.extend(extract_materials(line))
-    found_materials = list(dict.fromkeys(found_materials))
-
-    if len(found_materials) == 1:
-        if re.search(r"(?<![0-9])100\s*%|single|only|cotona", text_n):
-            return "inferred", {found_materials[0]: 100}
-
-    has_composition_context = any(
-        keyword in text_n
-        for keyword in ["섬유", "혼용", "품질표시", "품질 표시", "composition", "fabric", "shell"]
-    )
-    if has_composition_context and re.search(r"(?<![0-9])100\s*%(?![0-9])", text_n):
-        return "inferred", {"cotton": 100}
-
+            return part, normalize_percentages(parts[part])
     return "", {}
 
-def infer_missing_cotton_polyester_pair(text: str) -> tuple[str, dict[str, float | int]]:
-    text_n = normalize_text(text)
-    if not text_n:
-        return "", {}
 
-    polyester_pattern = r"(?:폴리에스터|플리에스터|리메스타|polyester|poliester|polyster)"
-    has_composition_context = any(
-        keyword in text_n
-        for keyword in ["섬유", "혼용", "품질표시", "품질 표시", "composition", "fabric", "shell"]
-    )
-    has_material_context = bool(re.search(polyester_pattern, text_n)) or "면" in text_n or bool(re.search(r"\bcotton\b", text_n))
-    if not (has_composition_context or has_material_context):
-        return "", {}
-
-    pattern = rf"(?<![0-9])([1-9][0-9]?)\s*%\s*.{{0,18}}?{polyester_pattern}\s*.{{0,10}}?([1-9][0-9]?)\s*%?"
-    for match in re.finditer(pattern, text_n):
-        first = float(match.group(1))
-        second = float(match.group(2))
-        if 95 <= first + second <= 105 and first >= second:
-            return "inferred", {
-                "cotton": int(first) if first.is_integer() else first,
-                "polyester": int(second) if second.is_integer() else second,
-            }
-
-    cotton_pattern = r"(?:면|cotton|coton|algodon|algodao|pamuk|cotone|baumwolle|katoen|bawe|kapas)"
-    pattern = rf"(?<![0-9])([1-9][0-9]?)\s*%\s*.{{0,10}}?{cotton_pattern}\s*.{{0,10}}?([1-9][0-9]?)\s*%?"
-    for match in re.finditer(pattern, text_n):
-        first = float(match.group(1))
-        second = float(match.group(2))
-        if 95 <= first + second <= 105 and first >= second:
-            return "inferred", {
-                "cotton": int(first) if first.is_integer() else first,
-                "polyester": int(second) if second.is_integer() else second,
-            }
-
-    return "", {}
 def parse_materials(text: str) -> dict[str, float | int]:
     _, materials = choose_representative_materials(parse_parts(text))
-    inferred_part, inferred_materials = infer_missing_cotton_polyester_pair(text)
-    if inferred_materials and (not materials or set(materials) in ({"polyester"}, {"cotton"})):
-        return inferred_materials
     return materials
 
 
@@ -408,7 +340,7 @@ def format_materials_korean(material_dict: dict[str, float | int]) -> str:
     parts = []
     for material, percent in sorted(material_dict.items(), key=lambda item: (-float(item[1]), item[0])):
         korean = MATERIAL_KOREAN.get(material, material)
-        percent_text = str(int(percent)) if float(percent).is_integer() else f"{float(percent):.1f}"
+        percent_text = str(int(percent)) if float(percent).is_integer() else format(Decimal(str(percent)).normalize(), "f")
         parts.append(f"{korean} {percent_text}%")
     return ", ".join(parts)
 
@@ -481,11 +413,6 @@ def failed_response(raw_text: str = "") -> dict:
 def parse_label(text: str) -> dict:
     parts_raw = parse_parts(text)
     selected_part, materials = choose_representative_materials(parts_raw)
-    inferred_part, inferred_materials = infer_missing_cotton_polyester_pair(text)
-    if inferred_materials and (not materials or set(materials) in ({"polyester"}, {"cotton"})):
-        selected_part, materials = inferred_part, inferred_materials
-    if not materials:
-        selected_part, materials = infer_materials_from_context(text)
     if not materials:
         return failed_response(text)
 
