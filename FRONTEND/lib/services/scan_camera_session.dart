@@ -29,6 +29,10 @@ class ScanCameraSession extends ChangeNotifier {
     _errorMessage = null;
     notifyListeners();
 
+    // 초기화에 실패한 컨트롤러도 기기 방향 스트림 구독 등을 잡고 있으므로
+    // catch에서 해제할 수 있게 try 밖에 둔다. 넘겨주거나 직접 해제하면 비운다.
+    CameraController? pendingController;
+
     try {
       final cameras = await availableCameras();
 
@@ -46,11 +50,13 @@ class ScanCameraSession extends ChangeNotifier {
         ResolutionPreset.high,
         enableAudio: false,
       );
+      pendingController = controller;
 
       await controller.initialize();
       await _configureAutoFocus(controller);
 
       if (!canUseCamera() || requestId != _requestId) {
+        pendingController = null;
         await controller.dispose();
 
         // 더 새로운 요청이 없다면 준비 중 표시를 반드시 되돌려,
@@ -64,6 +70,7 @@ class ScanCameraSession extends ChangeNotifier {
 
       final oldController = _controller;
       _controller = controller;
+      pendingController = null;
       _isInitializing = false;
       _errorMessage = null;
       notifyListeners();
@@ -71,6 +78,10 @@ class ScanCameraSession extends ChangeNotifier {
       await oldController?.dispose();
     } catch (e) {
       debugPrint('카메라 초기화 실패: $e');
+
+      // 요청 번호와 무관하게 먼저 해제한다. 권한 대화상자가 앱을 inactive로 만들면
+      // 요청이 먼저 무효화될 수 있어, 아래 조기 return 뒤에 두면 그 실패가 샌다.
+      await _disposeFailedController(pendingController);
 
       if (!canUseCamera() || requestId != _requestId) return;
 
@@ -88,6 +99,19 @@ class ScanCameraSession extends ChangeNotifier {
       await controller.setExposurePoint(const Offset(0.5, 0.5));
     } catch (_) {
       // Some camera implementations do not support explicit focus/exposure points.
+    }
+  }
+
+  /// 초기화에 실패한 컨트롤러를 해제한다. 해제 자체가 실패해도(예: 플랫폼이
+  /// 이미 해제된 미리보기를 다시 해제하려는 경우) 오류 표시와 준비 중 해제가
+  /// 막히지 않도록 예외를 삼킨다.
+  Future<void> _disposeFailedController(CameraController? controller) async {
+    if (controller == null) return;
+
+    try {
+      await controller.dispose();
+    } catch (e) {
+      debugPrint('실패한 카메라 컨트롤러 해제 실패: $e');
     }
   }
 
