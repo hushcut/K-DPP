@@ -20,6 +20,9 @@ class MaterialInputCollection extends ChangeNotifier {
   /// 지정한 위치의 편집 컨트롤러를 반환합니다.
   MaterialEditController operator [](int index) => _items[index];
 
+  /// 이 행이 아직 컬렉션에 남아 있는지 확인합니다. 제거된 행의 컨트롤러는 이미 해제됐습니다.
+  bool contains(MaterialEditController item) => _items.contains(item);
+
   /// 기존 행을 모두 해제하고 소재 맵의 값으로 편집 행을 다시 만듭니다.
   void setFromMaterials(Map<String, double> materials) {
     _clearItems();

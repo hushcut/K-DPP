@@ -2,28 +2,6 @@ part of '../scan_screen.dart';
 
 /// 이미지 획득, 라벨 분석, 수동 입력 전환까지 촬영 흐름을 처리합니다.
 extension _ScanCaptureActions on _ScanScreenState {
-  /// 결과 편집에 쓰는 소재 자동완성 목록을 최초 한 번만 요청합니다.
-  Future<void> _loadMaterialCatalog() async {
-    if (_hasRequestedMaterialCatalog) return;
-
-    _hasRequestedMaterialCatalog = true;
-
-    try {
-      final catalog = await _materialCatalogApiService.fetchMaterials();
-
-      if (!mounted) return;
-
-      _updateState(() {
-        _materialCatalog = catalog;
-      });
-    } catch (error, stackTrace) {
-      // 일시적인 실패가 앱 사용 내내 자동완성을 막지 않도록 다음 스캔에서 재시도합니다.
-      _hasRequestedMaterialCatalog = false;
-      debugPrint('소재 자동완성 목록을 불러오지 못했습니다: $error');
-      debugPrintStack(stackTrace: stackTrace);
-    }
-  }
-
   /// 선택 이미지를 분석하고 의류 유형 확인 후 편집 가능한 초안으로 변환합니다.
   Future<void> _scanImageFile(File imageFile) async {
     _updateState(() {

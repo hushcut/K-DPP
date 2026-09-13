@@ -3,8 +3,9 @@ part of '../report_screen.dart';
 
 // 소재명을 먼저 서버 표준명으로 되돌린 뒤 키워드를 맞춘다.
 // 스캔으로 등록한 옷의 소재 키는 서버 표시명(한글 '면','울')이라, 표준화 없이
-// 영문 키워드만 맞추면 아래 안내가 **스캔한 옷에서만 전부 빗나간다**
-// (자동완성으로 고른 옷은 `option.nameEn`이 들어가 영문 키라 정상이었다).
+// 영문 키워드만 맞추면 아래 안내가 **스캔한 옷에서만 전부 빗나갔다**
+// (당시 자동완성은 `option.nameEn`을 넣어 영문 키라 정상이었다. 2026-09-13부터는
+// 소재 선택창·자동완성도 한글명을 넣으므로 한글 키가 더 흔하다).
 bool _hasMaterial(Clothes item, List<String> keywords) {
   return MaterialName.matchesAny(item.materials.keys, keywords);
 }
