@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from dataclasses import dataclass
 
 from apps.text.rules import (
@@ -26,6 +27,14 @@ PART_PATTERNS = {
         "main fabric",
         "本体",
         "面料",
+        "表布",
+        "表層",
+        "表地",
+        "表素材",
+        "表生地",
+        "主面料",
+        "外层",
+        "外層",
     ],
     "lining": [
         "안감",
@@ -36,6 +45,16 @@ PART_PATTERNS = {
         "裏地",
         "里料",
         "裡料",
+        "内里",
+        "內裡",
+        "裏素材",
+        "裏生地",
+        "里布",
+        "裏布",
+        "内衬",
+        "內襯",
+        "衬里",
+        "襯裡",
     ],
     "filling": [
         "충전재",
@@ -45,12 +64,17 @@ PART_PATTERNS = {
         "filling",
         "fill",
         "中わた",
+        "中綿",
         "填充",
+        "填充物",
+        "填充料",
     ],
-    "pocket": ["주머니감", "주머니천", "주머니", "pocket"],
-    "rib": ["립", "리브", "rib"],
-    "sleeve": ["소매", "sleeve"],
-    "color_block": ["배색", "contrast", "配色"],
+    "pocket": [
+        "주머니감", "주머니천", "주머니", "pocket", "口袋布", "袋布", "ポケット布"
+    ],
+    "rib": ["립", "리브", "rib", "罗纹", "羅紋"],
+    "sleeve": ["소매", "sleeve", "袖子", "袖部", "袖"],
+    "color_block": ["배색", "contrast", "配色", "拼接", "別布"],
 }
 
 PART_PRIORITY = [
@@ -86,6 +110,16 @@ EXCLUDED_SEGMENT_WORDS = {
     "embroidery",
     "accessory",
     "trim",
+    "装饰",
+    "裝飾",
+    "刺绣",
+    "刺繍",
+    "辅料",
+    "輔料",
+    "配件",
+    "付属",
+    "附属",
+    "除く",
 }
 
 NON_COMPOSITION_WORDS = {
@@ -100,6 +134,21 @@ NON_COMPOSITION_WORDS = {
     "가슴둘레",
     "허리둘레",
     "검사필",
+    "产品名称",
+    "產品名稱",
+    "货号",
+    "貨號",
+    "型号",
+    "型號",
+    "尺码",
+    "尺碼",
+    "生产日期",
+    "生產日期",
+    "製造年月",
+    "製造国",
+    "製造國",
+    "品番",
+    "サイズ",
 }
 
 COMPOSITION_HINTS = {
@@ -112,10 +161,18 @@ COMPOSITION_HINTS = {
     "material",
     "materials",
     "fiber content",
+    "纤维成分",
+    "纖維成分",
+    "面料成分",
+    "材质",
+    "材質",
+    "組成表示",
+    "混用率",
+    "品質表示",
 }
 
 _TOKEN_PATTERN = re.compile(
-    r"[a-zà-ÿ]+|[가-힣]+|[一-龥]+|[ぁ-んァ-ン]+",
+    r"[a-zà-ÿ]+|[가-힣]+|[一-龥]+|[ぁ-んァ-ンー]+",
     re.IGNORECASE,
 )
 _PERCENT_PATTERN = re.compile(
@@ -179,13 +236,14 @@ class CompositionCandidate:
             "same_line": 3,
             "line_pairs": 2,
             "stacked_columns": 2,
+            "mixed_lines": 2,
             "adjacent_lines": 1,
         }.get(self.source, 0)
         return (
             1 if self.explicit_percent else 0,
             -abs(100.0 - self.total),
-            source_rank,
             len(self.materials),
+            source_rank,
         )
 
 
@@ -201,7 +259,9 @@ def normalize_text(text: str) -> str:
     if not text:
         return ""
 
-    normalized = text.casefold()
+    # Normalize full-width digits/punctuation and compatibility characters
+    # commonly returned from Japanese and Chinese care labels.
+    normalized = unicodedata.normalize("NFKC", text).casefold()
     normalized = normalized.replace("：", ":").replace("％", "%")
     normalized = normalized.replace("·", " ").replace("\u00a0", " ")
     normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
@@ -225,7 +285,28 @@ def find_material_key(word: str) -> str | None:
     if not token:
         return None
     corrected = OCR_CORRECTIONS.get(token, token)
-    return ALIAS_TO_MATERIAL.get(_normalized_alias(corrected))
+    corrected = _normalized_alias(corrected)
+    material = ALIAS_TO_MATERIAL.get(corrected)
+    if material:
+        return material
+
+    # OCR sometimes joins a Korean part marker and its first material
+    # (for example, ``배색면``). Only split a known non-ASCII marker and
+    # require the remainder to be a complete material alias.
+    for aliases in PART_PATTERNS.values():
+        for prefix in aliases:
+            normalized_prefix = _normalized_alias(prefix)
+            if (
+                not normalized_prefix.isascii()
+                and corrected.startswith(normalized_prefix)
+                and len(corrected) > len(normalized_prefix)
+            ):
+                material = ALIAS_TO_MATERIAL.get(
+                    corrected[len(normalized_prefix) :]
+                )
+                if material:
+                    return material
+    return None
 
 
 def _strip_excluded_segments(line: str) -> str:
@@ -253,11 +334,21 @@ def extract_materials(line: str) -> list[str]:
         return []
 
     found: list[str] = []
+    tokenizable = cleaned
     for alias, material in MULTIWORD_ALIASES:
         if re.search(rf"(?<![a-z]){re.escape(alias)}(?![a-z])", cleaned):
             found.append(material)
+            # A spatial OCR row can split a Korean compound such as
+            # ``폴리 우레탄``. Remove a matched multiword alias before the
+            # token pass so its partial token ``폴리`` is not also read as
+            # polyester.
+            tokenizable = re.sub(
+                rf"(?<![a-z]){re.escape(alias)}(?![a-z])",
+                " ",
+                tokenizable,
+            )
 
-    for token in _TOKEN_PATTERN.findall(cleaned):
+    for token in _TOKEN_PATTERN.findall(tokenizable):
         material = find_material_key(token)
         if material:
             found.append(material)
@@ -281,6 +372,24 @@ def _looks_like_non_composition_number(line: str) -> bool:
     if re.search(r"\d+(?:\.\d+)?\s*(?:cm|mm|kg|g|호|년|월|일)\b", line):
         return True
     return False
+
+
+def _is_metadata_line(info: LineInfo) -> bool:
+    """Whether an OCR row is safe to skip while pairing composition rows."""
+
+    if _looks_like_non_composition_number(info.normalized):
+        return True
+    if info.materials or info.explicit_percent:
+        return False
+
+    # Product codes often appear between a material and its percentage in
+    # Vision's paragraph order. They contain letters with digits, or several
+    # bare numeric groups, but never form a material/ratio pair by themselves.
+    has_letters = bool(re.search(r"[a-z가-힣一-龥ぁ-んァ-ン]", info.normalized))
+    has_digits = bool(re.search(r"\d", info.normalized))
+    if has_letters and has_digits:
+        return True
+    return len(_PLAIN_NUMBER_PATTERN.findall(info.normalized)) >= 2
 
 
 def extract_numbers(line: str, allow_plain_numbers: bool = False) -> list[float]:
@@ -406,6 +515,11 @@ def _pair_values(
         paired[material] = float(number)
 
     total = sum(paired.values())
+    # A partial OCR result such as ``cotton 95%`` must not be promoted to a
+    # complete single-material composition. Multi-material labels retain the
+    # existing small total-error tolerance because every component is present.
+    if len(paired) == 1 and abs(total - 100.0) > EXACT_RATIO_TOLERANCE:
+        return None
     if not MIN_ACCEPTED_RATIO_TOTAL <= total <= MAX_ACCEPTED_RATIO_TOTAL:
         return None
 
@@ -419,6 +533,7 @@ def _pair_values(
 
 
 def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
+    infos = [info for info in infos if not _is_metadata_line(info)]
     candidates: list[CompositionCandidate] = []
 
     for info in infos:
@@ -498,9 +613,89 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
         if candidate:
             candidates.append(candidate)
 
+    # Mixed layouts occur in real labels: one component can be split across
+    # two lines while the next component is complete on one line. Accumulate
+    # only exact material/ratio pairs, without borrowing a ratio twice.
+    for position, info in enumerate(infos):
+        if not info.materials:
+            continue
+
+        materials: list[str] = []
+        numbers: list[float] = []
+        explicit_percent = True
+        component_count = 0
+        used_split_pair = False
+        used_same_line_pair = False
+        cursor = position
+
+        while cursor < len(infos) and component_count < 6:
+            current = infos[cursor]
+            if current.part != info.part:
+                break
+
+            if (
+                current.materials
+                and current.numbers
+                and len(current.materials) == len(current.numbers)
+            ):
+                materials.extend(current.materials)
+                numbers.extend(current.numbers)
+                explicit_percent = explicit_percent and current.explicit_percent
+                component_count += len(current.materials)
+                used_same_line_pair = True
+                cursor += 1
+                continue
+
+            if (
+                current.materials
+                and not current.numbers
+                and cursor + 1 < len(infos)
+            ):
+                ratio_line = infos[cursor + 1]
+                if (
+                    ratio_line.part == info.part
+                    and not ratio_line.materials
+                    and ratio_line.numbers
+                    and ratio_line.explicit_percent
+                    and len(current.materials) == len(ratio_line.numbers)
+                ):
+                    materials.extend(current.materials)
+                    numbers.extend(ratio_line.numbers)
+                    component_count += len(current.materials)
+                    used_split_pair = True
+                    cursor += 2
+                    continue
+            break
+
+        if not (used_split_pair and used_same_line_pair):
+            continue
+        candidate = _pair_values(
+            info.part,
+            materials,
+            numbers,
+            source="mixed_lines",
+            explicit_percent=explicit_percent,
+            start_index=info.index,
+        )
+        # Mixed layouts must still show every ratio explicitly.
+        if candidate and explicit_percent:
+            candidates.append(candidate)
+
     for position, info in enumerate(infos):
         if not info.materials or info.numbers:
             continue
+
+        # Start only at the beginning of a material block. Otherwise a
+        # mismatched block could be made to look valid by dropping its first
+        # material and pairing only a suffix with the ratio column.
+        if position > 0:
+            previous = infos[position - 1]
+            if (
+                previous.part == info.part
+                and previous.materials
+                and not previous.numbers
+            ):
+                continue
 
         material_block: list[str] = []
         number_block: list[float] = []
@@ -530,12 +725,26 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
             explicit_percent=explicit_percent,
             start_index=info.index,
         )
-        if candidate:
+        # Bare number-only lines are too easily confused with product codes,
+        # dates, or temperatures. A stacked ratio column is accepted only
+        # when every ratio carries an explicit percent marker.
+        if candidate and explicit_percent:
             candidates.append(candidate)
 
     for position, info in enumerate(infos):
         if not info.materials or info.numbers:
             continue
+
+        # If this material belongs to a consecutive material block, pairing
+        # only its last row with the next ratio would hide a count mismatch.
+        if position > 0:
+            previous = infos[position - 1]
+            if (
+                previous.part == info.part
+                and previous.materials
+                and not previous.numbers
+            ):
+                continue
 
         for next_position in range(position + 1, min(position + 3, len(infos))):
             neighbor = infos[next_position]
@@ -554,6 +763,31 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
                 break
 
     return candidates
+
+
+def _composition_heading_indices(infos: list[LineInfo]) -> list[int]:
+    return [
+        info.index
+        for info in infos
+        if any(hint.casefold() in info.normalized for hint in COMPOSITION_HINTS)
+    ]
+
+
+def _context_rank(
+    candidate: CompositionCandidate,
+    heading_indices: list[int],
+) -> int:
+    """Prefer a material block immediately following a composition heading.
+
+    The heading is only a tie-breaker: labels without a heading and valid
+    composition blocks elsewhere remain accepted.
+    """
+    return int(
+        any(
+            0 < candidate.start_index - heading_index <= 6
+            for heading_index in heading_indices
+        )
+    )
 
 
 def _normalize_candidate(
@@ -591,17 +825,25 @@ def _best_candidates_by_part(
     dict[str, CompositionCandidate],
     list[str],
 ]:
-    candidates = _collect_candidates(build_line_infos(text))
+    infos = build_line_infos(text)
+    candidates = _collect_candidates(infos)
+    heading_indices = _composition_heading_indices(infos)
     best_by_part: dict[str, CompositionCandidate] = {}
     ambiguous_parts: set[str] = set()
 
     for candidate in candidates:
         current = best_by_part.get(candidate.part)
-        if current is None or candidate.score > current.score:
+        candidate_rank = (_context_rank(candidate, heading_indices), *candidate.score)
+        current_rank = (
+            (_context_rank(current, heading_indices), *current.score)
+            if current
+            else None
+        )
+        if current is None or candidate_rank > current_rank:
             best_by_part[candidate.part] = candidate
             ambiguous_parts.discard(candidate.part)
         elif (
-            candidate.score == current.score
+            candidate_rank == current_rank
             and candidate.materials != current.materials
         ):
             ambiguous_parts.add(candidate.part)
@@ -637,6 +879,11 @@ def normalize_percentages(
         explicit_percent=True,
         start_index=0,
     )
+    if (
+        len(candidate.materials) == 1
+        and abs(candidate.total - 100.0) > EXACT_RATIO_TOLERANCE
+    ):
+        return {}
     if not MIN_ACCEPTED_RATIO_TOTAL <= candidate.total <= MAX_ACCEPTED_RATIO_TOTAL:
         return {}
     normalized, _ = _normalize_candidate(candidate)

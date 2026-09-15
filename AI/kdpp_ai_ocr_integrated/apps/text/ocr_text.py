@@ -89,13 +89,40 @@ class OcrResult:
 
 
 @dataclass(frozen=True)
+class OcrPayload:
+    """Raw OCR text plus a text order reconstructed from word coordinates."""
+
+    text: str
+    layout_text: str = ""
+
+
+@dataclass(frozen=True)
+class OcrWord:
+    text: str
+    left: int
+    top: int
+    right: int
+    bottom: int
+
+    @property
+    def center_y(self) -> float:
+        return (self.top + self.bottom) / 2
+
+    @property
+    def height(self) -> int:
+        return max(1, self.bottom - self.top)
+
+
+@dataclass(frozen=True)
 class OcrCandidate:
     source: str
     text: str
     materials: dict[str, float | int]
+    selected_part: str
     parser_status: str
     parser_confidence: str
-    score: tuple[int, int, float, int, int, int]
+    score: tuple[int, int, int, int, float, int, int, int]
+    layout_used: bool = False
 
 
 @dataclass(frozen=True)
@@ -240,17 +267,18 @@ def _parse_candidate(text: str) -> dict:
 def _score_candidate(
     text: str,
     materials: dict[str, float | int],
+    selected_part: str,
     parser_status: str,
     parser_confidence: str,
     source: str,
     *,
     ratio_total_before_normalization: float | None,
     warning_count: int,
-) -> tuple[int, int, float, int, int, int]:
+) -> tuple[int, int, int, int, float, int, int, int]:
     """파서 성공 여부를 최우선으로 OCR 후보를 정렬할 점수를 만든다.
 
-    같은 품질이면 혼용률 합계가 100에 가까운 결과, 경고가 적은 결과,
-    명시적 퍼센트가 많은 결과, 마지막으로 원본 OCR 순서로 선택한다.
+    같은 품질이면 서비스의 소재 선택 원칙(겉감 우선), 소재 조성의 완전성,
+    혼용률 합계·경고·명시적 퍼센트·원본 OCR 순서로 선택한다.
     """
 
     total = (
@@ -261,11 +289,23 @@ def _score_candidate(
         else 0.0
     )
     confidence_rank = {"low": 0, "medium": 1, "high": 2}.get(parser_confidence, 0)
+    part_rank = {
+        "outer": 7,
+        "generic": 6,
+        "lining": 5,
+        "filling": 4,
+        "pocket": 3,
+        "rib": 2,
+        "sleeve": 1,
+        "color_block": 0,
+    }.get(selected_part, 0)
     explicit_percent_count = len(re.findall(r"\d{1,3}(?:\.\d+)?\s*[%％]", text))
     source_priority = 1 if source == "original" else 0
 
     return (
         1 if parser_status == "success" else 0,
+        part_rank,
+        len(materials),
         confidence_rank,
         -abs(100.0 - total) if materials else -100.0,
         -warning_count,
@@ -274,9 +314,15 @@ def _score_candidate(
     )
 
 
-def _build_candidate(source: str, text: str) -> OcrCandidate:
+def _build_candidate(
+    source: str,
+    text: str,
+    *,
+    layout_used: bool = False,
+) -> OcrCandidate:
     parsed = _parse_candidate(text)
     materials = parsed.get("materials", {})
+    selected_part = parsed.get("selected_part", "")
     parser_status = parsed.get("status", "failed")
     parser_confidence = parsed.get("confidence", {}).get("parser", "low")
     ratio_total = parsed.get("parse_evidence", {}).get(
@@ -287,17 +333,20 @@ def _build_candidate(source: str, text: str) -> OcrCandidate:
         source=source,
         text=text,
         materials=materials,
+        selected_part=selected_part,
         parser_status=parser_status,
         parser_confidence=parser_confidence,
         score=_score_candidate(
             text,
             materials,
+            selected_part,
             parser_status,
             parser_confidence,
             source,
             ratio_total_before_normalization=ratio_total,
             warning_count=len(parser_warnings),
         ),
+        layout_used=layout_used,
     )
 
 
@@ -327,6 +376,82 @@ def _extract_response_text(response: Any) -> str:
 
     texts = response.text_annotations
     return texts[0].description if texts else ""
+
+
+def _spatial_text_from_words(words: list[OcrWord]) -> str:
+    """Reassemble OCR words into visual rows, ordered left to right.
+
+    Vision's plain text is paragraph-order based. On care labels with a
+    material column and a ratio column, that order can separate a material
+    from its percentage. Grouping by overlapping vertical positions restores
+    the row used by the printed label.
+    """
+
+    if not words:
+        return ""
+
+    lines: list[list[OcrWord]] = []
+    line_center_y: list[float] = []
+    line_height: list[float] = []
+    for word in sorted(words, key=lambda item: (item.center_y, item.left)):
+        if lines:
+            tolerance = max(4.0, min(line_height[-1], word.height) * 0.55)
+            if abs(word.center_y - line_center_y[-1]) <= tolerance:
+                lines[-1].append(word)
+                count = len(lines[-1])
+                line_center_y[-1] = (
+                    line_center_y[-1] * (count - 1) + word.center_y
+                ) / count
+                line_height[-1] = max(line_height[-1], word.height)
+                continue
+
+        lines.append([word])
+        line_center_y.append(word.center_y)
+        line_height.append(float(word.height))
+
+    return "\n".join(
+        " ".join(word.text for word in sorted(line, key=lambda item: item.left))
+        for line in lines
+    )
+
+
+def _extract_response_layout_text(response: Any) -> str:
+    annotation = getattr(response, "full_text_annotation", None)
+    pages = getattr(annotation, "pages", None) if annotation else None
+    if not pages:
+        return ""
+
+    words: list[OcrWord] = []
+    for page in pages:
+        for block in getattr(page, "blocks", ()):
+            for paragraph in getattr(block, "paragraphs", ()):
+                for word in getattr(paragraph, "words", ()):
+                    text = "".join(
+                        str(getattr(symbol, "text", ""))
+                        for symbol in getattr(word, "symbols", ())
+                    ).strip()
+                    vertices = getattr(
+                        getattr(word, "bounding_box", None),
+                        "vertices",
+                        (),
+                    )
+                    coordinates = [
+                        (int(getattr(vertex, "x", 0) or 0), int(getattr(vertex, "y", 0) or 0))
+                        for vertex in vertices
+                    ]
+                    if not text or not coordinates:
+                        continue
+                    x_values, y_values = zip(*coordinates)
+                    words.append(
+                        OcrWord(
+                            text=text,
+                            left=min(x_values),
+                            top=min(y_values),
+                            right=max(x_values),
+                            bottom=max(y_values),
+                        )
+                    )
+    return _spatial_text_from_words(words)
 
 
 def _resolve_credential_path(
@@ -367,7 +492,7 @@ def _get_vision_client(
         raise OcrConfigurationError("Google Vision 인증 정보를 불러오지 못했습니다.") from exc
 
 
-def _run_google_ocr(client: Any, content: bytes) -> str:
+def _run_google_ocr(client: Any, content: bytes) -> OcrPayload:
     from google.api_core import exceptions as google_exceptions
     from google.api_core import retry as google_retry
     from google.cloud import vision
@@ -393,7 +518,10 @@ def _run_google_ocr(client: Any, content: bytes) -> str:
             retry=retry,
             timeout=OCR_TIMEOUT_SECONDS,
         )
-        return _extract_response_text(response).strip()
+        return OcrPayload(
+            text=_extract_response_text(response).strip(),
+            layout_text=_extract_response_layout_text(response).strip(),
+        )
     except OcrServiceError:
         raise
     except OcrConfigurationError:
@@ -428,6 +556,28 @@ def _run_google_ocr(client: Any, content: bytes) -> str:
         raise OcrServiceError("Google Vision OCR 요청에 실패했습니다.") from exc
 
 
+def _coerce_ocr_payload(value: OcrPayload | str) -> OcrPayload:
+    """Keep test doubles and older callers that return plain text compatible."""
+
+    if isinstance(value, OcrPayload):
+        return value
+    if isinstance(value, str):
+        return OcrPayload(text=value)
+    raise TypeError("OCR 결과는 텍스트 또는 OcrPayload여야 합니다.")
+
+
+def _build_payload_candidates(
+    source: str,
+    payload: OcrPayload,
+) -> list[OcrCandidate]:
+    candidates = [_build_candidate(source, payload.text)]
+    if payload.layout_text and payload.layout_text != payload.text:
+        candidates.append(
+            _build_candidate(source, payload.layout_text, layout_used=True)
+        )
+    return candidates
+
+
 def run_ocr_bytes(
     content: bytes,
     credential_path: str | None = None,
@@ -449,13 +599,16 @@ def run_ocr_bytes(
 
     client: Any | None = None
 
-    def run_candidate_ocr(source: str, candidate_content: bytes) -> str:
+    def run_candidate_ocr(source: str, candidate_content: bytes) -> OcrPayload:
         nonlocal client
         # QA 재실행에서 동일 이미지에 대한 외부 OCR 호출과 비용을 피한다.
         if ocr_cache is not None and not refresh_ocr_cache:
-            cached_text = ocr_cache.get(candidate_content)
-            if cached_text is not None:
-                return cached_text
+            cached_entry = ocr_cache.get_entry(candidate_content)
+            if cached_entry is not None:
+                return OcrPayload(
+                    text=cached_entry["text"],
+                    layout_text=str(cached_entry.get("layout_text", "")),
+                )
 
         if offline:
             raise OcrCacheMissError(
@@ -466,36 +619,37 @@ def run_ocr_bytes(
             client = _get_vision_client(
                 *_resolve_credential_path(credential_path)
             )
-        text = _run_google_ocr(client, candidate_content)
+        payload = _coerce_ocr_payload(_run_google_ocr(client, candidate_content))
         if ocr_cache is not None:
             ocr_cache.put(
                 candidate_content,
-                text,
+                payload.text,
                 file_name=cache_label,
                 source=source,
+                layout_text=payload.layout_text,
             )
-        return text
+        return payload
 
-    candidates: list[OcrCandidate] = [
-        _build_candidate(
-            "original",
-            run_candidate_ocr("original", validated.content),
-        )
-    ]
+    candidates = _build_payload_candidates(
+        "original",
+        run_candidate_ocr("original", validated.content),
+    )
+    ocr_candidate_count = 1
     processing_warnings: list[str] = []
 
     # 원본 파싱이 충분히 신뢰할 만할 때는 전처리 OCR 호출을 생략한다.
     # 어려운 사진만 재시도해 비용과 지연을 제한한다.
-    original = candidates[0]
+    original = max(candidates, key=lambda candidate: candidate.score)
     if original.parser_status != "success" or original.parser_confidence != "high":
         try:
             preprocessed = preprocess_image_bytes(validated.content)
-            candidates.append(
-                _build_candidate(
+            candidates.extend(
+                _build_payload_candidates(
                     "preprocessed",
                     run_candidate_ocr("preprocessed", preprocessed),
                 )
             )
+            ocr_candidate_count += 1
         except (
             InvalidImageError,
             OcrCacheMissError,
@@ -517,6 +671,8 @@ def run_ocr_bytes(
     result_warnings = processing_warnings
     if best.source != "original":
         result_warnings.append("전처리된 이미지의 OCR 결과를 사용했습니다.")
+    if best.layout_used:
+        result_warnings.append("OCR 좌표를 바탕으로 재구성한 줄 순서를 사용했습니다.")
     if not best.text:
         result_warnings.append("OCR에서 텍스트를 추출하지 못했습니다.")
 
@@ -525,7 +681,7 @@ def run_ocr_bytes(
         metadata=OcrMetadata(
             source=best.source,
             confidence=ocr_confidence,
-            candidate_count=len(candidates),
+            candidate_count=ocr_candidate_count,
             image_format=validated.image_format,
             width=validated.width,
             height=validated.height,

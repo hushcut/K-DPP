@@ -149,3 +149,34 @@ def test_negative_care_rule_wins_over_general_rule() -> None:
     assert "찬물 기계세탁" in result["care_instructions"]
     assert "건조기 사용" not in result["care_instructions"]
 
+
+def test_spatially_split_korean_compounds_are_one_material_each() -> None:
+    result = parse_label(
+        "리오 셀 50%\n나일 론 45%\n폴리 우레탄 5%"
+    )
+
+    assert result["status"] == "success"
+    assert result["materials"] == {
+        "lyocell": 50,
+        "nylon": 45,
+        "polyurethane": 5,
+    }
+
+
+def test_complete_multimaterial_candidate_beats_later_standalone_candidate() -> None:
+    result = parse_label(
+        "리오셀 70%\n나일론 30%\n혼용율 폴리에스터 100%"
+    )
+
+    assert result["status"] == "success"
+    assert result["materials"] == {"lyocell": 70, "nylon": 30}
+
+
+def test_body_measurements_between_material_and_ratio_are_skipped() -> None:
+    result = parse_label(
+        "아크릴\n신체치수 가슴둘레\n호칭 95\n95cm\n65%\n레이온\n35%"
+    )
+
+    assert result["status"] == "success"
+    assert result["materials"] == {"acrylic": 65, "rayon": 35}
+

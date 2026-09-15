@@ -52,6 +52,11 @@ class OcrTextCache:
         self._entries = payload["entries"]
 
     def get(self, content: bytes) -> str | None:
+        entry = self.get_entry(content)
+        return entry["text"] if entry is not None else None
+
+    def get_entry(self, content: bytes) -> dict[str, Any] | None:
+        """Return a cached OCR payload without discarding optional layout text."""
         digest = image_sha256(content)
         entry = self._entries.get(digest)
         if entry is None:
@@ -68,7 +73,7 @@ class OcrTextCache:
             ) from exc
 
         self.hit_count += 1
-        return text
+        return dict(entry)
 
     def put(
         self,
@@ -77,15 +82,21 @@ class OcrTextCache:
         *,
         file_name: str = "",
         source: str = "",
+        layout_text: str = "",
     ) -> None:
         if not isinstance(text, str):
             raise TypeError("OCR cache text must be a string")
+        if not isinstance(layout_text, str):
+            raise TypeError("OCR cache layout_text must be a string")
         digest = image_sha256(content)
-        self._entries[digest] = {
+        entry: dict[str, Any] = {
             "file_name": Path(file_name).name if file_name else "",
             "source": source,
             "text": text,
         }
+        if layout_text:
+            entry["layout_text"] = layout_text
+        self._entries[digest] = entry
         self._write()
         self.write_count += 1
 
