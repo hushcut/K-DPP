@@ -420,6 +420,10 @@ def main() -> None:
             "parser_confidence": confidence.get("parser", ""),
             "ocr_confidence": confidence.get("ocr", ""),
             "ocr_source": ocr.get("source", ""),
+            "ocr_attempt_failures": json.dumps(
+                ocr.get("attempt_failures", []),
+                ensure_ascii=False,
+            ),
             "warnings": json.dumps(
                 result.get("warnings", []),
                 ensure_ascii=False,

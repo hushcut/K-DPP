@@ -43,6 +43,7 @@ def _merge_ocr_metadata(parsed: dict[str, Any], metadata: OcrMetadata) -> dict[s
         "image_format": metadata.image_format,
         "width": metadata.width,
         "height": metadata.height,
+        "attempt_failures": list(metadata.attempt_failures),
     }
     return result
 

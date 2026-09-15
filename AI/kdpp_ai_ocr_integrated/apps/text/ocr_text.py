@@ -80,6 +80,7 @@ class OcrMetadata:
     width: int
     height: int
     warnings: tuple[str, ...] = ()
+    attempt_failures: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -686,6 +687,7 @@ def run_ocr_bytes(
     )
     ocr_candidate_count = 1
     processing_warnings: list[str] = []
+    attempt_failures: list[str] = []
 
     # 원본 파싱이 충분히 신뢰할 만할 때는 전처리 OCR 호출을 생략한다.
     # 어려운 사진만 재시도해 비용과 지연을 제한한다.
@@ -705,7 +707,8 @@ def run_ocr_bytes(
             OcrCacheMissError,
             OcrServiceError,
             MemoryError,
-        ):
+        ) as exc:
+            attempt_failures.append(f"preprocessed:{type(exc).__name__}")
             processing_warnings.append(
                 "전처리 OCR에 실패하여 원본 OCR 결과를 유지했습니다."
             )
@@ -729,7 +732,8 @@ def run_ocr_bytes(
                     OcrCacheMissError,
                     OcrServiceError,
                     MemoryError,
-                ):
+                ) as exc:
+                    attempt_failures.append(f"reflection:{type(exc).__name__}")
                     processing_warnings.append(
                         "반사 보정 OCR에 실패하여 기존 후보를 유지했습니다."
                     )
@@ -763,6 +767,7 @@ def run_ocr_bytes(
             width=validated.width,
             height=validated.height,
             warnings=tuple(result_warnings),
+            attempt_failures=tuple(attempt_failures),
         ),
     )
 

@@ -379,6 +379,7 @@ def test_reflection_ocr_failure_keeps_existing_candidates(monkeypatch) -> None:
 
     assert result.metadata.source == "original"
     assert result.metadata.candidate_count == 2
+    assert result.metadata.attempt_failures == ("reflection:OcrTimeoutError",)
     assert "반사 보정 OCR에 실패하여 기존 후보를 유지했습니다." in (
         result.metadata.warnings
     )
