@@ -300,7 +300,10 @@ def main() -> None:
     image_dir = Path(args.image_dir).expanduser().resolve()
     output_path = Path(args.output).expanduser().resolve()
     cache_path = Path(args.ocr_cache).expanduser().resolve()
-    cache = OcrTextCache(cache_path)
+    cache = OcrTextCache(
+        cache_path,
+        reset_stale_cache=args.refresh_ocr_cache,
+    )
     answers = load_answer_key(Path(args.answer_key).expanduser().resolve())
     images = image_files(image_dir)
     if not images:
