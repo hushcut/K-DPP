@@ -151,6 +151,17 @@ NON_COMPOSITION_WORDS = {
     "サイズ",
 }
 
+# Marketing copy can contain a material name and a percentage-like decoration
+# without declaring fiber content. Treat these phrases as non-composition so
+# a false positive is not returned as a confirmed material ratio.
+DESCRIPTIVE_MATERIAL_PHRASES = {
+    "silk touch",
+    "cotton feel",
+    "polyester look",
+    "wool like",
+    "wool-like",
+}
+
 COMPOSITION_HINTS = {
     "섬유의 조성",
     "혼용률",
@@ -366,6 +377,8 @@ def detect_part(line: str, current_part: str) -> str:
 
 def _looks_like_non_composition_number(line: str) -> bool:
     if any(word in line for word in NON_COMPOSITION_WORDS):
+        return True
+    if any(phrase in line for phrase in DESCRIPTIVE_MATERIAL_PHRASES):
         return True
     if re.search(r"\b(?:19|20)\d{2}\b", line):
         return True
@@ -782,12 +795,13 @@ def _context_rank(
     The heading is only a tie-breaker: labels without a heading and valid
     composition blocks elsewhere remain accepted.
     """
-    return int(
-        any(
-            0 < candidate.start_index - heading_index <= 6
-            for heading_index in heading_indices
-        )
-    )
+    for heading_index in heading_indices:
+        distance = candidate.start_index - heading_index
+        if distance == 0:
+            return 2
+        if 0 < distance <= 6:
+            return 1
+    return 0
 
 
 def _normalize_candidate(
@@ -833,9 +847,17 @@ def _best_candidates_by_part(
 
     for candidate in candidates:
         current = best_by_part.get(candidate.part)
-        candidate_rank = (_context_rank(candidate, heading_indices), *candidate.score)
+        candidate_rank = (
+            *candidate.score[:3],
+            _context_rank(candidate, heading_indices),
+            candidate.score[3],
+        )
         current_rank = (
-            (_context_rank(current, heading_indices), *current.score)
+            (
+                *current.score[:3],
+                _context_rank(current, heading_indices),
+                current.score[3],
+            )
             if current
             else None
         )

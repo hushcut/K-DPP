@@ -120,3 +120,17 @@ def test_ocr_candidate_does_not_treat_mismatched_counts_as_complete() -> None:
     assert candidate.parser_status == "failed"
     assert candidate.score[0] == 0
     assert candidate.score[1] == 0
+
+
+def test_composition_on_heading_line_beats_later_unlabeled_candidate() -> None:
+    result = parse_label("MATERIAL: COTTON 100%\nPOLYESTER 100%")
+
+    assert result["status"] == "success"
+    assert result["materials"] == {"cotton": 100}
+
+
+def test_material_touch_marketing_phrase_is_not_composition() -> None:
+    result = parse_label("SILK TOUCH 100%")
+
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
