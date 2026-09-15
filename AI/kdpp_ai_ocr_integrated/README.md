@@ -197,6 +197,21 @@ python -m scripts.run_qa_batch ^
 달라지는 변경 후 기존 캐시를 갱신할 때 사용합니다.
 `outputs/`의 OCR 캐시에는 라벨 텍스트가 포함될 수 있으므로 커밋하지 않습니다.
 
+## 합성 소재 라벨 데이터
+
+실사진 QA와 별도로, 재현 가능한 파서 회귀 입력을 만들기 위한 Pillow 기반 도구입니다.
+기본 설정은 seed가 고정된 20개 원본 라벨과 각 4개 이미지 조건 변형(총 80장)을
+생성합니다. manifest에는 정답 소재·비율, `source_group`, 언어, 조건, 이미지 SHA-256을
+저장하며 모든 행은 `include_in_accuracy=false`로 기록됩니다.
+
+```bash
+python -m scripts.generate_synthetic_labels
+```
+
+생성물은 `outputs/synthetic/`에 저장되고 Git에서 제외됩니다. 같은 seed·설정·폰트 환경에서는
+동일한 이미지 해시가 재생성됩니다. 합성 데이터 점수는 실제 라벨 사진의 OCR 정확도와
+별도로 기록해야 합니다.
+
 ## 세탁기호 ResNet18 실험
 
 ### 데이터 계약
