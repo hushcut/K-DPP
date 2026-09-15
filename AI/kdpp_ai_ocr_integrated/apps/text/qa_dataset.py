@@ -105,13 +105,13 @@ def _normalize_evaluation_materials(
     *,
     row_number: int,
 ) -> dict[str, float]:
-    """Match the parser's 95~105% acceptance and 100% normalization policy."""
+    """Accept only the parser's exact, confirmed 100% compositions."""
 
     normalized = normalize_percentages(materials)
     if not normalized:
         total = sum(materials.values())
         raise QaDatasetError(
-            f"{row_number}행 정확도 비교용 혼용률 합계는 95~105 범위여야 합니다: {total:g}"
+            f"{row_number}행 정확도 비교용 혼용률 합계는 정확히 100이어야 합니다: {total:g}"
         )
     return {material: float(ratio) for material, ratio in normalized.items()}
 
@@ -124,7 +124,7 @@ def parse_answer_materials(
     """정답지 한 행을 표준 소재 키와 혼용률 딕셔너리로 변환한다.
 
     `cotton;polyester` + `80;20` 또는 `cotton:80;polyester:20`을 지원한다.
-    합계가 100에서 0.5 이상 벗어나면 비교 대상에서 제외하지 않고 오류로 막는다.
+    합계가 100에서 0.01보다 많이 벗어나면 비교 대상에서 제외하지 않고 오류로 막는다.
     """
 
     direct = (row.get("answer_materials") or "").strip()

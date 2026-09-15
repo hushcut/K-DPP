@@ -35,11 +35,12 @@ def test_answer_key_accepts_parser_aliases_but_returns_canonical_keys() -> None:
     ) == {"cotton": 95.0, "spandex": 5.0}
 
 
-def test_answer_key_matches_parser_ratio_normalization_policy() -> None:
-    assert parse_answer_materials(
-        {"answer_materials": "cotton;spandex", "answer_ratios": "96;5"},
-        row_number=2,
-    ) == {"cotton": 95.0, "spandex": 5.0}
+def test_answer_key_rejects_non_exact_composition() -> None:
+    with pytest.raises(QaDatasetError, match="정확히 100"):
+        parse_answer_materials(
+            {"answer_materials": "cotton;spandex", "answer_ratios": "96;5"},
+            row_number=2,
+        )
 
 
 def test_loader_uses_normalized_composition_for_an_included_complex_label(tmp_path) -> None:

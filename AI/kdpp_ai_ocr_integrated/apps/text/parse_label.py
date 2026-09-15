@@ -88,9 +88,7 @@ PART_PRIORITY = [
     "color_block",
 ]
 
-MIN_ACCEPTED_RATIO_TOTAL = 95.0
-MAX_ACCEPTED_RATIO_TOTAL = 105.0
-EXACT_RATIO_TOLERANCE = 0.5
+EXACT_RATIO_TOLERANCE = 0.01
 
 EXCLUDED_SEGMENT_WORDS = {
     "심지",
@@ -528,12 +526,9 @@ def _pair_values(
         paired[material] = float(number)
 
     total = sum(paired.values())
-    # A partial OCR result such as ``cotton 95%`` must not be promoted to a
-    # complete single-material composition. Multi-material labels retain the
-    # existing small total-error tolerance because every component is present.
-    if len(paired) == 1 and abs(total - 100.0) > EXACT_RATIO_TOLERANCE:
-        return None
-    if not MIN_ACCEPTED_RATIO_TOTAL <= total <= MAX_ACCEPTED_RATIO_TOTAL:
+    # A partial or misread OCR result must not be rescaled into a valid-looking
+    # composition. Every supplied ratio needs to form one complete 100% block.
+    if abs(total - 100.0) > EXACT_RATIO_TOLERANCE:
         return None
 
     return CompositionCandidate(
@@ -807,21 +802,11 @@ def _context_rank(
 def _normalize_candidate(
     candidate: CompositionCandidate,
 ) -> tuple[dict[str, float | int], list[str]]:
-    total = candidate.total
     warnings: list[str] = []
     values = candidate.materials
 
     if not candidate.explicit_percent:
         warnings.append("ratio_marker_inferred")
-
-    if abs(total - 100.0) > 0.01:
-        warnings.append(
-            f"ratio_total_normalized:{round(total, 2)}"
-        )
-        values = {
-            material: ratio * 100.0 / total
-            for material, ratio in candidate.materials.items()
-        }
 
     normalized: dict[str, float | int] = {}
     for material, value in values.items():
@@ -901,12 +886,7 @@ def normalize_percentages(
         explicit_percent=True,
         start_index=0,
     )
-    if (
-        len(candidate.materials) == 1
-        and abs(candidate.total - 100.0) > EXACT_RATIO_TOLERANCE
-    ):
-        return {}
-    if not MIN_ACCEPTED_RATIO_TOTAL <= candidate.total <= MAX_ACCEPTED_RATIO_TOTAL:
+    if abs(candidate.total - 100.0) > EXACT_RATIO_TOLERANCE:
         return {}
     normalized, _ = _normalize_candidate(candidate)
     return normalized
@@ -1046,6 +1026,7 @@ def parse_label(text: str) -> dict:
         "selected_part": selected_part,
         "parts": parts,
         "parse_evidence": {
+            "composition_status": "confirmed",
             "source": selected_candidate.source,
             "ratio_total_before_normalization": round(
                 selected_candidate.total,

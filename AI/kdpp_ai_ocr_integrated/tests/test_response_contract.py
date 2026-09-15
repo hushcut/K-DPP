@@ -21,6 +21,19 @@ def test_normalize_label_response_keeps_the_existing_json_value_types() -> None:
     assert result["confidence"] == {"ocr": "high", "parser": "high"}
 
 
+def test_confirmed_composition_evidence_is_preserved() -> None:
+    result = normalize_label_response(
+        {
+            "status": "success",
+            "materials": {"cotton": 80, "polyester": 20},
+            "parse_evidence": {"composition_status": "confirmed"},
+        },
+        api_version="1.0",
+    )
+
+    assert result["parse_evidence"]["composition_status"] == "confirmed"
+
+
 def test_normalize_label_response_rejects_invalid_material_ratio_type() -> None:
     with pytest.raises(ValidationError, match="materials"):
         normalize_label_response(
