@@ -170,6 +170,7 @@ def test_ocr_attempt_diagnostics_are_safe_and_serialized() -> None:
                 attempt_failures=("reflection:OcrTimeoutError",),
                 attempt_count=3,
                 external_call_count=3,
+                retry_count=1,
                 elapsed_ms=321,
                 attempts=(
                     OcrAttempt(
@@ -178,6 +179,7 @@ def test_ocr_attempt_diagnostics_are_safe_and_serialized() -> None:
                         elapsed_ms=200,
                         external_call=True,
                         failure_code="timeout",
+                        retry_count=1,
                     ),
                 ),
             ),
@@ -193,6 +195,7 @@ def test_ocr_attempt_diagnostics_are_safe_and_serialized() -> None:
         "attempt_failures": ["reflection:OcrTimeoutError"],
         "attempt_count": 3,
         "external_call_count": 3,
+        "retry_count": 1,
         "elapsed_ms": 321,
         "attempts": [
             {
@@ -201,6 +204,7 @@ def test_ocr_attempt_diagnostics_are_safe_and_serialized() -> None:
                 "elapsed_ms": 200,
                 "external_call": True,
                 "failure_code": "timeout",
+                "retry_count": 1,
             }
         ],
     }

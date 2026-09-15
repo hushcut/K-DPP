@@ -59,6 +59,10 @@ class OcrConfigurationError(OcrError):
 class OcrServiceError(OcrError):
     """Google Vision could not complete the OCR request."""
 
+    def __init__(self, message: str, *, retry_count: int = 0) -> None:
+        super().__init__(message)
+        self.retry_count = retry_count
+
 
 class OcrQuotaExceededError(OcrServiceError):
     """Google Vision rejected the request because its quota was exhausted."""
@@ -84,6 +88,7 @@ class OcrMetadata:
     attempt_failures: tuple[str, ...] = ()
     attempt_count: int = 0
     external_call_count: int = 0
+    retry_count: int = 0
     elapsed_ms: int = 0
     attempts: tuple["OcrAttempt", ...] = ()
 
@@ -97,6 +102,7 @@ class OcrAttempt:
     elapsed_ms: int
     external_call: bool
     failure_code: str = ""
+    retry_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -111,6 +117,7 @@ class OcrPayload:
 
     text: str
     layout_text: str = ""
+    retry_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -596,6 +603,12 @@ def _run_google_ocr(client: Any, content: bytes) -> OcrPayload:
 
     image = vision.Image(content=content)
     image_context = vision.ImageContext(language_hints=LANGUAGE_HINTS)
+    retry_count = 0
+
+    def record_retry(_exc: Exception) -> None:
+        nonlocal retry_count
+        retry_count += 1
+
     retry = google_retry.Retry(
         predicate=google_retry.if_exception_type(
             google_exceptions.ServiceUnavailable,
@@ -606,6 +619,7 @@ def _run_google_ocr(client: Any, content: bytes) -> OcrPayload:
         maximum=2.0,
         multiplier=2.0,
         deadline=OCR_TIMEOUT_SECONDS,
+        on_error=record_retry,
     )
 
     try:
@@ -618,6 +632,7 @@ def _run_google_ocr(client: Any, content: bytes) -> OcrPayload:
         return OcrPayload(
             text=_extract_response_text(response).strip(),
             layout_text=_extract_response_layout_text(response).strip(),
+            retry_count=retry_count,
         )
     except OcrServiceError:
         raise
@@ -634,11 +649,13 @@ def _run_google_ocr(client: Any, content: bytes) -> OcrPayload:
             ) from exc
         if isinstance(cause, google_exceptions.TooManyRequests):
             raise OcrQuotaExceededError(
-                "Google Vision OCR 사용량 한도를 초과했습니다."
+                "Google Vision OCR 사용량 한도를 초과했습니다.",
+                retry_count=retry_count,
             ) from exc
         if isinstance(cause, (google_exceptions.DeadlineExceeded, TimeoutError)):
             raise OcrTimeoutError(
-                "Google Vision OCR 요청 시간이 초과되었습니다."
+                "Google Vision OCR 요청 시간이 초과되었습니다.",
+                retry_count=retry_count,
             ) from exc
         if isinstance(
             cause,
@@ -648,9 +665,13 @@ def _run_google_ocr(client: Any, content: bytes) -> OcrPayload:
             ),
         ):
             raise OcrUnavailableError(
-                "Google Vision OCR 서비스를 일시적으로 사용할 수 없습니다."
+                "Google Vision OCR 서비스를 일시적으로 사용할 수 없습니다.",
+                retry_count=retry_count,
             ) from exc
-        raise OcrServiceError("Google Vision OCR 요청에 실패했습니다.") from exc
+        raise OcrServiceError(
+            "Google Vision OCR 요청에 실패했습니다.",
+            retry_count=retry_count,
+        ) from exc
 
 
 def _coerce_ocr_payload(value: OcrPayload | str) -> OcrPayload:
@@ -773,6 +794,7 @@ def run_ocr_bytes(
                     elapsed_ms=round((time.monotonic() - attempt_started_at) * 1000),
                     external_call=external_call_count > external_calls_before,
                     failure_code=_attempt_failure_code(exc),
+                    retry_count=getattr(exc, "retry_count", 0),
                 )
             )
             raise
@@ -783,6 +805,7 @@ def run_ocr_bytes(
                     outcome="success",
                     elapsed_ms=round((time.monotonic() - attempt_started_at) * 1000),
                     external_call=external_call_count > external_calls_before,
+                    retry_count=payload.retry_count,
                 )
             )
             return payload
@@ -876,6 +899,7 @@ def run_ocr_bytes(
             attempt_failures=tuple(attempt_failures),
             attempt_count=len(attempts),
             external_call_count=external_call_count,
+            retry_count=sum(attempt.retry_count for attempt in attempts),
             elapsed_ms=round((time.monotonic() - started_at) * 1000),
             attempts=tuple(attempts),
         ),

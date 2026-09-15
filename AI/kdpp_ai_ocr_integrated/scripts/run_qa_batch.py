@@ -426,6 +426,7 @@ def main() -> None:
             ),
             "ocr_attempt_count": ocr.get("attempt_count", 0),
             "ocr_external_call_count": ocr.get("external_call_count", 0),
+            "ocr_retry_count": ocr.get("retry_count", 0),
             "ocr_elapsed_ms": ocr.get("elapsed_ms", 0),
             "ocr_attempts": json.dumps(
                 ocr.get("attempts", []),

@@ -225,6 +225,27 @@ def test_google_ocr_classifies_retry_deadline() -> None:
         ocr_text._run_google_ocr(RetryDeadlineClient(), image_bytes())
 
 
+def test_google_ocr_records_retry_count_on_success(monkeypatch) -> None:
+    from google.api_core import exceptions as google_exceptions
+
+    monkeypatch.setattr(
+        ocr_text,
+        "_extract_response_text",
+        lambda _response: "COTTON 100%",
+    )
+    monkeypatch.setattr(ocr_text, "_extract_response_layout_text", lambda _response: "")
+
+    class RetrySuccessClient:
+        def document_text_detection(self, **kwargs):
+            kwargs["retry"]._on_error(google_exceptions.ServiceUnavailable("retry"))
+            return object()
+
+    payload = ocr_text._run_google_ocr(RetrySuccessClient(), image_bytes())
+
+    assert payload.text == "COTTON 100%"
+    assert payload.retry_count == 1
+
+
 def test_high_confidence_original_uses_one_paid_ocr_call(monkeypatch) -> None:
     calls: list[bytes] = []
     monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_: object())
@@ -435,6 +456,7 @@ def test_reflection_ocr_failure_keeps_existing_candidates(monkeypatch) -> None:
     assert reflection_attempt.outcome == "failed"
     assert reflection_attempt.external_call is True
     assert reflection_attempt.failure_code == "timeout"
+    assert reflection_attempt.retry_count == 0
     assert "반사 보정 OCR에 실패하여 기존 후보를 유지했습니다." in (
         result.metadata.warnings
     )
