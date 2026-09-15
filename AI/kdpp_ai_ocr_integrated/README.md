@@ -220,6 +220,18 @@ Ubuntu/Debian 환경에서는 생성 전에 `sudo apt-get install fonts-noto-cjk
 AI CI는 이 폰트를 설치한 뒤 네 언어 생성 테스트를 실행합니다. 다른 운영체제에서는
 Noto CJK 또는 시스템 CJK 폰트를 설치해야 합니다.
 
+합성 manifest의 `original_text`를 파서에 직접 넣어 회귀를 측정하려면 다음 명령을 사용합니다.
+이 평가는 Google Vision이나 이미지 OCR을 호출하지 않으며, 결과를 실사진 QA 정확도로
+해석하면 안 됩니다.
+
+```bash
+python -m scripts.evaluate_synthetic_labels
+```
+
+`image_results.csv`에는 이미지 행별 파서 결과를, `source_group_results.csv`에는 같은 원본의
+모든 변형이 통과했는지의 그룹 점수를 저장합니다. `summary.json`의
+`evaluation_type`은 항상 `synthetic_parser_only`입니다.
+
 ## 세탁기호 ResNet18 실험
 
 ### 데이터 계약
