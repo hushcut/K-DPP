@@ -30,6 +30,9 @@ RESULT_COLUMNS = (
     "source_group",
     "language",
     "condition",
+    "layout",
+    "theme",
+    "jpeg_quality",
     "parse_status",
     "parser_source",
     "answer_materials",
@@ -140,6 +143,9 @@ def evaluate_manifest(
                 "source_group": row["source_group"],
                 "language": row["language"],
                 "condition": row["condition"],
+                "layout": row.get("layout", ""),
+                "theme": row.get("theme", ""),
+                "jpeg_quality": row.get("jpeg_quality", ""),
                 "parse_status": str(parsed["status"]),
                 "parser_source": str(
                     parsed.get("parse_evidence", {}).get("source", "")
@@ -190,6 +196,10 @@ def evaluate_manifest(
         "by_language": _aggregate_by(results, "language"),
         "by_condition": _aggregate_by(results, "condition"),
     }
+    if all(result["layout"] for result in results):
+        summary["by_layout"] = _aggregate_by(results, "layout")
+    if all(result["theme"] for result in results):
+        summary["by_theme"] = _aggregate_by(results, "theme")
     return results, group_results, summary
 
 

@@ -1,9 +1,11 @@
 import csv
+import json
 from pathlib import Path
 
 import pytest
 
 from apps.synthetic.label_generator import generate_dataset
+from apps.text.parse_label import parse_label
 
 
 def generator_config() -> dict:
@@ -14,11 +16,15 @@ def generator_config() -> dict:
         "variants_per_label": 2,
         "languages": ["en"],
         "conditions": ["clean", "blur"],
+        "layouts": ["material_first"],
+        "themes": ["white"],
         "materials": ["cotton", "polyester", "rayon"],
         "lining_probability": 0.0,
         "image_width": 400,
         "image_height": 240,
         "font_size": 20,
+        "jpeg_quality_min": 90,
+        "jpeg_quality_max": 90,
     }
 
 
@@ -47,6 +53,9 @@ def test_generator_writes_manifest_images_and_group_metadata(tmp_path) -> None:
     assert {row["source_group"] for row in rows} == {"SYN0001", "SYN0002"}
     assert {row["include_in_accuracy"] for row in rows} == {"false"}
     assert {row["split"] for row in rows} == {"unassigned"}
+    assert {row["layout"] for row in rows} == {"material_first"}
+    assert {row["theme"] for row in rows} == {"white"}
+    assert {row["jpeg_quality"] for row in rows} == {"90"}
     assert all((output_dir / "images" / row["file_name"]).is_file() for row in rows)
     assert (output_dir / "contact_sheet.jpg").is_file()
 
@@ -74,6 +83,45 @@ def test_same_seed_generates_identical_image_hashes(tmp_path) -> None:
             return [row["image_sha256"] for row in csv.DictReader(file)]
 
     assert hashes(first_dir) == hashes(second_dir)
+
+
+def test_generator_covers_layout_theme_and_mixed_condition_metadata(tmp_path) -> None:
+    config = generator_config()
+    config.update(
+        {
+            "base_label_count": 3,
+            "variants_per_label": 1,
+            "conditions": ["mixed"],
+            "layouts": ["material_first", "ratio_first", "stacked_columns"],
+            "themes": ["white", "ivory", "black"],
+            "jpeg_quality_min": 72,
+            "jpeg_quality_max": 96,
+        }
+    )
+
+    output_dir = tmp_path / "diverse"
+    generate_dataset(config, output_dir)
+
+    with (output_dir / "manifest.csv").open(encoding="utf-8-sig", newline="") as file:
+        rows = list(csv.DictReader(file))
+
+    assert {row["layout"] for row in rows} == {
+        "material_first",
+        "ratio_first",
+        "stacked_columns",
+    }
+    assert {row["theme"] for row in rows} == {"white", "ivory", "black"}
+    assert all(72 <= int(row["jpeg_quality"]) <= 96 for row in rows)
+    assert all(json.loads(row["transforms_json"])["blur_radius"] == 1.8 for row in rows)
+    assert all(parse_label(row["original_text"])["status"] == "success" for row in rows)
+
+
+def test_generator_rejects_unknown_layout(tmp_path) -> None:
+    config = generator_config()
+    config["layouts"] = ["unsupported"]
+
+    with pytest.raises(ValueError, match="layouts"):
+        generate_dataset(config, tmp_path / "invalid")
 
 
 def test_generator_refuses_to_overwrite_nonempty_directory(tmp_path) -> None:

@@ -201,7 +201,9 @@ python -m scripts.run_qa_batch ^
 
 실사진 QA와 별도로, 재현 가능한 파서 회귀 입력을 만들기 위한 Pillow 기반 도구입니다.
 기본 설정은 seed가 고정된 20개 원본 라벨과 각 4개 이미지 조건 변형(총 80장)을
-생성합니다. manifest에는 정답 소재·비율, `source_group`, 언어, 조건, 이미지 SHA-256을
+생성합니다. 변형에는 언어·조명·흐림·반사뿐 아니라 소재/비율 순서, 세로 열 레이아웃,
+배경 테마, JPEG 품질, 혼합 조건이 포함됩니다. manifest에는 정답 소재·비율,
+`source_group`, 언어, 조건, 레이아웃, 테마, JPEG 품질, 변환 정보, 이미지 SHA-256을
 저장하며 모든 행은 `include_in_accuracy=false`로 기록됩니다.
 
 ```bash

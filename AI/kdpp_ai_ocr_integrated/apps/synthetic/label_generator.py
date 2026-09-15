@@ -103,12 +103,30 @@ FONT_CANDIDATES = {
     ],
 }
 
+SUPPORTED_LAYOUTS = {"material_first", "ratio_first", "stacked_columns"}
+THEME_STYLES = {
+    "white": {"background": (255, 255, 255), "foreground": (0, 0, 0)},
+    "ivory": {"background": (255, 253, 240), "foreground": (42, 35, 28)},
+    "black": {"background": (25, 25, 25), "foreground": (245, 245, 245)},
+}
+SUPPORTED_CONDITIONS = {
+    "clean",
+    "rotation",
+    "blur",
+    "glare",
+    "low_light",
+    "perspective",
+    "mixed",
+}
+
 
 @dataclass(frozen=True)
 class LabelSpec:
     source_group: str
     language: str
     parts: dict[str, dict[str, int]]
+    layout: str
+    theme: str
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
@@ -125,9 +143,13 @@ def validate_config(config: dict[str, Any]) -> None:
         "variants_per_label",
         "languages",
         "conditions",
+        "layouts",
+        "themes",
         "materials",
         "image_width",
         "image_height",
+        "jpeg_quality_min",
+        "jpeg_quality_max",
     }
     missing = sorted(required - set(config))
     if missing:
@@ -142,6 +164,19 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError(f"Unsupported synthetic materials: {', '.join(unknown_materials)}")
     if not config["conditions"]:
         raise ValueError("conditions must not be empty")
+    unknown_conditions = sorted(set(config["conditions"]) - SUPPORTED_CONDITIONS)
+    if unknown_conditions:
+        raise ValueError(
+            "Unsupported synthetic image conditions: " + ", ".join(unknown_conditions)
+        )
+    if not config["layouts"] or not set(config["layouts"]).issubset(SUPPORTED_LAYOUTS):
+        raise ValueError("layouts must contain supported layout names")
+    if not config["themes"] or not set(config["themes"]).issubset(THEME_STYLES):
+        raise ValueError("themes must contain supported theme names")
+    minimum_quality = int(config["jpeg_quality_min"])
+    maximum_quality = int(config["jpeg_quality_max"])
+    if not 1 <= minimum_quality <= maximum_quality <= 100:
+        raise ValueError("jpeg quality must be between 1 and 100")
 
 
 def _composition(rng: random.Random, materials: list[str]) -> dict[str, int]:
@@ -162,7 +197,15 @@ def build_specs(config: dict[str, Any]) -> list[LabelSpec]:
         parts = {"outer": _composition(rng, config["materials"])}
         if rng.random() < float(config.get("lining_probability", 0.35)):
             parts["lining"] = _composition(rng, config["materials"])
-        specs.append(LabelSpec(f"SYN{index + 1:04d}", language, parts))
+        specs.append(
+            LabelSpec(
+                source_group=f"SYN{index + 1:04d}",
+                language=language,
+                parts=parts,
+                layout=config["layouts"][index % len(config["layouts"])],
+                theme=config["themes"][index % len(config["themes"])],
+            )
+        )
     return specs
 
 
@@ -182,54 +225,93 @@ def _font(language: str, size: int) -> tuple[ImageFont.FreeTypeFont | ImageFont.
 def label_text(spec: LabelSpec) -> str:
     lines: list[str] = []
     for part, composition in spec.parts.items():
-        values = " ".join(
-            f"{MATERIAL_NAMES[spec.language][material]} {ratio}%"
+        names_and_ratios = [
+            (MATERIAL_NAMES[spec.language][material], ratio)
             for material, ratio in composition.items()
-        )
-        lines.append(f"{PART_NAMES[spec.language][part]}: {values}")
+        ]
+        part_name = PART_NAMES[spec.language][part]
+        if spec.layout == "material_first":
+            values = " ".join(
+                f"{material} {ratio}%" for material, ratio in names_and_ratios
+            )
+            lines.append(f"{part_name}: {values}")
+        elif spec.layout == "ratio_first":
+            values = " ".join(
+                f"{ratio}% {material}" for material, ratio in names_and_ratios
+            )
+            lines.append(f"{part_name}: {values}")
+        else:
+            lines.append(part_name)
+            lines.extend(material for material, _ in names_and_ratios)
+            lines.extend(f"{ratio}%" for _, ratio in names_and_ratios)
     return "\n".join(lines)
 
 
 def _draw_label(spec: LabelSpec, config: dict[str, Any]) -> tuple[Image.Image, str]:
     width, height = int(config["image_width"]), int(config["image_height"])
-    image = Image.new("RGB", (width, height), "white")
+    style = THEME_STYLES[spec.theme]
+    image = Image.new("RGB", (width, height), style["background"])
     draw = ImageDraw.Draw(image)
     font, font_name = _font(spec.language, int(config.get("font_size", 38)))
     text = label_text(spec)
     top = int(height * 0.2)
     for line in text.splitlines():
-        draw.text((60, top), line, fill="black", font=font)
+        draw.text((60, top), line, fill=style["foreground"], font=font)
         bbox = draw.textbbox((60, top), line, font=font)
         top += max(55, bbox[3] - bbox[1] + 22)
-    draw.rectangle((30, 30, width - 30, height - 30), outline="black", width=2)
+    draw.rectangle(
+        (30, 30, width - 30, height - 30),
+        outline=style["foreground"],
+        width=2,
+    )
     return image, font_name
 
 
-def _apply_condition(image: Image.Image, condition: str, seed: int) -> Image.Image:
+def _apply_condition(
+    image: Image.Image,
+    condition: str,
+    seed: int,
+) -> tuple[Image.Image, dict[str, float | int]]:
     rng = random.Random(seed)
+    result = image
+    transforms: dict[str, float | int] = {}
+    background = image.getpixel((0, 0))
     if condition == "clean":
-        return image
-    if condition == "rotation":
-        return image.rotate(rng.choice((-7, -5, 5, 7)), fillcolor="white")
-    if condition == "blur":
-        return image.filter(ImageFilter.GaussianBlur(radius=1.4))
-    if condition == "low_light":
-        return ImageEnhance.Brightness(image).enhance(0.58)
-    if condition == "glare":
-        overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-        x = rng.randint(image.width // 4, image.width // 2)
-        draw.ellipse((x, 80, x + image.width // 3, image.height - 80), fill=(255, 255, 255, 85))
-        return Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
-    if condition == "perspective":
+        return result, transforms
+    if condition in {"rotation", "mixed"}:
+        angle = rng.choice((-7, -5, 5, 7))
+        result = result.rotate(angle, fillcolor=background)
+        transforms["rotation_degrees"] = angle
+    if condition in {"perspective", "mixed"}:
         shear = rng.choice((-0.12, 0.12))
-        return image.transform(
-            image.size,
+        result = result.transform(
+            result.size,
             Image.Transform.AFFINE,
-            (1, shear, -shear * image.height / 2, 0, 1, 0),
-            fillcolor="white",
+            (1, shear, -shear * result.height / 2, 0, 1, 0),
+            fillcolor=background,
         )
-    raise ValueError(f"Unsupported synthetic image condition: {condition}")
+        transforms["perspective_shear"] = shear
+    if condition in {"blur", "mixed"}:
+        blur_radius = 1.4 if condition == "blur" else 1.8
+        result = result.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+        transforms["blur_radius"] = blur_radius
+    if condition in {"low_light", "mixed"}:
+        brightness = 0.58 if condition == "low_light" else 0.72
+        result = ImageEnhance.Brightness(result).enhance(brightness)
+        transforms["brightness"] = brightness
+    if condition in {"glare", "mixed"}:
+        overlay = Image.new("RGBA", result.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        x = rng.randint(result.width // 4, result.width // 2)
+        opacity = 85 if condition == "glare" else 105
+        draw.ellipse(
+            (x, 80, x + result.width // 3, result.height - 80),
+            fill=(255, 255, 255, opacity),
+        )
+        result = Image.alpha_composite(result.convert("RGBA"), overlay).convert("RGB")
+        transforms["glare_opacity"] = opacity
+        transforms["glare_x"] = x
+    return result, transforms
 
 
 def _sha256(path: Path) -> str:
@@ -242,17 +324,23 @@ def _prepare_output(output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
 
-def _save_contact_sheet(image_paths: list[Path], output_path: Path) -> None:
-    thumbnails: list[Image.Image] = []
-    for image_path in image_paths:
+def _save_contact_sheet(rows: list[dict[str, str]], images_dir: Path, output_path: Path) -> None:
+    thumbnails: list[tuple[Image.Image, str]] = []
+    for row in rows:
+        image_path = images_dir / row["file_name"]
         thumbnail = Image.open(image_path).convert("RGB")
         thumbnail.thumbnail((240, 160))
-        thumbnails.append(thumbnail)
+        caption = f'{row["source_group"]} {row["layout"]}/{row["condition"]}'
+        thumbnails.append((thumbnail, caption))
     columns = 4
     rows = max(1, (len(thumbnails) + columns - 1) // columns)
-    sheet = Image.new("RGB", (columns * 240, rows * 160), "white")
-    for index, thumbnail in enumerate(thumbnails):
-        sheet.paste(thumbnail, ((index % columns) * 240, (index // columns) * 160))
+    sheet = Image.new("RGB", (columns * 240, rows * 184), "white")
+    draw = ImageDraw.Draw(sheet)
+    for index, (thumbnail, caption) in enumerate(thumbnails):
+        x = (index % columns) * 240
+        y = (index // columns) * 184
+        sheet.paste(thumbnail, (x, y))
+        draw.text((x + 4, y + 164), caption, fill="black")
     sheet.save(output_path, quality=90)
 
 
@@ -264,16 +352,19 @@ def generate_dataset(config: dict[str, Any], output_dir: str | Path) -> dict[str
     images_dir.mkdir()
 
     rows: list[dict[str, str]] = []
-    image_paths: list[Path] = []
     for source_index, spec in enumerate(build_specs(config), start=1):
         for variant in range(int(config["variants_per_label"])):
             condition = config["conditions"][(source_index + variant - 1) % len(config["conditions"])]
             sample_seed = int(config["seed"]) + source_index * 10_000 + variant
             image, font_name = _draw_label(spec, config)
-            image = _apply_condition(image, condition, sample_seed)
+            image, transforms = _apply_condition(image, condition, sample_seed)
             file_name = f"{spec.source_group}_v{variant + 1:02d}.jpg"
             image_path = images_dir / file_name
-            image.save(image_path, quality=92)
+            jpeg_quality = random.Random(sample_seed).randint(
+                int(config["jpeg_quality_min"]),
+                int(config["jpeg_quality_max"]),
+            )
+            image.save(image_path, quality=jpeg_quality)
             selected = spec.parts["outer"]
             rows.append(
                 {
@@ -283,6 +374,10 @@ def generate_dataset(config: dict[str, Any], output_dir: str | Path) -> dict[str
                     "include_in_accuracy": "false",
                     "language": spec.language,
                     "condition": condition,
+                    "layout": spec.layout,
+                    "theme": spec.theme,
+                    "jpeg_quality": str(jpeg_quality),
+                    "transforms_json": json.dumps(transforms, sort_keys=True),
                     "answer_materials": ";".join(selected),
                     "answer_ratios": ";".join(str(value) for value in selected.values()),
                     "selected_part": "outer",
@@ -293,7 +388,6 @@ def generate_dataset(config: dict[str, Any], output_dir: str | Path) -> dict[str
                     "image_sha256": _sha256(image_path),
                 }
             )
-            image_paths.append(image_path)
 
     manifest_path = output_path / "manifest.csv"
     with manifest_path.open("w", encoding="utf-8-sig", newline="") as file:
@@ -312,9 +406,17 @@ def generate_dataset(config: dict[str, Any], output_dir: str | Path) -> dict[str
             condition: sum(row["condition"] == condition for row in rows)
             for condition in config["conditions"]
         },
+        "layout_counts": {
+            layout: sum(row["layout"] == layout for row in rows)
+            for layout in config["layouts"]
+        },
+        "theme_counts": {
+            theme: sum(row["theme"] == theme for row in rows)
+            for theme in config["themes"]
+        },
     }
     (output_path / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
     )
-    _save_contact_sheet(image_paths, output_path / "contact_sheet.jpg")
+    _save_contact_sheet(rows, images_dir, output_path / "contact_sheet.jpg")
     return {"output_dir": str(output_path), **summary}

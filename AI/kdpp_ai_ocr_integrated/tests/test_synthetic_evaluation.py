@@ -12,11 +12,15 @@ def evaluation_config() -> dict:
         "variants_per_label": 2,
         "languages": ["en"],
         "conditions": ["clean", "blur"],
+        "layouts": ["material_first"],
+        "themes": ["white"],
         "materials": ["cotton", "polyester", "rayon"],
         "lining_probability": 0.0,
         "image_width": 400,
         "image_height": 240,
         "font_size": 20,
+        "jpeg_quality_min": 90,
+        "jpeg_quality_max": 90,
     }
 
 
@@ -33,6 +37,8 @@ def test_synthetic_evaluation_writes_image_and_source_group_scores(tmp_path) -> 
     assert summary["image_exact_composition_accuracy"] == 1.0
     assert summary["source_group_count"] == 2
     assert summary["source_group_all_variants_accuracy"] == 1.0
+    assert summary["by_layout"]["material_first"]["image_count"] == 4
+    assert summary["by_theme"]["white"]["image_count"] == 4
     assert (output_dir / "image_results.csv").is_file()
     assert (output_dir / "source_group_results.csv").is_file()
 

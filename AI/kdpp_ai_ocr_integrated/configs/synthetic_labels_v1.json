@@ -4,10 +4,14 @@
   "base_label_count": 20,
   "variants_per_label": 4,
   "languages": ["ko", "en", "ja", "zh"],
-  "conditions": ["clean", "rotation", "blur", "glare", "low_light", "perspective"],
+  "conditions": ["clean", "rotation", "blur", "glare", "low_light", "perspective", "mixed"],
+  "layouts": ["material_first", "ratio_first", "stacked_columns"],
+  "themes": ["white", "ivory", "black"],
   "materials": ["cotton", "polyester", "rayon", "nylon", "acrylic", "wool", "cashmere", "lyocell", "modal", "spandex", "polyurethane"],
   "lining_probability": 0.35,
   "image_width": 1200,
   "image_height": 800,
-  "font_size": 38
+  "font_size": 38,
+  "jpeg_quality_min": 72,
+  "jpeg_quality_max": 96
 }
