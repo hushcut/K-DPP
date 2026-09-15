@@ -22,6 +22,19 @@ def generator_config() -> dict:
     }
 
 
+def multilingual_generator_config() -> dict:
+    config = generator_config()
+    config.update(
+        {
+            "base_label_count": 4,
+            "variants_per_label": 1,
+            "languages": ["ko", "en", "ja", "zh"],
+            "conditions": ["clean"],
+        }
+    )
+    return config
+
+
 def test_generator_writes_manifest_images_and_group_metadata(tmp_path) -> None:
     output_dir = tmp_path / "synthetic"
 
@@ -36,6 +49,17 @@ def test_generator_writes_manifest_images_and_group_metadata(tmp_path) -> None:
     assert {row["split"] for row in rows} == {"unassigned"}
     assert all((output_dir / "images" / row["file_name"]).is_file() for row in rows)
     assert (output_dir / "contact_sheet.jpg").is_file()
+
+
+def test_generator_supports_all_default_languages(tmp_path) -> None:
+    output_dir = tmp_path / "multilingual"
+
+    generate_dataset(multilingual_generator_config(), output_dir)
+
+    with (output_dir / "manifest.csv").open(encoding="utf-8-sig", newline="") as file:
+        rows = list(csv.DictReader(file))
+    assert {row["language"] for row in rows} == {"ko", "en", "ja", "zh"}
+    assert all(row["font"] != "Pillow-default" for row in rows)
 
 
 def test_same_seed_generates_identical_image_hashes(tmp_path) -> None:

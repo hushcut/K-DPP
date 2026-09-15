@@ -215,6 +215,11 @@ python -m scripts.generate_synthetic_labels
 동일한 이미지 해시가 재생성됩니다. 합성 데이터 점수는 실제 라벨 사진의 OCR 정확도와
 별도로 기록해야 합니다.
 
+기본 설정에는 한국어·일본어·중국어가 포함됩니다. Windows는 기본 CJK 폰트를 사용하며,
+Ubuntu/Debian 환경에서는 생성 전에 `sudo apt-get install fonts-noto-cjk`를 실행합니다.
+AI CI는 이 폰트를 설치한 뒤 네 언어 생성 테스트를 실행합니다. 다른 운영체제에서는
+Noto CJK 또는 시스템 CJK 폰트를 설치해야 합니다.
+
 ## 세탁기호 ResNet18 실험
 
 ### 데이터 계약

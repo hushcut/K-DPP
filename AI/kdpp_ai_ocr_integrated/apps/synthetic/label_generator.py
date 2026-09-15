@@ -75,11 +75,32 @@ PART_NAMES = {
     "zh": {"outer": "面料", "lining": "里料"},
 }
 
+NOTO_CJK_FONT_CANDIDATES = [
+    "NotoSansCJK-Regular.ttc",
+    "NotoSansCJKkr-Regular.otf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+]
+
 FONT_CANDIDATES = {
     "en": ["arial.ttf", "DejaVuSans.ttf"],
-    "ko": ["malgun.ttf", "C:/Windows/Fonts/malgun.ttf"],
-    "ja": ["msgothic.ttc", "C:/Windows/Fonts/msgothic.ttc"],
-    "zh": ["msyh.ttc", "C:/Windows/Fonts/msyh.ttc"],
+    "ko": [
+        "malgun.ttf",
+        "C:/Windows/Fonts/malgun.ttf",
+        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+        *NOTO_CJK_FONT_CANDIDATES,
+    ],
+    "ja": [
+        "msgothic.ttc",
+        "C:/Windows/Fonts/msgothic.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+        *NOTO_CJK_FONT_CANDIDATES,
+    ],
+    "zh": [
+        "msyh.ttc",
+        "C:/Windows/Fonts/msyh.ttc",
+        "/System/Library/Fonts/PingFang.ttc",
+        *NOTO_CJK_FONT_CANDIDATES,
+    ],
 }
 
 
