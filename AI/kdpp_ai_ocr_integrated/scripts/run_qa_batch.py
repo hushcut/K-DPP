@@ -15,10 +15,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-BASE_DIR = Path(__file__).resolve().parents[1]
-if str(BASE_DIR) not in sys.path:
-    sys.path.insert(0, str(BASE_DIR))
-
 from apps.service.label_analysis import analyze_ocr_result
 from apps.text.qa_comparison import compare_material_compositions
 from apps.text.ocr_cache import (
@@ -32,6 +28,8 @@ from apps.text.qa_dataset import (
     parse_answer_materials as parse_qa_answer_materials,
 )
 
+
+BASE_DIR = Path(__file__).resolve().parents[1]
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
 
@@ -271,6 +269,11 @@ def main() -> None:
         help="Fail before OCR if an image has no answer or an answer has no image.",
     )
     parser.add_argument(
+        "--include-unanswered",
+        action="store_true",
+        help="Also run images that are not listed in the answer key.",
+    )
+    parser.add_argument(
         "--ocr-cache",
         default=str(BASE_DIR / "outputs" / "qa_ocr_cache.json"),
         help=(
@@ -288,7 +291,7 @@ def main() -> None:
         action="store_true",
         help="Use cached OCR only and never call Google Vision.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(sys.argv[1:])
     if args.tolerance < 0:
         raise ValueError("--tolerance은 0 이상이어야 합니다.")
     if args.offline and args.refresh_ocr_cache:
@@ -312,10 +315,39 @@ def main() -> None:
             f"{len(missing_images)}건"
         )
 
+    images_by_name: dict[str, list[Path]] = {}
+    for image_path in images:
+        images_by_name.setdefault(image_path.name, []).append(image_path)
+    duplicate_answer_names = sorted(
+        name
+        for name, matching_paths in images_by_name.items()
+        if name in answers and len(matching_paths) > 1
+    )
+    if duplicate_answer_names:
+        examples = ", ".join(duplicate_answer_names[:3])
+        raise AnswerKeyError(
+            "정답 CSV의 file_name과 같은 이미지가 여러 경로에 있습니다. "
+            "대상 이미지 폴더를 더 구체적으로 지정하세요: "
+            f"{examples}"
+        )
+
+    if args.include_unanswered:
+        selected_images = images
+    else:
+        # 기본값은 정답이 있는 이미지로 제한해, 폴더에 섞인 다른 이미지가
+        # Google Vision 호출 비용과 QA 결과에 영향을 주지 않게 한다.
+        selected_images = [
+            images_by_name[name][0]
+            for name in sorted(answers)
+            if name in images_by_name
+        ]
+    if not selected_images:
+        raise AnswerKeyError("정답 CSV에 해당하는 처리 가능 이미지가 없습니다.")
+
     rows: list[dict[str, Any]] = []
     cache_hit_count = 0
     cache_miss_count = 0
-    for image_path in images:
+    for image_path in selected_images:
         answer_metadata = answers.get(image_path.name, {})
         answer = answer_metadata.get("_materials", {})
         include_in_accuracy = bool(answer_metadata.get("include_in_accuracy", True))
@@ -422,6 +454,14 @@ def main() -> None:
         "Fully cached/API-backed images: "
         f"{cache_hit_count}/{cache_miss_count}"
     )
+    print(
+        "Selected images/available images: "
+        f"{len(selected_images)}/{len(images)}"
+    )
+    if summary.exception_count:
+        raise SystemExit(
+            f"QA 배치 중 예상 밖 예외가 {summary.exception_count}건 발생했습니다."
+        )
     print(f"Images: {summary.image_count}")
     print(
         "Exact composition accuracy: "

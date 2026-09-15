@@ -170,9 +170,17 @@ OCR·파서 자체의 회귀 확인에는 다음 도구를 사용합니다.
 python -m scripts.run_qa_batch ^
   --image-dir "C:\K-DPP-QA-DATASET\images" ^
   --answer-key "C:\K-DPP-QA-DATASET\answer_key.csv" ^
-  --credentials "C:\secure\vision-key.json" ^
-  --strict-coverage
+  --credentials "C:\secure\vision-key.json"
 ```
+
+기본값은 정답 CSV의 `file_name`에 있는 이미지만 처리합니다. 폴더에 섞인
+미정답 이미지를 함께 점검할 때만 `--include-unanswered`를 사용합니다.
+동일한 `file_name`이 하위 폴더에 중복되면 어느 이미지를 평가할지 알 수 없으므로
+실행을 중단합니다. 이때는 QA 실행 결과 폴더 전체가 아니라 정확한 `images` 폴더를
+`--image-dir`에 지정합니다.
+`--strict-coverage`는 이미지와 정답의 누락을 OCR 호출 전에 실패 처리하므로,
+데이터셋 계약을 감사할 때 함께 사용합니다. OCR·파서에서 예상 밖 예외가 발생하면
+결과 CSV와 요약 파일을 남긴 뒤 프로세스는 실패 종료합니다.
 
 첫 실행에서 저장된 OCR 캐시를 사용하면, 파서 규칙만 변경했을 때 Google Vision을
 다시 호출하지 않고 비교할 수 있습니다.
@@ -185,7 +193,8 @@ python -m scripts.run_qa_batch ^
   --strict-coverage
 ```
 
-`--refresh-ocr-cache`는 OCR 전처리 자체를 변경해 새 OCR 결과가 필요할 때만 사용합니다.
+`--refresh-ocr-cache`는 OCR 전처리·언어 힌트·좌표 기반 줄 재구성처럼 OCR 결과가
+달라지는 변경 후 기존 캐시를 갱신할 때 사용합니다.
 `outputs/`의 OCR 캐시에는 라벨 텍스트가 포함될 수 있으므로 커밋하지 않습니다.
 
 ## 세탁기호 ResNet18 실험

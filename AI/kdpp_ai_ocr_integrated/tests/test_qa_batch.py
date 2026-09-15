@@ -135,3 +135,103 @@ def test_failure_categories_distinguish_parser_and_material_errors() -> None:
         judgment="not_compared",
         failure_reason="answer_missing",
     ) == "not_compared"
+
+
+def _write_answer_key(tmp_path, file_name: str) -> str:
+    answer_key = tmp_path / "answer_key.csv"
+    answer_key.write_text(
+        "file_name,answer_materials,answer_ratios\n"
+        f"{file_name},cotton,100\n",
+        encoding="utf-8",
+    )
+    return str(answer_key)
+
+
+def test_main_processes_answer_key_images_only_by_default(monkeypatch, tmp_path) -> None:
+    matched_image = tmp_path / "QA001.jpg"
+    unmatched_image = tmp_path / "OTHER.jpg"
+    matched_image.write_bytes(b"matched")
+    unmatched_image.write_bytes(b"unmatched")
+    called_names: list[str] = []
+
+    def fake_analyze(image_path, **_kwargs):
+        called_names.append(image_path.name)
+        return {
+            "status": "success",
+            "materials": {"cotton": 100},
+            "confidence": {"ocr": "high", "parser": "high"},
+            "ocr": {"source": "original"},
+        }, True
+
+    output_path = tmp_path / "results.csv"
+    monkeypatch.setattr(run_qa_batch, "analyze_label_image_cached", fake_analyze)
+    monkeypatch.setattr(
+        run_qa_batch.sys,
+        "argv",
+        [
+            "run_qa_batch.py",
+            "--image-dir",
+            str(tmp_path),
+            "--answer-key",
+            _write_answer_key(tmp_path, matched_image.name),
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    run_qa_batch.main()
+
+    assert called_names == [matched_image.name]
+    assert "QA001.jpg" in output_path.read_text(encoding="utf-8-sig")
+    assert "OTHER.jpg" not in output_path.read_text(encoding="utf-8-sig")
+
+
+def test_main_exits_nonzero_after_unexpected_image_exception(monkeypatch, tmp_path) -> None:
+    image_path = tmp_path / "QA001.jpg"
+    image_path.write_bytes(b"matched")
+    output_path = tmp_path / "results.csv"
+
+    def broken_analyze(*_args, **_kwargs):
+        raise RuntimeError("unexpected test failure")
+
+    monkeypatch.setattr(run_qa_batch, "analyze_label_image_cached", broken_analyze)
+    monkeypatch.setattr(
+        run_qa_batch.sys,
+        "argv",
+        [
+            "run_qa_batch.py",
+            "--image-dir",
+            str(tmp_path),
+            "--answer-key",
+            _write_answer_key(tmp_path, image_path.name),
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="예상 밖 예외가 1건"):
+        run_qa_batch.main()
+
+    assert output_path.is_file()
+
+
+def test_main_rejects_duplicate_answer_key_file_names(monkeypatch, tmp_path) -> None:
+    image_path = tmp_path / "QA001.jpg"
+    duplicate_dir = tmp_path / "nested"
+    duplicate_dir.mkdir()
+    image_path.write_bytes(b"first")
+    (duplicate_dir / image_path.name).write_bytes(b"second")
+    monkeypatch.setattr(
+        run_qa_batch.sys,
+        "argv",
+        [
+            "run_qa_batch.py",
+            "--image-dir",
+            str(tmp_path),
+            "--answer-key",
+            _write_answer_key(tmp_path, image_path.name),
+        ],
+    )
+
+    with pytest.raises(AnswerKeyError, match="여러 경로"):
+        run_qa_batch.main()

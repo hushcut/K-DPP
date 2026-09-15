@@ -3,19 +3,16 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
 from tqdm import tqdm
 
-BASE_DIR = Path(__file__).resolve().parents[1]
-if str(BASE_DIR) not in sys.path:
-    sys.path.insert(0, str(BASE_DIR))
-
 from apps.service.label_analysis import analyze_label_image
 from apps.text.ocr_text import OcrError
 
+
+BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = BASE_DIR / "outputs"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
