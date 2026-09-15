@@ -90,8 +90,9 @@ This copy adds a more robust material parser for real QA images.
 
 - Parses material composition by line instead of only adjacent tokens.
 - Detects garment sections such as outer fabric, lining, filling, rib, sleeve, and pocket.
-- Uses outer/generic material as the representative `materials` result while preserving detailed `parts`.
-- Avoids blindly normalizing unrelated sections into one 100% total.
+- Uses the highest-priority valid garment section as representative materials; invalid or ambiguous evidence in a higher-priority section blocks fallback to a lower-priority section.
+- Accepts a composition only when every ratio is positive and its Decimal sum is exactly 100; ratios are neither rescaled nor rounded to force a total of 100.
+- Rejects malformed or signed ratios and measurements such as `30°C` instead of treating them as composition evidence.
 - Adds Japanese/Chinese/Korean material aliases and common OCR corrections.
 - Adds a QA batch script for comparing OCR results against an answer key CSV.
 
@@ -104,20 +105,35 @@ This copy adds a more robust material parser for real QA images.
     "cotton": 80,
     "polyester": 20
   },
-  "materials_korean": "? 80%, ????? 20%",
+  "materials_korean": "면 80%, 폴리에스터 20%",
   "raw_ocr_preview": "COTTON 80% POLYESTER 20%",
   "confidence": {
-    "ocr": "high"
+    "ocr": "unknown",
+    "parser": "high"
   },
-  "selected_part": "outer",
+  "warnings": [],
+  "care_instruction": "",
+  "care_instructions": [],
+  "selected_part": "generic",
   "parts": {
-    "outer": {
+    "generic": {
       "cotton": 80,
       "polyester": 20
     }
+  },
+  "parse_evidence": {
+    "composition_status": "confirmed",
+    "source": "same_line",
+    "ratio_total_before_normalization": 100,
+    "explicit_percent": true
   }
 }
 ```
+
+A successful parse contains only a confirmed composition whose ratios total
+exactly 100. Decimal ratios are preserved. Incomplete, non-100, malformed, or
+ambiguous evidence returns `status: "failed"` with empty `materials`; warnings
+and parser confidence explain the rejection.
 
 ### QA batch test
 

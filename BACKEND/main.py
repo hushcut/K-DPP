@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, localcontext
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
@@ -959,7 +960,31 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
         Path(temp_path).unlink(missing_ok=True)
 
 
-def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
+def _has_exact_material_total(materials: dict) -> bool:
+    """파서가 확인한 비율이 유효하며 정확히 100%인지 검사한다."""
+    if not materials:
+        return False
+
+    if any(not isinstance(key, str) or not key.strip() for key in materials):
+        return False
+    if any(
+        isinstance(value, bool) or not isinstance(value, (int, float))
+        for value in materials.values()
+    ):
+        return False
+
+    ratios = [Decimal(str(value)) for value in materials.values()]
+    if not all(ratio.is_finite() and 0 < ratio <= 100 for ratio in ratios):
+        return False
+
+    # 각 비율의 소수 자릿수와 합산 시 올림 자릿수를 확보해 작은 초과분도 보존한다.
+    fractional_digits = max(0, -min(ratio.as_tuple().exponent for ratio in ratios))
+    with localcontext() as context:
+        context.prec = 3 + len(str(len(ratios))) + fractional_digits
+        return sum(ratios, Decimal(0)) == Decimal("100")
+
+
+def parse_label_materials(label_text: str) -> dict:
     if parse_label is None:
         raise HTTPException(
             status_code=503,
@@ -971,6 +996,8 @@ def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
 
     parsed = parse_label(label_text)
     materials = parsed.get("materials") or {}
+    if not isinstance(materials, dict):
+        materials = {}
     raw_ocr_preview = parsed.get("raw_ocr_preview", "")
     # AI 파서는 버전마다 관리 지침 키가 다릅니다(develop: care_text,
     # ksw/ai-ocr-enhancement: care_instruction). 한쪽만 읽으면 AI 모듈을
@@ -981,21 +1008,56 @@ def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
         or "라벨 표기법에 맞춰 관리하세요."
     )
 
-    if not materials:
+    warnings = parsed.get("warnings")
+    if not isinstance(warnings, list):
+        warnings = []
+    confidence = parsed.get("confidence")
+    if not isinstance(confidence, dict):
+        confidence = {}
+    parse_evidence = parsed.get("parse_evidence")
+    if not isinstance(parse_evidence, dict):
+        parse_evidence = {}
+
+    parser_status = parsed.get("status")
+    parser_succeeded = parser_status == "success"
+    evidence_status = parse_evidence.get("composition_status")
+    evidence_confirmed = evidence_status == "confirmed"
+    exact_total = _has_exact_material_total(materials)
+
+    if not parser_succeeded or not evidence_confirmed or not exact_total:
+        parser_error_code = parsed.get("error_code")
+        if not parser_error_code:
+            if not parser_succeeded or not evidence_confirmed:
+                parser_error_code = "composition_unconfirmed"
+            elif materials:
+                parser_error_code = "ratio_total_invalid"
+            else:
+                parser_error_code = "composition_not_found"
         raise HTTPException(
             status_code=422,
             detail={
                 "message": "라벨에서 소재 혼용률을 찾지 못했습니다.",
                 "error_code": "MATERIAL_EXTRACTION_FAILED",
-                "materials": materials,
-                "partial_materials": materials,
+                "materials": {},
+                "partial_materials": {},
                 "care_instruction": care_instruction,
                 "raw_ocr_preview": raw_ocr_preview,
                 "ai_success": False,
+                "parser_error_code": parser_error_code,
+                "warnings": warnings,
+                "confidence": confidence,
+                "parse_evidence": parse_evidence,
             },
         )
 
-    return materials, care_instruction, raw_ocr_preview
+    return {
+        "materials": materials,
+        "care_instruction": care_instruction,
+        "raw_ocr_preview": raw_ocr_preview,
+        "warnings": warnings,
+        "confidence": confidence,
+        "parse_evidence": parse_evidence,
+    }
 
 # --- API 엔드포인트 시작 ---
 
@@ -1212,24 +1274,23 @@ def scan_label(
     current_user: database.User = Depends(get_current_user),
 ):
     label_text = extract_label_text(image, raw_ocr_text)
-    materials, care_instruction, raw_ocr_preview = parse_label_materials(label_text)
+    parsed = parse_label_materials(label_text)
+    materials = parsed["materials"]
     title = "스캔한 의류"
     category = "상의"
 
-    # 라벨 일부만 읽혀 합계가 100이 아니면, 이 값 그대로는 탄소 계산이
-    # 거부되므로(99.5~100.5 검사) 부분 인식임을 응답에 명시합니다.
-    total_ratio = sum(materials.values())
-    ratio_complete = 99.5 <= total_ratio <= 100.5
-
     return {
         "status": "success",
-        "message": "라벨 인식 완료" if ratio_complete else "라벨을 일부만 인식했습니다. 비율을 확인해 주세요.",
-        "ai_success": ratio_complete,
-        "analysis_failure_reason": None if ratio_complete else "RATIO_INCOMPLETE",
+        "message": "라벨 인식 완료",
+        "ai_success": True,
+        "analysis_failure_reason": None,
         "materials": materials,
         "material_details": build_material_details(materials, db),
-        "care_instruction": care_instruction,
-        "raw_ocr_preview": raw_ocr_preview,
+        "care_instruction": parsed["care_instruction"],
+        "raw_ocr_preview": parsed["raw_ocr_preview"],
+        "warnings": parsed["warnings"],
+        "confidence": parsed["confidence"],
+        "parse_evidence": parsed["parse_evidence"],
         "clothing": {
             "name": title,
             "category": category,

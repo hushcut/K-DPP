@@ -108,12 +108,11 @@ def test_equal_rank_conflicting_compositions_are_ambiguous() -> None:
     assert result["materials"] == {}
 
 
-def test_small_ratio_total_error_is_normalized_with_warning() -> None:
+def test_small_ratio_total_error_is_not_promoted_to_composition() -> None:
     result = parse_label("COTTON 100% POLYURETHANE 5%")
 
-    assert result["status"] == "success"
-    assert result["materials"] == {"cotton": 95.2, "polyurethane": 4.8}
-    assert result["warnings"] == ["generic:ratio_total_normalized:105.0"]
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
 
 
 def test_multilingual_alias_is_not_confused_with_wool() -> None:

@@ -46,6 +46,20 @@ def test_parse_text_success_and_failure_contract() -> None:
     assert failure.status_code == 422
     assert failure.json()["status"] == "failed"
     assert failure.json()["error_code"] == "composition_not_found"
+    assert failure.json()["parse_evidence"] == {}
+
+
+def test_parse_text_rejects_non_exact_ratio_total() -> None:
+    response = client.post(
+        "/v1/parse-text",
+        json={"text": "COTTON 100% POLYURETHANE 5%"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["status"] == "failed"
+    assert response.json()["materials"] == {}
+    assert response.json()["error_code"] == "composition_not_found"
+    assert response.json()["parse_evidence"] == {}
 
 
 def test_analyze_label_returns_consistent_success_contract(monkeypatch) -> None:

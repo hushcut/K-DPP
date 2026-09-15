@@ -155,6 +155,17 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
   ],
   "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
   "raw_ocr_preview": "COTTON 80% POLYESTER 20%",
+  "warnings": [],
+  "confidence": {
+    "ocr": "unknown",
+    "parser": "high"
+  },
+  "parse_evidence": {
+    "composition_status": "confirmed",
+    "source": "same_line",
+    "ratio_total_before_normalization": 100,
+    "explicit_percent": true
+  },
   "clothing": {
     "name": "스캔한 의류",
     "category": "상의"
@@ -178,10 +189,23 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
     "partial_materials": {},
     "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
     "raw_ocr_preview": "wash cold do not bleach dry flat",
-    "ai_success": false
+    "ai_success": false,
+    "parser_error_code": "composition_not_found",
+    "warnings": [],
+    "confidence": {
+      "ocr": "unknown",
+      "parser": "low"
+    },
+    "parse_evidence": {}
   }
 }
 ```
+
+파서가 성공 상태를 반환하고 소재 비율 합계가 정확히 100%로 확인된 경우에만
+200을 반환합니다. 합계가 100%가 아니거나 조성이 불완전·모호하면 비율을
+보정하지 않고 422 `MATERIAL_EXTRACTION_FAILED`로 반환합니다. 이때 `materials`와
+`partial_materials`는 모두 빈 객체이며 `parser_error_code`, `warnings`,
+`confidence`, `parse_evidence`를 진단 정보로 전달합니다.
 
 ## POST /api/carbon/calculate
 
@@ -380,8 +404,10 @@ Authorization: Bearer <token>
   (이전에는 무게 없는 소재 계수가 실제 배출량과 같은 이력에 섞였음)
 - 스캔 업로드 상한 **10MB** — 초과 시 413 `PAYLOAD_TOO_LARGE`.
 - 이미지 파트에 **Content-Type 필수** (jpeg/png/webp 외·누락 시 415).
-- `/api/scan` 응답: 인식된 비율 합이 99.5~100.5를 벗어나면
-  `ai_success=false`, `analysis_failure_reason="RATIO_INCOMPLETE"` (200 유지).
+- `/api/scan`은 파서가 확인한 소재 비율 합계가 정확히 100%일 때만 200을
+  반환합니다. 100%가 아니면 자동 보정하지 않고 422
+  `MATERIAL_EXTRACTION_FAILED`로 반환하며, 200 응답의 `ai_success`는 항상
+  `true`, `analysis_failure_reason`은 `null`입니다.
 - 이력 `created_at`은 UTC 오프셋 포함 ISO 형식(`...+00:00`)으로 직렬화.
 - 무게 입력 범위: 1g ~ 100,000g. NaN/Infinity는 비율·무게 모두 400으로 거부.
 - 비밀번호 앞뒤 공백은 가입 시 400으로 거부(저장·검증 모두 입력 원문 사용).

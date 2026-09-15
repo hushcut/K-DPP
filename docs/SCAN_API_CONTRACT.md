@@ -67,6 +67,17 @@ Authorization: Bearer <token>
   ],
   "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
   "raw_ocr_preview": "COTTON 80% POLYESTER 20%",
+  "warnings": [],
+  "confidence": {
+    "ocr": "unknown",
+    "parser": "high"
+  },
+  "parse_evidence": {
+    "composition_status": "confirmed",
+    "source": "same_line",
+    "ratio_total_before_normalization": 100,
+    "explicit_percent": true
+  },
   "clothing": {
     "name": "스캔한 의류",
     "category": "상의"
@@ -120,7 +131,14 @@ Authorization: Bearer <token>
     "partial_materials": {},
     "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
     "raw_ocr_preview": "CARE LABEL TEXT",
-    "ai_success": false
+    "ai_success": false,
+    "parser_error_code": "composition_not_found",
+    "warnings": [],
+    "confidence": {
+      "ocr": "unknown",
+      "parser": "low"
+    },
+    "parse_evidence": {}
   }
 }
 ```
@@ -144,23 +162,20 @@ Authorization: Bearer <token>
 | 403 | `AUTH_REQUIRED` | **권한 없음 안내만 표시(로그아웃하지 않음)** |
 | 413 | `PAYLOAD_TOO_LARGE` | 사진 용량 초과 안내 (상한 10MB) |
 | 415 | `UNSUPPORTED_IMAGE_FORMAT` | 지원하지 않는 이미지 안내 (JPEG/PNG/WebP만 허용) ※ |
-| 422 | `MATERIAL_EXTRACTION_FAILED` | 소재 직접 입력 흐름 |
+| 422 | `MATERIAL_EXTRACTION_FAILED` | 소재 조성 누락·불완전·모호·합계 100% 불일치 → 직접 입력 흐름 |
 | 502 | `OCR_FAILED` | 소재 직접 입력 안내 + `다시 촬영` 버튼 제공 |
-| 503 | `AI_MODULE_FAILED` | **전용 분기 없음** — 아래 '그 외 5xx'와 같게 처리됨 |
-| 504 | `OCR_TIMEOUT` | 시간 초과 안내 + 직접 입력 유도 (**백엔드 미구현, 프론트만 준비됨**) |
+| 503 | `AI_MODULE_FAILED` · `OCR_NOT_CONFIGURED` · `OCR_QUOTA_EXCEEDED` · `OCR_SERVICE_UNAVAILABLE` | **전용 분기 없음** — 아래 '그 외 5xx'와 같게 처리됨 |
+| 504 | `OCR_TIMEOUT` | 시간 초과 안내 + 직접 입력 유도 |
 | 500 · 그 외 5xx | — | 일시적 서버 문제 안내 (`statusCode >= 500` 폴백) |
 
 **503에 대한 주의**: 프론트에 503 전용 case가 없어 `statusCode >= 500` 폴백을 타고
 500·504와 **똑같은 문구**가 나옵니다. 이전 판에 적혀 있던 "서버/AI 모듈 문제 안내"는
 구현되지 않은 내용이었습니다(2026-09-08 정정).
 
-**503이 실제로 나는 경우**: 서버 기동 시 `from apps.text...` import 실패 한 가지뿐입니다
-(`BACKEND/main.py:882`, `:938`). OCR 미설정·한도 초과·Vision 장애는 전부 **502 `OCR_FAILED`**로
-나갑니다(`:922-932`가 `run_ocr` 실행 중 모든 예외를 `except Exception`으로 잡음).
-
-**504는 현재 백엔드가 내지 않고, 프론트에만 처리 경로가 있습니다**(403과 같은 형태).
-AI 계층에는 타임아웃이 있으나(`ksw/ai-ocr-enhancement`의 `OCR_TIMEOUT_SECONDS = 20`)
-develop에는 없고, 프론트 상한은 35초입니다.
+백엔드는 OCR 설정 오류·할당량 초과·서비스 장애를 각각 503으로, OCR 응답 시간
+초과를 504로 구분합니다. 그 밖의 OCR 예외는 502 `OCR_FAILED`로 반환합니다.
+프론트는 503을 별도 분기하지 않아 다른 5xx와 같은 안내를 표시하고, 504는
+시간 초과 전용 안내와 직접 입력 흐름으로 연결합니다.
 
 `AI_REQUESTS.md` F-4 요청에 따라 2026-09-08에 프론트에 `case 504:`를 추가했습니다
 (`scan_api_service.dart`, 브랜치 `jw/scan-partial-prefill`). 예고대로 새 enum은 만들지
@@ -170,36 +185,26 @@ develop에는 없고, 프론트 상한은 35초입니다.
 
 ### 422 `detail`의 프론트 사용 (2026-09-08 추가)
 
-직접 입력 폼은 `detail`의 아래 세 필드를 초기값으로 씁니다
+`detail`에는 직접 입력 폼의 초기값과 파서 진단 정보가 함께 들어갑니다
 (`scan_api_service.dart` → `scan_draft_service.dart` → `scan_result_view.dart`).
 
 | 필드 | 폼 반영 | 현재 실제로 오는 값 |
 | --- | --- | --- |
 | `partial_materials` | 소재·혼용률 입력 줄 | **항상 `{}`** |
-| `care_instruction` | 관리 지침 문구 | 항상 상수 `'라벨 표기법에 맞춰 관리하세요.'` |
+| `care_instruction` | 관리 지침 문구 | 파서가 감지한 관리 지침, 없으면 기본 문구 |
 | `raw_ocr_preview` | '인식된 라벨 원문' 카드 | AI가 읽어낸 라벨 글자 (상한 220자) |
+| `parser_error_code` · `warnings` · `confidence` · `parse_evidence` | 현재 프론트 미사용 | 파서 거부 사유와 근거 |
 
-**`partial_materials`는 이 경로에서 채워질 수 없습니다.** 422는 `materials`가 비었을
-때만 나고(`main.py:951`), 실패 응답을 만드는 AI `failed_response`도 `materials`·`parts`를
-`{}`로 고정합니다(develop·enhancement 공통). 즉 오늘 이 필드로 프리필되는 값은 없습니다.
-프론트는 값이 오면 그대로 채우도록 배선만 해 뒀으므로, AI 파서가 부분 인식 결과를
-실패 응답에 담기 시작하면 프론트 변경 없이 동작합니다.
+`partial_materials`는 계속 `{}`로 반환합니다. 백엔드는 파서가 일부 후보를
+만들었더라도 성공 상태·확인된 근거·정확한 합계 100%를 모두 만족하지 않으면
+해당 비율을 사용자 입력값으로 노출하지 않습니다. 이런 경우 422를 반환합니다.
+200 응답은 확인된 정확한 조성만 포함하므로 `ai_success`는 항상 `true`입니다.
+거부 원인은 `parser_error_code`, `warnings`, `confidence`, `parse_evidence`로 확인할
+수 있으며 현재 프론트는 이 진단 필드를 무시합니다.
 
-`care_instruction`도 마찬가지로 지금은 상수입니다 — develop `failed_response`에는
-`care_text` 키 자체가 없습니다. enhancement는 실패 시에도 `parse_care()`를 돌려 실제
-지침을 담지만 키 이름이 `care_instruction`이라, 백엔드가 두 키를 모두 읽도록 함께
-고쳤습니다(`main.py:950-956`).
-
-**실제로 부분 인식이 일어나는 경로는 422가 아니라 200입니다.** 소재를 찾았으나 합계가
-100이 아니면 `ai_success: false` + `analysis_failure_reason: "RATIO_INCOMPLETE"`로
-**200**이 나가고, 프론트는 이미 그 소재를 폼에 채웁니다. 다만 프론트가 `ai_success`를
-읽지 않아 화면에는 "스캔 완료!"로 표시되고, 저장 단계에서야 합계 경고를 만납니다
-(미해결, 백로그).
-
-※ **415의 WebP 허용은 백엔드 상수(`main.py:52`) 기준입니다.** AI 계층은 JPEG/PNG만 받습니다
-(`ksw/ai-ocr-enhancement`의 `SUPPORTED_IMAGE_FORMATS`). 현재는 백엔드가 OCR 텍스트를
-직접 다루므로 문제되지 않지만, HTTP 서비스로 전환하면 정합이 필요합니다
-(`docs/AI_REQUESTS.md` F-6).
+※ **415의 WebP 허용은 백엔드 상수 기준입니다.** AI `run_ocr`는 JPEG/PNG만
+허용하므로 WebP가 백엔드 형식 검사를 통과한 뒤 OCR 오류로 실패하는 계약 불일치가
+남아 있습니다(`docs/AI_REQUESTS.md` F-6).
 
 ## 2-1. 인증 오류 (401 / 403)
 
