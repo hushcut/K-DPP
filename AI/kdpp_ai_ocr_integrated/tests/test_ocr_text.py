@@ -28,6 +28,45 @@ def test_validate_image_accepts_png() -> None:
     assert (result.width, result.height) == (120, 80)
 
 
+def test_validate_image_converts_mpo_first_frame_to_jpeg(monkeypatch) -> None:
+    original_open = Image.open
+
+    def open_as_mpo(*args, **kwargs):
+        image = original_open(*args, **kwargs)
+        image.format = "MPO"
+        return image
+
+    monkeypatch.setattr(ocr_text.Image, "open", open_as_mpo)
+
+    result = ocr_text.validate_image_bytes(
+        image_bytes(),
+        declared_content_type="image/jpeg",
+    )
+
+    assert result.image_format == "MPO"
+    with original_open(BytesIO(result.content)) as converted:
+        assert converted.format == "JPEG"
+        assert converted.mode == "RGB"
+
+
+def test_validate_image_accepts_mpo_content_type(monkeypatch) -> None:
+    original_open = Image.open
+
+    def open_as_mpo(*args, **kwargs):
+        image = original_open(*args, **kwargs)
+        image.format = "MPO"
+        return image
+
+    monkeypatch.setattr(ocr_text.Image, "open", open_as_mpo)
+
+    result = ocr_text.validate_image_bytes(
+        image_bytes(),
+        declared_content_type="image/mpo",
+    )
+
+    assert result.image_format == "MPO"
+
+
 def test_validate_image_rejects_empty_content() -> None:
     with pytest.raises(ocr_text.InvalidImageError):
         ocr_text.validate_image_bytes(b"")

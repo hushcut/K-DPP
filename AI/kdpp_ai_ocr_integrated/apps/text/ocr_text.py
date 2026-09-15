@@ -28,7 +28,7 @@ MAX_IMAGE_PIXELS = 40_000_000
 MAX_IMAGE_ASPECT_RATIO = 20.0
 MAX_PREPROCESSED_PIXELS = 16_000_000
 MAX_PREPROCESSED_DIMENSION = 8192
-SUPPORTED_IMAGE_FORMATS = {"JPEG", "PNG"}
+SUPPORTED_IMAGE_FORMATS = {"JPEG", "PNG", "MPO"}
 OCR_TIMEOUT_SECONDS = 20
 
 # Keep Pillow's own decompression-bomb protection aligned with the API limit.
@@ -153,6 +153,33 @@ def read_image_bytes(image_path: str | os.PathLike[str]) -> bytes:
         raise InvalidImageError(f"이미지 파일을 읽을 수 없습니다: {image_path}") from exc
 
 
+def _convert_mpo_to_jpeg(content: bytes) -> bytes:
+    """MPO의 첫 프레임을 Vision OCR이 받을 수 있는 JPEG로 변환한다."""
+
+    try:
+        with Image.open(BytesIO(content)) as image:
+            frame = ImageOps.exif_transpose(image).convert("RGB")
+            buffer = BytesIO()
+            frame.save(buffer, format="JPEG", quality=95, optimize=True)
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        raise ImageTooLargeError(
+            "MPO 이미지가 안전한 처리 범위를 넘습니다."
+        ) from exc
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise InvalidImageError("MPO 이미지를 JPEG로 변환하지 못했습니다.") from exc
+    except MemoryError as exc:
+        raise ImageTooLargeError(
+            "MPO 이미지를 변환할 메모리가 부족합니다."
+        ) from exc
+
+    converted = buffer.getvalue()
+    if len(converted) > MAX_IMAGE_BYTES:
+        raise ImageTooLargeError(
+            f"변환된 MPO 이미지는 {MAX_IMAGE_BYTES // (1024 * 1024)}MB 이하여야 합니다."
+        )
+    return converted
+
+
 def validate_image_bytes(
     content: bytes,
     *,
@@ -169,8 +196,8 @@ def validate_image_bytes(
 
     if declared_content_type:
         normalized_type = declared_content_type.split(";", 1)[0].strip().lower()
-        if normalized_type not in {"image/jpeg", "image/png"}:
-            raise UnsupportedImageError("JPG 또는 PNG 이미지만 지원합니다.")
+        if normalized_type not in {"image/jpeg", "image/png", "image/mpo"}:
+            raise UnsupportedImageError("JPG, PNG 또는 MPO 이미지만 지원합니다.")
 
     try:
         with warnings.catch_warnings():
@@ -198,7 +225,10 @@ def validate_image_bytes(
         ) from exc
 
     if image_format not in SUPPORTED_IMAGE_FORMATS:
-        raise UnsupportedImageError("JPG 또는 PNG 이미지만 지원합니다.")
+        raise UnsupportedImageError("JPG, PNG 또는 MPO 이미지만 지원합니다.")
+
+    if image_format == "MPO":
+        content = _convert_mpo_to_jpeg(content)
 
     return ValidatedImage(
         content=content,
