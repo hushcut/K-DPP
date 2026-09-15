@@ -16,7 +16,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps, UnidentifiedImageError
 
 from apps.text.ocr_cache import OcrCacheMissError, OcrTextCache
 
@@ -207,45 +207,53 @@ def validate_image_bytes(
     )
 
 
+def _prepare_image_for_ocr(content: bytes) -> Image.Image:
+    """OCR 후보가 공유하는 회전 보정·안전한 크기 조절을 적용한다."""
+
+    with Image.open(BytesIO(content)) as image:
+        image = ImageOps.exif_transpose(image).convert("RGB")
+        width, height = image.size
+        _validate_image_dimensions(width, height)
+
+        # 작은 글자는 키우되, 큰 이미지가 메모리를 과도하게 쓰지 않도록 상한을 둔다.
+        scale = 1.0
+        if width < MIN_OCR_WIDTH:
+            scale = MIN_OCR_WIDTH / width
+        elif width > MAX_OCR_WIDTH:
+            scale = MAX_OCR_WIDTH / width
+
+        pixel_scale = math.sqrt(MAX_PREPROCESSED_PIXELS / (width * height))
+        dimension_scale = MAX_PREPROCESSED_DIMENSION / max(width, height)
+        scale = min(scale, pixel_scale, dimension_scale)
+
+        if scale != 1.0:
+            resampling = getattr(Image, "Resampling", Image)
+            output_width = max(1, int(width * scale))
+            output_height = max(1, int(height * scale))
+            image = image.resize(
+                (output_width, output_height),
+                resampling.LANCZOS,
+            )
+
+        return image.copy()
+
+
+def _encode_preprocessed_image(image: Image.Image) -> bytes:
+    buffer = BytesIO()
+    image.save(buffer, format="PNG", optimize=True)
+    return buffer.getvalue()
+
+
 def preprocess_image_bytes(content: bytes) -> bytes:
-    """회전 보정, 적정 크기 조절, 대비·선명도 보정을 적용한 OCR 후보를 만든다."""
+    """대비·선명도 보정을 적용한 기본 OCR 후보를 만든다."""
 
     try:
-        with Image.open(BytesIO(content)) as image:
-            image = ImageOps.exif_transpose(image).convert("RGB")
-            width, height = image.size
-            _validate_image_dimensions(width, height)
-
-            # 작은 글자는 키우되, 큰 이미지가 메모리를 과도하게 쓰지 않도록 상한을 둔다.
-            scale = 1.0
-            if width < MIN_OCR_WIDTH:
-                scale = MIN_OCR_WIDTH / width
-            elif width > MAX_OCR_WIDTH:
-                scale = MAX_OCR_WIDTH / width
-
-            pixel_scale = math.sqrt(
-                MAX_PREPROCESSED_PIXELS / (width * height)
-            )
-            dimension_scale = MAX_PREPROCESSED_DIMENSION / max(width, height)
-            scale = min(scale, pixel_scale, dimension_scale)
-
-            if scale != 1.0:
-                resampling = getattr(Image, "Resampling", Image)
-                output_width = max(1, int(width * scale))
-                output_height = max(1, int(height * scale))
-                image = image.resize(
-                    (output_width, output_height),
-                    resampling.LANCZOS,
-                )
-
-            image = ImageOps.autocontrast(image.convert("L"))
-            image = image.filter(
-                ImageFilter.UnsharpMask(radius=1.4, percent=150, threshold=3)
-            )
-
-            buffer = BytesIO()
-            image.save(buffer, format="PNG", optimize=True)
-            return buffer.getvalue()
+        image = _prepare_image_for_ocr(content)
+        image = ImageOps.autocontrast(image.convert("L"))
+        image = image.filter(
+            ImageFilter.UnsharpMask(radius=1.4, percent=150, threshold=3)
+        )
+        return _encode_preprocessed_image(image)
     except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
         raise ImageTooLargeError(
             "OCR 전처리 범위를 넘는 고해상도 이미지입니다."
@@ -255,6 +263,39 @@ def preprocess_image_bytes(content: bytes) -> bytes:
     except MemoryError as exc:
         raise ImageTooLargeError(
             "OCR 전처리 중 이미지가 너무 커서 메모리가 부족합니다."
+        ) from exc
+
+
+def preprocess_reflection_image_bytes(content: bytes) -> bytes:
+    """강한 반사로 밝게 뜬 라벨을 위한 하이라이트 압축 OCR 후보를 만든다.
+
+    완전히 포화된 픽셀을 복구하는 처리는 아니며, 남아 있는 회색 글자 대비를
+    넓히기 위한 마지막 후보이다.
+    """
+
+    try:
+        image = _prepare_image_for_ocr(content).convert("L")
+        highlight_lut = [
+            round(255 * ((value / 255) ** 1.8)) for value in range(256)
+        ]
+        image = image.point(highlight_lut)
+        image = ImageOps.equalize(ImageOps.autocontrast(image, cutoff=1))
+        image = ImageEnhance.Contrast(image).enhance(1.35)
+        image = image.filter(
+            ImageFilter.UnsharpMask(radius=1.8, percent=180, threshold=2)
+        )
+        return _encode_preprocessed_image(image)
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        raise ImageTooLargeError(
+            "OCR 전처리 범위를 넘는 고해상도 이미지입니다."
+        ) from exc
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise InvalidImageError(
+            "반사 보정 OCR 전처리 중 이미지 디코딩에 실패했습니다."
+        ) from exc
+    except MemoryError as exc:
+        raise ImageTooLargeError(
+            "반사 보정 OCR 전처리 중 이미지가 너무 커서 메모리가 부족합니다."
         ) from exc
 
 
@@ -650,6 +691,20 @@ def run_ocr_bytes(
                 )
             )
             ocr_candidate_count += 1
+
+            # 기본 전처리까지 조성을 만들지 못한 경우에만 반사 보정 후보를
+            # 추가한다. 성공한 후보가 있으면 불필요한 Vision 호출을 하지 않는다.
+            if not any(
+                candidate.parser_status == "success" for candidate in candidates
+            ):
+                reflection = preprocess_reflection_image_bytes(validated.content)
+                candidates.extend(
+                    _build_payload_candidates(
+                        "reflection",
+                        run_candidate_ocr("reflection", reflection),
+                    )
+                )
+                ocr_candidate_count += 1
         except (
             InvalidImageError,
             OcrCacheMissError,
@@ -670,7 +725,10 @@ def run_ocr_bytes(
     )
     result_warnings = processing_warnings
     if best.source != "original":
-        result_warnings.append("전처리된 이미지의 OCR 결과를 사용했습니다.")
+        if best.source == "reflection":
+            result_warnings.append("반사 보정된 이미지의 OCR 결과를 사용했습니다.")
+        else:
+            result_warnings.append("전처리된 이미지의 OCR 결과를 사용했습니다.")
     if best.layout_used:
         result_warnings.append("OCR 좌표를 바탕으로 재구성한 줄 순서를 사용했습니다.")
     if not best.text:

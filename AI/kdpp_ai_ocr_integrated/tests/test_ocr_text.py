@@ -97,6 +97,16 @@ def test_preprocess_image_converts_memory_error(monkeypatch) -> None:
         ocr_text.preprocess_image_bytes(image_bytes())
 
 
+def test_reflection_preprocess_respects_output_pixel_limit(monkeypatch) -> None:
+    monkeypatch.setattr(ocr_text, "MIN_OCR_WIDTH", 1800)
+    monkeypatch.setattr(ocr_text, "MAX_PREPROCESSED_PIXELS", 120 * 80)
+
+    result = ocr_text.preprocess_reflection_image_bytes(image_bytes())
+
+    with Image.open(BytesIO(result)) as image:
+        assert image.width * image.height <= ocr_text.MAX_PREPROCESSED_PIXELS
+
+
 def test_explicit_credentials_do_not_mutate_environment(monkeypatch, tmp_path) -> None:
     environment_key = tmp_path / "environment-key.json"
     explicit_key = tmp_path / "explicit-key.json"
@@ -280,6 +290,65 @@ def test_low_confidence_original_tries_preprocessed_candidate(monkeypatch) -> No
     assert result.metadata.source == "preprocessed"
     assert result.metadata.candidate_count == 2
     assert result.text == "COTTON 80% POLYESTER 20%"
+
+
+def test_failed_standard_preprocess_tries_reflection_candidate(monkeypatch) -> None:
+    calls: list[bytes] = []
+    monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_: object())
+    monkeypatch.setattr(
+        ocr_text,
+        "preprocess_image_bytes",
+        lambda _content: b"standard-preprocessed",
+    )
+    monkeypatch.setattr(
+        ocr_text,
+        "preprocess_reflection_image_bytes",
+        lambda _content: b"reflection-preprocessed",
+    )
+
+    def fake_ocr(_client, content: bytes) -> str:
+        calls.append(content)
+        return {
+            b"standard-preprocessed": "BRAND AND SIZE ONLY",
+            b"reflection-preprocessed": "COTTON 60% POLYESTER 40%",
+        }.get(content, "BRAND AND SIZE ONLY")
+
+    monkeypatch.setattr(ocr_text, "_run_google_ocr", fake_ocr)
+
+    result = ocr_text.run_ocr_bytes(image_bytes())
+
+    assert result.metadata.source == "reflection"
+    assert result.metadata.candidate_count == 3
+    assert result.text == "COTTON 60% POLYESTER 40%"
+    assert len(calls) == 3
+    assert "반사 보정된 이미지의 OCR 결과를 사용했습니다." in (
+        result.metadata.warnings
+    )
+
+
+def test_successful_standard_preprocess_skips_reflection_candidate(monkeypatch) -> None:
+    monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_: object())
+    monkeypatch.setattr(
+        ocr_text,
+        "preprocess_reflection_image_bytes",
+        lambda _content: pytest.fail("reflection candidate must be skipped"),
+    )
+    responses = iter(
+        [
+            "BRAND AND SIZE ONLY",
+            "COTTON 80% POLYESTER 20%",
+        ]
+    )
+    monkeypatch.setattr(
+        ocr_text,
+        "_run_google_ocr",
+        lambda _client, _content: next(responses),
+    )
+
+    result = ocr_text.run_ocr_bytes(image_bytes())
+
+    assert result.metadata.source == "preprocessed"
+    assert result.metadata.candidate_count == 2
 
 
 def test_preprocess_failure_keeps_original_candidate(monkeypatch) -> None:
