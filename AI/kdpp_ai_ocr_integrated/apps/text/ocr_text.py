@@ -238,9 +238,18 @@ def _prepare_image_for_ocr(content: bytes) -> Image.Image:
         return image.copy()
 
 
-def _encode_preprocessed_image(image: Image.Image) -> bytes:
+def _encode_preprocessed_image(
+    image: Image.Image,
+    *,
+    image_format: str = "PNG",
+) -> bytes:
     buffer = BytesIO()
-    image.save(buffer, format="PNG", optimize=True)
+    save_options: dict[str, Any] = {"format": image_format, "optimize": True}
+    if image_format == "JPEG":
+        # 반사 보정은 등화 처리 뒤 PNG 압축 효율이 낮다. OCR 후보 전송 지연을
+        # 줄이기 위해 텍스트 가독성을 보존하는 수준으로 JPEG 압축을 사용한다.
+        save_options["quality"] = 92
+    image.save(buffer, **save_options)
     return buffer.getvalue()
 
 
@@ -284,7 +293,7 @@ def preprocess_reflection_image_bytes(content: bytes) -> bytes:
         image = image.filter(
             ImageFilter.UnsharpMask(radius=1.8, percent=180, threshold=2)
         )
-        return _encode_preprocessed_image(image)
+        return _encode_preprocessed_image(image, image_format="JPEG")
     except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
         raise ImageTooLargeError(
             "OCR 전처리 범위를 넘는 고해상도 이미지입니다."
@@ -691,20 +700,6 @@ def run_ocr_bytes(
                 )
             )
             ocr_candidate_count += 1
-
-            # 기본 전처리까지 조성을 만들지 못한 경우에만 반사 보정 후보를
-            # 추가한다. 성공한 후보가 있으면 불필요한 Vision 호출을 하지 않는다.
-            if not any(
-                candidate.parser_status == "success" for candidate in candidates
-            ):
-                reflection = preprocess_reflection_image_bytes(validated.content)
-                candidates.extend(
-                    _build_payload_candidates(
-                        "reflection",
-                        run_candidate_ocr("reflection", reflection),
-                    )
-                )
-                ocr_candidate_count += 1
         except (
             InvalidImageError,
             OcrCacheMissError,
@@ -714,6 +709,30 @@ def run_ocr_bytes(
             processing_warnings.append(
                 "전처리 OCR에 실패하여 원본 OCR 결과를 유지했습니다."
             )
+        else:
+            # 기본 전처리까지 조성을 만들지 못한 경우에만 반사 보정 후보를
+            # 추가한다. 성공한 후보가 있으면 불필요한 Vision 호출을 하지 않는다.
+            if not any(
+                candidate.parser_status == "success" for candidate in candidates
+            ):
+                try:
+                    reflection = preprocess_reflection_image_bytes(validated.content)
+                    candidates.extend(
+                        _build_payload_candidates(
+                            "reflection",
+                            run_candidate_ocr("reflection", reflection),
+                        )
+                    )
+                    ocr_candidate_count += 1
+                except (
+                    InvalidImageError,
+                    OcrCacheMissError,
+                    OcrServiceError,
+                    MemoryError,
+                ):
+                    processing_warnings.append(
+                        "반사 보정 OCR에 실패하여 기존 후보를 유지했습니다."
+                    )
 
     best = max(candidates, key=lambda candidate: candidate.score)
     ocr_confidence = (

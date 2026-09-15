@@ -104,6 +104,7 @@ def test_reflection_preprocess_respects_output_pixel_limit(monkeypatch) -> None:
     result = ocr_text.preprocess_reflection_image_bytes(image_bytes())
 
     with Image.open(BytesIO(result)) as image:
+        assert image.format == "JPEG"
         assert image.width * image.height <= ocr_text.MAX_PREPROCESSED_PIXELS
 
 
@@ -349,6 +350,38 @@ def test_successful_standard_preprocess_skips_reflection_candidate(monkeypatch) 
 
     assert result.metadata.source == "preprocessed"
     assert result.metadata.candidate_count == 2
+
+
+def test_reflection_ocr_failure_keeps_existing_candidates(monkeypatch) -> None:
+    calls = 0
+    monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_: object())
+    monkeypatch.setattr(
+        ocr_text,
+        "preprocess_image_bytes",
+        lambda _content: b"standard-preprocessed",
+    )
+    monkeypatch.setattr(
+        ocr_text,
+        "preprocess_reflection_image_bytes",
+        lambda _content: b"reflection-preprocessed",
+    )
+
+    def fake_ocr(_client, _content: bytes) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise ocr_text.OcrTimeoutError("reflection timeout")
+        return "BRAND AND SIZE ONLY"
+
+    monkeypatch.setattr(ocr_text, "_run_google_ocr", fake_ocr)
+
+    result = ocr_text.run_ocr_bytes(image_bytes())
+
+    assert result.metadata.source == "original"
+    assert result.metadata.candidate_count == 2
+    assert "반사 보정 OCR에 실패하여 기존 후보를 유지했습니다." in (
+        result.metadata.warnings
+    )
 
 
 def test_preprocess_failure_keeps_original_candidate(monkeypatch) -> None:
