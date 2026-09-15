@@ -379,3 +379,5 @@ BACKEND/*.db-shm
 BACKEND/__pycache__/
 venv/
 
+# Pytest base temporary workspaces
+.pytest-tmp-*/
