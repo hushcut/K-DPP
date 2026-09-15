@@ -58,6 +58,18 @@ python -m venv .venv
 `GOOGLE_APPLICATION_CREDENTIALS` 또는 `--credentials`에 지정하는 Google Vision
 서비스 계정 JSON은 개인 로컬 경로에서만 사용해야 하며, 저장소에 추가하면 안 됩니다.
 
+### 팀 공통 개발 규칙
+
+- 개발 환경에는 `requirements-dev.txt`를 설치합니다. 이 파일은 서비스 의존성과
+  테스트·정적 검사 도구를 함께 포함합니다.
+- 코드 변경 후에는 `.venv\Scripts\python.exe -m ruff check .`를 실행해 기본
+  정적 검사를 통과해야 합니다.
+- 현재 Ruff는 문법 오류, 미사용 import·변수 등 실행 안정성에 직접 영향을 주는
+  규칙만 검사합니다. `ruff check --fix`나 `ruff format`으로 기존 코드를 일괄
+  변경하지 말고, 검사 결과를 검토한 뒤 필요한 항목만 별도 변경합니다.
+- 의존성 잠금 파일과 개발·테스트·배포 환경별 설치 규칙은 pip-tools 도입 검토와
+  함께 별도 작업으로 정리합니다.
+
 ## OCR 소재 분석
 
 ### 처리 방식

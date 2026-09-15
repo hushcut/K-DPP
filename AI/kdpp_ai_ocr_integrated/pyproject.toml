@@ -3,3 +3,12 @@ testpaths = ["tests", "../../QA"]
 pythonpath = ["."]
 addopts = "-q"
 
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["data", "models", "outputs", ".pytest-tmp-*"]
+
+[tool.ruff.lint]
+# 문법 오류와 미사용 항목 등 실행 안정성에 직접 영향을 주는 기본 규칙만 검사한다.
+select = ["E4", "E7", "E9", "F"]
+
