@@ -1,8 +1,16 @@
 # K-DPP AI OCR 통합 모듈
 
-이 폴더는 K-DPP의 AI 기능을 모아 둔 모듈입니다. 현재 `kyh/ai` 브랜치는
-`ksw/ai-ocr-enhancement`를 기반으로 하며, OCR 소재 분석의 안정성과 QA
-검증 도구를 보강합니다.
+K-DPP의 OCR 소재 분석과 세탁기호 실험 기능을 모은 AI 모듈입니다.
+
+## 팀 공통 규칙
+
+- 개발 환경은 `.venv`와 `requirements-dev.txt`를 사용합니다.
+- 코드 변경 후에는 Ruff와 pytest를 모두 통과해야 합니다.
+- AI 폴더 변경의 push·PR에서는 GitHub Actions가 Ruff와 pytest를 실행합니다.
+- 서비스 계정 JSON, 실제 데이터셋, 모델, OCR 캐시·출력물은 커밋하지 않습니다.
+- `ruff check --fix`나 `ruff format`으로 기존 코드를 일괄 변경하지 않습니다. 검사
+  결과를 검토해 필요한 변경만 적용합니다.
+- 의존성 잠금 파일과 환경별 설치 정책은 별도 합의 후 도입합니다.
 
 ## 현재 서비스 범위
 
@@ -44,7 +52,7 @@ kdpp_ai_ocr_integrated/
   outputs/                   # QA·평가 결과와 OCR 캐시 위치, Git 추적 제외
 ```
 
-## 설치와 기본 검증
+## 설치와 로컬 검증
 
 가상환경을 만든 뒤 의존성을 설치합니다. 자격증명 파일, 모델 가중치, 실제
 데이터셋은 저장소에 포함하지 않습니다.
@@ -52,23 +60,12 @@ kdpp_ai_ocr_integrated/
 ```bash
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.venv\Scripts\python.exe -m ruff check .
 .venv\Scripts\python.exe -m pytest -q
 ```
 
 `GOOGLE_APPLICATION_CREDENTIALS` 또는 `--credentials`에 지정하는 Google Vision
 서비스 계정 JSON은 개인 로컬 경로에서만 사용해야 하며, 저장소에 추가하면 안 됩니다.
-
-### 팀 공통 개발 규칙
-
-- 개발 환경에는 `requirements-dev.txt`를 설치합니다. 이 파일은 서비스 의존성과
-  테스트·정적 검사 도구를 함께 포함합니다.
-- 코드 변경 후에는 `.venv\Scripts\python.exe -m ruff check .`를 실행해 기본
-  정적 검사를 통과해야 합니다.
-- 현재 Ruff는 문법 오류, 미사용 import·변수 등 실행 안정성에 직접 영향을 주는
-  규칙만 검사합니다. `ruff check --fix`나 `ruff format`으로 기존 코드를 일괄
-  변경하지 말고, 검사 결과를 검토한 뒤 필요한 항목만 별도 변경합니다.
-- 의존성 잠금 파일과 개발·테스트·배포 환경별 설치 규칙은 pip-tools 도입 검토와
-  함께 별도 작업으로 정리합니다.
 
 ## OCR 소재 분석
 
@@ -301,4 +298,3 @@ accuracy만으로 모델을 선택하지 않습니다.
 - 현재 DPP 사용자 흐름은 소재 OCR 분석만 사용합니다.
 - AI 단위 QA와 서버 `/api/scan` 통합 QA는 목적과 허용오차가 달라, 결과를 하나의
   정확도 수치로 직접 비교하면 안 됩니다. 다음 단계에서 기준을 문서화하고 정리합니다.
-- GitHub Actions 기반 자동 검증은 아직 구성되지 않았습니다.
