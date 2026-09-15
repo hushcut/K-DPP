@@ -424,6 +424,13 @@ def main() -> None:
                 ocr.get("attempt_failures", []),
                 ensure_ascii=False,
             ),
+            "ocr_attempt_count": ocr.get("attempt_count", 0),
+            "ocr_external_call_count": ocr.get("external_call_count", 0),
+            "ocr_elapsed_ms": ocr.get("elapsed_ms", 0),
+            "ocr_attempts": json.dumps(
+                ocr.get("attempts", []),
+                ensure_ascii=False,
+            ),
             "warnings": json.dumps(
                 result.get("warnings", []),
                 ensure_ascii=False,

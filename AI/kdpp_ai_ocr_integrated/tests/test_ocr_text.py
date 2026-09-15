@@ -329,6 +329,13 @@ def test_low_confidence_original_tries_preprocessed_candidate(monkeypatch) -> No
 
     assert result.metadata.source == "preprocessed"
     assert result.metadata.candidate_count == 2
+    assert result.metadata.attempt_count == 2
+    assert result.metadata.external_call_count == 2
+    assert [attempt.source for attempt in result.metadata.attempts] == [
+        "original",
+        "preprocessed",
+    ]
+    assert all(attempt.outcome == "success" for attempt in result.metadata.attempts)
     assert result.text == "COTTON 80% POLYESTER 20%"
 
 
@@ -359,6 +366,8 @@ def test_failed_standard_preprocess_tries_reflection_candidate(monkeypatch) -> N
 
     assert result.metadata.source == "reflection"
     assert result.metadata.candidate_count == 3
+    assert result.metadata.attempt_count == 3
+    assert result.metadata.external_call_count == 3
     assert result.text == "COTTON 60% POLYESTER 40%"
     assert len(calls) == 3
     assert "반사 보정된 이미지의 OCR 결과를 사용했습니다." in (
@@ -418,7 +427,14 @@ def test_reflection_ocr_failure_keeps_existing_candidates(monkeypatch) -> None:
 
     assert result.metadata.source == "original"
     assert result.metadata.candidate_count == 2
+    assert result.metadata.attempt_count == 3
+    assert result.metadata.external_call_count == 3
     assert result.metadata.attempt_failures == ("reflection:OcrTimeoutError",)
+    reflection_attempt = result.metadata.attempts[-1]
+    assert reflection_attempt.source == "reflection"
+    assert reflection_attempt.outcome == "failed"
+    assert reflection_attempt.external_call is True
+    assert reflection_attempt.failure_code == "timeout"
     assert "반사 보정 OCR에 실패하여 기존 후보를 유지했습니다." in (
         result.metadata.warnings
     )
@@ -493,6 +509,10 @@ def test_cached_original_avoids_second_paid_call(monkeypatch, tmp_path) -> None:
     )
 
     assert first.text == second.text == "COTTON 100%"
+    assert first.metadata.external_call_count == 1
+    assert second.metadata.attempt_count == 1
+    assert second.metadata.external_call_count == 0
+    assert second.metadata.attempts[0].external_call is False
     assert calls == 1
     assert cache.write_count == 1
     assert cache.hit_count == 1

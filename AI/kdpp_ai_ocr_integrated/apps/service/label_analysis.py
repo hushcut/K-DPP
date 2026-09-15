@@ -44,6 +44,19 @@ def _merge_ocr_metadata(parsed: dict[str, Any], metadata: OcrMetadata) -> dict[s
         "width": metadata.width,
         "height": metadata.height,
         "attempt_failures": list(metadata.attempt_failures),
+        "attempt_count": metadata.attempt_count,
+        "external_call_count": metadata.external_call_count,
+        "elapsed_ms": metadata.elapsed_ms,
+        "attempts": [
+            {
+                "source": attempt.source,
+                "outcome": attempt.outcome,
+                "elapsed_ms": attempt.elapsed_ms,
+                "external_call": attempt.external_call,
+                "failure_code": attempt.failure_code,
+            }
+            for attempt in metadata.attempts
+        ],
     }
     return result
 

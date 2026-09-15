@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import os
 import re
+import time
 import warnings
 from dataclasses import dataclass
 from functools import lru_cache
@@ -81,6 +82,21 @@ class OcrMetadata:
     height: int
     warnings: tuple[str, ...] = ()
     attempt_failures: tuple[str, ...] = ()
+    attempt_count: int = 0
+    external_call_count: int = 0
+    elapsed_ms: int = 0
+    attempts: tuple["OcrAttempt", ...] = ()
+
+
+@dataclass(frozen=True)
+class OcrAttempt:
+    """One OCR candidate attempt without provider message or credential details."""
+
+    source: str
+    outcome: str
+    elapsed_ms: int
+    external_call: bool
+    failure_code: str = ""
 
 
 @dataclass(frozen=True)
@@ -659,6 +675,28 @@ def _build_payload_candidates(
     return candidates
 
 
+def _attempt_failure_code(exc: Exception) -> str:
+    """Return a stable, non-sensitive code for QA diagnostics."""
+
+    if isinstance(exc, OcrQuotaExceededError):
+        return "quota_exceeded"
+    if isinstance(exc, OcrTimeoutError):
+        return "timeout"
+    if isinstance(exc, OcrUnavailableError):
+        return "service_unavailable"
+    if isinstance(exc, OcrCacheMissError):
+        return "cache_miss"
+    if isinstance(exc, ImageTooLargeError):
+        return "image_too_large"
+    if isinstance(exc, InvalidImageError):
+        return "invalid_image"
+    if isinstance(exc, OcrServiceError):
+        return "service_error"
+    if isinstance(exc, MemoryError):
+        return "memory_error"
+    return "unknown"
+
+
 def run_ocr_bytes(
     content: bytes,
     credential_path: str | None = None,
@@ -671,6 +709,7 @@ def run_ocr_bytes(
 ) -> OcrResult:
     """한 이미지에서 원본/전처리 OCR 후보 중 파서 관점의 최선 결과를 반환한다."""
 
+    started_at = time.monotonic()
     validated = validate_image_bytes(
         content,
         declared_content_type=declared_content_type,
@@ -679,9 +718,11 @@ def run_ocr_bytes(
         raise OcrCacheMissError("오프라인 OCR 실행에는 캐시 파일이 필요합니다.")
 
     client: Any | None = None
+    external_call_count = 0
+    attempts: list[OcrAttempt] = []
 
     def run_candidate_ocr(source: str, candidate_content: bytes) -> OcrPayload:
-        nonlocal client
+        nonlocal client, external_call_count
         # QA 재실행에서 동일 이미지에 대한 외부 OCR 호출과 비용을 피한다.
         if ocr_cache is not None and not refresh_ocr_cache:
             cached_entry = ocr_cache.get_entry(candidate_content)
@@ -700,6 +741,7 @@ def run_ocr_bytes(
             client = _get_vision_client(
                 *_resolve_credential_path(credential_path)
             )
+        external_call_count += 1
         payload = _coerce_ocr_payload(_run_google_ocr(client, candidate_content))
         if ocr_cache is not None:
             ocr_cache.put(
@@ -711,9 +753,43 @@ def run_ocr_bytes(
             )
         return payload
 
+    def run_tracked_candidate(source: str, candidate_content: bytes) -> OcrPayload:
+        """Measure each candidate without exposing provider exception messages."""
+
+        external_calls_before = external_call_count
+        attempt_started_at = time.monotonic()
+        try:
+            payload = run_candidate_ocr(source, candidate_content)
+        except (
+            InvalidImageError,
+            OcrCacheMissError,
+            OcrServiceError,
+            MemoryError,
+        ) as exc:
+            attempts.append(
+                OcrAttempt(
+                    source=source,
+                    outcome="failed",
+                    elapsed_ms=round((time.monotonic() - attempt_started_at) * 1000),
+                    external_call=external_call_count > external_calls_before,
+                    failure_code=_attempt_failure_code(exc),
+                )
+            )
+            raise
+        else:
+            attempts.append(
+                OcrAttempt(
+                    source=source,
+                    outcome="success",
+                    elapsed_ms=round((time.monotonic() - attempt_started_at) * 1000),
+                    external_call=external_call_count > external_calls_before,
+                )
+            )
+            return payload
+
     candidates = _build_payload_candidates(
         "original",
-        run_candidate_ocr("original", validated.content),
+        run_tracked_candidate("original", validated.content),
     )
     ocr_candidate_count = 1
     processing_warnings: list[str] = []
@@ -728,7 +804,7 @@ def run_ocr_bytes(
             candidates.extend(
                 _build_payload_candidates(
                     "preprocessed",
-                    run_candidate_ocr("preprocessed", preprocessed),
+                    run_tracked_candidate("preprocessed", preprocessed),
                 )
             )
             ocr_candidate_count += 1
@@ -753,7 +829,7 @@ def run_ocr_bytes(
                     candidates.extend(
                         _build_payload_candidates(
                             "reflection",
-                            run_candidate_ocr("reflection", reflection),
+                            run_tracked_candidate("reflection", reflection),
                         )
                     )
                     ocr_candidate_count += 1
@@ -798,6 +874,10 @@ def run_ocr_bytes(
             height=validated.height,
             warnings=tuple(result_warnings),
             attempt_failures=tuple(attempt_failures),
+            attempt_count=len(attempts),
+            external_call_count=external_call_count,
+            elapsed_ms=round((time.monotonic() - started_at) * 1000),
+            attempts=tuple(attempts),
         ),
     )
 

@@ -6,10 +6,14 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from apps.service import main as service_main
+from apps.service.label_analysis import analyze_ocr_result
 from apps.service.response_contract import LABEL_RESPONSE_DEFAULTS
 from apps.text.ocr_text import (
+    OcrAttempt,
     OcrConfigurationError,
+    OcrMetadata,
     OcrQuotaExceededError,
+    OcrResult,
     OcrServiceError,
     OcrTimeoutError,
     OcrUnavailableError,
@@ -150,6 +154,56 @@ def test_analyze_label_returns_consistent_success_contract(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "success"
     assert response.json()["materials"] == {"cotton": 100}
+
+
+def test_ocr_attempt_diagnostics_are_safe_and_serialized() -> None:
+    result = analyze_ocr_result(
+        OcrResult(
+            text="COTTON 100%",
+            metadata=OcrMetadata(
+                source="original",
+                confidence="high",
+                candidate_count=2,
+                image_format="JPEG",
+                width=1200,
+                height=800,
+                attempt_failures=("reflection:OcrTimeoutError",),
+                attempt_count=3,
+                external_call_count=3,
+                elapsed_ms=321,
+                attempts=(
+                    OcrAttempt(
+                        source="reflection",
+                        outcome="failed",
+                        elapsed_ms=200,
+                        external_call=True,
+                        failure_code="timeout",
+                    ),
+                ),
+            ),
+        )
+    )
+
+    assert result["ocr"] == {
+        "source": "original",
+        "candidate_count": 2,
+        "image_format": "JPEG",
+        "width": 1200,
+        "height": 800,
+        "attempt_failures": ["reflection:OcrTimeoutError"],
+        "attempt_count": 3,
+        "external_call_count": 3,
+        "elapsed_ms": 321,
+        "attempts": [
+            {
+                "source": "reflection",
+                "outcome": "failed",
+                "elapsed_ms": 200,
+                "external_call": True,
+                "failure_code": "timeout",
+            }
+        ],
+    }
 
 
 def test_analyze_label_maps_ocr_provider_failure_to_502(monkeypatch) -> None:
