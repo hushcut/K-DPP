@@ -250,7 +250,7 @@ def test_high_confidence_original_uses_one_paid_ocr_call(monkeypatch) -> None:
     calls: list[bytes] = []
     monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_: object())
 
-    def fake_ocr(_client, content: bytes) -> str:
+    def fake_ocr(_client, content: bytes, **_kwargs) -> str:
         calls.append(content)
         return "COTTON 80% POLYESTER 20%"
 
@@ -286,7 +286,10 @@ def test_spatial_layout_candidate_beats_flattened_column_order(monkeypatch) -> N
     monkeypatch.setattr(
         ocr_text,
         "_run_google_ocr",
-        lambda _client, _content: ocr_text.OcrPayload(raw_text, layout_text),
+        lambda _client, _content, **_kwargs: ocr_text.OcrPayload(
+            raw_text,
+            layout_text,
+        ),
     )
 
     result = ocr_text.run_ocr_bytes(image_bytes())
@@ -306,7 +309,10 @@ def test_outer_candidate_beats_more_complete_color_block_candidate(monkeypatch) 
     monkeypatch.setattr(
         ocr_text,
         "_run_google_ocr",
-        lambda _client, _content: ocr_text.OcrPayload(raw_text, layout_text),
+        lambda _client, _content, **_kwargs: ocr_text.OcrPayload(
+            raw_text,
+            layout_text,
+        ),
     )
 
     result = ocr_text.run_ocr_bytes(image_bytes())
@@ -324,7 +330,10 @@ def test_complete_multimaterial_candidate_beats_single_material_layout(monkeypat
     monkeypatch.setattr(
         ocr_text,
         "_run_google_ocr",
-        lambda _client, _content: ocr_text.OcrPayload(raw_text, layout_text),
+        lambda _client, _content, **_kwargs: ocr_text.OcrPayload(
+            raw_text,
+            layout_text,
+        ),
     )
 
     result = ocr_text.run_ocr_bytes(image_bytes())
@@ -343,7 +352,7 @@ def test_low_confidence_original_tries_preprocessed_candidate(monkeypatch) -> No
     monkeypatch.setattr(
         ocr_text,
         "_run_google_ocr",
-        lambda _client, _content: next(responses),
+        lambda _client, _content, **_kwargs: next(responses),
     )
 
     result = ocr_text.run_ocr_bytes(image_bytes())
@@ -374,7 +383,7 @@ def test_failed_standard_preprocess_tries_reflection_candidate(monkeypatch) -> N
         lambda _content: b"reflection-preprocessed",
     )
 
-    def fake_ocr(_client, content: bytes) -> str:
+    def fake_ocr(_client, content: bytes, **_kwargs) -> str:
         calls.append(content)
         return {
             b"standard-preprocessed": "BRAND AND SIZE ONLY",
@@ -396,6 +405,62 @@ def test_failed_standard_preprocess_tries_reflection_candidate(monkeypatch) -> N
     )
 
 
+def test_ocr_candidate_timeouts_fit_the_total_budget(monkeypatch) -> None:
+    timeouts: list[float] = []
+    monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_: object())
+    monkeypatch.setattr(ocr_text, "preprocess_image_bytes", lambda _content: b"basic")
+    monkeypatch.setattr(
+        ocr_text,
+        "preprocess_reflection_image_bytes",
+        lambda _content: b"reflection",
+    )
+
+    def fake_ocr(_client, _content: bytes, *, timeout_seconds: float) -> str:
+        timeouts.append(timeout_seconds)
+        return "BRAND AND SIZE ONLY"
+
+    monkeypatch.setattr(ocr_text, "_run_google_ocr", fake_ocr)
+
+    result = ocr_text.run_ocr_bytes(image_bytes())
+
+    assert result.metadata.external_call_count == 3
+    assert len(timeouts) == 3
+    assert timeouts[0] <= 10
+    assert timeouts[1] <= 8
+    assert timeouts[2] <= 7
+    assert sum(timeouts) <= ocr_text.OCR_TOTAL_TIMEOUT_SECONDS
+
+
+def test_total_timeout_skips_later_candidate_without_another_ocr_call(
+    monkeypatch,
+) -> None:
+    clock = {"now": 0.0}
+    calls: list[float] = []
+    monkeypatch.setattr(ocr_text.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_: object())
+
+    def fake_ocr(_client, _content: bytes, *, timeout_seconds: float) -> str:
+        calls.append(timeout_seconds)
+        clock["now"] += timeout_seconds
+        return "BRAND AND SIZE ONLY"
+
+    def slow_preprocess(_content: bytes) -> bytes:
+        clock["now"] += 16
+        return b"basic"
+
+    monkeypatch.setattr(ocr_text, "_run_google_ocr", fake_ocr)
+    monkeypatch.setattr(ocr_text, "preprocess_image_bytes", slow_preprocess)
+
+    result = ocr_text.run_ocr_bytes(image_bytes())
+
+    assert len(calls) == 1
+    assert result.metadata.external_call_count == 1
+    assert result.metadata.attempts[-1].source == "preprocessed"
+    assert result.metadata.attempts[-1].outcome == "skipped"
+    assert result.metadata.attempts[-1].failure_code == "total_timeout"
+    assert result.metadata.attempt_failures == ("preprocessed:total_timeout",)
+
+
 def test_successful_standard_preprocess_skips_reflection_candidate(monkeypatch) -> None:
     monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_: object())
     monkeypatch.setattr(
@@ -412,7 +477,7 @@ def test_successful_standard_preprocess_skips_reflection_candidate(monkeypatch) 
     monkeypatch.setattr(
         ocr_text,
         "_run_google_ocr",
-        lambda _client, _content: next(responses),
+        lambda _client, _content, **_kwargs: next(responses),
     )
 
     result = ocr_text.run_ocr_bytes(image_bytes())
@@ -435,7 +500,7 @@ def test_reflection_ocr_failure_keeps_existing_candidates(monkeypatch) -> None:
         lambda _content: b"reflection-preprocessed",
     )
 
-    def fake_ocr(_client, _content: bytes) -> str:
+    def fake_ocr(_client, _content: bytes, **_kwargs) -> str:
         nonlocal calls
         calls += 1
         if calls == 3:
@@ -467,7 +532,7 @@ def test_preprocess_failure_keeps_original_candidate(monkeypatch) -> None:
     monkeypatch.setattr(
         ocr_text,
         "_run_google_ocr",
-        lambda _client, _content: "BRAND AND SIZE ONLY",
+        lambda _client, _content, **_kwargs: "BRAND AND SIZE ONLY",
     )
 
     def fail_preprocess(_content: bytes) -> bytes:
@@ -494,7 +559,7 @@ def test_second_ocr_failure_keeps_original_candidate(monkeypatch) -> None:
         lambda _content: b"preprocessed",
     )
 
-    def fake_ocr(_client, _content: bytes) -> str:
+    def fake_ocr(_client, _content: bytes, **_kwargs) -> str:
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -516,7 +581,7 @@ def test_cached_original_avoids_second_paid_call(monkeypatch, tmp_path) -> None:
     calls = 0
     monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_: object())
 
-    def fake_ocr(_client, _content: bytes) -> str:
+    def fake_ocr(_client, _content: bytes, **_kwargs) -> str:
         nonlocal calls
         calls += 1
         return "COTTON 100%"
@@ -566,7 +631,7 @@ def test_cached_candidates_are_rescored_without_api(monkeypatch, tmp_path) -> No
     calls = 0
     monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_: object())
 
-    def fake_ocr(_client, _content: bytes) -> str:
+    def fake_ocr(_client, _content: bytes, **_kwargs) -> str:
         nonlocal calls
         calls += 1
         return next(responses)

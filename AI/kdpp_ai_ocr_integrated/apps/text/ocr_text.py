@@ -33,6 +33,12 @@ MAX_PREPROCESSED_PIXELS = 16_000_000
 MAX_PREPROCESSED_DIMENSION = 8192
 SUPPORTED_IMAGE_FORMATS = {"JPEG", "PNG", "MPO"}
 OCR_TIMEOUT_SECONDS = 20
+OCR_TOTAL_TIMEOUT_SECONDS = 25.0
+OCR_CANDIDATE_TIMEOUT_SECONDS = {
+    "original": 10.0,
+    "preprocessed": 8.0,
+    "reflection": 7.0,
+}
 
 # Keep Pillow's own decompression-bomb protection aligned with the API limit.
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
@@ -72,6 +78,10 @@ class OcrQuotaExceededError(OcrServiceError):
 
 class OcrTimeoutError(OcrServiceError):
     """Google Vision did not complete the request before the deadline."""
+
+
+class OcrTotalTimeoutError(OcrTimeoutError):
+    """The request-wide OCR time budget was exhausted before another candidate."""
 
 
 class OcrUnavailableError(OcrServiceError):
@@ -452,7 +462,12 @@ def _get_vision_client(
         raise OcrConfigurationError("Google Vision 인증 정보를 불러오지 못했습니다.") from exc
 
 
-def _run_google_ocr(client: Any, content: bytes) -> OcrPayload:
+def _run_google_ocr(
+    client: Any,
+    content: bytes,
+    *,
+    timeout_seconds: float = OCR_TIMEOUT_SECONDS,
+) -> OcrPayload:
     from google.api_core import exceptions as google_exceptions
     from google.api_core import retry as google_retry
     from google.cloud import vision
@@ -474,7 +489,7 @@ def _run_google_ocr(client: Any, content: bytes) -> OcrPayload:
         initial=0.5,
         maximum=2.0,
         multiplier=2.0,
-        deadline=OCR_TIMEOUT_SECONDS,
+        deadline=timeout_seconds,
         on_error=record_retry,
     )
 
@@ -483,7 +498,7 @@ def _run_google_ocr(client: Any, content: bytes) -> OcrPayload:
             image=image,
             image_context=image_context,
             retry=retry,
-            timeout=OCR_TIMEOUT_SECONDS,
+            timeout=timeout_seconds,
         )
         return OcrPayload(
             text=_extract_response_text(response).strip(),
@@ -597,8 +612,33 @@ def run_ocr_bytes(
     client: Any | None = None
     external_call_count = 0
     attempts: list[OcrAttempt] = []
+    processing_warnings: list[str] = []
+    attempt_failures: list[str] = []
 
-    def run_candidate_ocr(source: str, candidate_content: bytes) -> OcrPayload:
+    def remaining_timeout_seconds() -> float:
+        return max(0.0, OCR_TOTAL_TIMEOUT_SECONDS - (time.monotonic() - started_at))
+
+    def record_total_timeout(source: str) -> None:
+        attempts.append(
+            OcrAttempt(
+                source=source,
+                outcome="skipped",
+                elapsed_ms=0,
+                external_call=False,
+                failure_code="total_timeout",
+            )
+        )
+        attempt_failures.append(f"{source}:total_timeout")
+        processing_warnings.append(
+            "전체 OCR 시간 제한으로 추가 후보를 실행하지 않았습니다."
+        )
+
+    def run_candidate_ocr(
+        source: str,
+        candidate_content: bytes,
+        *,
+        timeout_seconds: float,
+    ) -> OcrPayload:
         nonlocal client, external_call_count
         # QA 재실행에서 동일 이미지에 대한 외부 OCR 호출과 비용을 피한다.
         if ocr_cache is not None and not refresh_ocr_cache:
@@ -619,7 +659,13 @@ def run_ocr_bytes(
                 *_resolve_credential_path(credential_path)
             )
         external_call_count += 1
-        payload = _coerce_ocr_payload(_run_google_ocr(client, candidate_content))
+        payload = _coerce_ocr_payload(
+            _run_google_ocr(
+                client,
+                candidate_content,
+                timeout_seconds=timeout_seconds,
+            )
+        )
         if ocr_cache is not None:
             ocr_cache.put(
                 candidate_content,
@@ -635,8 +681,19 @@ def run_ocr_bytes(
 
         external_calls_before = external_call_count
         attempt_started_at = time.monotonic()
+        timeout_seconds = min(
+            OCR_CANDIDATE_TIMEOUT_SECONDS[source],
+            remaining_timeout_seconds(),
+        )
+        if timeout_seconds <= 0:
+            record_total_timeout(source)
+            raise OcrTotalTimeoutError("전체 OCR 시간 제한을 초과했습니다.")
         try:
-            payload = run_candidate_ocr(source, candidate_content)
+            payload = run_candidate_ocr(
+                source,
+                candidate_content,
+                timeout_seconds=timeout_seconds,
+            )
         except (
             InvalidImageError,
             OcrCacheMissError,
@@ -671,15 +728,19 @@ def run_ocr_bytes(
         run_tracked_candidate("original", validated.content),
     )
     ocr_candidate_count = 1
-    processing_warnings: list[str] = []
-    attempt_failures: list[str] = []
 
     # 원본 파싱이 충분히 신뢰할 만할 때는 전처리 OCR 호출을 생략한다.
     # 어려운 사진만 재시도해 비용과 지연을 제한한다.
     original = max(candidates, key=lambda candidate: candidate.score)
     if original.parser_status != "success" or original.parser_confidence != "high":
         try:
+            if remaining_timeout_seconds() <= 0:
+                record_total_timeout("preprocessed")
+                raise OcrTotalTimeoutError("전체 OCR 시간 제한을 초과했습니다.")
             preprocessed = preprocess_image_bytes(validated.content)
+            if remaining_timeout_seconds() <= 0:
+                record_total_timeout("preprocessed")
+                raise OcrTotalTimeoutError("전체 OCR 시간 제한을 초과했습니다.")
             candidates.extend(
                 _build_payload_candidates(
                     "preprocessed",
@@ -693,10 +754,11 @@ def run_ocr_bytes(
             OcrServiceError,
             MemoryError,
         ) as exc:
-            attempt_failures.append(f"preprocessed:{type(exc).__name__}")
-            processing_warnings.append(
-                "전처리 OCR에 실패하여 원본 OCR 결과를 유지했습니다."
-            )
+            if not isinstance(exc, OcrTotalTimeoutError):
+                attempt_failures.append(f"preprocessed:{type(exc).__name__}")
+                processing_warnings.append(
+                    "전처리 OCR에 실패하여 원본 OCR 결과를 유지했습니다."
+                )
         else:
             # 기본 전처리까지 조성을 만들지 못한 경우에만 반사 보정 후보를
             # 추가한다. 성공한 후보가 있으면 불필요한 Vision 호출을 하지 않는다.
@@ -704,7 +766,13 @@ def run_ocr_bytes(
                 candidate.parser_status == "success" for candidate in candidates
             ):
                 try:
+                    if remaining_timeout_seconds() <= 0:
+                        record_total_timeout("reflection")
+                        raise OcrTotalTimeoutError("전체 OCR 시간 제한을 초과했습니다.")
                     reflection = preprocess_reflection_image_bytes(validated.content)
+                    if remaining_timeout_seconds() <= 0:
+                        record_total_timeout("reflection")
+                        raise OcrTotalTimeoutError("전체 OCR 시간 제한을 초과했습니다.")
                     candidates.extend(
                         _build_payload_candidates(
                             "reflection",
@@ -718,10 +786,11 @@ def run_ocr_bytes(
                     OcrServiceError,
                     MemoryError,
                 ) as exc:
-                    attempt_failures.append(f"reflection:{type(exc).__name__}")
-                    processing_warnings.append(
-                        "반사 보정 OCR에 실패하여 기존 후보를 유지했습니다."
-                    )
+                    if not isinstance(exc, OcrTotalTimeoutError):
+                        attempt_failures.append(f"reflection:{type(exc).__name__}")
+                        processing_warnings.append(
+                            "반사 보정 OCR에 실패하여 기존 후보를 유지했습니다."
+                        )
 
     best = max(candidates, key=lambda candidate: candidate.score)
     ocr_confidence = (
