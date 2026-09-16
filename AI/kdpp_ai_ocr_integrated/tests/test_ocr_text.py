@@ -6,7 +6,7 @@ import pytest
 from PIL import Image
 
 from apps.text.ocr_cache import OcrCacheMissError, OcrTextCache
-from apps.text import ocr_text
+from apps.text import ocr_image, ocr_text
 
 
 def image_bytes(
@@ -36,7 +36,7 @@ def test_validate_image_converts_mpo_first_frame_to_jpeg(monkeypatch) -> None:
         image.format = "MPO"
         return image
 
-    monkeypatch.setattr(ocr_text.Image, "open", open_as_mpo)
+    monkeypatch.setattr(ocr_image.Image, "open", open_as_mpo)
 
     result = ocr_text.validate_image_bytes(
         image_bytes(),
@@ -57,7 +57,7 @@ def test_validate_image_accepts_mpo_content_type(monkeypatch) -> None:
         image.format = "MPO"
         return image
 
-    monkeypatch.setattr(ocr_text.Image, "open", open_as_mpo)
+    monkeypatch.setattr(ocr_image.Image, "open", open_as_mpo)
 
     result = ocr_text.validate_image_bytes(
         image_bytes(),
@@ -86,65 +86,65 @@ def test_validate_image_rejects_declared_content_type() -> None:
 
 
 def test_validate_image_enforces_byte_limit(monkeypatch) -> None:
-    monkeypatch.setattr(ocr_text, "MAX_IMAGE_BYTES", 10)
+    monkeypatch.setattr(ocr_image, "MAX_IMAGE_BYTES", 10)
 
     with pytest.raises(ocr_text.ImageTooLargeError):
         ocr_text.validate_image_bytes(image_bytes())
 
 
 def test_validate_image_rejects_pixel_limit_boundary(monkeypatch) -> None:
-    monkeypatch.setattr(ocr_text, "MAX_IMAGE_PIXELS", 120 * 80)
+    monkeypatch.setattr(ocr_image, "MAX_IMAGE_PIXELS", 120 * 80)
 
     with pytest.raises(ocr_text.ImageTooLargeError):
         ocr_text.validate_image_bytes(image_bytes())
 
 
 def test_validate_image_rejects_extreme_aspect_ratio(monkeypatch) -> None:
-    monkeypatch.setattr(ocr_text, "MAX_IMAGE_ASPECT_RATIO", 5.0)
+    monkeypatch.setattr(ocr_image, "MAX_IMAGE_ASPECT_RATIO", 5.0)
 
     with pytest.raises(ocr_text.ImageTooLargeError):
         ocr_text.validate_image_bytes(image_bytes(size=(600, 20)))
 
 
 def test_preprocess_image_respects_output_pixel_limit(monkeypatch) -> None:
-    monkeypatch.setattr(ocr_text, "MIN_OCR_WIDTH", 1800)
-    monkeypatch.setattr(ocr_text, "MAX_PREPROCESSED_PIXELS", 120 * 80)
+    monkeypatch.setattr(ocr_image, "MIN_OCR_WIDTH", 1800)
+    monkeypatch.setattr(ocr_image, "MAX_PREPROCESSED_PIXELS", 120 * 80)
 
     result = ocr_text.preprocess_image_bytes(image_bytes())
 
     with Image.open(BytesIO(result)) as image:
-        assert image.width * image.height <= ocr_text.MAX_PREPROCESSED_PIXELS
+        assert image.width * image.height <= ocr_image.MAX_PREPROCESSED_PIXELS
 
 
 def test_preprocess_image_respects_output_dimension_limit(monkeypatch) -> None:
-    monkeypatch.setattr(ocr_text, "MIN_OCR_WIDTH", 1800)
-    monkeypatch.setattr(ocr_text, "MAX_PREPROCESSED_DIMENSION", 100)
+    monkeypatch.setattr(ocr_image, "MIN_OCR_WIDTH", 1800)
+    monkeypatch.setattr(ocr_image, "MAX_PREPROCESSED_DIMENSION", 100)
 
     result = ocr_text.preprocess_image_bytes(image_bytes())
 
     with Image.open(BytesIO(result)) as image:
-        assert max(image.size) <= ocr_text.MAX_PREPROCESSED_DIMENSION
+        assert max(image.size) <= ocr_image.MAX_PREPROCESSED_DIMENSION
 
 
 def test_preprocess_image_converts_memory_error(monkeypatch) -> None:
     def raise_memory_error(_image):
         raise MemoryError
 
-    monkeypatch.setattr(ocr_text.ImageOps, "exif_transpose", raise_memory_error)
+    monkeypatch.setattr(ocr_image.ImageOps, "exif_transpose", raise_memory_error)
 
     with pytest.raises(ocr_text.ImageTooLargeError):
         ocr_text.preprocess_image_bytes(image_bytes())
 
 
 def test_reflection_preprocess_respects_output_pixel_limit(monkeypatch) -> None:
-    monkeypatch.setattr(ocr_text, "MIN_OCR_WIDTH", 1800)
-    monkeypatch.setattr(ocr_text, "MAX_PREPROCESSED_PIXELS", 120 * 80)
+    monkeypatch.setattr(ocr_image, "MIN_OCR_WIDTH", 1800)
+    monkeypatch.setattr(ocr_image, "MAX_PREPROCESSED_PIXELS", 120 * 80)
 
     result = ocr_text.preprocess_reflection_image_bytes(image_bytes())
 
     with Image.open(BytesIO(result)) as image:
         assert image.format == "JPEG"
-        assert image.width * image.height <= ocr_text.MAX_PREPROCESSED_PIXELS
+        assert image.width * image.height <= ocr_image.MAX_PREPROCESSED_PIXELS
 
 
 def test_explicit_credentials_do_not_mutate_environment(monkeypatch, tmp_path) -> None:
