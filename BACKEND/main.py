@@ -332,7 +332,7 @@ def parse_label_materials(label_text: str) -> tuple[dict[str, float], str]:
             },
         )
 
-    care_instruction = parsed.get("care_text") or "라벨 표기법에 맞춰 관리하세요."
+    care_instruction = parsed.get("care_instruction") or "라벨 표기법에 맞춰 관리하세요."
     return materials, care_instruction
 
 # --- API 엔드포인트 시작 ---

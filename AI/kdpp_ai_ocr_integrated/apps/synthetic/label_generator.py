@@ -312,13 +312,39 @@ def _draw_label(spec: LabelSpec, config: dict[str, Any]) -> tuple[Image.Image, s
     style = THEME_STYLES[spec.theme]
     image = Image.new("RGB", (width, height), style["background"])
     draw = ImageDraw.Draw(image)
-    font, font_name = _font(spec.language, int(config.get("font_size", 38)))
-    text = label_text(spec)
-    top = int(height * 0.2)
-    for line in text.splitlines():
+    lines = label_text(spec).splitlines()
+    preferred_top = int(height * 0.2)
+    # Leave room for the supported rotation variants as well as the border.
+    frame_margin = max(40, int(min(width, height) * 0.125))
+    top_margin, bottom_margin = frame_margin, height - frame_margin
+
+    requested_font_size = int(config.get("font_size", 38))
+    for font_size in range(requested_font_size, min(12, requested_font_size) - 1, -1):
+        font, font_name = _font(spec.language, font_size)
+        boxes = [draw.textbbox((60, 0), line, font=font) for line in lines]
+        steps = [max(55, box[3] - box[1] + 22) for box in boxes[:-1]]
+        content_height = sum(steps) + boxes[-1][3]
+        if max(preferred_top, top_margin) + content_height <= bottom_margin:
+            top = max(preferred_top, top_margin)
+            break
+        if top_margin + content_height <= bottom_margin:
+            top = bottom_margin - content_height
+            break
+
+        if len(lines) == 1:
+            continue
+        max_step = (bottom_margin - top_margin - boxes[-1][3]) // (len(lines) - 1)
+        if max_step >= max(box[3] - box[1] + 8 for box in boxes):
+            steps = [max_step] * (len(lines) - 1)
+            top = top_margin
+            break
+    else:
+        raise ValueError("합성 라벨 텍스트를 이미지 높이 안에 배치할 수 없습니다.")
+
+    for index, line in enumerate(lines):
         draw.text((60, top), line, fill=style["foreground"], font=font)
-        bbox = draw.textbbox((60, top), line, font=font)
-        top += max(55, bbox[3] - bbox[1] + 22)
+        if index < len(steps):
+            top += steps[index]
     draw.rectangle(
         (30, 30, width - 30, height - 30),
         outline=style["foreground"],

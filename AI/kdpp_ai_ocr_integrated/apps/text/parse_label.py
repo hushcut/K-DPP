@@ -342,27 +342,28 @@ def extract_materials(line: str) -> list[str]:
     if not cleaned:
         return []
 
-    found: list[str] = []
+    found_by_position: list[tuple[int, str]] = []
     tokenizable = cleaned
     for alias, material in MULTIWORD_ALIASES:
-        if re.search(rf"(?<![a-z]){re.escape(alias)}(?![a-z])", cleaned):
-            found.append(material)
-            # A spatial OCR row can split a Korean compound such as
-            # ``폴리 우레탄``. Remove a matched multiword alias before the
-            # token pass so its partial token ``폴리`` is not also read as
-            # polyester.
-            tokenizable = re.sub(
-                rf"(?<![a-z]){re.escape(alias)}(?![a-z])",
-                " ",
-                tokenizable,
+        pattern = rf"(?<![a-z]){re.escape(alias)}(?![a-z])"
+        for match in list(re.finditer(pattern, tokenizable)):
+            found_by_position.append((match.start(), material))
+            # Keep offsets while masking a compound so a partial token such
+            # as ``폴리`` cannot also be read as polyester.
+            tokenizable = (
+                tokenizable[: match.start()]
+                + " " * (match.end() - match.start())
+                + tokenizable[match.end() :]
             )
 
-    for token in _TOKEN_PATTERN.findall(tokenizable):
-        material = find_material_key(token)
+    for match in _TOKEN_PATTERN.finditer(tokenizable):
+        material = find_material_key(match.group())
         if material:
-            found.append(material)
+            found_by_position.append((match.start(), material))
 
-    return list(dict.fromkeys(found))
+    return list(dict.fromkeys(
+        material for _, material in sorted(found_by_position)
+    ))
 
 
 def detect_part(line: str, current_part: str) -> str:
@@ -485,12 +486,13 @@ def build_line_infos(text: str) -> list[LineInfo]:
             continue
 
         current_part = detect_part(normalized, current_part)
-        materials = tuple(extract_materials(normalized))
-        number_only_line = not materials and not _TOKEN_PATTERN.search(normalized)
+        composition_text = _strip_excluded_segments(normalized)
+        materials = tuple(extract_materials(composition_text))
+        number_only_line = not materials and not _TOKEN_PATTERN.search(composition_text)
         allow_plain = bool(materials) or number_only_line
-        numbers = tuple(extract_numbers(normalized, allow_plain_numbers=allow_plain))
+        numbers = tuple(extract_numbers(composition_text, allow_plain_numbers=allow_plain))
         explicit_percent = bool(numbers) and len(
-            _PERCENT_PATTERN.findall(normalized)
+            _PERCENT_PATTERN.findall(composition_text)
         ) == len(numbers)
 
         infos.append(

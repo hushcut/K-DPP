@@ -54,12 +54,13 @@ def test_scan_label_uses_ai_parser_and_returns_analysis_response(monkeypatch) ->
 
     response = backend_main.scan_label(
         image=image,
-        raw_ocr_text="COTTON 80% POLYESTER 20%",
+        raw_ocr_text="COTTON 80% POLYESTER 20%\nDO NOT WASH\nDO NOT BLEACH",
         db=db,
     )
 
     assert response["materials"] == {"cotton": 80, "polyester": 20}
     assert response["carbon_footprint"] == 8.54
+    assert response["care_instruction"] == "물세탁 금지; 표백 금지"
     assert response["saved_result_id"] == 42
     assert response["title"] == "스캔한 의류"
     assert response["category"] == "상의"

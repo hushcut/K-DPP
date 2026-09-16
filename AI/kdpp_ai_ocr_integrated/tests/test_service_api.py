@@ -1,7 +1,9 @@
 import asyncio
+import threading
 from io import BytesIO
 
 import pytest
+from fastapi import UploadFile
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -27,6 +29,21 @@ def image_bytes() -> bytes:
     buffer = BytesIO()
     Image.new("RGB", (80, 60), "white").save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def run_with_event_loop_probe(request, started: threading.Event, release: threading.Event):
+    async def run():
+        async def release_when_started():
+            assert await asyncio.to_thread(started.wait, 0.4)
+            release.set()
+
+        response, _ = await asyncio.wait_for(
+            asyncio.gather(request(), release_when_started()),
+            timeout=0.4,
+        )
+        return response
+
+    return asyncio.run(run())
 
 
 def assert_failure_contract(response, *, status_code: int, error_code: str) -> None:
@@ -154,6 +171,31 @@ def test_analyze_label_returns_consistent_success_contract(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "success"
     assert response.json()["materials"] == {"cotton": 100}
+
+
+def test_analyze_label_keeps_event_loop_responsive_during_ocr(monkeypatch) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    async def read_upload_stub(_file):
+        return image_bytes()
+
+    def waiting_ocr(*_args, **_kwargs):
+        started.set()
+        release.wait(0.8)
+        return {"status": "success"}
+
+    monkeypatch.setattr(service_main, "read_upload", read_upload_stub)
+    monkeypatch.setattr(service_main, "analyze_label_image_bytes", waiting_ocr)
+    response = run_with_event_loop_probe(
+        lambda: service_main.analyze_label(
+            UploadFile(filename="label.png", file=BytesIO(b"image"))
+        ),
+        started,
+        release,
+    )
+
+    assert response.status_code == 200
 
 
 def test_ocr_attempt_diagnostics_are_safe_and_serialized() -> None:
@@ -291,6 +333,44 @@ def test_analyze_symbol_returns_versioned_success_contract(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["api_version"] == service_main.API_VERSION
     assert response.json()["model_scope"] == "cropped_care_symbol_only"
+
+
+@pytest.mark.parametrize("blocked_stage", ["runtime", "prediction"])
+def test_analyze_symbol_keeps_event_loop_responsive(monkeypatch, blocked_stage) -> None:
+    class InvalidCheckpointError(Exception):
+        pass
+
+    started = threading.Event()
+    release = threading.Event()
+
+    async def read_upload_stub(_file):
+        return image_bytes()
+
+    def wait_if_selected(stage):
+        if blocked_stage == stage:
+            started.set()
+            release.wait(0.8)
+
+    def load_runtime_stub():
+        wait_if_selected("runtime")
+
+        def predict_stub(*_args, **_kwargs):
+            wait_if_selected("prediction")
+            return {"status": "success", "symbols": []}
+
+        return InvalidCheckpointError, "models/symbol.pt", predict_stub
+
+    monkeypatch.setattr(service_main, "read_upload", read_upload_stub)
+    monkeypatch.setattr(service_main, "load_symbol_runtime", load_runtime_stub)
+    response = run_with_event_loop_probe(
+        lambda: service_main.analyze_symbol(
+            UploadFile(filename="symbol.png", file=BytesIO(b"image"))
+        ),
+        started,
+        release,
+    )
+
+    assert response.status_code == 200
 
 
 def test_analyze_symbol_maps_invalid_checkpoint_to_503(monkeypatch) -> None:

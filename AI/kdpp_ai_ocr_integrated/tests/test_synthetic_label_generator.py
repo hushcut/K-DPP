@@ -1,10 +1,19 @@
 import csv
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from PIL import ImageDraw
 
-from apps.synthetic.label_generator import generate_dataset
+from apps.synthetic.label_generator import (
+    LabelSpec,
+    _draw_label,
+    build_specs,
+    generate_dataset,
+    label_text,
+    load_config,
+)
 from apps.text.parse_label import parse_label
 
 
@@ -199,6 +208,42 @@ def test_generator_creates_paired_control_variants_per_source_group(tmp_path) ->
         assert by_role["layout_stacked_columns"]["comparison_value"] == "stacked_columns"
         assert by_role["theme_ivory"]["comparison_axis"] == "theme"
         assert by_role["theme_black"]["comparison_value"] == "black"
+
+
+def test_stacked_compositions_are_fully_drawn_inside_the_image(monkeypatch) -> None:
+    drawn_boxes = []
+    original_text = ImageDraw.ImageDraw.text
+
+    def record_text(draw, position, text, *args, **kwargs):
+        drawn_boxes.append(draw.textbbox(position, text, font=kwargs["font"]))
+        return original_text(draw, position, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record_text)
+    config_dir = Path(__file__).resolve().parents[1] / "configs"
+    for config_name in ("synthetic_labels_v1.json", "synthetic_label_controls_v1.json"):
+        config = load_config(config_dir / config_name)
+        specs = [replace(spec, layout="stacked_columns") for spec in build_specs(config)]
+        specs.append(
+            LabelSpec(
+                source_group="LONG",
+                language="en",
+                parts={
+                    "outer": {"cotton": 50, "polyester": 30, "nylon": 20},
+                    "lining": {"rayon": 40, "wool": 30, "acrylic": 30},
+                },
+                layout="stacked_columns",
+                theme="white",
+            )
+        )
+        margin = max(40, int(min(config["image_width"], config["image_height"]) * 0.125))
+        for spec in specs:
+            drawn_boxes.clear()
+            _draw_label(spec, config)
+            assert len(drawn_boxes) == len(label_text(spec).splitlines())
+            assert all(
+                margin <= box[1] and box[3] <= config["image_height"] - margin
+                for box in drawn_boxes
+            ), spec.source_group
 
 
 def test_generator_rejects_unknown_layout(tmp_path) -> None:

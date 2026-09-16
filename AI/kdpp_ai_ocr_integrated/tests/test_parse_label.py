@@ -134,6 +134,17 @@ def test_decoration_composition_does_not_replace_outer_material() -> None:
     assert result["materials"] == {"cotton": 100}
 
 
+def test_excluded_trim_ratio_does_not_invalidate_main_composition() -> None:
+    for text in (
+        "COTTON 60% POLYESTER 40% (TRIM NYLON 100%)",
+        "COTTON 60% POLYESTER 40% TRIM NYLON 100%",
+        "면 60% 폴리에스터 40% (장식 나일론 100%)",
+    ):
+        result = parse_label(text)
+        assert result["status"] == "success"
+        assert result["materials"] == {"cotton": 60, "polyester": 40}
+
+
 def test_negative_care_rule_wins_over_general_rule() -> None:
     result = parse_label(
         "COTTON 100%\n"
@@ -160,6 +171,16 @@ def test_spatially_split_korean_compounds_are_one_material_each() -> None:
         "nylon": 45,
         "polyurethane": 5,
     }
+
+
+def test_spatially_split_material_keeps_ratio_order_on_same_line() -> None:
+    for text in (
+        "면 95% 폴리 우레탄 5%",
+        "폴리 우레탄 5% 면 95%",
+    ):
+        result = parse_label(text)
+        assert result["status"] == "success"
+        assert result["materials"] == {"cotton": 95, "polyurethane": 5}
 
 
 def test_complete_multimaterial_candidate_beats_later_standalone_candidate() -> None:

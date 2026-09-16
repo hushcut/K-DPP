@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 
@@ -153,7 +154,8 @@ async def analyze_label(file: UploadFile = File(...)):
     try:
         declared_content_type = file.content_type
         content = await read_upload(file)
-        result = analyze_label_image_bytes(
+        result = await asyncio.to_thread(
+            analyze_label_image_bytes,
             content,
             declared_content_type=declared_content_type,
         )
@@ -217,14 +219,15 @@ async def analyze_symbol(file: UploadFile = File(...)):
     try:
         # 이 import는 현재 서비스의 핵심 OCR 경로와 의도적으로 분리돼 있다.
         model_checkpoint_error, default_model_path, predict_symbol = (
-            load_symbol_runtime()
+            await asyncio.to_thread(load_symbol_runtime)
         )
         content = await read_upload(file)
         model_path = os.getenv(
             "KDPP_SYMBOL_MODEL_PATH",
             str(default_model_path),
         )
-        result = predict_symbol(
+        result = await asyncio.to_thread(
+            predict_symbol,
             content,
             model_path=model_path,
         )
