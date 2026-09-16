@@ -175,35 +175,35 @@ async def analyze_label(file: UploadFile = File(...)):
             error_code="invalid_image",
             message=str(exc),
         )
-    except OcrConfigurationError as exc:
+    except OcrConfigurationError:
         return failure_response(
             status_code=503,
             error_code="ocr_not_configured",
-            message=str(exc),
+            message="Google Vision OCR 설정을 확인해 주세요.",
         )
-    except OcrQuotaExceededError as exc:
+    except OcrQuotaExceededError:
         return failure_response(
             status_code=503,
             error_code="ocr_quota_exceeded",
-            message=str(exc),
+            message="Google Vision OCR 사용량 한도를 초과했습니다.",
         )
-    except OcrTimeoutError as exc:
+    except OcrTimeoutError:
         return failure_response(
             status_code=504,
             error_code="ocr_timeout",
-            message=str(exc),
+            message="Google Vision OCR 응답 시간이 초과되었습니다.",
         )
-    except OcrUnavailableError as exc:
+    except OcrUnavailableError:
         return failure_response(
             status_code=503,
             error_code="ocr_service_unavailable",
-            message=str(exc),
+            message="Google Vision OCR 서비스를 일시적으로 사용할 수 없습니다.",
         )
-    except OcrServiceError as exc:
+    except OcrServiceError:
         return failure_response(
             status_code=502,
             error_code="ocr_service_failed",
-            message=str(exc),
+            message="Google Vision OCR 처리에 실패했습니다.",
         )
 
     status_code = 200 if result["status"] == "success" else 422
@@ -229,11 +229,11 @@ async def analyze_symbol(file: UploadFile = File(...)):
             content,
             model_path=model_path,
         )
-    except ModuleNotFoundError as exc:
+    except ModuleNotFoundError:
         return failure_response(
             status_code=503,
             error_code="symbol_feature_unavailable",
-            message=f"세탁기호 분류 의존성을 불러올 수 없습니다: {exc.name}",
+            message="세탁기호 분류 기능이 설치되지 않았습니다.",
         )
     except ImageTooLargeError as exc:
         return failure_response(
@@ -247,17 +247,17 @@ async def analyze_symbol(file: UploadFile = File(...)):
             error_code="invalid_image",
             message=str(exc),
         )
-    except FileNotFoundError as exc:
+    except FileNotFoundError:
         return failure_response(
             status_code=503,
             error_code="symbol_model_not_configured",
-            message=str(exc),
+            message="세탁기호 모델 파일을 찾을 수 없습니다.",
         )
-    except model_checkpoint_error as exc:
+    except model_checkpoint_error:
         return failure_response(
             status_code=503,
             error_code="symbol_model_invalid",
-            message=str(exc),
+            message="세탁기호 모델을 불러올 수 없습니다.",
         )
     return JSONResponse(
         status_code=200,

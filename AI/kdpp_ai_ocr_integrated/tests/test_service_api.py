@@ -281,7 +281,7 @@ def test_ocr_attempt_diagnostics_are_safe_and_serialized() -> None:
 
 def test_analyze_label_maps_ocr_provider_failure_to_502(monkeypatch) -> None:
     def fail(*_args, **_kwargs):
-        raise OcrServiceError("provider unavailable")
+        raise OcrServiceError("provider unavailable: C:/credentials/private-key.json")
 
     monkeypatch.setattr(service_main, "analyze_label_image_bytes", fail)
     response = client.post(
@@ -291,6 +291,7 @@ def test_analyze_label_maps_ocr_provider_failure_to_502(monkeypatch) -> None:
 
     assert response.status_code == 502
     assert response.json()["error_code"] == "ocr_service_failed"
+    assert "private-key.json" not in response.text
 
 
 @pytest.mark.parametrize(
@@ -327,6 +328,7 @@ def test_analyze_label_maps_specific_ocr_failures(
 
     assert response.status_code == status_code
     assert response.json()["error_code"] == error_code
+    assert str(error) not in response.json()["message"]
 
 
 def test_analyze_symbol_returns_versioned_success_contract(monkeypatch) -> None:
@@ -419,6 +421,29 @@ def test_analyze_symbol_maps_invalid_checkpoint_to_503(monkeypatch) -> None:
 
     assert response.status_code == 503
     assert response.json()["error_code"] == "symbol_model_invalid"
+    assert "architecture mismatch" not in response.text
+
+
+def test_analyze_symbol_hides_missing_model_path(monkeypatch) -> None:
+    class InvalidCheckpointError(Exception):
+        pass
+
+    def fail(*_args, **_kwargs):
+        raise FileNotFoundError("C:/models/private/symbol.pt")
+
+    monkeypatch.setattr(
+        service_main,
+        "load_symbol_runtime",
+        lambda: (InvalidCheckpointError, "models/symbol.pt", fail),
+    )
+    response = symbol_client().post(
+        "/v1/analyze-symbol",
+        files={"file": ("symbol.png", image_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error_code"] == "symbol_model_not_configured"
+    assert "C:/models/private" not in response.text
 
 
 def test_analyze_symbol_isolated_when_optional_runtime_is_missing(monkeypatch) -> None:
@@ -433,3 +458,4 @@ def test_analyze_symbol_isolated_when_optional_runtime_is_missing(monkeypatch) -
 
     assert response.status_code == 503
     assert response.json()["error_code"] == "symbol_feature_unavailable"
+    assert "torchvision" not in response.text
