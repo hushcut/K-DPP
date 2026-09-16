@@ -79,6 +79,15 @@ python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-symbol.txt
 ```
 
+심볼 API는 텍스트 OCR 서비스의 기본 라우트에 포함되지 않습니다. 선택 의존성을
+설치한 뒤 실행 환경에서 명시적으로 활성화합니다.
+
+```powershell
+$env:KDPP_ENABLE_SYMBOL_API = "1"
+$env:KDPP_SYMBOL_MODEL_PATH = "models/symbol/best_symbol_model_exp.pt"
+.venv\Scripts\python.exe -m apps.service
+```
+
 `requirements-dev.txt`는 전체 테스트를 위해 세탁기호 의존성도 함께 설치합니다.
 
 pytest에는 `/api/scan`의 AI 연결 검사도 포함되므로, 전체 검증에는 백엔드 의존성이

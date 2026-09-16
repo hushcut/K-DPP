@@ -3,7 +3,7 @@ import threading
 from io import BytesIO
 
 import pytest
-from fastapi import UploadFile
+from fastapi import FastAPI, UploadFile
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -23,6 +23,33 @@ from apps.text.ocr_text import (
 
 
 client = TestClient(service_main.app)
+
+
+def symbol_client() -> TestClient:
+    application = FastAPI()
+    service_main.register_symbol_api(application, enabled=True)
+    return TestClient(application)
+
+
+def test_symbol_api_registration_is_opt_in() -> None:
+    text_only_app = FastAPI()
+    symbol_app = FastAPI()
+
+    assert service_main.register_symbol_api(text_only_app, enabled=False) is False
+    assert "/v1/analyze-symbol" not in text_only_app.openapi()["paths"]
+
+    assert service_main.register_symbol_api(symbol_app, enabled=True) is True
+    assert "/v1/analyze-symbol" in symbol_app.openapi()["paths"]
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
+def test_symbol_api_accepts_explicit_enable_values(value) -> None:
+    assert service_main.symbol_api_enabled(value) is True
+
+
+@pytest.mark.parametrize("value", ["", "0", "false", "off", "unexpected"])
+def test_symbol_api_rejects_other_values(value) -> None:
+    assert service_main.symbol_api_enabled(value) is False
 
 
 def image_bytes() -> bytes:
@@ -325,7 +352,7 @@ def test_analyze_symbol_returns_versioned_success_contract(monkeypatch) -> None:
         ),
     )
 
-    response = client.post(
+    response = symbol_client().post(
         "/v1/analyze-symbol",
         files={"file": ("symbol.png", image_bytes(), "image/png")},
     )
@@ -385,7 +412,7 @@ def test_analyze_symbol_maps_invalid_checkpoint_to_503(monkeypatch) -> None:
         "load_symbol_runtime",
         lambda: (InvalidCheckpointError, "models/symbol.pt", fail),
     )
-    response = client.post(
+    response = symbol_client().post(
         "/v1/analyze-symbol",
         files={"file": ("symbol.png", image_bytes(), "image/png")},
     )
@@ -399,7 +426,7 @@ def test_analyze_symbol_isolated_when_optional_runtime_is_missing(monkeypatch) -
         raise ModuleNotFoundError("No module named 'torchvision'", name="torchvision")
 
     monkeypatch.setattr(service_main, "load_symbol_runtime", unavailable_runtime)
-    response = client.post(
+    response = symbol_client().post(
         "/v1/analyze-symbol",
         files={"file": ("symbol.png", image_bytes(), "image/png")},
     )

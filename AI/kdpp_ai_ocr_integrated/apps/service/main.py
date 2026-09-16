@@ -10,7 +10,7 @@ import asyncio
 import os
 from typing import Any
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import APIRouter, FastAPI, File, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -38,11 +38,9 @@ from apps.text.ocr_text import (
 app = FastAPI(
     title="K-DPP AI Label Service",
     version=API_VERSION,
-    description=(
-        "Google Vision OCR, 소재 혼용률 파서, 세탁기호 crop 분류기의 "
-        "단일 AI 서비스 경계"
-    ),
+    description="Google Vision OCR과 소재 혼용률 파서의 AI 서비스 경계",
 )
+symbol_router = APIRouter()
 
 
 class ParseTextRequest(BaseModel):
@@ -212,7 +210,7 @@ async def analyze_label(file: UploadFile = File(...)):
     return JSONResponse(status_code=status_code, content=result)
 
 
-@app.post("/v1/analyze-symbol")
+@symbol_router.post("/v1/analyze-symbol")
 async def analyze_symbol(file: UploadFile = File(...)):
     """Classify an already-cropped care symbol, not a full care-label photo."""
 
@@ -265,3 +263,26 @@ async def analyze_symbol(file: UploadFile = File(...)):
         status_code=200,
         content={"api_version": API_VERSION, **result},
     )
+
+
+def symbol_api_enabled(value: str | None = None) -> bool:
+    """환경 설정값이 세탁기호 실험 API를 명시적으로 활성화하는지 반환한다."""
+
+    configured = os.getenv("KDPP_ENABLE_SYMBOL_API", "") if value is None else value
+    return configured.strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def register_symbol_api(
+    application: FastAPI,
+    *,
+    enabled: bool | None = None,
+) -> bool:
+    """선택된 환경에서만 무거운 심볼 분류 API를 서비스에 등록한다."""
+
+    should_enable = symbol_api_enabled() if enabled is None else enabled
+    if should_enable:
+        application.include_router(symbol_router)
+    return should_enable
+
+
+register_symbol_api(app)
