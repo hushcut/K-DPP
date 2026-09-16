@@ -243,5 +243,3 @@ def preprocess_reflection_image_bytes(content: bytes) -> bytes:
         raise ImageTooLargeError(
             "반사 보정 OCR 전처리 중 이미지가 너무 커서 메모리가 부족합니다."
         ) from exc
-
-
