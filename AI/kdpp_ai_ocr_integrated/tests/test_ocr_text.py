@@ -392,7 +392,7 @@ def test_failed_standard_preprocess_tries_reflection_candidate(monkeypatch) -> N
 
     monkeypatch.setattr(ocr_text, "_run_google_ocr", fake_ocr)
 
-    result = ocr_text.run_ocr_bytes(image_bytes())
+    result = ocr_text.run_ocr_bytes(image_bytes(), enable_reflection=True)
 
     assert result.metadata.source == "reflection"
     assert result.metadata.candidate_count == 3
@@ -403,6 +403,36 @@ def test_failed_standard_preprocess_tries_reflection_candidate(monkeypatch) -> N
     assert "반사 보정된 이미지의 OCR 결과를 사용했습니다." in (
         result.metadata.warnings
     )
+
+
+def test_default_candidate_limit_skips_reflection_ocr(monkeypatch) -> None:
+    monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_: object())
+    monkeypatch.setattr(ocr_text, "preprocess_image_bytes", lambda _content: b"basic")
+    monkeypatch.setattr(
+        ocr_text,
+        "preprocess_reflection_image_bytes",
+        lambda _content: pytest.fail("reflection OCR must be opt-in"),
+    )
+    monkeypatch.setattr(
+        ocr_text,
+        "_run_google_ocr",
+        lambda _client, _content, **_kwargs: "BRAND AND SIZE ONLY",
+    )
+
+    result = ocr_text.run_ocr_bytes(image_bytes(), enable_reflection=False)
+
+    assert result.metadata.candidate_count == 2
+    assert result.metadata.attempt_count == 2
+    assert result.metadata.external_call_count == 2
+    assert [attempt.source for attempt in result.metadata.attempts] == [
+        "original",
+        "preprocessed",
+    ]
+
+
+def test_reflection_ocr_requires_explicit_enable_value() -> None:
+    assert ocr_text.reflection_ocr_enabled("true") is True
+    assert ocr_text.reflection_ocr_enabled("false") is False
 
 
 def test_ocr_candidate_timeouts_fit_the_total_budget(monkeypatch) -> None:
@@ -421,7 +451,7 @@ def test_ocr_candidate_timeouts_fit_the_total_budget(monkeypatch) -> None:
 
     monkeypatch.setattr(ocr_text, "_run_google_ocr", fake_ocr)
 
-    result = ocr_text.run_ocr_bytes(image_bytes())
+    result = ocr_text.run_ocr_bytes(image_bytes(), enable_reflection=True)
 
     assert result.metadata.external_call_count == 3
     assert len(timeouts) == 3
@@ -509,7 +539,7 @@ def test_reflection_ocr_failure_keeps_existing_candidates(monkeypatch) -> None:
 
     monkeypatch.setattr(ocr_text, "_run_google_ocr", fake_ocr)
 
-    result = ocr_text.run_ocr_bytes(image_bytes())
+    result = ocr_text.run_ocr_bytes(image_bytes(), enable_reflection=True)
 
     assert result.metadata.source == "original"
     assert result.metadata.candidate_count == 2

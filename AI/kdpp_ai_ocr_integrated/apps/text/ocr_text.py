@@ -70,6 +70,7 @@ __all__ = [
     "preprocess_image_bytes",
     "preprocess_reflection_image_bytes",
     "read_image_bytes",
+    "reflection_ocr_enabled",
     "run_ocr",
     "run_ocr_bytes",
     "run_ocr_with_metadata",
@@ -84,6 +85,13 @@ OCR_CANDIDATE_TIMEOUT_SECONDS = {
     "preprocessed": 8.0,
     "reflection": 7.0,
 }
+
+
+def reflection_ocr_enabled(value: str | None = None) -> bool:
+    """환경 설정값이 세 번째 반사 보정 OCR 후보를 활성화하는지 반환한다."""
+
+    configured = os.getenv("KDPP_ENABLE_REFLECTION_OCR", "") if value is None else value
+    return configured.strip().casefold() in {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True)
@@ -383,6 +391,7 @@ def run_ocr_bytes(
     refresh_ocr_cache: bool = False,
     offline: bool = False,
     cache_label: str = "",
+    enable_reflection: bool | None = None,
 ) -> OcrResult:
     """한 이미지에서 원본/전처리 OCR 후보 중 파서 관점의 최선 결과를 반환한다."""
 
@@ -393,6 +402,11 @@ def run_ocr_bytes(
     )
     if offline and ocr_cache is None:
         raise OcrCacheMissError("오프라인 OCR 실행에는 캐시 파일이 필요합니다.")
+    use_reflection = (
+        reflection_ocr_enabled()
+        if enable_reflection is None
+        else enable_reflection
+    )
 
     client: Any | None = None
     external_call_count = 0
@@ -547,7 +561,7 @@ def run_ocr_bytes(
         else:
             # 기본 전처리까지 조성을 만들지 못한 경우에만 반사 보정 후보를
             # 추가한다. 성공한 후보가 있으면 불필요한 Vision 호출을 하지 않는다.
-            if not any(
+            if use_reflection and not any(
                 candidate.parser_status == "success" for candidate in candidates
             ):
                 try:
