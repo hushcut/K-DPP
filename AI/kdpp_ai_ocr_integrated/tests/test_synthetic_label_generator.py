@@ -41,6 +41,59 @@ def multilingual_generator_config() -> dict:
     return config
 
 
+def controlled_generator_config() -> dict:
+    config = generator_config()
+    config.update(
+        {
+            "variants_per_label": 5,
+            "conditions": ["clean"],
+            "layouts": ["material_first", "ratio_first", "stacked_columns"],
+            "themes": ["white", "ivory", "black"],
+            "variant_plan": [
+                {
+                    "role": "baseline",
+                    "condition": "clean",
+                    "layout": "material_first",
+                    "theme": "white",
+                },
+                {
+                    "role": "layout_ratio_first",
+                    "condition": "clean",
+                    "layout": "ratio_first",
+                    "theme": "white",
+                    "comparison_axis": "layout",
+                    "comparison_value": "ratio_first",
+                },
+                {
+                    "role": "layout_stacked_columns",
+                    "condition": "clean",
+                    "layout": "stacked_columns",
+                    "theme": "white",
+                    "comparison_axis": "layout",
+                    "comparison_value": "stacked_columns",
+                },
+                {
+                    "role": "theme_ivory",
+                    "condition": "clean",
+                    "layout": "material_first",
+                    "theme": "ivory",
+                    "comparison_axis": "theme",
+                    "comparison_value": "ivory",
+                },
+                {
+                    "role": "theme_black",
+                    "condition": "clean",
+                    "layout": "material_first",
+                    "theme": "black",
+                    "comparison_axis": "theme",
+                    "comparison_value": "black",
+                },
+            ],
+        }
+    )
+    return config
+
+
 def test_generator_writes_manifest_images_and_group_metadata(tmp_path) -> None:
     output_dir = tmp_path / "synthetic"
 
@@ -116,12 +169,52 @@ def test_generator_covers_layout_theme_and_mixed_condition_metadata(tmp_path) ->
     assert all(parse_label(row["original_text"])["status"] == "success" for row in rows)
 
 
+def test_generator_creates_paired_control_variants_per_source_group(tmp_path) -> None:
+    output_dir = tmp_path / "controls"
+
+    summary = generate_dataset(controlled_generator_config(), output_dir)
+
+    with (output_dir / "manifest.csv").open(encoding="utf-8-sig", newline="") as file:
+        rows = list(csv.DictReader(file))
+    grouped = {
+        source_group: [row for row in rows if row["source_group"] == source_group]
+        for source_group in {row["source_group"] for row in rows}
+    }
+
+    assert summary["variant_role_counts"] == {
+        "baseline": 2,
+        "layout_ratio_first": 2,
+        "layout_stacked_columns": 2,
+        "theme_black": 2,
+        "theme_ivory": 2,
+    }
+    for variants in grouped.values():
+        by_role = {row["variant_role"]: row for row in variants}
+        assert len(by_role) == 5
+        assert len({row["parts_json"] for row in variants}) == 1
+        assert {row["condition"] for row in variants} == {"clean"}
+        assert by_role["baseline"]["layout"] == "material_first"
+        assert by_role["baseline"]["theme"] == "white"
+        assert by_role["layout_ratio_first"]["comparison_axis"] == "layout"
+        assert by_role["layout_stacked_columns"]["comparison_value"] == "stacked_columns"
+        assert by_role["theme_ivory"]["comparison_axis"] == "theme"
+        assert by_role["theme_black"]["comparison_value"] == "black"
+
+
 def test_generator_rejects_unknown_layout(tmp_path) -> None:
     config = generator_config()
     config["layouts"] = ["unsupported"]
 
     with pytest.raises(ValueError, match="layouts"):
         generate_dataset(config, tmp_path / "invalid")
+
+
+def test_generator_rejects_control_variant_with_another_changed_axis(tmp_path) -> None:
+    config = controlled_generator_config()
+    config["variant_plan"][1]["theme"] = "ivory"
+
+    with pytest.raises(ValueError, match="change only"):
+        generate_dataset(config, tmp_path / "invalid-controls")
 
 
 def test_generator_refuses_to_overwrite_nonempty_directory(tmp_path) -> None:

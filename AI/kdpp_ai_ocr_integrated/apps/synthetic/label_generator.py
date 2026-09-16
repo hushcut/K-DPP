@@ -6,7 +6,7 @@ import csv
 import hashlib
 import json
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -118,6 +118,7 @@ SUPPORTED_CONDITIONS = {
     "perspective",
     "mixed",
 }
+COMPARISON_AXES = {"layout", "theme"}
 
 
 @dataclass(frozen=True)
@@ -177,6 +178,65 @@ def validate_config(config: dict[str, Any]) -> None:
     maximum_quality = int(config["jpeg_quality_max"])
     if not 1 <= minimum_quality <= maximum_quality <= 100:
         raise ValueError("jpeg quality must be between 1 and 100")
+    _validate_variant_plan(config)
+
+
+def _validate_variant_plan(config: dict[str, Any]) -> None:
+    variant_plan = config.get("variant_plan")
+    if variant_plan is None:
+        return
+    if not isinstance(variant_plan, list) or len(variant_plan) != int(
+        config["variants_per_label"]
+    ):
+        raise ValueError("variant_plan length must match variants_per_label")
+
+    roles: set[str] = set()
+    plan_by_role: dict[str, dict[str, Any]] = {}
+    comparison_count = 0
+    for item in variant_plan:
+        if not isinstance(item, dict):
+            raise ValueError("variant_plan entries must be objects")
+        required = {"role", "condition", "layout", "theme"}
+        if missing := sorted(required - set(item)):
+            raise ValueError("variant_plan entry is missing: " + ", ".join(missing))
+        role = str(item["role"])
+        if not role or role in roles:
+            raise ValueError("variant_plan roles must be unique and non-empty")
+        roles.add(role)
+        plan_by_role[role] = item
+        if item["condition"] not in SUPPORTED_CONDITIONS:
+            raise ValueError("variant_plan condition is unsupported")
+        if item["layout"] not in SUPPORTED_LAYOUTS:
+            raise ValueError("variant_plan layout is unsupported")
+        if item["theme"] not in THEME_STYLES:
+            raise ValueError("variant_plan theme is unsupported")
+
+        comparison_axis = str(item.get("comparison_axis", ""))
+        comparison_value = str(item.get("comparison_value", ""))
+        if comparison_axis:
+            comparison_count += 1
+            if comparison_axis not in COMPARISON_AXES or not comparison_value:
+                raise ValueError("variant_plan comparison axis is invalid")
+            if item[comparison_axis] != comparison_value:
+                raise ValueError("variant_plan comparison value must match its variant")
+
+    if not comparison_count:
+        return
+
+    baseline = plan_by_role.get("baseline")
+    if baseline is None:
+        raise ValueError("controlled variant_plan requires one baseline role")
+    for item in variant_plan:
+        axis = str(item.get("comparison_axis", ""))
+        if not axis:
+            continue
+        if item["condition"] != baseline["condition"]:
+            raise ValueError("controlled variants must use the baseline condition")
+        unchanged_field = "theme" if axis == "layout" else "layout"
+        if item[unchanged_field] != baseline[unchanged_field]:
+            raise ValueError(
+                "controlled variants must change only their comparison axis"
+            )
 
 
 def _composition(rng: random.Random, materials: list[str]) -> dict[str, int]:
@@ -330,7 +390,8 @@ def _save_contact_sheet(rows: list[dict[str, str]], images_dir: Path, output_pat
         image_path = images_dir / row["file_name"]
         thumbnail = Image.open(image_path).convert("RGB")
         thumbnail.thumbnail((240, 160))
-        caption = f'{row["source_group"]} {row["layout"]}/{row["condition"]}'
+        caption_detail = row["variant_role"] or f'{row["layout"]}/{row["condition"]}'
+        caption = f'{row["source_group"]} {caption_detail}'
         thumbnails.append((thumbnail, caption))
     columns = 4
     rows = max(1, (len(thumbnails) + columns - 1) // columns)
@@ -344,6 +405,38 @@ def _save_contact_sheet(rows: list[dict[str, str]], images_dir: Path, output_pat
     sheet.save(output_path, quality=90)
 
 
+def _variant_settings(
+    config: dict[str, Any],
+    spec: LabelSpec,
+    *,
+    source_index: int,
+    variant: int,
+) -> dict[str, str]:
+    """Return the per-image settings, preserving the legacy default sequence."""
+
+    variant_plan = config.get("variant_plan")
+    if variant_plan is not None:
+        planned = variant_plan[variant]
+        return {
+            "role": str(planned["role"]),
+            "condition": str(planned["condition"]),
+            "layout": str(planned["layout"]),
+            "theme": str(planned["theme"]),
+            "comparison_axis": str(planned.get("comparison_axis", "")),
+            "comparison_value": str(planned.get("comparison_value", "")),
+        }
+    return {
+        "role": "",
+        "condition": str(
+            config["conditions"][(source_index + variant - 1) % len(config["conditions"])]
+        ),
+        "layout": spec.layout,
+        "theme": spec.theme,
+        "comparison_axis": "",
+        "comparison_value": "",
+    }
+
+
 def generate_dataset(config: dict[str, Any], output_dir: str | Path) -> dict[str, Any]:
     validate_config(config)
     output_path = Path(output_dir)
@@ -354,9 +447,20 @@ def generate_dataset(config: dict[str, Any], output_dir: str | Path) -> dict[str
     rows: list[dict[str, str]] = []
     for source_index, spec in enumerate(build_specs(config), start=1):
         for variant in range(int(config["variants_per_label"])):
-            condition = config["conditions"][(source_index + variant - 1) % len(config["conditions"])]
+            variant_settings = _variant_settings(
+                config,
+                spec,
+                source_index=source_index,
+                variant=variant,
+            )
+            variant_spec = replace(
+                spec,
+                layout=variant_settings["layout"],
+                theme=variant_settings["theme"],
+            )
+            condition = variant_settings["condition"]
             sample_seed = int(config["seed"]) + source_index * 10_000 + variant
-            image, font_name = _draw_label(spec, config)
+            image, font_name = _draw_label(variant_spec, config)
             image, transforms = _apply_condition(image, condition, sample_seed)
             file_name = f"{spec.source_group}_v{variant + 1:02d}.jpg"
             image_path = images_dir / file_name
@@ -374,15 +478,18 @@ def generate_dataset(config: dict[str, Any], output_dir: str | Path) -> dict[str
                     "include_in_accuracy": "false",
                     "language": spec.language,
                     "condition": condition,
-                    "layout": spec.layout,
-                    "theme": spec.theme,
+                    "layout": variant_spec.layout,
+                    "theme": variant_spec.theme,
+                    "variant_role": variant_settings["role"],
+                    "comparison_axis": variant_settings["comparison_axis"],
+                    "comparison_value": variant_settings["comparison_value"],
                     "jpeg_quality": str(jpeg_quality),
                     "transforms_json": json.dumps(transforms, sort_keys=True),
                     "answer_materials": ";".join(selected),
                     "answer_ratios": ";".join(str(value) for value in selected.values()),
                     "selected_part": "outer",
                     "parts_json": json.dumps(spec.parts, ensure_ascii=False, sort_keys=True),
-                    "original_text": label_text(spec),
+                    "original_text": label_text(variant_spec),
                     "font": font_name,
                     "seed": str(sample_seed),
                     "image_sha256": _sha256(image_path),
@@ -413,6 +520,10 @@ def generate_dataset(config: dict[str, Any], output_dir: str | Path) -> dict[str
         "theme_counts": {
             theme: sum(row["theme"] == theme for row in rows)
             for theme in config["themes"]
+        },
+        "variant_role_counts": {
+            role: sum(row["variant_role"] == role for row in rows)
+            for role in sorted({row["variant_role"] for row in rows if row["variant_role"]})
         },
     }
     (output_path / "summary.json").write_text(

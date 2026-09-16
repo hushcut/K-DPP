@@ -240,6 +240,23 @@ python -m scripts.evaluate_synthetic_labels
 모든 변형이 통과했는지의 그룹 점수를 저장합니다. `summary.json`의
 `evaluation_type`은 항상 `synthetic_parser_only`입니다.
 
+### 레이아웃·테마 대조군
+
+기본 80장은 여러 스트레스 조건을 함께 섞어 회귀 범위를 넓히는 용도입니다. 따라서 기본
+결과의 레이아웃·테마별 집계는 조건 효과의 원인으로 해석하지 않습니다. 조건 효과는 별도
+대조군 설정으로 확인합니다. 이 설정은 같은 `source_group`의 소재·비율·언어를 유지한 채
+기준 라벨 1장과 레이아웃 2종·테마 2종만 각각 바꾼 총 100장을 생성합니다. 모든 대조군은
+`clean` 조건과 JPEG 품질 90을 사용합니다.
+
+```bash
+python -m scripts.generate_synthetic_labels --config configs/synthetic_label_controls_v1.json --output outputs/synthetic/label_controls_v1
+python -m scripts.evaluate_synthetic_labels --manifest outputs/synthetic/label_controls_v1/manifest.csv --output-dir outputs/synthetic_evaluation/label_controls_v1
+```
+
+대조군 `summary.json`의 `controlled_comparisons`는 같은 원본의 기준 라벨과 비교 대상만
+짝지어 집계합니다. 이 역시 `original_text`를 파서에 넣는 검사이므로, 시각 OCR 성능의
+증거가 아니라 파서 규칙의 회귀 지표입니다.
+
 ## 세탁기호 ResNet18 실험
 
 ### 데이터 계약

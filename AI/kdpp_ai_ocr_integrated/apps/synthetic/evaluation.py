@@ -32,6 +32,9 @@ RESULT_COLUMNS = (
     "condition",
     "layout",
     "theme",
+    "variant_role",
+    "comparison_axis",
+    "comparison_value",
     "jpeg_quality",
     "parse_status",
     "parser_source",
@@ -104,6 +107,59 @@ def _aggregate_by(
     }
 
 
+def _summarize_controlled_comparisons(
+    results: list[dict[str, str]],
+) -> dict[str, dict[str, dict[str, int | float]]]:
+    """Compare only variants paired with their source group's baseline."""
+
+    grouped: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for result in results:
+        grouped[result["source_group"]].append(result)
+
+    pairs: dict[tuple[str, str], list[tuple[dict[str, str], dict[str, str]]]] = (
+        defaultdict(list)
+    )
+    for group in grouped.values():
+        baselines = [row for row in group if row["variant_role"] == "baseline"]
+        if len(baselines) != 1:
+            continue
+        baseline = baselines[0]
+        for row in group:
+            axis = row["comparison_axis"]
+            value = row["comparison_value"]
+            if axis in {"layout", "theme"} and value:
+                pairs[(axis, value)].append((baseline, row))
+
+    comparisons: dict[str, dict[str, dict[str, int | float]]] = {}
+    for (axis, value), paired_rows in sorted(pairs.items()):
+        baseline_success = sum(
+            baseline["judgment"] == "success" for baseline, _ in paired_rows
+        )
+        variant_success = sum(
+            variant["judgment"] == "success" for _, variant in paired_rows
+        )
+        both_success = sum(
+            baseline["judgment"] == "success" and variant["judgment"] == "success"
+            for baseline, variant in paired_rows
+        )
+        comparisons.setdefault(axis, {})[value] = {
+            "pair_count": len(paired_rows),
+            "baseline_exact_composition_count": baseline_success,
+            "baseline_exact_composition_accuracy": _rate(
+                baseline_success, len(paired_rows)
+            ),
+            "comparison_exact_composition_count": variant_success,
+            "comparison_exact_composition_accuracy": _rate(
+                variant_success, len(paired_rows)
+            ),
+            "both_exact_composition_count": both_success,
+            "both_exact_composition_accuracy": _rate(
+                both_success, len(paired_rows)
+            ),
+        }
+    return comparisons
+
+
 def evaluate_manifest(
     manifest_path: str | Path,
     *,
@@ -145,6 +201,9 @@ def evaluate_manifest(
                 "condition": row["condition"],
                 "layout": row.get("layout", ""),
                 "theme": row.get("theme", ""),
+                "variant_role": row.get("variant_role", ""),
+                "comparison_axis": row.get("comparison_axis", ""),
+                "comparison_value": row.get("comparison_value", ""),
                 "jpeg_quality": row.get("jpeg_quality", ""),
                 "parse_status": str(parsed["status"]),
                 "parser_source": str(
@@ -196,10 +255,9 @@ def evaluate_manifest(
         "by_language": _aggregate_by(results, "language"),
         "by_condition": _aggregate_by(results, "condition"),
     }
-    if all(result["layout"] for result in results):
-        summary["by_layout"] = _aggregate_by(results, "layout")
-    if all(result["theme"] for result in results):
-        summary["by_theme"] = _aggregate_by(results, "theme")
+    controlled_comparisons = _summarize_controlled_comparisons(results)
+    if controlled_comparisons:
+        summary["controlled_comparisons"] = controlled_comparisons
     return results, group_results, summary
 
 

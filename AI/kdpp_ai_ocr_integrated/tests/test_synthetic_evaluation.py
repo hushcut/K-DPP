@@ -24,6 +24,59 @@ def evaluation_config() -> dict:
     }
 
 
+def controlled_evaluation_config() -> dict:
+    config = evaluation_config()
+    config.update(
+        {
+            "variants_per_label": 5,
+            "conditions": ["clean"],
+            "layouts": ["material_first", "ratio_first", "stacked_columns"],
+            "themes": ["white", "ivory", "black"],
+            "variant_plan": [
+                {
+                    "role": "baseline",
+                    "condition": "clean",
+                    "layout": "material_first",
+                    "theme": "white",
+                },
+                {
+                    "role": "layout_ratio_first",
+                    "condition": "clean",
+                    "layout": "ratio_first",
+                    "theme": "white",
+                    "comparison_axis": "layout",
+                    "comparison_value": "ratio_first",
+                },
+                {
+                    "role": "layout_stacked_columns",
+                    "condition": "clean",
+                    "layout": "stacked_columns",
+                    "theme": "white",
+                    "comparison_axis": "layout",
+                    "comparison_value": "stacked_columns",
+                },
+                {
+                    "role": "theme_ivory",
+                    "condition": "clean",
+                    "layout": "material_first",
+                    "theme": "ivory",
+                    "comparison_axis": "theme",
+                    "comparison_value": "ivory",
+                },
+                {
+                    "role": "theme_black",
+                    "condition": "clean",
+                    "layout": "material_first",
+                    "theme": "black",
+                    "comparison_axis": "theme",
+                    "comparison_value": "black",
+                },
+            ],
+        }
+    )
+    return config
+
+
 def test_synthetic_evaluation_writes_image_and_source_group_scores(tmp_path) -> None:
     dataset_dir = tmp_path / "dataset"
     generate_dataset(evaluation_config(), dataset_dir)
@@ -37,10 +90,25 @@ def test_synthetic_evaluation_writes_image_and_source_group_scores(tmp_path) -> 
     assert summary["image_exact_composition_accuracy"] == 1.0
     assert summary["source_group_count"] == 2
     assert summary["source_group_all_variants_accuracy"] == 1.0
-    assert summary["by_layout"]["material_first"]["image_count"] == 4
-    assert summary["by_theme"]["white"]["image_count"] == 4
+    assert "by_layout" not in summary
+    assert "by_theme" not in summary
     assert (output_dir / "image_results.csv").is_file()
     assert (output_dir / "source_group_results.csv").is_file()
+
+
+def test_synthetic_evaluation_compares_only_paired_control_variants(tmp_path) -> None:
+    dataset_dir = tmp_path / "dataset"
+    generate_dataset(controlled_evaluation_config(), dataset_dir)
+
+    _, _, summary = evaluate_manifest(dataset_dir / "manifest.csv")
+
+    comparisons = summary["controlled_comparisons"]
+    assert comparisons["layout"]["ratio_first"]["pair_count"] == 2
+    assert comparisons["layout"]["stacked_columns"][
+        "comparison_exact_composition_accuracy"
+    ] == 1.0
+    assert comparisons["theme"]["ivory"]["baseline_exact_composition_accuracy"] == 1.0
+    assert comparisons["theme"]["black"]["both_exact_composition_count"] == 2
 
 
 def test_source_group_score_fails_when_one_variant_parser_fails(tmp_path) -> None:
