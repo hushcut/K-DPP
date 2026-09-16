@@ -90,6 +90,22 @@ $env:KDPP_SYMBOL_MODEL_PATH = "models/symbol/best_symbol_model_exp.pt"
 
 `requirements-dev.txt`는 전체 테스트를 위해 세탁기호 의존성도 함께 설치합니다.
 
+### 텍스트 OCR 운영 번들
+
+운영 배포물은 저장소 전체를 복사하지 않고 명시된 텍스트 서비스 파일만 구성합니다.
+
+```powershell
+.venv\Scripts\python.exe -m scripts.build_text_runtime --output dist\text-runtime
+```
+
+생성된 `dist/text-runtime`에는 텍스트 OCR 서비스와 기본 `requirements.txt`만 포함됩니다.
+심볼 학습·평가, 합성 데이터 생성, QA 스크립트, 테스트, 데이터셋, 모델과 출력물은
+포함되지 않습니다. 배포 환경에서는 번들 디렉터리에서 다음 진입점을 사용합니다.
+
+```powershell
+python -m apps.service
+```
+
 pytest에는 `/api/scan`의 AI 연결 검사도 포함되므로, 전체 검증에는 백엔드 의존성이
 필요합니다. 이 검사는 `raw_ocr_text`만 사용하며 Google Vision 호출이나 실제 DB 저장을 하지
 않습니다.
