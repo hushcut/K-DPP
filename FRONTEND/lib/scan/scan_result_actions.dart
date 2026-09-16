@@ -70,7 +70,8 @@ extension _ScanResultActions on _ScanScreenState {
   }) {
     return showClothingTypePickerSheet(
       context: context,
-      options: ClothingTypeCatalog.options,
+      options: _clothingTypeCatalog.value,
+      optionsListenable: _clothingTypeCatalog,
       initialSelection: initialSelection,
       discardPrompt: discardPrompt,
     );

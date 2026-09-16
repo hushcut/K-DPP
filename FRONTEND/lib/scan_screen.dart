@@ -10,6 +10,8 @@ import 'models/clothes.dart';
 import 'models/clothing_type_option.dart';
 import 'models/main_screen_arguments.dart';
 import 'services/carbon_api_service.dart';
+import 'services/clothing_type_catalog_api_service.dart';
+import 'services/clothing_type_catalog_controller.dart';
 import 'services/material_catalog_api_service.dart';
 import 'services/material_catalog_controller.dart';
 import 'services/scan_analysis_service.dart';
@@ -71,6 +73,12 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   final MaterialCatalogController _materialCatalog = MaterialCatalogController(
     fetchMaterials: MaterialCatalogApiService().fetchMaterials,
   );
+  // 의류 종류 선택창이 쓰는 무게표입니다. 서버 표를 받기 전에는 앱 내장 표를 씁니다.
+  final ClothingTypeCatalogController _clothingTypeCatalog =
+      ClothingTypeCatalogController(
+        fetchClothingTypes:
+            ClothingTypeCatalogApiService().fetchClothingTypes,
+      );
   final ScanCaptureService _scanCaptureService = ScanCaptureService();
   final ScanDraftService _scanDraftService = const ScanDraftService();
   final ScanSaveService _scanSaveService = const ScanSaveService();
@@ -131,6 +139,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
     _cameraSession.dispose();
     _materialInputs.dispose();
     _materialCatalog.dispose();
+    _clothingTypeCatalog.dispose();
     _titleController.dispose();
     super.dispose();
   }
