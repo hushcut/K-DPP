@@ -1,14 +1,14 @@
-"""이미지 검증, Google Vision OCR, 후보 선택을 담당하는 OCR 경계.
+"""이미지 검증과 Google Vision OCR 후보 실행을 담당하는 OCR 경계.
 
 원본 OCR을 우선 사용하고, 파서 신뢰도가 낮을 때만 전처리 후보를 추가로
 요청한다. 비용과 지연을 제한하면서 흐림·작은 글자 라벨의 인식률을 보완한다.
+후보 점수화는 ``ocr_candidates``에, 좌표 기반 읽기 순서 복원은 ``ocr_layout``에 둔다.
 """
 
 from __future__ import annotations
 
 import math
 import os
-import re
 import time
 import warnings
 from dataclasses import dataclass
@@ -19,7 +19,9 @@ from typing import Any
 
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps, UnidentifiedImageError
 
+from apps.text.ocr_candidates import OcrCandidate, build_candidate, score_candidate
 from apps.text.ocr_cache import OcrCacheMissError, OcrTextCache
+from apps.text.ocr_layout import OcrWord, extract_response_layout_text, spatial_text_from_words
 
 LANGUAGE_HINTS = ["ko", "en", "ja", "zh-Hans", "zh-Hant"]
 MIN_OCR_WIDTH = 1800
@@ -118,35 +120,6 @@ class OcrPayload:
     text: str
     layout_text: str = ""
     retry_count: int = 0
-
-
-@dataclass(frozen=True)
-class OcrWord:
-    text: str
-    left: int
-    top: int
-    right: int
-    bottom: int
-
-    @property
-    def center_y(self) -> float:
-        return (self.top + self.bottom) / 2
-
-    @property
-    def height(self) -> int:
-        return max(1, self.bottom - self.top)
-
-
-@dataclass(frozen=True)
-class OcrCandidate:
-    source: str
-    text: str
-    materials: dict[str, float | int]
-    selected_part: str
-    parser_status: str
-    parser_confidence: str
-    score: tuple[int, int, int, int, float, int, int, int]
-    layout_used: bool = False
 
 
 @dataclass(frozen=True)
@@ -379,42 +352,15 @@ def _score_candidate(
     ratio_total_before_normalization: float | None,
     warning_count: int,
 ) -> tuple[int, int, int, int, float, int, int, int]:
-    """파서 성공 여부를 최우선으로 OCR 후보를 정렬할 점수를 만든다.
-
-    같은 품질이면 서비스의 소재 선택 원칙(겉감 우선), 소재 조성의 완전성,
-    혼용률 합계·경고·명시적 퍼센트·원본 OCR 순서로 선택한다.
-    """
-
-    total = (
-        ratio_total_before_normalization
-        if ratio_total_before_normalization is not None
-        else sum(float(value) for value in materials.values())
-        if materials
-        else 0.0
-    )
-    confidence_rank = {"low": 0, "medium": 1, "high": 2}.get(parser_confidence, 0)
-    part_rank = {
-        "outer": 7,
-        "generic": 6,
-        "lining": 5,
-        "filling": 4,
-        "pocket": 3,
-        "rib": 2,
-        "sleeve": 1,
-        "color_block": 0,
-    }.get(selected_part, 0)
-    explicit_percent_count = len(re.findall(r"\d{1,3}(?:\.\d+)?\s*[%％]", text))
-    source_priority = 1 if source == "original" else 0
-
-    return (
-        1 if parser_status == "success" else 0,
-        part_rank,
-        len(materials),
-        confidence_rank,
-        -abs(100.0 - total) if materials else -100.0,
-        -warning_count,
-        min(explicit_percent_count, 4),
-        source_priority,
+    return score_candidate(
+        text,
+        materials,
+        selected_part,
+        parser_status,
+        parser_confidence,
+        source,
+        ratio_total_before_normalization=ratio_total_before_normalization,
+        warning_count=warning_count,
     )
 
 
@@ -424,32 +370,10 @@ def _build_candidate(
     *,
     layout_used: bool = False,
 ) -> OcrCandidate:
-    parsed = _parse_candidate(text)
-    materials = parsed.get("materials", {})
-    selected_part = parsed.get("selected_part", "")
-    parser_status = parsed.get("status", "failed")
-    parser_confidence = parsed.get("confidence", {}).get("parser", "low")
-    ratio_total = parsed.get("parse_evidence", {}).get(
-        "ratio_total_before_normalization"
-    )
-    parser_warnings = parsed.get("warnings", [])
-    return OcrCandidate(
-        source=source,
-        text=text,
-        materials=materials,
-        selected_part=selected_part,
-        parser_status=parser_status,
-        parser_confidence=parser_confidence,
-        score=_score_candidate(
-            text,
-            materials,
-            selected_part,
-            parser_status,
-            parser_confidence,
-            source,
-            ratio_total_before_normalization=ratio_total,
-            warning_count=len(parser_warnings),
-        ),
+    return build_candidate(
+        source,
+        text,
+        parse_candidate=_parse_candidate,
         layout_used=layout_used,
     )
 
@@ -483,79 +407,11 @@ def _extract_response_text(response: Any) -> str:
 
 
 def _spatial_text_from_words(words: list[OcrWord]) -> str:
-    """Reassemble OCR words into visual rows, ordered left to right.
-
-    Vision's plain text is paragraph-order based. On care labels with a
-    material column and a ratio column, that order can separate a material
-    from its percentage. Grouping by overlapping vertical positions restores
-    the row used by the printed label.
-    """
-
-    if not words:
-        return ""
-
-    lines: list[list[OcrWord]] = []
-    line_center_y: list[float] = []
-    line_height: list[float] = []
-    for word in sorted(words, key=lambda item: (item.center_y, item.left)):
-        if lines:
-            tolerance = max(4.0, min(line_height[-1], word.height) * 0.55)
-            if abs(word.center_y - line_center_y[-1]) <= tolerance:
-                lines[-1].append(word)
-                count = len(lines[-1])
-                line_center_y[-1] = (
-                    line_center_y[-1] * (count - 1) + word.center_y
-                ) / count
-                line_height[-1] = max(line_height[-1], word.height)
-                continue
-
-        lines.append([word])
-        line_center_y.append(word.center_y)
-        line_height.append(float(word.height))
-
-    return "\n".join(
-        " ".join(word.text for word in sorted(line, key=lambda item: item.left))
-        for line in lines
-    )
+    return spatial_text_from_words(words)
 
 
 def _extract_response_layout_text(response: Any) -> str:
-    annotation = getattr(response, "full_text_annotation", None)
-    pages = getattr(annotation, "pages", None) if annotation else None
-    if not pages:
-        return ""
-
-    words: list[OcrWord] = []
-    for page in pages:
-        for block in getattr(page, "blocks", ()):
-            for paragraph in getattr(block, "paragraphs", ()):
-                for word in getattr(paragraph, "words", ()):
-                    text = "".join(
-                        str(getattr(symbol, "text", ""))
-                        for symbol in getattr(word, "symbols", ())
-                    ).strip()
-                    vertices = getattr(
-                        getattr(word, "bounding_box", None),
-                        "vertices",
-                        (),
-                    )
-                    coordinates = [
-                        (int(getattr(vertex, "x", 0) or 0), int(getattr(vertex, "y", 0) or 0))
-                        for vertex in vertices
-                    ]
-                    if not text or not coordinates:
-                        continue
-                    x_values, y_values = zip(*coordinates)
-                    words.append(
-                        OcrWord(
-                            text=text,
-                            left=min(x_values),
-                            top=min(y_values),
-                            right=max(x_values),
-                            bottom=max(y_values),
-                        )
-                    )
-    return _spatial_text_from_words(words)
+    return extract_response_layout_text(response)
 
 
 def _resolve_credential_path(
