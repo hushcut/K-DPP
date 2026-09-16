@@ -4,7 +4,8 @@ K-DPP의 OCR 소재 분석과 세탁기호 실험 기능을 모은 AI 모듈입�
 
 ## 팀 공통 규칙
 
-- 개발 환경은 `.venv`와 `requirements-dev.txt`를 사용합니다.
+- 텍스트 OCR 실행 환경은 `requirements.txt`, 세탁기호 실험 환경은
+  `requirements-symbol.txt`, 개발 환경은 `.venv`와 `requirements-dev.txt`를 사용합니다.
 - 코드 변경 후에는 Ruff와 pytest를 모두 통과해야 합니다.
 - AI·BACKEND·QA 폴더 변경의 push·PR에서는 GitHub Actions가 Ruff와 pytest를 실행합니다.
 - 서비스 계정 JSON, 실제 데이터셋, 모델, OCR 캐시·출력물은 커밋하지 않습니다.
@@ -63,6 +64,22 @@ python -m venv .venv
 .venv\Scripts\python.exe -m ruff check .
 .venv\Scripts\python.exe -m pytest -q
 ```
+
+텍스트 OCR과 소재 파서만 실행할 때는 PyTorch가 포함되지 않은 기본 의존성을
+설치합니다.
+
+```bash
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+세탁기호 학습·평가 또는 `/v1/analyze-symbol` API가 필요한 환경은 선택 의존성을
+설치합니다.
+
+```bash
+.venv\Scripts\python.exe -m pip install -r requirements-symbol.txt
+```
+
+`requirements-dev.txt`는 전체 테스트를 위해 세탁기호 의존성도 함께 설치합니다.
 
 pytest에는 `/api/scan`의 AI 연결 검사도 포함되므로, 전체 검증에는 백엔드 의존성이
 필요합니다. 이 검사는 `raw_ocr_text`만 사용하며 Google Vision 호출이나 실제 DB 저장을 하지
