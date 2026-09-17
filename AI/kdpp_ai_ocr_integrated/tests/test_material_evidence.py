@@ -167,6 +167,46 @@ def test_common_label_formats_from_integration_review(
     assert result["parse_evidence"]["explicit_percent"] is True
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("棉 95% 氨纶 5%", {"cotton": 95, "spandex": 5}),
+        ("棉 ９５％ 氨纶 ５％", {"cotton": 95, "spandex": 5}),
+        ("棉 95% 氨綸 5%", {"cotton": 95, "spandex": 5}),
+        ("棉 95% 氨纶丝 5%", {"cotton": 95, "spandex": 5}),
+        ("棉 95% 氨綸絲 5%", {"cotton": 95, "spandex": 5}),
+        (
+            "棉 95% 聚氨酯弹性纤维 5%",
+            {"cotton": 95, "spandex": 5},
+        ),
+        (
+            "棉 95% 聚氨酯彈性纖維 5%",
+            {"cotton": 95, "spandex": 5},
+        ),
+        ("棉 95% 聚氨酯 5%", {"cotton": 95, "polyurethane": 5}),
+        ("棉 95% 聚氨脂 5%", {"cotton": 95, "polyurethane": 5}),
+        (
+            "聚氨酯 95% 氨纶 5%",
+            {"polyurethane": 95, "spandex": 5},
+        ),
+    ],
+)
+def test_chinese_spandex_and_polyurethane_are_distinct(
+    text: str,
+    expected: dict[str, int],
+) -> None:
+    result = parse_label(text)
+
+    assert result["status"] == "success", result
+    assert result["materials"] == expected
+    assert parse_materials(text) == expected
+    assert result["parse_evidence"]["source"] == "same_line"
+
+
+def test_unrecognized_chinese_ocr_variant_is_not_inferred() -> None:
+    assert_rejected("棉 95% 腨纶 5%")
+
+
 @pytest.mark.parametrize("size", ["80", "100", "120", "９５"])
 def test_unlabeled_korean_garment_sizes_after_complete_composition(
     size: str,
