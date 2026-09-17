@@ -115,6 +115,16 @@ _MEASUREMENT_UNIT_PATTERN = re.compile(
     r"cm|mm|kg|mg|g|lb|lbs|oz|호|년|월|일|번|원|円|元|도)(?:\b|$)",
     re.IGNORECASE,
 )
+_IMITATION_LEATHER_PATTERN = re.compile(
+    r"(?<![a-z])(?:faux|fake|synthetic|artificial|imitation|vegan|pu|pvc)"
+    r"[\s\-‐‑‒–—_/]*(?:leather(?![a-z])|가죽|피혁|레더)|"
+    r"(?:인조|합성|모조|비건)[\s\-‐‑‒–—_/]*(?:가죽|피혁|레더)|"
+    r"(?:人造|合成|人工|仿)[\s\-‐‑‒–—_/]*(?:皮革|革)|"
+    r"(?:フェイク|合成|人工|ヴィーガン)[\s\-‐‑‒–—_/]*(?:レザー|皮革)|"
+    r"(?<![a-z])simili[\s\-‐‑‒–—_/]*cuir(?![a-z])|"
+    r"(?<![a-z])kunst[\s\-‐‑‒–—_/]*leder(?![a-z])",
+    re.IGNORECASE,
+)
 _INEXACT_SIGNS = "+-−±∓‐‑‒–—<>≤≥≦≧~≈≃∼"
 _PLAIN_NUMBER_METADATA_PREFIX = re.compile(
     r"(?:\b(?:size|style|model|sku|lot|item|date|price|wash|iron|dry|"
@@ -171,6 +181,10 @@ _RATIO_PREFIX_CONTEXTS = {
     "纤维成分",
     "成分",
 }
+_EXPLICIT_PART_HEADER_CONTEXTS = _RATIO_PREFIX_CONTEXTS | {
+    "fabric",
+    "재질",
+}
 
 
 def _normalized_alias(value: str) -> str:
@@ -183,6 +197,11 @@ ALIAS_TO_MATERIAL = {
     for alias in aliases
     if alias.strip()
 }
+_MATERIAL_ONLY_LINE_CONTEXTS = (
+    set(ALIAS_TO_MATERIAL)
+    | _RATIO_PAIR_DESCRIPTORS
+    | _EXPLICIT_PART_HEADER_CONTEXTS
+)
 
 MULTIWORD_ALIASES = sorted(
     (
@@ -370,10 +389,20 @@ def _material_evidence(line: str) -> tuple[MaterialEvidence, ...]:
     return tuple(ordered)
 
 
+def _part_alias_pattern(alias: str) -> str:
+    escaped = re.escape(alias.casefold())
+    if alias.isascii():
+        return rf"(?<![a-z]){escaped}(?![a-z])"
+    return escaped
+
+
 def _explicit_part(line: str) -> str | None:
     normalized = normalize_text(line)
     for part, aliases in PART_PATTERNS.items():
-        if any(alias.casefold() in normalized for alias in aliases):
+        if any(
+            re.search(_part_alias_pattern(alias), normalized, re.IGNORECASE)
+            for alias in aliases
+        ):
             return part
     return None
 
@@ -563,16 +592,37 @@ def extract_numbers(line: str, allow_plain_numbers: bool = False) -> list[Decima
 
 
 def _split_part_markers(text: str) -> str:
-    prepared = text
     markers = {
         alias
         for aliases in PART_PATTERNS.values()
         for alias in aliases
         if len(alias) >= 2
     }
+    prepared_lines: list[str] = []
+    for line in text.split("\n"):
+        prepared_line = line
+        for marker in sorted(markers, key=len, reverse=True):
+            suffix = re.search(
+                rf"(?i)({_part_alias_pattern(marker)})"
+                r"[\s)\]}>:;,./|\-‐‑‒–—]*$",
+                prepared_line,
+            )
+            if not suffix or suffix.start() == 0:
+                continue
+
+            composition = prepared_line[: suffix.start()].rstrip(
+                " \t([{<:;,./|-‐‑‒–—"
+            )
+            if extract_materials(composition):
+                prepared_line = f"{composition} {suffix.group(1)}"
+                break
+        prepared_lines.append(prepared_line)
+
+    prepared = "\n".join(prepared_lines)
     for marker in sorted(markers, key=len, reverse=True):
         prepared = re.sub(
-            rf"(?i)(?<!^)(?<!\n)(?<![a-z])({re.escape(marker)})(?![a-z])",
+            rf"(?i)(?<!^)(?<!\n)({_part_alias_pattern(marker)})"
+            r"(?=[^\n]*[0-9a-zà-ÿ가-힣一-龥ぁ-んァ-ン])",
             r"\n\1",
             prepared,
         )
@@ -616,6 +666,9 @@ def build_line_infos(text: str) -> list[LineInfo]:
         current_part = explicit_part or current_part
         composition_text = "" if is_metadata else _strip_excluded_segments(normalized)
         materials = tuple(extract_materials(composition_text))
+        has_imitation_leather = bool(
+            _IMITATION_LEATHER_PATTERN.search(composition_text)
+        )
         number_only_line = (
             not materials and not _TOKEN_PATTERN.search(composition_text)
         )
@@ -624,6 +677,12 @@ def build_line_infos(text: str) -> list[LineInfo]:
             composition_text,
             allow_plain_numbers=allow_plain,
         )
+        invalid_evidence = invalid_evidence or has_imitation_leather
+        if materials and not numbers:
+            invalid_evidence = invalid_evidence or not _contains_only_known_phrases(
+                composition_text,
+                _MATERIAL_ONLY_LINE_CONTEXTS,
+            )
         if materials and numbers and len(materials) == len(numbers):
             invalid_evidence = invalid_evidence or not _same_line_pairing_is_supported(
                 composition_text,
@@ -911,6 +970,19 @@ def _best_candidates_by_part(
         and info.index not in covered_indices_by_part.get(info.part, set())
     }
     blocked_parts.update(incomplete_parts)
+    unrecognized_explicit_parts = {
+        info.part
+        for info in infos
+        if info.explicit_part
+        and info.part not in best_by_part
+        and not info.materials
+        and not info.numbers
+        and not _contains_only_known_phrases(
+            info.normalized,
+            _EXPLICIT_PART_HEADER_CONTEXTS,
+        )
+    }
+    blocked_parts.update(unrecognized_explicit_parts)
 
     parts: dict[str, dict[str, float | int]] = {}
     warnings: list[str] = []

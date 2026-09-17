@@ -199,6 +199,219 @@ def test_incomplete_outer_is_not_replaced_by_lining() -> None:
     assert_rejected("OUTER COTTON 95%\nLINING NYLON 100%")
 
 
+def test_unrecognized_outer_is_not_replaced_by_lining() -> None:
+    assert_rejected("겉감: 인조모피\n안감: 폴리에스터 100%")
+
+
+@pytest.mark.parametrize(
+    ("text", "expected", "selected_part"),
+    [
+        (
+            "OUTER\nCOTTON 100%\nLINING NYLON 100%",
+            {"cotton": 100},
+            "outer",
+        ),
+        (
+            "겉감:\n면 100%\n안감: 폴리에스터 100%",
+            {"cotton": 100},
+            "outer",
+        ),
+        ("LINING\nNYLON 100%", {"nylon": 100}, "lining"),
+        ("OUTER FABRIC\nCOTTON 100%", {"cotton": 100}, "outer"),
+        (
+            "OUTER: BRUSHED FINISH\nCOTTON 100%\nLINING NYLON 100%",
+            {"cotton": 100},
+            "outer",
+        ),
+    ],
+)
+def test_part_headers_without_composition_remain_supported(
+    text: str,
+    expected: dict[str, int],
+    selected_part: str,
+) -> None:
+    result = parse_label(text)
+
+    assert result["status"] == "success", result
+    assert result["materials"] == expected
+    assert result["selected_part"] == selected_part
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "FAUX LEATHER 100%",
+        "FAUX-LEATHER 100%",
+        "FAKE LEATHER 100%",
+        "SYNTHETIC LEATHER 100%",
+        "ARTIFICIAL LEATHER 100%",
+        "IMITATION LEATHER 100%",
+        "VEGAN LEATHER 100%",
+        "PU LEATHER 100%",
+        "PVC LEATHER 100%",
+        "PU 가죽 100%",
+        "인조 가죽 100%",
+        "인조가죽 100%",
+        "합성 가죽 100%",
+        "모조 가죽 100%",
+        "비건 가죽 100%",
+        "人造 皮革 100%",
+        "人工 皮革 100%",
+        "合成 皮革 100%",
+        "仿 皮革 100%",
+        "フェイク レザー 100%",
+        "SIMILI CUIR 100%",
+        "KUNST LEDER 100%",
+        "FAUX LEATHER\n100%",
+    ],
+)
+def test_faux_leather_is_not_treated_as_natural_leather(text: str) -> None:
+    assert_rejected(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "LEATHER 100%",
+        "GENUINE LEATHER 100%",
+        "REAL LEATHER 100%",
+        "NATURAL LEATHER 100%",
+        "PATENT LEATHER 100%",
+        "가죽 100%",
+        "천연 가죽 100%",
+        "皮革 100%",
+    ],
+)
+def test_natural_leather_remains_supported(text: str) -> None:
+    result = parse_label(text)
+
+    assert result["status"] == "success", result
+    assert result["materials"] == {"leather": 100}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "100% POLYESTER SHELL\n100% COTTON LINING",
+        "POLYESTER 100% SHELL\nCOTTON 100% LINING",
+        "100% POLYESTER (SHELL)\n100% COTTON (LINING)",
+        "100% POLYESTER - SHELL\n100% COTTON - LINING",
+        "폴리에스터 100% 겉감\n면 100% 안감",
+        "POLYESTER SHELL\n100%\nCOTTON LINING\n100%",
+    ],
+)
+def test_suffix_part_markers_bind_to_preceding_composition(text: str) -> None:
+    result = parse_label(text)
+
+    assert result["status"] == "success", result
+    assert result["materials"] == {"polyester": 100}
+    assert result["selected_part"] == "outer"
+    assert result["parts"] == {
+        "outer": {"polyester": 100},
+        "lining": {"cotton": 100},
+    }
+
+
+def test_suffix_part_marker_supports_multi_material_composition() -> None:
+    result = parse_label(
+        "COTTON 60% POLYESTER 40% SHELL\n"
+        "NYLON 100% LINING"
+    )
+
+    assert result["status"] == "success", result
+    assert result["materials"] == {"cotton": 60, "polyester": 40}
+    assert result["selected_part"] == "outer"
+    assert result["parts"] == {
+        "outer": {"cotton": 60, "polyester": 40},
+        "lining": {"nylon": 100},
+    }
+
+
+def test_incomplete_suffix_outer_is_not_replaced_by_lining() -> None:
+    assert_rejected("COTTON 95% SHELL\nNYLON 100% LINING")
+
+
+def test_inline_part_transition_remains_supported() -> None:
+    result = parse_label(
+        "SHELL: 100% POLYESTER LINING: 100% COTTON"
+    )
+
+    assert result["status"] == "success", result
+    assert result["materials"] == {"polyester": 100}
+    assert result["selected_part"] == "outer"
+    assert result["parts"] == {
+        "outer": {"polyester": 100},
+        "lining": {"cotton": 100},
+    }
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        "IMPORTED AND DISTRIBUTED BY ABC",
+        "SHELLFISH PRODUCTS",
+        "SEASHELL DESIGN",
+        "STREAMLINING PROCESS",
+        "OUTERWEAR COLLECTION",
+        "FACELIFT COLLECTION",
+        "REFILLABLE PRODUCT",
+        "POCKETBOOK STYLE",
+        "SLEEVELESS TOP",
+        "CONTRASTING COLOR",
+        "SURFACE TREATMENT",
+        "INTERFACE DESIGN",
+        "DESCRIBED STYLE",
+        "RIBBON DETAIL",
+        "MAIN FABRICATION LINE",
+    ],
+)
+def test_part_marker_aliases_are_matched_as_tokens(metadata: str) -> None:
+    result = parse_label(
+        f"{metadata}\n"
+        "100% COTTON\n"
+        "LINING: 100% POLYESTER"
+    )
+
+    assert result["status"] == "success", result
+    assert result["materials"] == {"cotton": 100}
+    assert result["selected_part"] == "generic"
+    assert result["parts"] == {
+        "generic": {"cotton": 100},
+        "lining": {"polyester": 100},
+    }
+
+
+@pytest.mark.parametrize(
+    ("text", "materials", "part"),
+    [
+        ("COTTON 100% RIB", {"cotton": 100}, "rib"),
+        ("MAIN   FABRIC: COTTON 100%", {"cotton": 100}, "outer"),
+        ("겉 감: 면 100%", {"cotton": 100}, "outer"),
+        ("本体: 綿 100%", {"cotton": 100}, "outer"),
+        ("面料: 棉 100%", {"cotton": 100}, "outer"),
+        ("裏地ポリエステル 100%", {"polyester": 100}, "lining"),
+    ],
+)
+def test_part_markers_remain_supported(
+    text: str,
+    materials: dict[str, int],
+    part: str,
+) -> None:
+    result = parse_label(text)
+
+    assert result["status"] == "success", result
+    assert result["materials"] == materials
+    assert result["selected_part"] == part
+
+
+def test_explicit_rib_part_remains_supported() -> None:
+    result = parse_label("RIB: COTTON 100%")
+
+    assert result["status"] == "success", result
+    assert result["materials"] == {"cotton": 100}
+    assert result["selected_part"] == "rib"
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -289,7 +502,61 @@ def test_alias_groups_do_not_hide_unmatched_materials_or_ratios(text) -> None:
         "60% COTTON MODACRYLIC 40% POLYESTER",
         "COTTON 60% OTHER FIBER POLYESTER 40%",
         "60% COTTON OTHER FIBER 40% POLYESTER",
+        "COTTON METALLIC POLYESTER\n60% 40%",
+        "COTTON OTHER FIBER POLYESTER\n60% 40%",
+        "COTTON UNKNOWN POLYESTER\n60% 40%",
+        "COTTON MODACRYLIC POLYESTER\n60% 40%",
     ],
 )
 def test_malformed_or_unmatched_ratio_evidence_is_rejected(text: str) -> None:
     assert_rejected(text)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "COTTON POLYESTER\n60% 40%",
+            {"cotton": 60, "polyester": 40},
+        ),
+        (
+            "ORGANIC COTTON RECYCLED POLYESTER\n60% 40%",
+            {"cotton": 60, "polyester": 40},
+        ),
+        (
+            "MATERIAL: COTTON POLYESTER\n60% 40%",
+            {"cotton": 60, "polyester": 40},
+        ),
+        (
+            "면 폴리에스터\n60% 40%",
+            {"cotton": 60, "polyester": 40},
+        ),
+        (
+            "COTTON / COTON POLYESTER / 폴리에스터\n60% 40%",
+            {"cotton": 60, "polyester": 40},
+        ),
+        (
+            "면 및 폴리에스터\n60% 40%",
+            {"cotton": 60, "polyester": 40},
+        ),
+    ],
+)
+def test_stacked_materials_and_ratios_remain_supported(
+    text: str,
+    expected: dict[str, int],
+) -> None:
+    result = parse_label(text)
+
+    assert result["status"] == "success", result
+    assert result["materials"] == expected
+    assert result["parse_evidence"]["source"] == "stacked_columns"
+
+
+def test_described_alternating_materials_and_ratios_remain_supported() -> None:
+    result = parse_label(
+        "ORGANIC COTTON\n60%\nRECYCLED POLYESTER\n40%"
+    )
+
+    assert result["status"] == "success", result
+    assert result["materials"] == {"cotton": 60, "polyester": 40}
+    assert result["parse_evidence"]["source"] == "alternating_lines"
