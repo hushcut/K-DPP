@@ -7,7 +7,8 @@ void main() {
   const clothingType = ClothingTypeOption(
     label: 'Test top',
     category: 'Top',
-    weightRangeLabel: '500g',
+    minWeightGram: 500,
+    maxWeightGram: 500,
     estimatedWeightGram: 500,
     icon: Icons.checkroom_outlined,
   );

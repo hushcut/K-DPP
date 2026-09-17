@@ -4,6 +4,10 @@ part of '../scan_screen.dart';
 extension _ScanCaptureActions on _ScanScreenState {
   /// 선택 이미지를 분석하고 의류 유형 확인 후 편집 가능한 초안으로 변환합니다.
   Future<void> _scanImageFile(File imageFile) async {
+    // 분석을 기다리는 동안 서버 무게표를 받아 두면 종류 선택창이 서버 값으로 열립니다.
+    // 이미 받았으면 다시 요청하지 않고, 실패했으면 이번 스캔에서 다시 요청합니다.
+    unawaited(_clothingTypeCatalog.load());
+
     _updateState(() {
       _selectedImage = imageFile;
       _isScanning = true;

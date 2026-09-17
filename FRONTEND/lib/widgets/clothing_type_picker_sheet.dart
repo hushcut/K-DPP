@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/clothing_type_option.dart';
@@ -33,10 +34,14 @@ class ClothingTypePickerDiscardPrompt {
 /// [discardPrompt]가 없으면 드래그·바깥 탭·뒤로가기로 닫을 수 있고 그때는 null을 반환합니다.
 /// 있으면 선택을 건너뛸 수 없는 시트가 되어 닫는 경로를 모두 막고, 시트 안 '다시 촬영'
 /// 버튼이나 시스템 뒤로가기에서 확인을 받은 경우에만 null로 닫힙니다.
+///
+/// [optionsListenable]을 주면 시트가 열려 있는 동안 목록이 바뀌어도(서버 무게표 도착)
+/// 새 목록을 보여 줍니다. 그때는 [options]보다 그 값을 씁니다.
 Future<ClothingTypeOption?> showClothingTypePickerSheet({
   required BuildContext context,
   required List<ClothingTypeOption> options,
   required ClothingTypeOption initialSelection,
+  ValueListenable<List<ClothingTypeOption>>? optionsListenable,
   ClothingTypePickerDiscardPrompt? discardPrompt,
 }) {
   final canDismiss = discardPrompt == null;
@@ -61,6 +66,7 @@ Future<ClothingTypeOption?> showClothingTypePickerSheet({
     builder: (sheetContext) {
       return ClothingTypePickerSheet(
         options: options,
+        optionsListenable: optionsListenable,
         initialSelection: initialSelection,
         discardPrompt: discardPrompt,
         onSelected: (option) {
@@ -81,11 +87,14 @@ class ClothingTypePickerSheet extends StatefulWidget {
     required this.options,
     required this.initialSelection,
     required this.onSelected,
+    this.optionsListenable,
     this.discardPrompt,
   });
 
   // 표시할 선택지와 현재 선택된 초기값입니다.
   final List<ClothingTypeOption> options;
+  /// 열려 있는 동안 바뀔 수 있는 선택지입니다. 있으면 [options] 대신 씁니다.
+  final ValueListenable<List<ClothingTypeOption>>? optionsListenable;
   final ClothingTypeOption initialSelection;
   /// 일반 선택 또는 검증된 직접 입력 결과를 상위 화면에 전달합니다.
   final ValueChanged<ClothingTypeOption> onSelected;
@@ -106,9 +115,19 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
   String _directCategory = '상의';
   String? _directErrorText;
 
+  List<ClothingTypeOption> get _options =>
+      widget.optionsListenable?.value ?? widget.options;
+
+  // 목록이 바뀌면 다시 그립니다. 선택 표시는 이름으로 맞추므로 고른 종류가 유지됩니다.
+  void _handleOptionsChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
+    widget.optionsListenable?.addListener(_handleOptionsChanged);
 
     _directCategory = widget.initialSelection.category == '하의' ? '하의' : '상의';
 
@@ -121,7 +140,18 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
   }
 
   @override
+  void didUpdateWidget(covariant ClothingTypePickerSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.optionsListenable != widget.optionsListenable) {
+      oldWidget.optionsListenable?.removeListener(_handleOptionsChanged);
+      widget.optionsListenable?.addListener(_handleOptionsChanged);
+    }
+  }
+
+  @override
   void dispose() {
+    widget.optionsListenable?.removeListener(_handleOptionsChanged);
     _directNameController.dispose();
     _directWeightController.dispose();
     super.dispose();
@@ -311,7 +341,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
           style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
         ),
         const SizedBox(height: 18),
-        ...widget.options.map((option) {
+        ..._options.map((option) {
           final isSelected = option.isDirectWeightPlaceholder
               ? widget.initialSelection.isDirectWeight ||
                     widget.initialSelection.isDirectWeightPlaceholder
