@@ -143,6 +143,45 @@ def test_metadata_header_does_not_consume_a_garment_part() -> None:
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
+        ("면 60%, 폴리에스터 40%", {"cotton": 60, "polyester": 40}),
+        ("60% COTTON, 40% POLYESTER", {"cotton": 60, "polyester": 40}),
+        ("FABRIC: 100% COTTON", {"cotton": 100}),
+        ("ORGANIC COTTON 100%", {"cotton": 100}),
+        ("품번 AB1234 면 100%", {"cotton": 100}),
+        (
+            "제조국: 베트남 면 95% 폴리우레탄 5%",
+            {"cotton": 95, "polyurethane": 5},
+        ),
+        ("면 100%\n95", {"cotton": 100}),
+    ],
+)
+def test_common_label_formats_from_integration_review(
+    text: str,
+    expected: dict[str, int],
+) -> None:
+    result = parse_label(text)
+
+    assert result["status"] == "success", result
+    assert result["materials"] == expected
+    assert result["parse_evidence"]["source"] == "same_line"
+    assert result["parse_evidence"]["explicit_percent"] is True
+
+
+@pytest.mark.parametrize("size", ["80", "100", "120", "９５"])
+def test_unlabeled_korean_garment_sizes_after_complete_composition(
+    size: str,
+) -> None:
+    result = parse_label(f"면 100%\n{size}")
+
+    assert result["status"] == "success", result
+    assert result["materials"] == {"cotton": 100}
+    assert result["confidence"]["parser"] == "medium"
+    assert result["warnings"] == ["unlabeled_garment_size_inferred"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
         ("ORGANIC COTTON 100%", {"cotton": 100}),
         ("RECYCLED POLYESTER 100%", {"polyester": 100}),
         ("BODY: COTTON 100%", {"cotton": 100}),
@@ -493,6 +532,9 @@ def test_alias_groups_do_not_hide_unmatched_materials_or_ratios(text) -> None:
     "text",
     [
         "COTTON -60% POLYESTER 40%",
+        "COTTON 92, 5% SPANDEX 95%",
+        "60%, 40% COTTON POLYESTER",
+        "60% COTTON,, 40% POLYESTER",
         "COTTON 1000% POLYESTER 100%",
         "COTTON 92..5% SPANDEX 7.5%",
         "UNKNOWN 60% COTTON 40% POLYESTER",
@@ -506,9 +548,42 @@ def test_alias_groups_do_not_hide_unmatched_materials_or_ratios(text) -> None:
         "COTTON OTHER FIBER POLYESTER\n60% 40%",
         "COTTON UNKNOWN POLYESTER\n60% 40%",
         "COTTON MODACRYLIC POLYESTER\n60% 40%",
+        "60% COTTON METALLIC, 40% POLYESTER",
+        "60% COTTON, 40% METALLIC POLYESTER",
+        "FABRIC WIDTH: 100% COTTON",
+        "NON FABRIC: 100% COTTON",
+        "FABRICATION: 100% COTTON",
+        "FABRIC: 100% UNKNOWN COTTON",
     ],
 )
 def test_malformed_or_unmatched_ratio_evidence_is_rejected(text: str) -> None:
+    assert_rejected(text)
+
+
+def test_ratio_first_decimal_commas_and_item_separator_are_supported() -> None:
+    result = parse_label("92,5% COTTON, 7,5% SPANDEX")
+
+    assert result["status"] == "success", result
+    assert result["materials"] == {"cotton": 92.5, "spandex": 7.5}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "면 60%\n95",
+        "면 100%\n79",
+        "면 100%\n81",
+        "면 100%\n125",
+        "면 100%\n95%",
+        "면 100\n95",
+        "COTTON 100%\n95",
+        "면 100%\n95\n폴리에스터 5%",
+        "면 100%\n95\n40%",
+        "면 100%\n95\nMADE IN KOREA",
+        "면\n95",
+    ],
+)
+def test_unlabeled_size_inference_does_not_hide_ratio_evidence(text: str) -> None:
     assert_rejected(text)
 
 

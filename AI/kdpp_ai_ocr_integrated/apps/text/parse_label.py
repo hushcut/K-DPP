@@ -149,6 +149,10 @@ _METADATA_VALUE_PATTERNS = {
         r"[0-9]+(?:[.,][0-9]+)?\s*%(?:\s*(?:이하|미만|max(?:imum)?))?"
     ),
 }
+# 한국 의류 호칭에서 흔한 5단위 값만 무표기 사이즈 후보로 인정한다.
+_UNLABELED_KOREAN_GARMENT_SIZE_VALUES = {
+    str(value) for value in range(80, 125, 5)
+}
 _RATIO_PAIR_DESCRIPTORS = {
     "organic",
     "recycled",
@@ -173,6 +177,7 @@ _RATIO_PREFIX_CONTEXTS = {
     *(alias for aliases in PART_PATTERNS.values() for alias in aliases),
     "fiber",
     "fibre",
+    "fabric",
     "content",
     "body",
     "組成",
@@ -241,6 +246,7 @@ class LineInfo:
     invalid_evidence: bool
     explicit_part: bool
     is_metadata: bool
+    inferred_metadata: bool
 
 
 @dataclass(frozen=True)
@@ -431,6 +437,7 @@ def _read_numbers(
     allow_plain_numbers: bool,
 ) -> tuple[tuple[Decimal, ...], bool, bool, tuple[NumberEvidence, ...]]:
     normalized = normalize_text(line)
+    material_evidence = _material_evidence(normalized)
     matches = list(_NUMBER_CANDIDATE_PATTERN.finditer(normalized))
     explicit_matches = [
         match for match in matches if match.group().strip().endswith("%")
@@ -445,6 +452,13 @@ def _read_numbers(
         value_text = token.removesuffix("%").strip()
         prefix = normalized[: match.start()].rstrip()
         suffix = normalized[match.end() :]
+        comma_prefix = _strip_excluded_segments(prefix)
+        comma_materials = _material_evidence(comma_prefix)
+        valid_material_comma = (
+            prefix.endswith(",")
+            and bool(comma_materials)
+            and comma_prefix[comma_materials[-1].end :].strip() == ","
+        )
         if _MEASUREMENT_UNIT_PATTERN.match(suffix):
             return None, False
         if not has_percent and (
@@ -459,7 +473,11 @@ def _read_numbers(
             or re.match(r"[.,](?=[0-9.,])", suffix) is not None
             or (not has_percent and re.match(r"[a-z]", suffix) is not None)
             or re.match(r"\s*%", suffix) is not None
-            or (prefix and prefix[-1] in "0123456789.,")
+            or (
+                prefix
+                and prefix[-1] in "0123456789.,"
+                and not valid_material_comma
+            )
             or (prefix and prefix[-1] in _INEXACT_SIGNS)
             or (suffix.strip() and suffix.strip()[0] in _INEXACT_SIGNS)
         )
@@ -489,7 +507,7 @@ def _read_numbers(
 
     invalid = invalid or normalized.count("%") != len(explicit_matches)
     values = list(explicit_values)
-    material_count = len(extract_materials(normalized))
+    material_count = len(material_evidence)
 
     # Plain numbers are considered only when explicit percentages do not
     # already account for every recognized material. This keeps identifiers,
@@ -648,13 +666,44 @@ def _classify_metadata_line(
     return _METADATA_VALUE_PATTERNS[kind].fullmatch(value) is not None, None
 
 
+def _is_unlabeled_korean_garment_size(
+    line: str,
+    previous: LineInfo | None,
+    *,
+    is_last_line: bool,
+) -> bool:
+    if (
+        not is_last_line
+        or line not in _UNLABELED_KOREAN_GARMENT_SIZE_VALUES
+        or previous is None
+        or previous.is_metadata
+        or previous.invalid_evidence
+        or not previous.explicit_percent
+        or not previous.materials
+        or len(previous.materials) != len(previous.numbers)
+        or len(set(previous.materials)) != len(previous.materials)
+        or sum(previous.numbers, Decimal(0)) != EXACT_RATIO_TOTAL
+    ):
+        return False
+
+    return any(
+        find_material_key(match.group())
+        for match in re.finditer(r"[가-힣]+", previous.normalized)
+    )
+
+
 def build_line_infos(text: str) -> list[LineInfo]:
     infos: list[LineInfo] = []
     current_part = "generic"
     pending_metadata_kind: str | None = None
     prepared = _split_part_markers(normalize_text(text))
+    raw_lines = prepared.split("\n")
+    content_indices = [
+        index for index, raw in enumerate(raw_lines) if normalize_text(raw)
+    ]
+    last_content_index = content_indices[-1] if content_indices else -1
 
-    for index, raw in enumerate(prepared.split("\n")):
+    for index, raw in enumerate(raw_lines):
         normalized = normalize_text(raw)
         if not normalized:
             continue
@@ -662,6 +711,14 @@ def build_line_infos(text: str) -> list[LineInfo]:
         is_metadata, pending_metadata_kind = _classify_metadata_line(
             normalized, pending_metadata_kind
         )
+        inferred_metadata = False
+        if not is_metadata and _is_unlabeled_korean_garment_size(
+            normalized,
+            infos[-1] if infos else None,
+            is_last_line=index == last_content_index,
+        ):
+            is_metadata = True
+            inferred_metadata = True
         explicit_part = None if is_metadata else _explicit_part(normalized)
         current_part = explicit_part or current_part
         composition_text = "" if is_metadata else _strip_excluded_segments(normalized)
@@ -701,6 +758,7 @@ def build_line_infos(text: str) -> list[LineInfo]:
                 invalid_evidence=invalid_evidence,
                 explicit_part=explicit_part is not None,
                 is_metadata=is_metadata,
+                inferred_metadata=inferred_metadata,
             )
         )
     return infos
@@ -986,6 +1044,8 @@ def _best_candidates_by_part(
 
     parts: dict[str, dict[str, float | int]] = {}
     warnings: list[str] = []
+    if any(info.inferred_metadata for info in infos):
+        warnings.append("unlabeled_garment_size_inferred")
     for part, candidate in best_by_part.items():
         if part in blocked_parts:
             warning = (
@@ -1181,6 +1241,7 @@ def parse_label(text: str) -> dict:
         "high"
         if selected_candidate.explicit_percent
         and selected_candidate.source == "same_line"
+        and "unlabeled_garment_size_inferred" not in warnings
         else "medium"
     )
     care_instruction = parse_care(text)
