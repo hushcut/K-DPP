@@ -6,6 +6,7 @@ import 'closet_provider.dart';
 import 'models/closet_sort_option.dart';
 import 'models/clothes.dart';
 import 'theme/app_palette.dart';
+import 'utils/material_name.dart';
 
 part 'closet/closet_actions.dart';
 part 'closet/closet_body.dart';

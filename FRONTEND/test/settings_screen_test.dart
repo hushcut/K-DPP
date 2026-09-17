@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:k_dpp/closet_provider.dart';
+import 'package:k_dpp/material_name_display_provider.dart';
 import 'package:k_dpp/services/auth_api_service.dart';
 import 'package:k_dpp/settings_screen.dart';
 import 'package:k_dpp/theme_provider.dart';
@@ -32,6 +33,7 @@ void main() {
         providers: [
           ChangeNotifierProvider.value(value: provider),
           ChangeNotifierProvider(create: (_) => ThemeProvider()),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
         ],
         child: const MaterialApp(home: SettingsScreen()),
       ),
@@ -316,6 +318,7 @@ void main() {
         providers: [
           ChangeNotifierProvider.value(value: provider),
           ChangeNotifierProvider(create: (_) => ThemeProvider()),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
         ],
         child: const MaterialApp(home: SettingsScreen()),
       ),
@@ -360,6 +363,7 @@ Future<ClosetProvider> _pumpSettings(
       providers: [
         ChangeNotifierProvider.value(value: provider),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
       ],
       child: MaterialApp(
         home: SettingsScreen(

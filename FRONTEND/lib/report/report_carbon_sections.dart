@@ -8,14 +8,16 @@ String _formatMaterialValue(double value) {
   return value.toStringAsFixed(1);
 }
 
-// 혼용률이 가장 높은 소재를 리포트의 대표 소재로 표시합니다.
-String _mainMaterialLabel(Clothes item) {
-  if (item.materials.isEmpty) return '소재 정보 없음';
+// 합산·표시 이름 변환을 마친 소재 중 혼용률이 가장 높은 것을 대표 소재로 표시합니다.
+// 합산 전에 고르면 '면 30 + cotton 30'이 폴리에스터 40에 밀립니다. 비율이 같으면 먼저 나온 소재입니다.
+String _mainMaterialLabel(List<MapEntry<String, double>> materialEntries) {
+  if (materialEntries.isEmpty) return '소재 정보 없음';
 
-  final sorted = item.materials.entries.toList()
-    ..sort((a, b) => b.value.compareTo(a.value));
+  final main = materialEntries.reduce(
+    (current, next) => next.value > current.value ? next : current,
+  );
 
-  return '${sorted.first.key.toUpperCase()} ${_formatMaterialValue(sorted.first.value)}%';
+  return '${main.key} ${_formatMaterialValue(main.value)}%';
 }
 
 Widget _buildSummaryCard({

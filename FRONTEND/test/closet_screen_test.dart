@@ -202,6 +202,48 @@ void main() {
     expect(find.text('데님 팬츠'), findsOneWidget);
   });
 
+  testWidgets('옷장 검색은 저장 키와 다른 언어의 소재명으로도 같은 소재를 찾는다', (tester) async {
+    final provider = ClosetProvider(storage: FakeClosetStorage());
+
+    // 같은 면 소재가 등록 경로에 따라 한글 키와 영문 키로 저장돼 있다.
+    // 리포트에는 둘 다 설정 언어의 같은 이름으로 보이므로 검색도 같아야 한다.
+    for (final (title, materials) in [
+      ('스캔한 셔츠', {'면': 100.0}),
+      ('직접 입력한 셔츠', {'cotton': 100.0}),
+      ('모달 티셔츠', {'modal': 100.0}),
+    ]) {
+      await provider.addClothes(
+        Clothes(
+          title: title,
+          category: '상의',
+          health: 88,
+          materials: materials,
+          careInstruction: '찬물 세탁',
+          carbonFootprint: 2.1,
+        ),
+      );
+    }
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: provider,
+        child: MaterialApp(
+          home: Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    for (final query in ['면', 'cotton', 'COTTON']) {
+      await tester.enterText(find.byType(TextField), query);
+      await tester.pumpAndSettle();
+
+      expect(find.text('스캔한 셔츠'), findsOneWidget, reason: query);
+      expect(find.text('직접 입력한 셔츠'), findsOneWidget, reason: query);
+      expect(find.text('모달 티셔츠'), findsNothing, reason: query);
+    }
+  });
+
   testWidgets('길게 눌러 선택한 의류를 확인 다이얼로그를 거쳐 삭제한다', (tester) async {
     final provider = ClosetProvider(storage: FakeClosetStorage());
     await provider.addClothes(

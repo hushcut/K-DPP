@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'closet_provider.dart';
+import 'material_name_display_provider.dart';
 import 'models/clothes.dart';
 import 'theme/app_palette.dart';
 import 'utils/material_name.dart';
