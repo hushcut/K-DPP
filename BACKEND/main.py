@@ -933,11 +933,11 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
         message = "AI OCR 처리에 실패했습니다."
         if ocr_text_module is not None:
             if isinstance(exc, ocr_text_module.OcrConfigurationError):
-                status_code = 503
+                status_code = 502
                 error_code = "OCR_NOT_CONFIGURED"
                 message = "Google Vision OCR 설정을 확인해 주세요."
             elif isinstance(exc, ocr_text_module.OcrQuotaExceededError):
-                status_code = 503
+                status_code = 502
                 error_code = "OCR_QUOTA_EXCEEDED"
                 message = "Google Vision OCR 사용량 한도를 초과했습니다."
             elif isinstance(exc, ocr_text_module.OcrTimeoutError):

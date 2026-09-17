@@ -124,13 +124,13 @@ async def analyze_label(file: UploadFile = File(...)):
         )
     except OcrConfigurationError as exc:
         return failure_response(
-            status_code=503,
+            status_code=502,
             error_code="ocr_not_configured",
             message=str(exc),
         )
     except OcrQuotaExceededError as exc:
         return failure_response(
-            status_code=503,
+            status_code=502,
             error_code="ocr_quota_exceeded",
             message=str(exc),
         )

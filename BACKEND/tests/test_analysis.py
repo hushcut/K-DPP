@@ -508,8 +508,8 @@ def test_scan_material_failure_keeps_parser_care_instruction(
     [
         (RuntimeError, 502, "OCR_FAILED"),
         (ocr_text.OcrServiceError, 502, "OCR_FAILED"),
-        (ocr_text.OcrConfigurationError, 503, "OCR_NOT_CONFIGURED"),
-        (ocr_text.OcrQuotaExceededError, 503, "OCR_QUOTA_EXCEEDED"),
+        (ocr_text.OcrConfigurationError, 502, "OCR_NOT_CONFIGURED"),
+        (ocr_text.OcrQuotaExceededError, 502, "OCR_QUOTA_EXCEEDED"),
         (ocr_text.OcrTimeoutError, 504, "OCR_TIMEOUT"),
         (ocr_text.OcrUnavailableError, 503, "OCR_SERVICE_UNAVAILABLE"),
     ],

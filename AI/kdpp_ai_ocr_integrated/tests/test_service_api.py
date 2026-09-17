@@ -103,10 +103,10 @@ def test_analyze_label_maps_ocr_provider_failure_to_502(monkeypatch) -> None:
 @pytest.mark.parametrize(
     ("error", "status_code", "error_code"),
     [
-        (OcrConfigurationError("configuration"), 503, "ocr_not_configured"),
+        (OcrConfigurationError("configuration"), 502, "ocr_not_configured"),
         (
             OcrQuotaExceededError("quota exceeded"),
-            503,
+            502,
             "ocr_quota_exceeded",
         ),
         (OcrTimeoutError("timeout"), 504, "ocr_timeout"),

@@ -163,25 +163,26 @@ Authorization: Bearer <token>
 | 413 | `PAYLOAD_TOO_LARGE` | 사진 용량 초과 안내 (상한 10MB) |
 | 415 | `UNSUPPORTED_IMAGE_FORMAT` | 지원하지 않는 이미지 안내 (JPEG/PNG/WebP만 허용) ※ |
 | 422 | `MATERIAL_EXTRACTION_FAILED` | 소재 조성 누락·불완전·모호·합계 100% 불일치 → 직접 입력 흐름 |
-| 502 | `OCR_FAILED` | 소재 직접 입력 안내 + `다시 촬영` 버튼 제공 |
-| 503 | `AI_MODULE_FAILED` · `OCR_NOT_CONFIGURED` · `OCR_QUOTA_EXCEEDED` · `OCR_SERVICE_UNAVAILABLE` | **전용 분기 없음** — 아래 '그 외 5xx'와 같게 처리됨 |
+| 502 | `OCR_FAILED` · `OCR_NOT_CONFIGURED` · `OCR_QUOTA_EXCEEDED` | 소재 직접 입력 안내 + `다시 촬영` 버튼 제공 |
+| 503 | `AI_MODULE_FAILED` · `OCR_SERVICE_UNAVAILABLE` | **전용 분기 없음** — 아래 '그 외 5xx'와 같게 처리됨 |
 | 504 | `OCR_TIMEOUT` | 시간 초과 안내 + 직접 입력 유도 |
 | 500 · 그 외 5xx | — | 일시적 서버 문제 안내 (`statusCode >= 500` 폴백) |
 
 **503에 대한 주의**: 프론트에 503 전용 case가 없어 `statusCode >= 500` 폴백을 타고
-500·504와 **똑같은 문구**가 나옵니다. 이전 판에 적혀 있던 "서버/AI 모듈 문제 안내"는
-구현되지 않은 내용이었습니다(2026-09-08 정정).
+500 및 그 밖의 5xx와 같은 일시적 서버 문제 안내를 표시합니다. 504는 전용 분기로
+시간 초과 안내를 표시합니다.
 
-백엔드는 OCR 설정 오류·할당량 초과·서비스 장애를 각각 503으로, OCR 응답 시간
-초과를 504로 구분합니다. 그 밖의 OCR 예외는 502 `OCR_FAILED`로 반환합니다.
-프론트는 503을 별도 분기하지 않아 다른 5xx와 같은 안내를 표시하고, 504는
-시간 초과 전용 안내와 직접 입력 흐름으로 연결합니다.
+백엔드는 재시도로 해결되지 않는 OCR 설정 오류·할당량 초과를 502로 반환해
+직접 입력 흐름으로 연결합니다. 세부 원인은 `OCR_NOT_CONFIGURED`와
+`OCR_QUOTA_EXCEEDED`로 구분합니다. Google Vision 일시 장애는 503,
+OCR 응답 시간 초과는 504, 그 밖의 OCR 예외는 502 `OCR_FAILED`로 반환합니다.
 
 `AI_REQUESTS.md` F-4 요청에 따라 2026-09-08에 프론트에 `case 504:`를 추가했습니다
 (`scan_api_service.dart`, 브랜치 `jw/scan-partial-prefill`). 예고대로 새 enum은 만들지
 않고 기존 `ScanApiErrorType.timeout`을 재사용하므로, 통신 시간 초과와 같은 문구
 ("분석이 예상보다 오래 걸렸어요. 다시 시도하거나 직접 입력해 주세요.")가 나갑니다.
-즉 502·503과 후속 흐름은 같고 문구만 시간 초과에 맞게 달라집니다.
+즉 502·503·504 모두 직접 입력으로 이어질 수 있으며, 오류 원인에 맞게 안내 문구가
+달라집니다.
 
 ### 422 `detail`의 프론트 사용 (2026-09-08 추가)
 
