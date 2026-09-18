@@ -19,13 +19,13 @@ from apps.synthetic import label_generator as generator
 from apps.text.parse_label import parse_materials
 
 
-POLICY = "kdpp-fiber-labels-v1"
+POLICY = "kdpp-fiber-labels-v2"
 SOURCE_COMPOSITION = {"cotton": 80, "spandex": 5, "polyurethane": 15}
 EXPECTED_COMPOSITIONS = {
     "en": {"cotton": 80, "spandex": 5, "polyurethane": 15},
     "ko": {"cotton": 80, "spandex": 5, "polyurethane": 15},
     "ja": {"cotton": 80, "spandex": 5, "polyurethane": 15},
-    "zh": {"cotton": 80, "polyurethane": 20},
+    "zh": {"cotton": 80, "spandex": 5, "polyurethane": 15},
 }
 # Fixed expectations make a change in the generator and parser contract visible.
 # They must not be constructed from the generator's own material-name table.
@@ -33,7 +33,7 @@ EXPECTED_LINES = {
     "en": ["COTTON  80%", "SPANDEX  5%", "POLYURETHANE  15%"],
     "ko": ["면  80%", "스판덱스  5%", "폴리우레탄  15%"],
     "ja": ["綿  80%", "スパンデックス  5%", "ポリウレタン  15%"],
-    "zh": ["棉  80%", "氨纶  20%"],
+    "zh": ["棉  80%", "氨纶  5%", "聚氨酯  15%"],
 }
 
 
@@ -60,7 +60,7 @@ def make_config(output_dir: Path) -> dict:
 
 
 class SyntheticMaterialPolicyTests(unittest.TestCase):
-    def test_chinese_alias_collision_merges_only_within_each_part(self) -> None:
+    def test_chinese_policy_keeps_elastic_material_keys_distinct(self) -> None:
         source = {
             "outer": {"cotton": 80, "spandex": 5, "polyurethane": 15},
             "lining": {"nylon": 90, "spandex": 10},
@@ -70,11 +70,7 @@ class SyntheticMaterialPolicyTests(unittest.TestCase):
 
         actual = generator.normalize_label_parts(source, "zh")
 
-        self.assertEqual(actual, {
-            "outer": {"cotton": 80, "polyurethane": 20},
-            "lining": {"nylon": 90, "polyurethane": 10},
-            "rib": {"cotton": 95, "polyurethane": 5},
-        })
+        self.assertEqual(actual, source)
         self.assertEqual(source, before)
         for part in source:
             self.assertEqual(sum(actual[part].values()), 100)
@@ -82,9 +78,9 @@ class SyntheticMaterialPolicyTests(unittest.TestCase):
         actual["rib"]["cotton"] = 0
         self.assertEqual(source, before)
 
-    def test_other_languages_keep_both_keys_and_return_independent_parts(self) -> None:
+    def test_all_languages_return_independent_part_dictionaries(self) -> None:
         source = {"generic": copy.deepcopy(SOURCE_COMPOSITION)}
-        for language in ("en", "ko", "ja"):
+        for language in ("en", "ko", "ja", "zh"):
             with self.subTest(language=language):
                 actual = generator.normalize_label_parts(source, language)
                 self.assertEqual(actual, {
@@ -109,7 +105,7 @@ class SyntheticMaterialPolicyTests(unittest.TestCase):
             {"spandex": 5, "polyurethane": 15, "cotton": 80},
         )
 
-    def test_spec_retains_raw_composition_before_chinese_label_normalization(self) -> None:
+    def test_spec_retains_raw_composition_under_v2_policy(self) -> None:
         raw = copy.deepcopy(SOURCE_COMPOSITION)
         config = make_config(Path("unused_policy_test_output"))
         config["languages"] = ["zh"]
@@ -117,8 +113,8 @@ class SyntheticMaterialPolicyTests(unittest.TestCase):
             spec = generator._make_spec(0, config, random.Random(config["seed"]))
 
         self.assertEqual(spec.source_parts, {"generic": SOURCE_COMPOSITION})
-        self.assertEqual(spec.parts, {"generic": {"cotton": 80, "polyurethane": 20}})
-        self.assertEqual(spec.answer, {"cotton": 80, "polyurethane": 20})
+        self.assertEqual(spec.parts, {"generic": SOURCE_COMPOSITION})
+        self.assertEqual(spec.answer, SOURCE_COMPOSITION)
         self.assertEqual(raw, SOURCE_COMPOSITION)
         self.assertIsNot(spec.parts["generic"], spec.source_parts["generic"])
 
@@ -173,6 +169,7 @@ class SyntheticMaterialPolicyTests(unittest.TestCase):
                             self.assertIn(line, row["original_text"].splitlines())
                         if language == "zh":
                             self.assertEqual(row["original_text"].count("氨纶"), 1)
+                            self.assertEqual(row["original_text"].count("聚氨酯"), 1)
                             self.assertNotIn("SPANDEX", row["original_text"])
                         self.assertEqual(parse_materials(row["original_text"]), answer)
                         self.assertTrue((output / "images" / row["file_name"]).is_file())

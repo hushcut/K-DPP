@@ -77,6 +77,55 @@ class SyntheticParserEvaluationTests(unittest.TestCase):
         self.assertEqual(report["label_issue_sources"], [])
         self.assertEqual(report["source_results"][0]["notes"][0]["kind"], "material_key_convention")
 
+    def test_v2_policy_preserves_spandex_answer_and_source_provenance(self):
+        row = self.row(
+            material_label_policy="kdpp-fiber-labels-v2",
+            source_parts_json=self.row()["parts_json"],
+        )
+        self.write_rows([row])
+        predicted = {"acrylic": 60, "spandex": 40}
+
+        report = evaluate_manifest(
+            self.path,
+            lambda _: {"materials": predicted, "selected_part": "outer"},
+            lambda _: predicted,
+        )
+
+        self.assertEqual(report["metrics"]["image_rows"]["parse_materials_exact"]["passed"], 1)
+        self.assertEqual(report["source_results"][0]["source_parts"]["outer"]["spandex"], 40)
+        self.assertEqual(report["source_results"][0]["notes"][0]["kind"], "material_key_convention")
+        self.assertEqual(report["label_issue_sources"], [])
+
+    def test_v2_policy_rejects_marker_key_mismatch_even_when_provenance_matches(self):
+        wrong_parts = json.dumps({"outer": {"acrylic": 60, "polyurethane": 40}})
+        row = self.row(
+            material_label_policy="kdpp-fiber-labels-v2",
+            source_parts_json=wrong_parts,
+            answer_materials="acrylic;polyurethane",
+            normalized_materials="acrylic;polyurethane",
+            parts_json=wrong_parts,
+        )
+        self.write_rows([row])
+
+        with self.assertRaisesRegex(ValueError, "original_text material markers require"):
+            load_manifest(self.path)
+
+    def test_v2_policy_accepts_distinct_chinese_elastic_markers(self):
+        parts = {"outer": {"spandex": 40, "polyurethane": 60}}
+        row = self.row(
+            original_text="面料\n氨纶 40%\n聚氨酯 60%",
+            answer_materials="spandex;polyurethane",
+            answer_ratios="40;60",
+            normalized_materials="spandex;polyurethane",
+            normalized_ratios="40;60",
+            parts_json=json.dumps(parts),
+            material_label_policy="kdpp-fiber-labels-v2",
+            source_parts_json=json.dumps(parts),
+        )
+        self.write_rows([row])
+
+        self.assertEqual(load_manifest(self.path)[0]["parts"]["outer"], parts["outer"])
+
     def test_incomplete_or_inconsistent_source_provenance_is_rejected(self):
         cases = [
             {"material_label_policy": "kdpp-fiber-labels-v1"},
@@ -86,6 +135,13 @@ class SyntheticParserEvaluationTests(unittest.TestCase):
             {"material_label_policy": "kdpp-fiber-labels-v1", "source_parts_json": '{"outer":{"cotton":90}}'},
             {"material_label_policy": "kdpp-fiber-labels-v1", "source_parts_json": '{"outer":{"cotton":100}}'},
             {"material_label_policy": "unknown", "source_parts_json": self.row()["parts_json"]},
+            {
+                "material_label_policy": "kdpp-fiber-labels-v2",
+                "source_parts_json": self.row()["parts_json"],
+                "answer_materials": "acrylic;polyurethane",
+                "normalized_materials": "acrylic;polyurethane",
+                "parts_json": '{"outer":{"acrylic":60,"polyurethane":40}}',
+            },
         ]
         for changes in cases:
             with self.subTest(changes=changes):

@@ -127,8 +127,8 @@ class MaterialEvidenceTests(unittest.TestCase):
                 )
         self.assert_composition(
             "棉９２．５％ 氨纶７．５％",
-            {"cotton": 92.5, "polyurethane": 7.5},
-            "면 92.5%, 폴리우레탄 7.5%",
+            {"cotton": 92.5, "spandex": 7.5},
+            "면 92.5%, 스판덱스 7.5%",
         )
 
     def test_decimal_ratios_before_materials(self) -> None:
@@ -145,8 +145,8 @@ class MaterialEvidenceTests(unittest.TestCase):
                 )
         self.assert_composition(
             "92.5%面料棉7.5%氨纶\n里料锦纶100%",
-            {"cotton": 92.5, "polyurethane": 7.5},
-            "면 92.5%, 폴리우레탄 7.5%",
+            {"cotton": 92.5, "spandex": 7.5},
+            "면 92.5%, 스판덱스 7.5%",
             "outer",
         )
 

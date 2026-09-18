@@ -20,7 +20,7 @@ MATERIAL_NAMES = {
     "cotton": {"en": "COTTON", "ko": "\uba74", "ja": "\u7dbf", "zh": "\u68c9"},
     "polyester": {"en": "POLYESTER", "ko": "\ud3f4\ub9ac\uc5d0\uc2a4\ud130", "ja": "\u30dd\u30ea\u30a8\u30b9\u30c6\u30eb", "zh": "\u805a\u916f\u7ea4\u7ef4"},
     "nylon": {"en": "NYLON", "ko": "\ub098\uc77c\ub860", "ja": "\u30ca\u30a4\u30ed\u30f3", "zh": "\u9526\u7eb6"},
-    "polyurethane": {"en": "POLYURETHANE", "ko": "\ud3f4\ub9ac\uc6b0\ub808\ud0c4", "ja": "\u30dd\u30ea\u30a6\u30ec\u30bf\u30f3", "zh": "\u6c28\u7eb6"},
+    "polyurethane": {"en": "POLYURETHANE", "ko": "\ud3f4\ub9ac\uc6b0\ub808\ud0c4", "ja": "\u30dd\u30ea\u30a6\u30ec\u30bf\u30f3", "zh": "\u805a\u6c28\u916f"},
     "spandex": {"en": "SPANDEX", "ko": "\uc2a4\ud310\ub371\uc2a4", "ja": "\u30b9\u30d1\u30f3\u30c7\u30c3\u30af\u30b9", "zh": "\u6c28\u7eb6"},
     "wool": {"en": "WOOL", "ko": "\ubaa8", "ja": "\u7f8a\u6bdb", "zh": "\u7f8a\u6bdb"},
     "linen": {"en": "LINEN", "ko": "\ub9b0\ub128", "ja": "\u9ebb", "zh": "\u4e9a\u9ebb"},

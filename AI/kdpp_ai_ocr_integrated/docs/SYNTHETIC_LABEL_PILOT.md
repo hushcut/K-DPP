@@ -25,8 +25,9 @@ Run from `AI/kdpp_ai_ocr_integrated`:
 python scripts/generate_synthetic_labels.py
 ```
 
-The current default is `outputs/synthetic/synthetic_v1_pilot_corrected_v1_0_2` (generator v1.0.2).
-The original v1.0.0 pilot stays in `outputs/synthetic/synthetic_v1_pilot`, with its own resolved config.
+The current default is `outputs/synthetic/synthetic_v1_pilot_corrected_v1_0_3` (generator v1.0.3).
+The original v1.0.0 pilot and historical corrected v1.0.2 output stay in their existing directories,
+with their own resolved configs.
 Reproducing that historical generator also requires its historical code, not just its old config.
 Generated output is ignored by Git.
 The generator refuses to overwrite a non-empty output directory. Use `--output` for another run:
@@ -48,12 +49,12 @@ training, validation, and testing, every row in a source group must stay in the 
 manifest deliberately leaves `split` as `unassigned` and `include_in_accuracy` as `false` so it cannot
 be mistaken for the real-photo QA score.
 
-Generator v1.0.2 records `source_parts_json` before its label-key policy is applied, and
-`parts_json` after it. The versioned `material_label_policy` is `kdpp-fiber-labels-v1`.
-On Chinese fiber labels, the existing API key for `氨纶` is `polyurethane`, so the generator
-resolves a sampled `spandex` key to that display/answer key before rendering. Collisions merge
-within each part; other languages keep both keys. This is a local API compatibility rule, not
-a universal equivalence between spandex and polyurethane. The parser and backend are unchanged.
+Generator v1.0.3 records the sampled composition in `source_parts_json` and the rendered answer
+in `parts_json`. The current `material_label_policy` is `kdpp-fiber-labels-v2`. It keeps
+`spandex` and `polyurethane` separate in every language: Chinese `氨纶` is `spandex`, while
+`聚氨酯` is `polyurethane`. No ratios or material keys are merged. The evaluator still understands
+the historical v1 policy so old manifests remain reproducible records, and it rejects a versioned
+manifest when its Chinese elastic-fiber marker contradicts the recorded material key.
 
 ## Validation and deciding whether more data is needed
 
@@ -69,6 +70,7 @@ a universal equivalence between spandex and polyurethane. The parser and backend
 ```powershell
 python scripts/evaluate_synthetic_parser.py --manifest outputs/synthetic/synthetic_v1_pilot/manifest.csv --output outputs/synthetic/parser_alias_review/after.json
 python scripts/evaluate_synthetic_parser.py --manifest outputs/synthetic/synthetic_v1_pilot_corrected_v1_0_2/manifest.csv --output outputs/synthetic/pilot_correction_review/corrected.json
+python scripts/evaluate_synthetic_parser.py --manifest outputs/synthetic/synthetic_v1_pilot_corrected_v1_0_3/manifest.csv --output outputs/synthetic/synthetic_v1_pilot_corrected_v1_0_3/parser_report.json
 ```
 
 This reads `original_text` only; it does not open images or call Google Vision.
@@ -81,11 +83,12 @@ The unchanged v1.0.0 pilot improved from 60/80 to 72/80 material matches after
 Japanese/Chinese parser updates. The remaining two source groups contain the
 incorrect Chinese acrylic spelling `腨纶`; source 0020 also exposes the generator's
 ambiguous `氨纶` mapping to both spandex and polyurethane. Generator v1.0.1 fixes
-the acrylic spelling to `腈纶` for future runs. Existing images and answers are
-preserved. Generator v1.0.2 additionally records and applies the label-key contract before
-rendering. The corrected pilot matches 80/80 image rows (20/20 distinct texts), while the
-unchanged original remains 72/80 with the same parser. This is a dataset correction, not an
-additional parser-performance gain. Image OCR has not been evaluated yet.
+the acrylic spelling to `腈纶` for future runs. Generator v1.0.2 records the historical v1
+label-key contract and matched 80/80 under that contract. Generator v1.0.3 adopts the current
+v2 contract. Its 80 image hashes are identical to v1.0.2, while the four `SYN_SOURCE_0020`
+manifest rows now record `acrylic 60, spandex 40`. The v1.0.3 pilot matches 80/80 image rows
+(20/20 distinct texts) with the current parser. This is a ground-truth contract correction,
+not an OCR-performance gain. Image OCR has not been evaluated yet.
 
 See [the parser review](PARSER_ALIAS_REVIEW.md) for results, limitations, and next steps.
 See [the pilot correction review](PILOT_CORRECTION_REVIEW.md) for the contract, exact changes,
@@ -95,7 +98,9 @@ preservation checks, and reproduction commands.
 
 The parser now requires explicit material/ratio correspondence and a complete 100% composition.
 It preserves decimal ratios, rejects missing or contradictory evidence, and keeps a failed outer
-part from being replaced with a valid lining. The corrected pilot remains 80/80; its images and
-answers are unchanged. The original typo-bearing 8 rows now return failure with empty materials.
+part from being replaced with a valid lining. The current v1.0.3 pilot remains 80/80. The
+historical v1.0.2 manifest is retained as a legacy-contract record; its four `氨纶` rows
+intentionally differ from the current parser key. The original typo-bearing 8 rows return failure
+with empty materials.
 See [the material-evidence review](MATERIAL_EVIDENCE_REVIEW.md) for the regression cases,
 API behavior, validation, and limits of this conservative policy.

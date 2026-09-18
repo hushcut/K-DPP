@@ -17,6 +17,7 @@ import csv
 import hashlib
 import importlib
 import json
+import re
 import sys
 from collections import Counter, defaultdict
 from decimal import Decimal, InvalidOperation
@@ -34,7 +35,13 @@ METRICS = (
 )
 # Frozen answer contracts are checked independently of the generator and the
 # selected --parser-root, which may be a historical checkout without this policy.
-MATERIAL_POLICIES = {"kdpp-fiber-labels-v1": {"zh": {"spandex": "polyurethane"}}}
+MATERIAL_POLICIES = {
+    "kdpp-fiber-labels-v1": {"zh": {"spandex": "polyurethane"}},
+    "kdpp-fiber-labels-v2": {},
+}
+_ZH_LONG_SPANDEX = re.compile(r"聚氨[酯脂][弹彈]性[纤纖][维維]")
+_ZH_SPANDEX = re.compile(r"氨[纶綸](?:[丝絲])?")
+_ZH_POLYURETHANE = re.compile(r"聚氨[酯脂]")
 
 
 def _ratio(value, context):
@@ -77,6 +84,31 @@ def _unique_object(pairs):
             raise ValueError(f"duplicate JSON key {key!r}")
         result[key] = value
     return result
+
+
+def _validate_material_markers(text, language, policy, parts, context):
+    """Check Chinese elastic-fiber labels against the declared answer contract."""
+    if language != "zh" or not policy:
+        return
+    remaining, long_count = _ZH_LONG_SPANDEX.subn("", text)
+    remaining, spandex_count = _ZH_SPANDEX.subn("", remaining)
+    polyurethane_count = len(_ZH_POLYURETHANE.findall(remaining))
+    required = set()
+    if policy == "kdpp-fiber-labels-v1":
+        if long_count or spandex_count or polyurethane_count:
+            required.add("polyurethane")
+    else:
+        if long_count or spandex_count:
+            required.add("spandex")
+        if polyurethane_count:
+            required.add("polyurethane")
+    recorded = {material for composition in parts.values() for material in composition}
+    missing = required - recorded
+    if missing:
+        raise ValueError(
+            f"{context}: original_text material markers require {sorted(required)}, "
+            f"but parts_json records {sorted(recorded)}"
+        )
 
 
 def load_manifest(path):
@@ -137,6 +169,9 @@ def load_manifest(path):
                     contracted_parts[part] = contracted
                 if contracted_parts != parts:
                     raise ValueError(f"{context}: source parts violate the declared material label policy")
+                _validate_material_markers(
+                    row["original_text"], row["label_language"], policy, parts, context
+                )
             source = {
                 "source_group": row["source_group"], "language": row["label_language"],
                 "original_text": row["original_text"], "expected_materials": expected,
@@ -197,10 +232,24 @@ def evaluate_manifest(manifest, parse_label, parse_materials):
         if "腨纶" in text:
             notes.append({"kind": "invalid_label_spelling",
                           "message": "Generated text contains 腨纶 (U+8168); the standard acrylic spelling is 腈纶 (U+8148). Original text and answer remain unchanged."})
-        if "氨纶" in text:
-            versioned = source["material_label_policy"] == "kdpp-fiber-labels-v1"
-            notes.append({"kind": "material_key_convention" if versioned else "ambiguous_material_label",
-                          "message": "K-DPP uses the legacy polyurethane API key for 氨纶 on fiber labels. The original unversioned generator also used spandex for this text. Strict scores preserve every manifest key without remapping, regardless of policy metadata."})
+        if any(name in text for name in ("氨纶", "氨綸")):
+            policy = source["material_label_policy"]
+            if policy == "kdpp-fiber-labels-v1":
+                note = {
+                    "kind": "material_key_convention",
+                    "message": "Historical v1 manifests use the polyurethane API key for 氨纶. Strict scores preserve that recorded answer without remapping.",
+                }
+            elif policy == "kdpp-fiber-labels-v2":
+                note = {
+                    "kind": "material_key_convention",
+                    "message": "The v2 label contract maps 氨纶/氨綸 to spandex and keeps 聚氨酯 as polyurethane.",
+                }
+            else:
+                note = {
+                    "kind": "ambiguous_material_label",
+                    "message": "This unversioned manifest does not declare whether 氨纶 follows the historical v1 key or the current spandex key. Strict scores preserve its recorded answer.",
+                }
+            notes.append(note)
         results.append({
             "source_group": source["source_group"], "language": source["language"],
             "image_rows": len(source["rows"]), "rows": source["rows"],

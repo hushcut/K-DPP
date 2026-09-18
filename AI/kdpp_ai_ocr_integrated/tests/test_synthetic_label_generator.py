@@ -16,7 +16,7 @@ if str(BASE_DIR) not in sys.path:
 from apps.synthetic.label_generator import generate_dataset
 
 
-def test_config(output_dir: Path) -> dict:
+def make_test_config(output_dir: Path) -> dict:
     return {
         "dataset_name": "unit_test",
         "generator_version": "test",
@@ -42,7 +42,7 @@ class SyntheticLabelGeneratorTests(unittest.TestCase):
     def test_generates_expected_files_and_valid_answers(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp) / "dataset"
-            summary = generate_dataset(test_config(output))
+            summary = generate_dataset(make_test_config(output))
 
             self.assertEqual(summary["images"], 6)
             self.assertEqual(summary["unique_source_groups"], 3)
@@ -69,8 +69,8 @@ class SyntheticLabelGeneratorTests(unittest.TestCase):
             root = Path(temp)
             first = root / "first"
             second = root / "second"
-            generate_dataset(test_config(first))
-            generate_dataset(test_config(second))
+            generate_dataset(make_test_config(first))
+            generate_dataset(make_test_config(second))
 
             def hashes(path: Path) -> list[str]:
                 with (path / "manifest.csv").open("r", encoding="utf-8-sig", newline="") as stream:
@@ -81,7 +81,7 @@ class SyntheticLabelGeneratorTests(unittest.TestCase):
     def test_chinese_acrylic_uses_correct_spelling_in_image_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp) / "dataset"
-            config = test_config(output)
+            config = make_test_config(output)
             config.update({
                 "base_label_count": 1,
                 "variants_per_label": 1,
@@ -118,7 +118,7 @@ class SyntheticLabelGeneratorTests(unittest.TestCase):
             output.mkdir()
             (output / "keep.txt").write_text("do not overwrite", encoding="utf-8")
             with self.assertRaises(FileExistsError):
-                generate_dataset(test_config(output))
+                generate_dataset(make_test_config(output))
 
 
 if __name__ == "__main__":

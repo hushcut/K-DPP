@@ -1,7 +1,7 @@
 {
-  "dataset_name": "synthetic_v1_pilot_corrected_v1_0_2",
-  "generator_version": "1.0.2",
-  "material_label_policy": "kdpp-fiber-labels-v1",
+  "dataset_name": "synthetic_v1_pilot_corrected_v1_0_3",
+  "generator_version": "1.0.3",
+  "material_label_policy": "kdpp-fiber-labels-v2",
   "seed": 20260909,
   "base_label_count": 20,
   "variants_per_label": 4,
@@ -31,5 +31,5 @@
   "jpeg_quality_min": 72,
   "jpeg_quality_max": 96,
   "contact_sheet_limit": 80,
-  "output_dir": "outputs/synthetic/synthetic_v1_pilot_corrected_v1_0_2"
+  "output_dir": "outputs/synthetic/synthetic_v1_pilot_corrected_v1_0_3"
 }

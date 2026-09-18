@@ -90,3 +90,18 @@ Google Vision 호출, 실제 사진 163장 재평가, 새 사진 수집·모델 
 
 다음은 실제 이미지에서 OCR 오류와 파싱 실패를 나누어 측정하는 단계다.
 현재 수정 파일럿의 80/80이나 텍스트 테스트 통과를 OCR 정확도로 해석하면 안 된다.
+
+## 2026-09-18 중국어 탄성섬유 계약 후속 검증
+
+위의 수정 파일럿 80/80은 당시 v1.0.2의 `氨纶 → polyurethane` 계약에 따른 역사적
+결과다. 프로젝트 공통 기준을 `氨纶 → spandex`로 확정하면서 생성기 v1.0.3과
+`kdpp-fiber-labels-v2` manifest를 새 출력 폴더에 생성했다. v1.0.2 산출물은 그대로
+보존하며 평가기는 v1과 v2를 모두 검증한다.
+
+v1.0.3은 이미지 80장 해시를 유지하고 `SYN_SOURCE_0020` 네 행의 정답만 현재 키에
+맞췄다. 전체 unittest 51개와 파서 단독 평가의 소재·비율 80/80, 대표 부위 80/80을
+통과했다. 재평가 명령은 다음과 같다.
+
+```powershell
+python -B scripts/evaluate_synthetic_parser.py --manifest outputs/synthetic/synthetic_v1_pilot_corrected_v1_0_3/manifest.csv --output outputs/synthetic/synthetic_v1_pilot_corrected_v1_0_3/parser_report.json
+```

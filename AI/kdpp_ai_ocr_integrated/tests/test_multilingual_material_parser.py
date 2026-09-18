@@ -77,21 +77,27 @@ class MultilingualMaterialParserTests(unittest.TestCase):
 
     def test_rib_is_not_merged_into_outer_or_lining(self) -> None:
         cases = [
-            "表地\nカシミヤ60%\n羊毛40%\n裏地\n絹100%\nリブ\n綿95%\nポリウレタン5%",
-            "面料\n羊绒60%\n羊毛40%\n里料\n蚕丝100%\n螺纹\n棉95%\n氨纶5%",
+            (
+                "表地\nカシミヤ60%\n羊毛40%\n裏地\n絹100%\nリブ\n綿95%\nポリウレタン5%",
+                {"cotton": 95, "polyurethane": 5},
+            ),
+            (
+                "面料\n羊绒60%\n羊毛40%\n里料\n蚕丝100%\n螺纹\n棉95%\n氨纶5%",
+                {"cotton": 95, "spandex": 5},
+            ),
         ]
-        for text in cases:
+        for text, expected_rib in cases:
             with self.subTest(text=text):
                 parsed = self.assert_composition(text, {"cashmere": 60, "wool": 40}, "outer")
                 self.assertEqual(parsed["parts"]["lining"], {"silk": 100})
-                self.assertEqual(parsed["parts"]["rib"], {"cotton": 95, "polyurethane": 5})
+                self.assertEqual(parsed["parts"]["rib"], expected_rib)
 
     def test_ratio_before_cjk_header_stays_with_its_part(self) -> None:
         cases = [
-            ("95%面料棉5%氨纶\n里料聚酯100%", {"cotton": 95, "polyurethane": 5}),
+            ("95%面料棉5%氨纶\n里料聚酯100%", {"cotton": 95, "spandex": 5}),
             ("50%本体綿50%ポリエステル\n裏地ナイロン100%", {"cotton": 50, "polyester": 50}),
             ("80%本体綿20%ポリエステル", {"cotton": 80, "polyester": 20}),
-            ("９５％面料棉５％氨纶\n里料蚕丝１００％", {"cotton": 95, "polyurethane": 5}),
+            ("９５％面料棉５％氨纶\n里料蚕丝１００％", {"cotton": 95, "spandex": 5}),
         ]
         for text, expected in cases:
             with self.subTest(text=text):
@@ -118,14 +124,31 @@ class MultilingualMaterialParserTests(unittest.TestCase):
             ("면 60% 폴리에스터 40%", {"cotton": 60, "polyester": 40}),
             ("COTTON 95% ELASTANE 5%", {"cotton": 95, "spandex": 5}),
             ("COTTON 95% POLYURETHANE 5%", {"cotton": 95, "polyurethane": 5}),
-            ("棉95% 氨纶5%", {"cotton": 95, "polyurethane": 5}),
+            ("棉95% 氨纶5%", {"cotton": 95, "spandex": 5}),
+            ("棉95% 氨綸5%", {"cotton": 95, "spandex": 5}),
+            ("棉95% 氨纶丝5%", {"cotton": 95, "spandex": 5}),
+            ("棉95% 氨綸絲5%", {"cotton": 95, "spandex": 5}),
+            ("棉95% 聚氨酯弹性纤维5%", {"cotton": 95, "spandex": 5}),
+            ("棉95% 聚氨酯彈性纖維5%", {"cotton": 95, "spandex": 5}),
+            ("棉95% 聚氨酯弹性纖維5%", {"cotton": 95, "spandex": 5}),
+            ("棉95% 聚氨酯彈性纤维5%", {"cotton": 95, "spandex": 5}),
+            ("棉95% 聚氨脂弹性纤维5%", {"cotton": 95, "spandex": 5}),
+            ("棉95% 聚氨脂弹性纖維5%", {"cotton": 95, "spandex": 5}),
+            ("棉95% 聚氨脂彈性纤维5%", {"cotton": 95, "spandex": 5}),
+            ("棉95% 聚氨脂彈性纖維5%", {"cotton": 95, "spandex": 5}),
+            ("棉95% 聚氨酯5%", {"cotton": 95, "polyurethane": 5}),
+            ("棉95% 聚氨脂5%", {"cotton": 95, "polyurethane": 5}),
+            ("聚氨酯95% 氨纶5%", {"polyurethane": 95, "spandex": 5}),
         ]
         for text, expected in cases:
             with self.subTest(text=text):
                 self.assert_composition(text, expected)
 
     def test_unknown_text_and_generator_typo_are_not_material_aliases(self) -> None:
-        for text in ["", "未知繊維100%", "腨纶100%"]:
+        for text in [
+            "", "未知繊維100%", "腨纶100%",
+            "非弹性纤维100%", "无弹性纤维100%", "弹性纤维除外100%", "非彈性纖維100%",
+        ]:
             with self.subTest(text=text):
                 self.assertEqual(parse_materials(text), {})
                 self.assertEqual(parse_label(text)["status"], "failed")

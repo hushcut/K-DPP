@@ -25,7 +25,11 @@ MATERIAL_ALIASES = {
     "spandex": [
         "spandex", "elastane", "elastan", "elasthan", "elastano", "lycra",
         "\uc2a4\ud310\ub371\uc2a4", "\uc5d8\ub77c\uc2a4\ud14c\uc778",
-        "スパンデックス",
+        "スパンデックス", "氨纶", "氨綸", "氨纶丝", "氨綸絲",
+        "聚氨酯弹性纤维", "聚氨酯弹性纖維",
+        "聚氨酯彈性纤维", "聚氨酯彈性纖維",
+        "聚氨脂弹性纤维", "聚氨脂弹性纖維",
+        "聚氨脂彈性纤维", "聚氨脂彈性纖維",
     ],
     "linen": ["linen", "lin", "leinen", "lino", "\ub9b0\ub128", "\ub9c8", "\u9ebb"],
     "viscose": ["viscose", "viskose", "viscon", "viskon", "viskoz", "viscosa", "\ube44\uc2a4\ucf54\uc2a4", "ビスコース", "粘胶纤维"],
@@ -33,7 +37,7 @@ MATERIAL_ALIASES = {
     "modal": ["modal", "\ubaa8\ub2ec", "モダール", "莫代尔"],
     "cashmere": ["cashmere", "kaschmir", "kashmir", "cachemire", "\uce90\uc2dc\ubbf8\uc5b4", "カシミヤ", "羊绒"],
     "polyurethane": [
-        "polyurethane", "polyurethan", "polyurethanc", "polyurethene", "pu", "\ud3f4\ub9ac\uc6b0\ub808\ud0c4", "\uc6b0\ub808\ud0c4", "\ud3f4\ub9ac\uc6b0", "\u30dd\u30ea\u30a6\u30ec\u30bf\u30f3", "\u6c28\u7eb6", "\u5f48\u6027\u7e96\u7dad",
+        "polyurethane", "polyurethan", "polyurethanc", "polyurethene", "pu", "\ud3f4\ub9ac\uc6b0\ub808\ud0c4", "\uc6b0\ub808\ud0c4", "\ud3f4\ub9ac\uc6b0", "\u30dd\u30ea\u30a6\u30ec\u30bf\u30f3", "聚氨酯", "聚氨脂",
     ],
     "leather": ["leather", "cuir", "leder", "piel", "\uac00\uc8fd"],
     "ramie": ["ramie", "\ub77c\ubbf8"],
