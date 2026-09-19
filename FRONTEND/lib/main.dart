@@ -1,6 +1,7 @@
 // 앱 시작 준비, 전역 상태 등록, 테마와 이름 기반 라우트를 구성하는 진입 파일입니다.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'login_screen.dart';
@@ -115,6 +116,11 @@ class MyApp extends StatelessWidget {
           theme: _lightTheme(),
           darkTheme: _darkTheme(),
           themeMode: themeProvider.themeMode,
+          // 앱 문구가 전부 한국어라 앱 언어도 한국어로 고정합니다. 기본값(영어)이면
+          // TalkBack이 한국어 글자와 숫자를 영어 음성으로 읽습니다(2026-09-18 폰 확인).
+          locale: const Locale('ko', 'KR'),
+          supportedLocales: const [Locale('ko', 'KR')],
+          localizationsDelegates: GlobalMaterialLocalizations.delegates,
           initialRoute: '/splash',
           // 스플래시부터 인증 화면과 메인 화면까지 앱의 주요 이동 경로입니다.
           routes: {

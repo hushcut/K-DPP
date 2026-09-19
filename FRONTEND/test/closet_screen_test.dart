@@ -202,6 +202,55 @@ void main() {
     expect(find.text('데님 팬츠'), findsOneWidget);
   });
 
+  testWidgets('검색 결과가 없을 때 키보드가 올라와도 빈 목록 안내가 넘치지 않는다', (tester) async {
+    // 2026-09-18 폰 확인(SM-N986N): 검색 결과 0건 + 키보드에서
+    // 'BOTTOM OVERFLOWED BY 105 PIXELS'. 화면·배율·글자 크기는 그 폰 값(1080x2316,
+    // 밀도 450 = 배율 2.8125, 글자 1.1 — adb로 확인), 키보드는 스크린샷에서 잰 1098 물리 픽셀.
+    // (정정 2026-09-19: 처음엔 배율 2.625에 키보드를 500dp로 크게 잡았다)
+    tester.view.physicalSize = const Size(1080, 2316);
+    tester.view.devicePixelRatio = 2.8125;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.1;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    final provider = ClosetProvider(storage: FakeClosetStorage());
+    await provider.addClothes(
+      Clothes(
+        title: '린넨 셔츠',
+        category: '상의',
+        health: 88,
+        materials: {'linen': 100},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: 2.1,
+      ),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: provider,
+        child: MaterialApp(
+          home: Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'm');
+    tester.view.viewInsets = const FakeViewPadding(bottom: 1098);
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('"m"에 맞는 의류가 없습니다.'), findsOneWidget);
+
+    // 자리가 모자라도 스크롤해서 버튼까지 닿을 수 있어야 한다.
+    await tester.ensureVisible(find.text('검색어 지우기'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('검색어 지우기'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('린넨 셔츠'), findsOneWidget);
+  });
+
   testWidgets('옷장 검색은 저장 키와 다른 언어의 소재명으로도 같은 소재를 찾는다', (tester) async {
     final provider = ClosetProvider(storage: FakeClosetStorage());
 

@@ -54,8 +54,8 @@ Future<ClothingTypeOption?> showClothingTypePickerSheet({
     isDismissible: canDismiss,
     // Flutter 손잡이는 enableDrag가 false여도 자체 드래그 감지기와 접근성 '닫기'
     // 동작을 가지며, 둘 다 PopScope를 거치지 않고 시트를 닫습니다. 그래서 필수
-    // 선택에서는 손잡이를 빼고 시트 안에 모양만 그립니다. enableDrag도 꺼야
-    // 하단 안전 영역을 끌어내려 닫는 경로가 막힙니다.
+    // 선택에서는 손잡이를 뺍니다. 끌어서 닫히지 않으므로 손잡이 모양도 그리지 않습니다
+    // (2026-09-18 사용자 결정). enableDrag도 꺼야 하단 안전 영역을 끌어내려 닫는 경로가 막힙니다.
     enableDrag: canDismiss,
     showDragHandle: canDismiss,
     backgroundColor: sheetColor,
@@ -257,22 +257,22 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
         padding: EdgeInsets.only(
           bottom: MediaQuery.viewInsetsOf(context).bottom,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (isSelectionRequired) const _DecorativeDragHandle(),
-            ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: maxSheetHeight),
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 180),
-                switchInCurve: Curves.easeOut,
-                switchOutCurve: Curves.easeOut,
-                child: _isDirectInputMode
-                    ? _buildDirectInputView(context)
-                    : _buildOptionListView(context),
-              ),
+        child: Padding(
+          // 손잡이가 없는 필수 선택 시트는 제목이 둥근 윗변에 붙지 않게 띄웁니다.
+          padding: EdgeInsets.only(top: isSelectionRequired ? 24 : 0),
+          // 키보드 여백을 뺀 남은 높이 안에서만 커지게 합니다. 전에는 Column 안에 있어
+          // 높이 제한 없이 화면 높이의 78%까지 커져 키보드 여백과 합쳐 넘쳤습니다(2026-09-18 폰 확인).
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxSheetHeight),
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              switchInCurve: Curves.easeOut,
+              switchOutCurve: Curves.easeOut,
+              child: _isDirectInputMode
+                  ? _buildDirectInputView(context)
+                  : _buildOptionListView(context),
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -639,33 +639,6 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// 필수 선택 시트에서 Flutter 손잡이 대신 그리는, 모양만 있는 손잡이입니다.
-///
-/// 드래그와 접근성 '닫기' 동작이 없어야 하므로 제스처 없이 그리고 의미 정보에서도 뺍니다.
-/// 크기와 색은 Flutter 기본 손잡이(48px 영역, 32x4 막대)에 맞춥니다.
-class _DecorativeDragHandle extends StatelessWidget {
-  const _DecorativeDragHandle();
-
-  @override
-  Widget build(BuildContext context) {
-    return ExcludeSemantics(
-      child: SizedBox(
-        height: kMinInteractiveDimension,
-        child: Center(
-          child: Container(
-            width: 32,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

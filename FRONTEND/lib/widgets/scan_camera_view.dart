@@ -66,8 +66,14 @@ class ScanCameraView extends StatelessWidget {
             final buttonAreaGap = (availableHeight * 0.082)
                 .clamp(24.0, 56.0)
                 .toDouble();
+            // 권한 안내 같은 오류 문구는 라벨 틀보다 길어, 오류를 보여 줄 때는 틀을 화면 폭까지
+            // 키워(세로 공간이 허락하는 만큼) 스크롤 없이 보이게 합니다(2026-09-19 폰 확인).
+            final showsCameraError =
+                cameraErrorMessage != null &&
+                !isCameraInitializing &&
+                !isScanning;
             final frameSizeByWidth = (constraints.maxWidth - 40)
-                .clamp(180.0, 250.0)
+                .clamp(180.0, showsCameraError ? double.infinity : 250.0)
                 .toDouble();
             // 비율로 계산하되, 남는 공간을 넘지 않게 해 짧은 화면에서도
             // 문구·버튼이 잘리지 않도록 합니다.
@@ -310,7 +316,7 @@ class ScanCameraView extends StatelessWidget {
       return Semantics(
         liveRegion: true,
         child: Padding(
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.all(12),
           child: Center(
             child: SingleChildScrollView(
               child: Column(
@@ -319,9 +325,9 @@ class ScanCameraView extends StatelessWidget {
                   const Icon(
                     Icons.no_photography_outlined,
                     color: Colors.white70,
-                    size: 34,
+                    size: 28,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   Text(
                     errorMessage,
                     textAlign: TextAlign.center,
@@ -331,28 +337,36 @@ class ScanCameraView extends StatelessWidget {
                       height: 1.4,
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  TextButton(
-                    onPressed: onRetryCamera,
-                    style: TextButton.styleFrom(
-                      minimumSize: const Size(0, 36),
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: const Text('다시 시도'),
+                  const SizedBox(height: 8),
+                  // 두 버튼을 한 줄에 두어 카메라 틀 안에서 스크롤 없이 보이게 합니다.
+                  // 글자가 커져 한 줄에 안 들어가면 자동으로 줄을 바꿉니다(2026-09-19 폰 확인).
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 4,
+                    children: [
+                      TextButton(
+                        onPressed: onRetryCamera,
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(0, 36),
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text('다시 시도'),
+                      ),
+                      if (isPermissionError)
+                        TextButton(
+                          onPressed: () => _showCameraPermissionGuide(context),
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size(0, 36),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: const Text('권한 확인 방법'),
+                        ),
+                    ],
                   ),
                   if (isPermissionError) ...[
-                    const SizedBox(height: 6),
-                    TextButton(
-                      onPressed: () => _showCameraPermissionGuide(context),
-                      style: TextButton.styleFrom(
-                        minimumSize: const Size(0, 36),
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: const Text('권한 확인 방법'),
-                    ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 4),
                     const Text(
                       '앨범 사진 선택은 계속 사용할 수 있어요.',
                       textAlign: TextAlign.center,
