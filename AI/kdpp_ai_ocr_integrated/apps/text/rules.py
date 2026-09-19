@@ -140,6 +140,8 @@ MATERIAL_ALIASES = {
         "氨綸絲",
         "聚氨酯弹性纤维",
         "聚氨酯彈性纖維",
+        "弹性纤维",
+        "彈性纖維",
         "ポリウレタン弾性繊維",
         "スパンデックス",
     ],
@@ -169,8 +171,14 @@ MATERIAL_ALIASES = {
         "粘膠",
         "粘胶纤维",
         "粘膠纖維",
+        "粘纤",
+        "粘纖",
         "黏胶",
         "黏膠",
+        "黏纤",
+        "黏纖",
+        "再生纤维素纤维",
+        "再生纖維素纖維",
         "ビスコース",
     ],
     "silk": [
@@ -184,6 +192,8 @@ MATERIAL_ALIASES = {
         "絹",
         "蚕丝",
         "蠶絲",
+        "真丝",
+        "真絲",
         "シルク",
     ],
     "modal": ["modal", "모달", "莫代尔", "莫代爾", "モダール", "モダル"],
@@ -216,6 +226,8 @@ MATERIAL_ALIASES = {
         "醋酸",
         "醋酸纤维",
         "醋酸纖維",
+        "醋酯纤维",
+        "醋酯纖維",
         "アセテート",
     ],
     "triacetate": [
@@ -250,6 +262,15 @@ MATERIAL_ALIASES = {
     "bamboo": ["bamboo", "대나무", "竹纤维", "竹纖維", "竹繊維"],
     "cupro": ["cupro", "큐프로", "铜氨纤维", "銅氨纖維", "キュプラ"],
     "hemp": ["hemp", "대마", "大麻", "ヘンプ"],
+}
+
+
+# Multilingual labels name one elastic fiber differently per language
+# (``polyurethane`` / ``폴리우레탄`` / ``氨纶``), and the carbon factors match,
+# so a label mixing them still declares a single composition. Only the
+# ambiguity check uses this; each name still reports under its own key.
+EQUIVALENT_MATERIALS = {
+    "polyurethane": "spandex",
 }
 
 
