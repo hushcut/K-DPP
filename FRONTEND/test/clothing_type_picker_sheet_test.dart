@@ -57,6 +57,30 @@ void main() {
       semantics.dispose();
     });
 
+    testWidgets('끌어서 닫을 수 없으므로 손잡이를 그리지 않는다', (tester) async {
+      _usePhoneView(tester);
+      await _openSheet(tester, discardPrompt: prompt);
+
+      expect(_dragHandles(), findsNothing);
+    });
+
+    testWidgets('직접 무게 입력에서 키보드가 올라와도 시트가 넘치지 않는다', (tester) async {
+      // 2026-09-18 폰 확인(SM-N986N): 'BOTTOM OVERFLOWED BY 122 PIXELS'.
+      // 키보드 높이는 그 폰 스크린샷에서 잰 삼성 키보드(숫자 줄·추천 줄 포함) 1098 물리 픽셀.
+      // (정정 2026-09-19: 처음엔 '실측 418'이라 적었는데, 418은 이 테스트 배율 2.625로 나눈 값이다.
+      // 그 폰의 실제 배율은 2.8125라 약 390dp — 물리 픽셀로 적어 배율과 무관하게 했다)
+      _usePhoneView(tester);
+      await _openSheet(tester, discardPrompt: prompt);
+      await tester.scrollUntilVisible(find.text('직접 입력'), 100);
+      await tester.tap(find.text('직접 입력'));
+      await tester.pumpAndSettle();
+
+      tester.view.viewInsets = const FakeViewPadding(bottom: 1098);
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('바깥을 탭해도 닫히지 않고 확인창도 뜨지 않는다', (tester) async {
       _usePhoneView(tester);
       final sheet = await _openSheet(tester, discardPrompt: prompt);
@@ -185,6 +209,13 @@ void main() {
       expect(sheet.result, isNull);
     });
 
+    testWidgets('끌어서 닫을 수 있으므로 손잡이를 보여 준다', (tester) async {
+      _usePhoneView(tester);
+      await _openSheet(tester);
+
+      expect(_dragHandles(), findsOneWidget);
+    });
+
     testWidgets('바깥 탭과 뒤로가기로도 확인 없이 닫힌다', (tester) async {
       _usePhoneView(tester);
       final tappedOutside = await _openSheet(tester);
@@ -268,6 +299,11 @@ Rect _sheetRect(WidgetTester tester) {
 }
 
 bool _isSheetOpen() => find.byType(BottomSheet).evaluate().isNotEmpty;
+
+// Flutter 손잡이(_DragHandle)와 직접 그린 손잡이 모양을 모두 찾는다.
+Finder _dragHandles() => find.byWidgetPredicate(
+  (widget) => widget.runtimeType.toString().contains('DragHandle'),
+);
 
 Finder _dialogButton(String label) {
   return find.descendant(

@@ -89,6 +89,24 @@ void main() {
     expect(find.text('직접 입력 모드'), findsOneWidget);
     expect(find.textContaining('AI가 라벨을 정확히 인식하지 못했어요.'), findsWidgets);
   });
+  testWidgets('새 소재 칸의 0% 뒤에 숫자를 쳐도 맨 앞 0이 붙지 않는다', (tester) async {
+    // 2026-09-19 폰 확인: 새 칸이 '0'으로 시작해 100을 치면 '0100%'가 됐다.
+    final materialInputs = MaterialInputCollection()..addEmpty();
+    addTearDown(materialInputs.dispose);
+
+    await _pumpResultView(tester, materialInputs: materialInputs);
+
+    await tester.enterText(find.widgetWithText(TextFormField, '0'), '0100');
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextFormField, '100'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, '0100'), findsNothing);
+
+    // 소수점 앞의 0은 지우지 않는다.
+    await tester.enterText(find.widgetWithText(TextFormField, '100'), '0.5');
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextFormField, '0.5'), findsOneWidget);
+  });
+
   testWidgets('소재 입력 중에는 화면 전체를 다시 그리지 않고 합계만 갱신한다', (tester) async {
     final materialInputs = MaterialInputCollection()
       ..setFromMaterials({'cotton': 70});

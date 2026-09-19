@@ -5,6 +5,7 @@ import '../services/material_catalog_api_service.dart';
 import '../services/material_catalog_controller.dart';
 import '../theme/app_palette.dart';
 import '../utils/clothing_estimator.dart';
+import '../utils/leading_zero_trimmer.dart';
 import '../utils/scan_calculation_resolver.dart';
 import 'material_edit_controller.dart';
 import 'material_input_collection.dart';
@@ -794,6 +795,7 @@ class ScanResultView extends StatelessWidget {
             style: TextStyle(color: primaryText, fontSize: 14),
             textAlign: TextAlign.right,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: const [LeadingZeroTrimmer()],
             decoration: InputDecoration(
               filled: true,
               fillColor: inputFillColor,

@@ -21,7 +21,7 @@ extension _ClosetListViews on _ClosetScreenState {
     final isSearching = _searchQuery.isNotEmpty;
     final action = isSearching ? _searchController.clear : widget.onStartScan;
 
-    return Center(
+    final content = Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -81,6 +81,19 @@ extension _ClosetListViews on _ClosetScreenState {
               ),
             ],
           ],
+        ),
+      ),
+    );
+
+    // 키보드가 올라와 목록 칸이 안내보다 낮아지면 넘치지 않게 스크롤하고,
+    // 자리가 넉넉하면 지금처럼 가운데에 둡니다(2026-09-18 폰 확인).
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight: constraints.hasBoundedHeight ? constraints.maxHeight : 0,
+          ),
+          child: content,
         ),
       ),
     );

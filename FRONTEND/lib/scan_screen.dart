@@ -101,6 +101,8 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
       isCameraReady: () => _cameraSession.isReady,
       initializeCamera: _cameraSession.initialize,
       disposeCamera: _cameraSession.disposeCamera,
+      isCameraInitializing: () => _cameraSession.isInitializing,
+      isCameraPermissionDenied: () => _cameraSession.isPermissionDenied,
     );
     WidgetsBinding.instance.addObserver(this);
     _cameraSession.addListener(_handleCameraSessionChanged);
