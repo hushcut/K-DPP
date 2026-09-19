@@ -37,6 +37,7 @@ PART_PATTERNS = {
         "내피",
         "lining",
         "lning",
+        "uning",
         "裏地",
         "里料",
         "裡料",
@@ -238,9 +239,105 @@ def extract_materials(line: str) -> list[str]:
     )
 
 
-def detect_part(line: str, current_part: str) -> str:
+_PART_MARKER_PATTERNS = {
+    part: [
+        re.compile(
+            rf"(?<![a-z]){re.escape(alias.casefold())}(?![a-z])"
+            if alias.isascii()
+            else re.escape(alias.casefold())
+        )
+        for alias in aliases
+    ]
+    for part, aliases in PART_PATTERNS.items()
+}
+
+
+def declared_part(line: str) -> str | None:
+    """Part explicitly named on a line, or ``None`` when no marker appears.
+
+    An ASCII marker must stand on its own so a word that merely contains one
+    (``distributed`` holding ``rib``) does not retag a composition row.
+    """
     normalized = normalize_text(line)
-    for part, aliases in PART_PATTERNS.items():
-        if any(alias.casefold() in normalized for alias in aliases):
+    for part, patterns in _PART_MARKER_PATTERNS.items():
+        if any(pattern.search(normalized) for pattern in patterns):
             return part
-    return current_part
+    return None
+
+
+def detect_part(line: str, current_part: str) -> str:
+    return declared_part(line) or current_part
+
+
+# A fiber the table cannot price must not be dropped silently: its ratio would
+# be handed to whichever neighbouring material is recognised.
+UNPRICED_MATERIALS = {
+    "metallic",
+    "modacrylic",
+    "메탈릭",
+    "모다크릴",
+    "モダクリル",
+}
+
+# ``faux leather`` is not leather, so a modifier that negates the material it
+# qualifies blocks the row instead of resolving to the bare material.
+NEGATING_MODIFIERS = {
+    "faux",
+    "imitation",
+    "artificial",
+    "synthetic",
+    "fake",
+    "인조",
+    "합성",
+    "모조",
+    "仿",
+    "人造",
+}
+
+# Chinese and Japanese fiber names are built from these suffixes, so a token
+# longer than the suffix alone names a fiber the alias table does not hold.
+_CJK_FIBER_SUFFIXES = ("纶", "綸", "纤维", "纖維", "繊維", "纤", "纖", "丝", "絲")
+
+_EMBEDDABLE_ALIASES = sorted(
+    (alias for alias in ALIAS_TO_MATERIAL if alias.isascii() and len(alias) >= 4),
+    key=len,
+    reverse=True,
+)
+
+
+def _is_unresolved_material_token(token: str) -> bool:
+    if find_material_key(token):
+        return False
+
+    normalized = _normalized_alias(token)
+    if not normalized:
+        return False
+    if normalized in UNPRICED_MATERIALS or normalized in NEGATING_MODIFIERS:
+        return True
+    if any(
+        normalized.endswith(suffix) and len(normalized) > len(suffix)
+        for suffix in _CJK_FIBER_SUFFIXES
+    ):
+        return True
+    # ``modacrylic`` is not acrylic, and neither is anything else that merely
+    # ends with a known fiber name.
+    return any(normalized.endswith(alias) for alias in _EMBEDDABLE_ALIASES)
+
+
+def unresolved_material_tokens(line: str) -> list[str]:
+    """Fiber-like tokens on a composition row that no material key covers."""
+
+    cleaned = _strip_excluded_segments(normalize_text(line))
+    if not cleaned or not extract_materials(cleaned):
+        return []
+
+    tokenizable = cleaned
+    for alias, _ in MULTIWORD_ALIASES:
+        pattern = rf"(?<![a-z]){re.escape(alias)}(?![a-z])"
+        tokenizable = re.sub(pattern, lambda match: " " * len(match.group(0)), tokenizable)
+
+    return [
+        match.group()
+        for match in _TOKEN_PATTERN.finditer(tokenizable)
+        if _is_unresolved_material_token(match.group())
+    ]

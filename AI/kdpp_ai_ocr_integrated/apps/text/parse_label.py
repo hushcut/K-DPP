@@ -1,18 +1,21 @@
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from apps.text.material_extraction import (
     PART_PATTERNS,
     _strip_excluded_segments,
     _TOKEN_PATTERN,
     clean_ocr_preview,
+    declared_part,
     detect_part,
     extract_materials,
     normalize_text,
+    unresolved_material_tokens,
 )
 from apps.text.rules import (
     CARE_CONFLICTS,
     CARE_RULES,
+    EQUIVALENT_MATERIALS,
     MATERIAL_KOREAN,
 )
 
@@ -98,6 +101,12 @@ _PLAIN_NUMBER_PATTERN = re.compile(
     r"(?<![a-z0-9])([0-9]{1,3}(?:\.[0-9]+)?)(?![a-z0-9])",
     re.IGNORECASE,
 )
+# A wash temperature carries no percent marker, so it would otherwise be free
+# to complete a partial composition (``COTTON 70% SPANDEX 30°C``).
+_TEMPERATURE_PATTERN = re.compile(
+    r"(?<![a-z0-9])[0-9]{1,3}(?:\.[0-9]+)?\s*(?:°c|°f|도(?![가-힣]))",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -109,6 +118,7 @@ class LineInfo:
     materials: tuple[str, ...]
     numbers: tuple[float, ...]
     explicit_percent: bool
+    unresolved_materials: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -138,6 +148,12 @@ class CompositionCandidate:
             len(self.materials),
             source_rank,
         )
+
+
+def _mask_temperatures(line: str) -> str:
+    """Blank temperature values, keeping every other offset unchanged."""
+
+    return _TEMPERATURE_PATTERN.sub(lambda match: " " * len(match.group(0)), line)
 
 
 def _looks_like_non_composition_number(line: str) -> bool:
@@ -191,7 +207,7 @@ def extract_numbers(line: str, allow_plain_numbers: bool = False) -> list[float]
             for match in percentage_matches
         ]
         percentage_spans = [match.span() for match in percentage_matches]
-        for match in _PLAIN_NUMBER_PATTERN.finditer(normalized):
+        for match in _PLAIN_NUMBER_PATTERN.finditer(_mask_temperatures(normalized)):
             start, end = match.span()
             overlaps_percentage = any(
                 start < percent_end and end > percent_start
@@ -219,7 +235,7 @@ def extract_numbers(line: str, allow_plain_numbers: bool = False) -> list[float]
 
     return [
         float(match.group(1))
-        for match in _PLAIN_NUMBER_PATTERN.finditer(normalized)
+        for match in _PLAIN_NUMBER_PATTERN.finditer(_mask_temperatures(normalized))
         if 0 < float(match.group(1)) <= 100
     ]
 
@@ -239,6 +255,54 @@ def _split_part_markers(text: str) -> str:
             prepared,
         )
     return prepared
+
+
+def _apply_trailing_part_markers(infos: list[LineInfo]) -> list[LineInfo]:
+    """Retag composition rows on labels that print the part marker after them.
+
+    ``100% COTTON LINING`` and ``表地 / 55% モダール`` are both common layouts,
+    so which side a marker names is decided once per label: whichever comes
+    first, a composition row or a standalone marker, sets the direction.
+    """
+
+    first_material = next(
+        (position for position, info in enumerate(infos) if info.materials),
+        None,
+    )
+    first_marker = next(
+        (
+            position
+            for position, info in enumerate(infos)
+            if not info.materials
+            and not info.numbers
+            and declared_part(info.normalized) is not None
+        ),
+        None,
+    )
+    if first_material is None or first_marker is None or first_marker < first_material:
+        return infos
+
+    adjusted = list(infos)
+    for position in range(1, len(adjusted)):
+        marker_line = adjusted[position]
+        if marker_line.materials or marker_line.numbers:
+            continue
+
+        marker_part = declared_part(marker_line.normalized)
+        if marker_part is None:
+            continue
+
+        previous = adjusted[position - 1]
+        if not previous.materials or not previous.numbers:
+            continue
+        if previous.part == marker_part:
+            continue
+        # A row that names its own part already states where it belongs.
+        if declared_part(previous.normalized) is not None:
+            continue
+
+        adjusted[position - 1] = replace(previous, part=marker_part)
+    return adjusted
 
 
 def build_line_infos(text: str) -> list[LineInfo]:
@@ -270,9 +334,12 @@ def build_line_infos(text: str) -> list[LineInfo]:
                 materials=materials,
                 numbers=numbers,
                 explicit_percent=explicit_percent,
+                unresolved_materials=tuple(
+                    unresolved_material_tokens(composition_text)
+                ),
             )
         )
-    return infos
+    return _apply_trailing_part_markers(infos)
 
 
 def _pair_values(
@@ -308,6 +375,12 @@ def _pair_values(
     )
 
 
+def _is_standalone_composition(info: LineInfo) -> bool:
+    """Whether a row's own ratios already form one complete composition."""
+
+    return abs(sum(info.numbers) - 100.0) <= EXACT_RATIO_TOLERANCE
+
+
 def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
     infos = [info for info in infos if not _is_metadata_line(info)]
     candidates: list[CompositionCandidate] = []
@@ -328,9 +401,7 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
         if not info.materials or not info.numbers:
             continue
 
-        materials: list[str] = []
-        numbers: list[float] = []
-        explicit_percent = True
+        run: list[LineInfo] = []
         for current in infos[position : position + 6]:
             if (
                 current.part != info.part
@@ -339,9 +410,24 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
                 or len(current.materials) != len(current.numbers)
             ):
                 break
+            run.append(current)
+
+        materials: list[str] = []
+        numbers: list[float] = []
+        explicit_percent = True
+        for offset, current in enumerate(run):
             materials.extend(current.materials)
             numbers.extend(current.numbers)
             explicit_percent = explicit_percent and current.explicit_percent
+            if len(materials) <= len(info.materials):
+                continue
+
+            # A following row that cannot stand on its own is part of this
+            # block, so an exact total reached before it is only a fragment.
+            following = run[offset + 1 :]
+            if following and not _is_standalone_composition(following[0]):
+                continue
+
             candidate = _pair_values(
                 info.part,
                 materials,
@@ -350,7 +436,7 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
                 explicit_percent=explicit_percent,
                 start_index=info.index,
             )
-            if candidate and len(materials) > len(info.materials):
+            if candidate:
                 candidates.append(candidate)
 
     for position, info in enumerate(infos):
@@ -541,6 +627,17 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
     return candidates
 
 
+def _equivalent_composition(materials: dict[str, float]) -> tuple[tuple[str, float], ...]:
+    """Composition keyed so alternate names for one fiber compare as equal."""
+
+    return tuple(
+        sorted(
+            (EQUIVALENT_MATERIALS.get(material, material), value)
+            for material, value in materials.items()
+        )
+    )
+
+
 def _composition_heading_indices(infos: list[LineInfo]) -> list[int]:
     return [
         info.index
@@ -591,6 +688,7 @@ def _best_candidates_by_part(
     dict[str, dict[str, float | int]],
     dict[str, CompositionCandidate],
     list[str],
+    set[str],
 ]:
     infos = build_line_infos(text)
     candidates = _collect_candidates(infos)
@@ -617,11 +715,14 @@ def _best_candidates_by_part(
         if current is None or candidate_rank > current_rank:
             best_by_part[candidate.part] = candidate
             ambiguous_parts.discard(candidate.part)
-        elif (
-            candidate_rank == current_rank
-            and candidate.materials != current.materials
-        ):
+        elif candidate_rank == current_rank and _equivalent_composition(
+            candidate.materials
+        ) != _equivalent_composition(current.materials):
             ambiguous_parts.add(candidate.part)
+
+    # A row naming a fiber the table cannot resolve has no trustworthy
+    # material/ratio mapping: its ratio would silently move to a neighbour.
+    unresolved_parts = {info.part for info in infos if info.unresolved_materials}
 
     parts: dict[str, dict[str, float | int]] = {}
     warnings: list[str] = []
@@ -629,15 +730,24 @@ def _best_candidates_by_part(
         if part in ambiguous_parts:
             warnings.append(f"{part}:ambiguous_composition_candidates")
             continue
+        if part in unresolved_parts:
+            warnings.append(f"{part}:unresolved_material_token")
+            continue
         normalized, candidate_warnings = _normalize_candidate(candidate)
         parts[part] = normalized
         warnings.extend(f"{part}:{warning}" for warning in candidate_warnings)
 
-    return parts, best_by_part, warnings
+    expected_parts = unresolved_parts | {
+        part
+        for info in infos
+        if (part := declared_part(info.normalized)) is not None
+    }
+
+    return parts, best_by_part, warnings, expected_parts
 
 
 def parse_parts(text: str) -> dict[str, dict[str, float | int]]:
-    parts, _, _ = _best_candidates_by_part(text)
+    parts, _, _, _ = _best_candidates_by_part(text)
     return parts
 
 
@@ -745,7 +855,7 @@ def parse_label(text: str) -> dict:
             message="OCR에서 라벨 텍스트를 추출하지 못했습니다.",
         )
 
-    parts, candidates, warnings = _best_candidates_by_part(text)
+    parts, candidates, warnings, expected_parts = _best_candidates_by_part(text)
     selected_part, materials = choose_representative_materials(parts)
     if not materials:
         error_code = (
@@ -763,6 +873,28 @@ def parse_label(text: str) -> dict:
             error_code=error_code,
             message=message,
             warnings=warnings,
+        )
+
+    # The label names a more representative part (an outer shell above a
+    # lining) whose composition never resolved. Substituting the part that
+    # happened to add up would report a lining as the whole garment.
+    unconfirmed_parts = [
+        part
+        for part in PART_PRIORITY[: PART_PRIORITY.index(selected_part)]
+        if part in expected_parts and part not in parts
+    ]
+    if unconfirmed_parts:
+        return failed_response(
+            text,
+            error_code="incomplete_part_composition",
+            message=(
+                "겉감 등 대표 부위의 혼용률을 확인하지 못해 "
+                "다른 부위 값을 대신 사용하지 않았습니다."
+            ),
+            warnings=[
+                *warnings,
+                *(f"{part}:composition_not_confirmed" for part in unconfirmed_parts),
+            ],
         )
 
     selected_candidate = candidates[selected_part]

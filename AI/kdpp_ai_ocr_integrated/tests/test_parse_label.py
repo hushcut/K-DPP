@@ -192,6 +192,119 @@ def test_complete_multimaterial_candidate_beats_later_standalone_candidate() -> 
     assert result["materials"] == {"lyocell": 70, "nylon": 30}
 
 
+def test_incomplete_outer_does_not_promote_lining_to_the_whole_garment() -> None:
+    result = parse_label("OUTER COTTON 95%\nLINING NYLON 100%")
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "incomplete_part_composition"
+    assert result["materials"] == {}
+    assert "outer:composition_not_confirmed" in result["warnings"]
+
+
+def test_unreadable_outer_material_does_not_promote_lining() -> None:
+    result = parse_label("겉감: 인조모피\n안감: 폴리에스터 100%")
+
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
+
+
+def test_trailing_part_marker_keeps_each_ratio_with_its_own_part() -> None:
+    result = parse_label("100% POLYESTER SHELL\n100% COTTON LINING")
+
+    assert result["status"] == "success"
+    assert result["selected_part"] == "outer"
+    assert result["materials"] == {"polyester": 100}
+    assert result["parts"]["lining"] == {"cotton": 100}
+
+
+def test_wash_temperature_does_not_complete_a_partial_composition() -> None:
+    result = parse_label("COTTON 70% SPANDEX 30°C MACHINE WASH")
+
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
+
+
+def test_leading_materials_summing_to_100_do_not_drop_a_later_one() -> None:
+    result = parse_label("COTTON 60%\nPOLYESTER 40%\nSPANDEX 5%")
+
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
+
+
+def test_part_marker_inside_a_longer_word_is_not_a_part() -> None:
+    result = parse_label(
+        "IMPORTED AND DISTRIBUTED BY ABC\n100% COTTON\nLINING: 100% POLYESTER"
+    )
+
+    assert result["status"] == "success"
+    assert result["materials"] == {"cotton": 100}
+    assert result["parts"]["lining"] == {"polyester": 100}
+
+
+def test_faux_leather_is_not_confirmed_as_leather() -> None:
+    for text in ("FAUX LEATHER 100%", "인조 가죽 100%"):
+        result = parse_label(text)
+
+        assert result["status"] == "failed"
+        assert result["materials"] == {}
+        assert "generic:unresolved_material_token" in result["warnings"]
+
+
+def test_unlisted_fiber_does_not_hand_its_ratio_to_a_neighbour() -> None:
+    result = parse_label("MODACRYLIC 60% COTTON 40% POLYESTER")
+
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
+
+
+def test_unlisted_fiber_in_a_material_column_blocks_the_ratio_column() -> None:
+    result = parse_label("COTTON METALLIC POLYESTER\n60% 40%")
+
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
+
+
+def test_garbled_chinese_fiber_name_does_not_become_the_whole_composition() -> None:
+    result = parse_label("人造丝 腨纶\n100%")
+
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
+
+
+def test_chinese_fiber_aliases_are_resolved() -> None:
+    result = parse_label("面料:棉 98% 彈性纖維 2%")
+
+    assert result["status"] == "success"
+    assert result["materials"] == {"cotton": 98, "spandex": 2}
+
+
+def test_multilingual_label_repeating_one_composition_is_not_ambiguous() -> None:
+    result = parse_label(
+        "SHELL : COTTON 98% POLYURETHANE 2%\n"
+        "LINING: POLYESTER 80% COTTON 20%\n"
+        "面料:棉 98% 氨纶 2%\n"
+        "里料:聚酯纤维 80% 棉 20%\n"
+        "겉감\n면 98% 폴리우레탄 2%\n"
+        "안감 : 폴리에스터 80% 면 20%"
+    )
+
+    assert result["status"] == "success"
+    assert result["selected_part"] == "outer"
+    assert result["materials"] == {"cotton": 98, "polyurethane": 2}
+    assert result["parts"]["lining"] == {"polyester": 80, "cotton": 20}
+
+
+def test_misread_lining_marker_does_not_land_in_the_outer_part() -> None:
+    result = parse_label(
+        "SHELL : COTTON 98% POLYURETHANE 2%\nUNING: POLYESTER 80% COTTON 20%"
+    )
+
+    assert result["status"] == "success"
+    assert result["selected_part"] == "outer"
+    assert result["materials"] == {"cotton": 98, "polyurethane": 2}
+    assert result["parts"]["lining"] == {"polyester": 80, "cotton": 20}
+
+
 def test_body_measurements_between_material_and_ratio_are_skipped() -> None:
     result = parse_label(
         "아크릴\n신체치수 가슴둘레\n호칭 95\n95cm\n65%\n레이온\n35%"
