@@ -210,25 +210,30 @@ def _strip_excluded_segments(line: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
+def _mask_multiword_aliases(text: str) -> tuple[str, list[tuple[int, str]]]:
+    """Blank multiword aliases, returning the masked text and their materials."""
+
+    found_by_position: list[tuple[int, str]] = []
+    for alias, material in MULTIWORD_ALIASES:
+        pattern = rf"(?<![a-z]){re.escape(alias)}(?![a-z])"
+        for match in list(re.finditer(pattern, text)):
+            found_by_position.append((match.start(), material))
+            # Keep offsets while masking a compound so a partial token such
+            # as ``폴리`` cannot also be read as polyester.
+            text = (
+                text[: match.start()]
+                + " " * (match.end() - match.start())
+                + text[match.end() :]
+            )
+    return text, found_by_position
+
+
 def extract_materials(line: str) -> list[str]:
     cleaned = _strip_excluded_segments(normalize_text(line))
     if not cleaned:
         return []
 
-    found_by_position: list[tuple[int, str]] = []
-    tokenizable = cleaned
-    for alias, material in MULTIWORD_ALIASES:
-        pattern = rf"(?<![a-z]){re.escape(alias)}(?![a-z])"
-        for match in list(re.finditer(pattern, tokenizable)):
-            found_by_position.append((match.start(), material))
-            # Keep offsets while masking a compound so a partial token such
-            # as ``폴리`` cannot also be read as polyester.
-            tokenizable = (
-                tokenizable[: match.start()]
-                + " " * (match.end() - match.start())
-                + tokenizable[match.end() :]
-            )
-
+    tokenizable, found_by_position = _mask_multiword_aliases(cleaned)
     for match in _TOKEN_PATTERN.finditer(tokenizable):
         material = find_material_key(match.group())
         if material:
@@ -265,10 +270,6 @@ def declared_part(line: str) -> str | None:
     return None
 
 
-def detect_part(line: str, current_part: str) -> str:
-    return declared_part(line) or current_part
-
-
 # A fiber the table cannot price must not be dropped silently: its ratio would
 # be handed to whichever neighbouring material is recognised.
 UNPRICED_MATERIALS = {
@@ -298,10 +299,8 @@ NEGATING_MODIFIERS = {
 # longer than the suffix alone names a fiber the alias table does not hold.
 _CJK_FIBER_SUFFIXES = ("纶", "綸", "纤维", "纖維", "繊維", "纤", "纖", "丝", "絲")
 
-_EMBEDDABLE_ALIASES = sorted(
-    (alias for alias in ALIAS_TO_MATERIAL if alias.isascii() and len(alias) >= 4),
-    key=len,
-    reverse=True,
+_EMBEDDABLE_ALIASES = tuple(
+    alias for alias in ALIAS_TO_MATERIAL if alias.isascii() and len(alias) >= 4
 )
 
 
@@ -328,16 +327,15 @@ def unresolved_material_tokens(line: str) -> list[str]:
     """Fiber-like tokens on a composition row that no material key covers."""
 
     cleaned = _strip_excluded_segments(normalize_text(line))
-    if not cleaned or not extract_materials(cleaned):
-        return []
-
-    tokenizable = cleaned
-    for alias, _ in MULTIWORD_ALIASES:
-        pattern = rf"(?<![a-z]){re.escape(alias)}(?![a-z])"
-        tokenizable = re.sub(pattern, lambda match: " " * len(match.group(0)), tokenizable)
-
+    tokenizable, multiword_materials = _mask_multiword_aliases(cleaned)
+    tokens = [match.group() for match in _TOKEN_PATTERN.finditer(tokenizable)]
+    has_known_material = bool(multiword_materials) or any(
+        find_material_key(token) for token in tokens
+    )
+    # An unknown fiber can occupy its own row in a material column. A bare
+    # modifier (such as "synthetic" in care text) is not itself a fiber name.
     return [
-        match.group()
-        for match in _TOKEN_PATTERN.finditer(tokenizable)
-        if _is_unresolved_material_token(match.group())
+        token for token in tokens
+        if _is_unresolved_material_token(token)
+        and (has_known_material or token not in NEGATING_MODIFIERS)
     ]

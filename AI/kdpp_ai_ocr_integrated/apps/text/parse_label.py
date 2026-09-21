@@ -7,7 +7,6 @@ from apps.text.material_extraction import (
     _TOKEN_PATTERN,
     clean_ocr_preview,
     declared_part,
-    detect_part,
     extract_materials,
     normalize_text,
     unresolved_material_tokens,
@@ -119,6 +118,11 @@ class LineInfo:
     numbers: tuple[float, ...]
     explicit_percent: bool
     unresolved_materials: tuple[str, ...] = ()
+    marker_part: str | None = None
+
+    @property
+    def is_standalone_marker(self) -> bool:
+        return self.marker_part is not None and not self.materials and not self.numbers
 
 
 @dataclass(frozen=True)
@@ -128,6 +132,7 @@ class CompositionCandidate:
     source: str
     explicit_percent: bool
     start_index: int
+    row_indices: tuple[int, ...] = ()
 
     @property
     def total(self) -> float:
@@ -148,6 +153,27 @@ class CompositionCandidate:
             len(self.materials),
             source_rank,
         )
+
+
+_CARE_PHRASES = tuple(
+    {alias.casefold() for aliases in CARE_RULES.values() for alias in aliases}
+)
+# Number safety needs broader context than the phrases used to display care
+# instructions. These words alone do not imply a specific care recommendation.
+_CARE_CONTEXT_PATTERN = re.compile(
+    r"(?<![a-z])(?:wash(?:ing)?|rinse|bleach(?:ing)?|iron(?:ing)?|dry(?:ing)?)(?![a-z])"
+    r"|세탁|표백|다림질|건조|드라이"
+    r"|水洗|洗涤|洗滌|漂白|熨|烘|干洗|乾洗"
+    r"|洗濯|手洗|アイロン|乾燥|ドライ"
+)
+
+
+def _mentions_care(line: str) -> bool:
+    """Whether a row also carries care text, whose numbers are not ratios."""
+
+    return bool(_CARE_CONTEXT_PATTERN.search(line)) or any(
+        phrase in line for phrase in _CARE_PHRASES
+    )
 
 
 def _mask_temperatures(line: str) -> str:
@@ -171,6 +197,17 @@ def _looks_like_non_composition_number(line: str) -> bool:
 def _is_metadata_line(info: LineInfo) -> bool:
     """Whether an OCR row is safe to skip while pairing composition rows."""
 
+    if any(phrase in info.normalized for phrase in DESCRIPTIVE_MATERIAL_PHRASES):
+        return True
+    # A product code, origin, date or size can share a row with the fiber
+    # content. Every material still carries its own explicit percent there,
+    # and ``extract_numbers`` has already kept only those percent values.
+    if (
+        info.materials
+        and info.explicit_percent
+        and len(info.materials) == len(info.numbers)
+    ):
+        return False
     if _looks_like_non_composition_number(info.normalized):
         return True
     if info.materials or info.explicit_percent:
@@ -194,8 +231,15 @@ def extract_numbers(line: str, allow_plain_numbers: bool = False) -> list[float]
         if 0 < float(match.group(1)) <= 100
     ]
     percentages = [float(match.group(1)) for match in percentage_matches]
+    # A bare number is only inferred as a ratio on a row without care text:
+    # ``SPANDEX 30 MACHINE WASH`` may be a wash temperature, not 30%.
+    infer_plain = (
+        allow_plain_numbers
+        and not _looks_like_non_composition_number(normalized)
+        and not _mentions_care(normalized)
+    )
     if percentages:
-        if not allow_plain_numbers or _looks_like_non_composition_number(normalized):
+        if not infer_plain:
             return percentages
 
         material_count = len(extract_materials(normalized))
@@ -225,7 +269,7 @@ def extract_numbers(line: str, allow_plain_numbers: bool = False) -> list[float]
             return [value for _, value in values_by_position]
         return percentages
 
-    if not allow_plain_numbers or _looks_like_non_composition_number(normalized):
+    if not infer_plain:
         return []
 
     stripped = re.sub(r"[0-9.,:;/\-\s]", "", normalized)
@@ -260,48 +304,53 @@ def _split_part_markers(text: str) -> str:
 def _apply_trailing_part_markers(infos: list[LineInfo]) -> list[LineInfo]:
     """Retag composition rows on labels that print the part marker after them.
 
-    ``100% COTTON LINING`` and ``表地 / 55% モダール`` are both common layouts,
-    so which side a marker names is decided once per label: whichever comes
-    first, a composition row or a standalone marker, sets the direction.
+    ``100% COTTON LINING`` names the row before the marker, while
+    ``表地 / 55% モダール`` and ``면 100% / 안감 / 폴리 100%`` name the rows after
+    it. A label is read marker-after only when it opens with a composition row
+    and closes with a standalone marker; otherwise the forward scan stands.
     """
 
-    first_material = next(
-        (position for position, info in enumerate(infos) if info.materials),
-        None,
-    )
-    first_marker = next(
-        (
-            position
-            for position, info in enumerate(infos)
-            if not info.materials
-            and not info.numbers
-            and declared_part(info.normalized) is not None
-        ),
-        None,
-    )
-    if first_material is None or first_marker is None or first_marker < first_material:
+    marker_rows = [
+        position for position, info in enumerate(infos) if info.is_standalone_marker
+    ]
+    material_rows = [position for position, info in enumerate(infos) if info.materials]
+    if not marker_rows or not material_rows:
         return infos
+    trailing_layout = (
+        material_rows[0] < marker_rows[0] and material_rows[-1] < marker_rows[-1]
+    )
 
     adjusted = list(infos)
-    for position in range(1, len(adjusted)):
-        marker_line = adjusted[position]
-        if marker_line.materials or marker_line.numbers:
+    for position, next_marker in zip(marker_rows, [*marker_rows[1:], len(infos)]):
+        marker_part = infos[position].marker_part
+        # An outer marker that owns no row before the next marker can only be
+        # naming the row printed before it (``면 100% 겉감 / 안감 / ...``). Other
+        # parts are not inferred: a stray ``배색`` must not claim the main row.
+        orphan_outer = marker_part == "outer" and not any(
+            info.materials for info in infos[position + 1 : next_marker]
+        )
+        if position == 0 or not (trailing_layout or orphan_outer):
             continue
 
-        marker_part = declared_part(marker_line.normalized)
-        if marker_part is None:
-            continue
+        # A trailing marker owns the whole preceding composition, including
+        # alternating rows and stacked ratio columns. Stop at a part boundary
+        # or unrelated text; metadata between composition rows can be skipped.
+        block_positions: list[int] = []
+        for cursor in range(position - 1, -1, -1):
+            previous = infos[cursor]
+            if previous.marker_part is not None:
+                # A composition that explicitly names its part must not have
+                # only its continuation rows reassigned to another part.
+                if previous.materials or previous.unresolved_materials:
+                    block_positions.clear()
+                break
+            if previous.materials or previous.unresolved_materials or previous.numbers:
+                block_positions.append(cursor)
+            elif _mentions_care(previous.normalized) or not _is_metadata_line(previous):
+                break
 
-        previous = adjusted[position - 1]
-        if not previous.materials or not previous.numbers:
-            continue
-        if previous.part == marker_part:
-            continue
-        # A row that names its own part already states where it belongs.
-        if declared_part(previous.normalized) is not None:
-            continue
-
-        adjusted[position - 1] = replace(previous, part=marker_part)
+        for cursor in block_positions:
+            adjusted[cursor] = replace(infos[cursor], part=marker_part)
     return adjusted
 
 
@@ -315,7 +364,8 @@ def build_line_infos(text: str) -> list[LineInfo]:
         if not normalized:
             continue
 
-        current_part = detect_part(normalized, current_part)
+        marker_part = declared_part(normalized)
+        current_part = marker_part or current_part
         composition_text = _strip_excluded_segments(normalized)
         materials = tuple(extract_materials(composition_text))
         number_only_line = not materials and not _TOKEN_PATTERN.search(composition_text)
@@ -337,6 +387,7 @@ def build_line_infos(text: str) -> list[LineInfo]:
                 unresolved_materials=tuple(
                     unresolved_material_tokens(composition_text)
                 ),
+                marker_part=marker_part,
             )
         )
     return _apply_trailing_part_markers(infos)
@@ -350,6 +401,7 @@ def _pair_values(
     source: str,
     explicit_percent: bool,
     start_index: int,
+    row_indices: tuple[int, ...] = (),
 ) -> CompositionCandidate | None:
     if not materials or not numbers or len(materials) != len(numbers):
         return None
@@ -372,6 +424,7 @@ def _pair_values(
         source=source,
         explicit_percent=explicit_percent,
         start_index=start_index,
+        row_indices=row_indices or (start_index,),
     )
 
 
@@ -435,6 +488,7 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
                 source="line_pairs",
                 explicit_percent=explicit_percent,
                 start_index=info.index,
+                row_indices=tuple(row.index for row in run[: offset + 1]),
             )
             if candidate:
                 candidates.append(candidate)
@@ -471,6 +525,7 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
             source="alternating_lines",
             explicit_percent=True,
             start_index=info.index,
+            row_indices=tuple(row.index for row in infos[position:cursor]),
         )
         if candidate:
             candidates.append(candidate)
@@ -538,6 +593,7 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
             source="mixed_lines",
             explicit_percent=explicit_percent,
             start_index=info.index,
+            row_indices=tuple(row.index for row in infos[position:cursor]),
         )
         # Mixed layouts must still show every ratio explicitly.
         if candidate and explicit_percent:
@@ -586,6 +642,7 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
             source="stacked_columns",
             explicit_percent=explicit_percent,
             start_index=info.index,
+            row_indices=tuple(row.index for row in infos[position:cursor]),
         )
         # Bare number-only lines are too easily confused with product codes,
         # dates, or temperatures. A stacked ratio column is accepted only
@@ -619,6 +676,7 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
                 source="adjacent_lines",
                 explicit_percent=neighbor.explicit_percent,
                 start_index=info.index,
+                row_indices=(info.index, neighbor.index),
             )
             if candidate:
                 candidates.append(candidate)
@@ -722,7 +780,21 @@ def _best_candidates_by_part(
 
     # A row naming a fiber the table cannot resolve has no trustworthy
     # material/ratio mapping: its ratio would silently move to a neighbour.
-    unresolved_parts = {info.part for info in infos if info.unresolved_materials}
+    composition_rows = [
+        info for info in infos
+        if (info.materials or info.unresolved_materials) and not _is_metadata_line(info)
+    ]
+    unresolved_parts = {
+        info.part for info in composition_rows if info.unresolved_materials
+    }
+    # Every recognized material row must belong to a complete candidate.
+    # A valid 100% row cannot hide an unpaired row before or after it. Keep
+    # coverage from all complete blocks so multilingual repetitions remain valid.
+    covered_rows = {index for candidate in candidates for index in candidate.row_indices}
+    incomplete_parts = {
+        info.part for info in composition_rows
+        if info.materials and info.index not in covered_rows
+    }
 
     parts: dict[str, dict[str, float | int]] = {}
     warnings: list[str] = []
@@ -733,14 +805,15 @@ def _best_candidates_by_part(
         if part in unresolved_parts:
             warnings.append(f"{part}:unresolved_material_token")
             continue
+        if part in incomplete_parts:
+            warnings.append(f"{part}:unpaired_material_rows")
+            continue
         normalized, candidate_warnings = _normalize_candidate(candidate)
         parts[part] = normalized
         warnings.extend(f"{part}:{warning}" for warning in candidate_warnings)
 
-    expected_parts = unresolved_parts | {
-        part
-        for info in infos
-        if (part := declared_part(info.normalized)) is not None
+    expected_parts = {info.part for info in composition_rows} | {
+        info.marker_part for info in infos if info.marker_part is not None
     }
 
     return parts, best_by_part, warnings, expected_parts

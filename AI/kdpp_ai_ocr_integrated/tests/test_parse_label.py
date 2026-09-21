@@ -1,3 +1,5 @@
+import pytest
+
 from apps.text.parse_label import parse_label
 
 
@@ -305,6 +307,167 @@ def test_misread_lining_marker_does_not_land_in_the_outer_part() -> None:
     assert result["parts"]["lining"] == {"polyester": 80, "cotton": 20}
 
 
+def test_metadata_sharing_a_row_keeps_the_explicit_composition() -> None:
+    for text, expected in (
+        ("품번 AB1234 면 100%", {"cotton": 100}),
+        ("제조국: 베트남 면 95% 폴리우레탄 5%", {"cotton": 95, "polyurethane": 5}),
+        ("면 100% 2024년 제조", {"cotton": 100}),
+        ("COTTON 100% 95cm", {"cotton": 100}),
+    ):
+        result = parse_label(text)
+
+        assert result["status"] == "success", text
+        assert result["materials"] == expected, text
+
+
+def test_metadata_row_does_not_rescue_a_partial_or_descriptive_ratio() -> None:
+    for text in ("품번 AB1234 면 60%", "SILK TOUCH 100%"):
+        result = parse_label(text)
+
+        assert result["status"] == "failed", text
+        assert result["materials"] == {}, text
+
+
+def test_bare_number_beside_care_text_is_not_inferred_as_a_ratio() -> None:
+    for text in (
+        "COTTON 70% SPANDEX 30 MACHINE WASH",
+        "면 70% 스판덱스 30 손세탁",
+    ):
+        result = parse_label(text)
+
+        assert result["status"] == "failed", text
+        assert result["materials"] == {}, text
+
+
+def test_leading_lining_marker_leaves_the_unlabeled_main_row_alone() -> None:
+    for text in ("면 100%\n안감\n폴리에스터 100%", "COTTON 100%\nLINING\nPOLYESTER 100%"):
+        result = parse_label(text)
+
+        assert result["status"] == "success", text
+        assert result["materials"] == {"cotton": 100}, text
+        assert result["parts"] == {
+            "generic": {"cotton": 100},
+            "lining": {"polyester": 100},
+        }, text
+
+
+def test_outer_marker_owning_no_row_names_the_row_before_it() -> None:
+    result = parse_label("면 100% 겉감\n안감\n폴리에스터 100%")
+
+    assert result["status"] == "success"
+    assert result["parts"] == {"outer": {"cotton": 100}, "lining": {"polyester": 100}}
+
+
+def test_stray_non_outer_marker_does_not_claim_the_main_row() -> None:
+    result = parse_label("면 100%\n배색\n안감\n폴리에스터 100%")
+
+    assert result["status"] == "success"
+    assert result["materials"] == {"cotton": 100}
+    assert result["parts"]["lining"] == {"polyester": 100}
+
+
+def test_wool_variants_are_resolved() -> None:
+    for text, expected in (
+        ("80% LAMBSWOOL 20% NYLON", {"wool": 80, "nylon": 20}),
+        ("MERINO 100%", {"wool": 100}),
+    ):
+        result = parse_label(text)
+
+        assert result["status"] == "success", text
+        assert result["materials"] == expected, text
+
+
+def test_common_label_notations_are_parsed() -> None:
+    for text, expected in (
+        ("면 60%, 폴리에스터 40%", {"cotton": 60, "polyester": 40}),
+        ("60% COTTON, 40% POLYESTER", {"cotton": 60, "polyester": 40}),
+        ("FABRIC: 100% COTTON", {"cotton": 100}),
+        ("ORGANIC COTTON 100%", {"cotton": 100}),
+        ("면 100%\n95", {"cotton": 100}),
+    ):
+        result = parse_label(text)
+
+        assert result["status"] == "success", text
+        assert result["materials"] == expected, text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "COTTON 70% SPANDEX 30 WASH",
+        "COTTON 70% SPANDEX 30 WASHING",
+        "COTTON 70% SPANDEX 30 IRON",
+        "COTTON 70 SPANDEX 30 WASH",
+        "면 70% 스판덱스 30 세탁",
+        "면 70% 스판덱스 30 물세탁",
+        "棉 70% 氨纶 30 水洗",
+        "綿 70% ポリウレタン 30 洗濯",
+    ],
+)
+def test_short_care_terms_do_not_supply_missing_ratios(text: str) -> None:
+    result = parse_label(text)
+
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
+
+
+@pytest.mark.parametrize("care", ["WASH 30", "IRON 30", "세탁 30", "水洗 30", "洗濯 30"])
+def test_explicit_ratios_remain_valid_beside_short_care_terms(care: str) -> None:
+    result = parse_label(f"COTTON 70% SPANDEX 30% {care}")
+
+    assert result["status"] == "success"
+    assert result["materials"] == {"cotton": 70, "spandex": 30}
+
+
+def test_care_word_inside_product_description_does_not_block_ratio_recovery() -> None:
+    result = parse_label("STONEWASH COTTON 95% SPANDEX 5")
+
+    assert result["status"] == "success"
+    assert result["materials"] == {"cotton": 95, "spandex": 5}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "COTTON 80%\nPOLYESTER 20%\nOUTER\nNYLON 100%\nLINING",
+        "COTTON\n80%\nPOLYESTER\n20%\nOUTER\nNYLON\n100%\nLINING",
+        "COTTON\nPOLYESTER\n80%\n20%\nOUTER\nNYLON 100%\nLINING",
+        "COTTON 80%\nPOLYESTER\n20%\nOUTER\nNYLON 100%\nLINING",
+        "COTTON 80%\nSTYLE AB123\nPOLYESTER 20%\nOUTER\nNYLON 100%\nLINING",
+        "COTTON 80%\nPOLYESTER 20%\nOUTER\nLINING\nNYLON 100%",
+        "면 80%\n폴리에스터 20%\n겉감\n나일론 100%\n안감",
+        "棉 80%\n聚酯纤维 20%\n面料\n尼龙 100%\n里料",
+        "綿 80%\nポリエステル 20%\n表地\nナイロン 100%\n裏地",
+    ],
+)
+def test_trailing_marker_owns_the_entire_composition_block(text: str) -> None:
+    result = parse_label(text)
+
+    assert result["status"] == "success"
+    assert result["selected_part"] == "outer"
+    assert result["parts"] == {
+        "outer": {"cotton": 80, "polyester": 20},
+        "lining": {"nylon": 100},
+    }
+
+
+@pytest.mark.parametrize(
+    "main", ["COTTON 80%\nPOLYESTER", "MODACRYLIC\nCOTTON\n100%"]
+)
+def test_incomplete_trailing_outer_block_does_not_promote_lining(main: str) -> None:
+    result = parse_label(f"{main}\nOUTER\nNYLON 100%\nLINING")
+
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
+
+
+def test_trailing_marker_does_not_split_an_explicitly_named_block() -> None:
+    result = parse_label("OUTER COTTON 80%\nPOLYESTER 20%\nLINING")
+
+    assert result["status"] == "success"
+    assert result["parts"] == {"outer": {"cotton": 80, "polyester": 20}}
+
+
 def test_body_measurements_between_material_and_ratio_are_skipped() -> None:
     result = parse_label(
         "아크릴\n신체치수 가슴둘레\n호칭 95\n95cm\n65%\n레이온\n35%"
@@ -312,4 +475,73 @@ def test_body_measurements_between_material_and_ratio_are_skipped() -> None:
 
     assert result["status"] == "success"
     assert result["materials"] == {"acrylic": 65, "rayon": 35}
+
+
+@pytest.mark.parametrize("main", ["COTTON 80%", "COTTON", "COTTON 100%\nNYLON 20%"])
+def test_unconfirmed_unlabeled_main_does_not_fall_back_to_lining(main: str) -> None:
+    result = parse_label(f"{main}\nLINING\nPOLYESTER 100%")
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "incomplete_part_composition"
+    assert result["materials"] == {}
+    assert "generic:composition_not_confirmed" in result["warnings"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "COTTON 100%\nPOLYESTER 20%",
+        "POLYESTER 20%\nCOTTON 100%",
+        "COTTON 100%\nPOLYESTER",
+        "COTTON 100%\nSTYLE AB123\nPOLYESTER 20%",
+        "COTTON\n100%\nPOLYESTER 20%",
+        "COTTON 60%\nPOLYESTER 40%\nSPANDEX",
+    ],
+)
+def test_complete_candidate_does_not_hide_unpaired_material_rows(text: str) -> None:
+    result = parse_label(text)
+
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "MODACRYLIC\nCOTTON\n100%",
+        "COTTON 100%\nMODACRYLIC 20%",
+        "COTTON\nMETALLIC\n100%",
+        "腨纶\n棉\n100%",
+        "MODACRYLIC\nLINING\nPOLYESTER 100%",
+    ],
+)
+def test_unlisted_fiber_on_its_own_row_cannot_be_ignored(text: str) -> None:
+    result = parse_label(text)
+
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("COTTON 80%\nPOLYESTER 20%", {"cotton": 80, "polyester": 20}),
+        ("COTTON 80%\nPOLYESTER\n20%", {"cotton": 80, "polyester": 20}),
+        ("COTTON\n80%\nPOLYESTER\n20%", {"cotton": 80, "polyester": 20}),
+        ("COTTON\nPOLYESTER\n80%\n20%", {"cotton": 80, "polyester": 20}),
+        ("COTTON\nCOMPOSITION\n100%", {"cotton": 100}),
+        ("COTTON 100%\nCOTON 100%", {"cotton": 100}),
+        ("COTTON 100%\nLINING POLYESTER 20%", {"cotton": 100}),
+        ("COTTON 100%\nLINING MODACRYLIC 20%", {"cotton": 100}),
+        ("COTTON 100%\nTRIM MODACRYLIC 20%", {"cotton": 100}),
+        ("SILK TOUCH 100%\nLINING POLYESTER 100%", {"polyester": 100}),
+    ],
+)
+def test_complete_blocks_and_separate_lower_priority_parts_remain_valid(
+    text: str, expected: dict[str, int]
+) -> None:
+    result = parse_label(text)
+
+    assert result["status"] == "success"
+    assert result["materials"] == expected
 
