@@ -74,20 +74,19 @@ void _showDisposalBottomSheet(
   Clothes item,
   String disposalGuide,
 ) {
-  final isDark = Theme.of(context).brightness == Brightness.dark;
-  final palette = AppPalette.of(context);
-  final backgroundColor = isDark ? const Color(0xFF121212) : Colors.white;
-  final primaryText = palette.textPrimary;
-  final secondaryText = isDark ? const Color(0xFFD1D1D6) : Colors.black87;
-
+  // 배경색은 테마(AppTheme.bottomSheetTheme)에 맡기고 글자색은 builder 안에서 읽습니다.
+  // 여는 순간에 정하면 시트가 열린 채 시스템 밝기가 바뀔 때 따라오지 않습니다.
   showModalBottomSheet(
     context: context,
     showDragHandle: true,
-    backgroundColor: backgroundColor,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
     ),
     builder: (context) {
+      final isDark = Theme.of(context).brightness == Brightness.dark;
+      final primaryText = AppPalette.of(context).textPrimary;
+      final secondaryText = isDark ? const Color(0xFFD1D1D6) : Colors.black87;
+
       return SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),

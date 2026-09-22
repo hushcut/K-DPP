@@ -18,13 +18,11 @@ Future<MaterialCatalogItem?> showMaterialPickerSheet({
   String initialQuery = '',
   Iterable<String> excludedNames = const [],
 }) {
-  final isDark = Theme.of(context).brightness == Brightness.dark;
-
+  // 배경색은 테마(AppTheme.bottomSheetTheme)에 맡깁니다. 여는 순간에 정하면 열린 채 밝기가 바뀔 때 굳습니다.
   return showModalBottomSheet<MaterialCatalogItem>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    backgroundColor: isDark ? const Color(0xFF121212) : Colors.white,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
     ),

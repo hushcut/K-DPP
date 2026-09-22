@@ -284,20 +284,19 @@ class SettingsScreen extends StatelessWidget {
 
   // 카메라·앨범 사진과 임시 파일이 어떻게 사용되는지 하단 시트로 안내합니다.
   void _showPrivacyGuide(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final palette = AppPalette.of(context);
-    final backgroundColor = isDark ? const Color(0xFF121212) : Colors.white;
-    final primaryText = palette.textPrimary;
-    final secondaryText = palette.textSecondary;
-
+    // 배경색은 테마(AppTheme.bottomSheetTheme)에 맡기고 글자색은 builder 안에서 읽습니다.
+    // 여는 순간에 정하면 시트가 열린 채 시스템 밝기가 바뀔 때 따라오지 않습니다.
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      backgroundColor: backgroundColor,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (sheetContext) {
+        final palette = AppPalette.of(sheetContext);
+        final primaryText = palette.textPrimary;
+        final secondaryText = palette.textSecondary;
+
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),

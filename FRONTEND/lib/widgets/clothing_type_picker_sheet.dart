@@ -46,9 +46,9 @@ Future<ClothingTypeOption?> showClothingTypePickerSheet({
   ClothingTypePickerDiscardPrompt? discardPrompt,
 }) {
   final canDismiss = discardPrompt == null;
-  final isDark = Theme.of(context).brightness == Brightness.dark;
-  final sheetColor = isDark ? const Color(0xFF121212) : Colors.white;
 
+  // 배경색은 테마(AppTheme.bottomSheetTheme)에 맡깁니다. 여기서 정하면 여는 순간의 테마로 굳어
+  // 시트가 열린 채 시스템 밝기가 바뀔 때 따라오지 않습니다.
   return showModalBottomSheet<ClothingTypeOption>(
     context: context,
     isScrollControlled: true,
@@ -59,7 +59,6 @@ Future<ClothingTypeOption?> showClothingTypePickerSheet({
     // (2026-09-18 사용자 결정). enableDrag도 꺼야 하단 안전 영역을 끌어내려 닫는 경로가 막힙니다.
     enableDrag: canDismiss,
     showDragHandle: canDismiss,
-    backgroundColor: sheetColor,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
     ),

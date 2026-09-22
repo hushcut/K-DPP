@@ -10,9 +10,7 @@ Future<void> _showEditBottomSheet(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    backgroundColor: Theme.of(context).brightness == Brightness.dark
-        ? const Color(0xFF121212)
-        : Colors.white,
+    // 배경색은 테마(AppTheme.bottomSheetTheme)에 맡깁니다. 여는 순간에 정하면 열린 채 밝기가 바뀔 때 굳습니다.
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
     ),
