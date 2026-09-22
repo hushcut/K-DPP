@@ -10,6 +10,7 @@ import '../utils/scan_calculation_resolver.dart';
 import 'material_edit_controller.dart';
 import 'material_input_collection.dart';
 import 'material_picker_sheet.dart';
+import 'number_keyboard_toolbar.dart';
 
 /// 스캔한 의류 정보를 검토·수정하고 옷장 저장을 요청하는 결과 폼입니다.
 ///
@@ -114,7 +115,7 @@ class ScanResultView extends StatelessWidget {
         ? 'AI가 라벨을 정확히 인식하지 못했어요. 소재와 혼용률을 직접 입력해 주세요.'
         : '의류 무게 기준과 분석 결과를 확인해 주세요.';
 
-    return Container(
+    final form = Container(
       color: backgroundColor,
       child: Form(
         key: formKey,
@@ -171,6 +172,7 @@ class ScanResultView extends StatelessWidget {
                       controller: titleController,
                       validator: validateTitle,
                       enabled: !isSaving,
+                      onTapOutside: dismissKeyboardOnTapOutside,
                       style: TextStyle(color: primaryText),
                       decoration: InputDecoration(
                         filled: true,
@@ -377,13 +379,27 @@ class ScanResultView extends StatelessWidget {
                         ),
                       ),
                     const SizedBox(height: 14),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: isSaving ? null : onAddMaterial,
-                        icon: const Icon(Icons.add),
-                        label: const Text('소재 추가'),
-                      ),
+                    // 합계가 허용 범위(100.5%)를 넘으면 소재를 더 넣어도 맞출 수 없어 추가를 막습니다.
+                    // 이때는 항상 위의 빨간 안내가 떠 있어 버튼이 꺼진 이유를 보여 줍니다.
+                    ListenableBuilder(
+                      listenable: materialInputs,
+                      builder: (context, _) {
+                        final isTotalOver =
+                            ClothingEstimator.isMaterialsTotalOver(
+                              materialInputs.collectEditedMaterials(),
+                            );
+
+                        return SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: isSaving || isTotalOver
+                                ? null
+                                : onAddMaterial,
+                            icon: const Icon(Icons.add),
+                            label: const Text('소재 추가'),
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ),
@@ -460,6 +476,14 @@ class ScanResultView extends StatelessWidget {
           ),
         ),
       ),
+    );
+
+    // 이 화면은 키보드만큼 줄어든 본문을 채우므로, 맨 아래에 둔 막대가 키보드 바로 위에 놓입니다.
+    return Column(
+      children: [
+        Expanded(child: form),
+        _buildNumberKeyboardToolbar(context),
+      ],
     );
   }
 
@@ -612,10 +636,11 @@ class ScanResultView extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Expanded(
+            // 문장마다 줄을 나눠 한 줄씩 읽히게 합니다. 둘째 줄은 좁은 폰에서도 한 줄에 들도록 짧게 둡니다.
             child: Text(
               isShort
-                  ? '100%까지 ${_formatMaterialGap(amount)}% 부족해요. 저장 전 소재 비율을 조정해 주세요.'
-                  : '100%보다 ${_formatMaterialGap(amount)}% 많아요. 저장 전 소재 비율을 조정해 주세요.',
+                  ? '100%까지 ${_formatMaterialGap(amount)}% 부족해요.\n저장 전 소재 비율을 조정해 주세요.'
+                  : '100%보다 ${_formatMaterialGap(amount)}% 많아요.\n줄여야 저장하거나 소재를 더 추가할 수 있어요.',
               style: TextStyle(color: primaryText, fontSize: 12, height: 1.45),
             ),
           ),
@@ -659,6 +684,43 @@ class ScanResultView extends StatelessWidget {
     item.nameController.text = picked.nameKo;
   }
 
+  // iOS 숫자 키패드에는 확인 키가 없어, 함유율 칸에 포커스가 있는 동안 [다음]·[완료] 막대를
+  // 그립니다. 포커스가 바뀔 때마다 FocusManager가 알려 주므로 이 부분만 다시 그립니다.
+  Widget _buildNumberKeyboardToolbar(BuildContext context) {
+    if (!NumberKeyboardToolbar.isNeeded(context)) return const SizedBox.shrink();
+
+    return ListenableBuilder(
+      listenable: FocusManager.instance,
+      builder: (context, _) {
+        final index = _indexOfFocusedPercent();
+        if (index == null) return const SizedBox.shrink();
+
+        return NumberKeyboardToolbar(
+          onNext: _focusNextRowName(index),
+          onDone: () => FocusManager.instance.primaryFocus?.unfocus(),
+        );
+      },
+    );
+  }
+
+  int? _indexOfFocusedPercent() {
+    for (var i = 0; i < materialInputs.length; i++) {
+      if (materialInputs[i].percentFocusNode.hasFocus) return i;
+    }
+    return null;
+  }
+
+  // 함유율 다음 차례인 다음 행의 소재명으로 포커스를 옮깁니다. 마지막 행이면 null입니다.
+  VoidCallback? _focusNextRowName(int index) {
+    if (index >= materialInputs.length - 1) return null;
+
+    final next = materialInputs[index + 1];
+    return () {
+      // 그사이 그 행이 지워졌다면 포커스 노드가 이미 해제됐으므로 건드리지 않습니다.
+      if (materialInputs.contains(next)) next.nameFocusNode.requestFocus();
+    };
+  }
+
   // 소재명 입력(선택창 아이콘)과 함유율 입력, 항목 삭제 버튼으로 한 편집 행을 만듭니다.
   Widget _buildMaterialRow(
     BuildContext context,
@@ -668,6 +730,7 @@ class ScanResultView extends StatelessWidget {
     required Color inputFillColor,
   }) {
     final item = materialInputs[index];
+    final focusNextRowName = _focusNextRowName(index);
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -678,6 +741,11 @@ class ScanResultView extends StatelessWidget {
             focusNode: item.nameFocusNode,
             validator: validateMaterialName,
             enabled: !isSaving,
+            // 키보드의 '다음'은 같은 행의 함유율로 옮깁니다. 기본 동작(다음 포커스 대상)은
+            // 목록 아이콘 같은 버튼으로 갈 수 있어 직접 지정합니다.
+            textInputAction: TextInputAction.next,
+            onEditingComplete: item.percentFocusNode.requestFocus,
+            onTapOutside: dismissKeyboardOnTapOutside,
             style: TextStyle(color: primaryText, fontSize: 14),
             decoration: InputDecoration(
               filled: true,
@@ -714,8 +782,16 @@ class ScanResultView extends StatelessWidget {
           width: 86,
           child: TextFormField(
             controller: item.percentController,
+            focusNode: item.percentFocusNode,
             validator: validateMaterialValue,
             enabled: !isSaving,
+            // Android 키보드의 동작 키도 iOS 막대와 같은 순서로 옮깁니다.
+            // 마지막 행은 '완료'라 기본 동작대로 키보드를 닫습니다.
+            textInputAction: focusNextRowName == null
+                ? TextInputAction.done
+                : TextInputAction.next,
+            onEditingComplete: focusNextRowName,
+            onTapOutside: dismissKeyboardOnTapOutside,
             style: TextStyle(color: primaryText, fontSize: 14),
             textAlign: TextAlign.right,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),

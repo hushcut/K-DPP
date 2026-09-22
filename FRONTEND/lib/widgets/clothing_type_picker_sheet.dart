@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../models/clothing_type_option.dart';
 import '../theme/app_palette.dart';
+import 'number_keyboard_toolbar.dart';
 
 /// 선택을 건너뛸 수 없는 유형 선택 시트에서 '다시 촬영'으로 나갈 때 보여 줄 확인 문구입니다.
 ///
@@ -110,6 +111,7 @@ class ClothingTypePickerSheet extends StatefulWidget {
 class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
   final TextEditingController _directNameController = TextEditingController();
   final TextEditingController _directWeightController = TextEditingController();
+  final FocusNode _directWeightFocusNode = FocusNode();
 
   bool _isDirectInputMode = false;
   String _directCategory = '상의';
@@ -154,6 +156,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
     widget.optionsListenable?.removeListener(_handleOptionsChanged);
     _directNameController.dispose();
     _directWeightController.dispose();
+    _directWeightFocusNode.dispose();
     super.dispose();
   }
 
@@ -257,22 +260,32 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
         padding: EdgeInsets.only(
           bottom: MediaQuery.viewInsetsOf(context).bottom,
         ),
-        child: Padding(
-          // 손잡이가 없는 필수 선택 시트는 제목이 둥근 윗변에 붙지 않게 띄웁니다.
-          padding: EdgeInsets.only(top: isSelectionRequired ? 24 : 0),
-          // 키보드 여백을 뺀 남은 높이 안에서만 커지게 합니다. 전에는 Column 안에 있어
-          // 높이 제한 없이 화면 높이의 78%까지 커져 키보드 여백과 합쳐 넘쳤습니다(2026-09-18 폰 확인).
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: maxSheetHeight),
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
-              switchInCurve: Curves.easeOut,
-              switchOutCurve: Curves.easeOut,
-              child: _isDirectInputMode
-                  ? _buildDirectInputView(context)
-                  : _buildOptionListView(context),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // 키보드 여백과 아래 막대를 뺀 남은 높이 안에서만 커지게 Flexible로 감쌉니다.
+            // Flexible 없이 Column에 두면 높이 제한 없이 화면 높이의 78%까지 커져
+            // 키보드 여백과 합쳐 넘칩니다(2026-09-18 폰 확인).
+            Flexible(
+              child: Padding(
+                // 손잡이가 없는 필수 선택 시트는 제목이 둥근 윗변에 붙지 않게 띄웁니다.
+                padding: EdgeInsets.only(top: isSelectionRequired ? 24 : 0),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: maxSheetHeight),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    switchInCurve: Curves.easeOut,
+                    switchOutCurve: Curves.easeOut,
+                    child: _isDirectInputMode
+                        ? _buildDirectInputView(context)
+                        : _buildOptionListView(context),
+                  ),
+                ),
+              ),
             ),
-          ),
+            _buildWeightKeyboardToolbar(context),
+          ],
         ),
       ),
     );
@@ -293,6 +306,21 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
         _confirmDiscard();
       },
       child: sheet,
+    );
+  }
+
+  // iOS 숫자 키패드에는 확인 키가 없어, 무게 칸에 포커스가 있는 동안 시트 맨 아래
+  // (키보드 바로 위)에 [완료] 막대를 붙입니다. 무게 뒤로 이어지는 입력란이 없어 [다음]은 없습니다.
+  Widget _buildWeightKeyboardToolbar(BuildContext context) {
+    if (!_isDirectInputMode || !NumberKeyboardToolbar.isNeeded(context)) {
+      return const SizedBox.shrink();
+    }
+
+    return ListenableBuilder(
+      listenable: _directWeightFocusNode,
+      builder: (context, _) => _directWeightFocusNode.hasFocus
+          ? NumberKeyboardToolbar(onDone: () => _directWeightFocusNode.unfocus())
+          : const SizedBox.shrink(),
     );
   }
 
@@ -509,6 +537,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
           autofocus: true,
           style: TextStyle(color: primaryText),
           textInputAction: TextInputAction.next,
+          onTapOutside: dismissKeyboardOnTapOutside,
           decoration: InputDecoration(
             filled: true,
             fillColor: inputFillColor,
@@ -529,9 +558,11 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
         const SizedBox(height: 14),
         TextField(
           controller: _directWeightController,
+          focusNode: _directWeightFocusNode,
           style: TextStyle(color: primaryText),
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           textInputAction: TextInputAction.done,
+          onTapOutside: dismissKeyboardOnTapOutside,
           decoration: InputDecoration(
             filled: true,
             fillColor: inputFillColor,

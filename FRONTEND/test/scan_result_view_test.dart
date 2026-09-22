@@ -6,6 +6,7 @@ import 'package:k_dpp/services/material_catalog_controller.dart';
 import 'package:k_dpp/utils/clothing_type_catalog.dart';
 import 'package:k_dpp/utils/scan_form_validator.dart';
 import 'package:k_dpp/widgets/material_input_collection.dart';
+import 'package:k_dpp/widgets/number_keyboard_toolbar.dart';
 import 'package:k_dpp/widgets/scan_result_view.dart';
 
 void main() {
@@ -45,7 +46,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('현재 소재 합계: 90.0%'), findsOneWidget);
-    expect(find.textContaining('100%까지 10% 부족해요.'), findsOneWidget);
+    // 문장마다 줄을 나눠 한 줄씩 읽히게 한다.
+    expect(
+      find.text('100%까지 10% 부족해요.\n저장 전 소재 비율을 조정해 주세요.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('스캔 실패 화면은 직접 소재 입력 흐름으로 분리된다', (tester) async {
@@ -543,6 +548,151 @@ void main() {
     await _pumpResultView(tester, materialInputs: materialInputs);
     expect(find.byTooltip('목록에서 소재 고르기'), findsNothing);
   });
+
+  testWidgets('합계가 100.5%를 넘으면 소재 추가를 막고, 비율을 줄이면 다시 풀린다', (tester) async {
+    // 2026-09-22 요청: 이미 100%를 넘었는데 소재를 더 넣으면 합계를 맞출 수 없다.
+    final materialInputs = MaterialInputCollection()
+      ..setFromMaterials({'면': 60, '폴리에스터': 41});
+    addTearDown(materialInputs.dispose);
+
+    await _pumpResultView(tester, materialInputs: materialInputs);
+    expect(_addMaterialButton(tester).onPressed, isNull);
+    expect(
+      find.text('100%보다 1% 많아요.\n줄여야 저장하거나 소재를 더 추가할 수 있어요.'),
+      findsOneWidget,
+    );
+
+    await tester.enterText(find.widgetWithText(TextFormField, '41'), '40');
+    await tester.pumpAndSettle();
+    expect(_addMaterialButton(tester).onPressed, isNotNull);
+  });
+
+  testWidgets('합계가 100.5% 이하면 정확히 100이 넘어도 소재를 추가할 수 있다', (tester) async {
+    // "면 100"을 "면 95·스판 5"로 고칠 때 추가부터 하는 순서를 막지 않는다.
+    final materialInputs = MaterialInputCollection()
+      ..setFromMaterials({'면': 60, '폴리에스터': 40.5});
+    addTearDown(materialInputs.dispose);
+
+    await _pumpResultView(tester, materialInputs: materialInputs);
+    expect(_addMaterialButton(tester).onPressed, isNotNull);
+  });
+
+  testWidgets('iOS 함유율 칸에는 키보드 위 막대가 뜨고, 다음은 다음 행 소재명으로·완료는 키보드를 닫는다', (
+    tester,
+  ) async {
+    // 2026-09-22 폰 확인: iOS 숫자 키패드에 확인 키가 없어 키보드를 끌어내려야 했다.
+    _usePhoneView(tester);
+    _stopCursorBlink();
+    final materialInputs = MaterialInputCollection()
+      ..setFromMaterials({'면': 60, '폴리에스터': 40});
+    addTearDown(materialInputs.dispose);
+
+    await _pumpResultView(tester, materialInputs: materialInputs);
+    expect(find.byType(NumberKeyboardToolbar), findsNothing);
+
+    await _tapField(tester, '60');
+    expect(_toolbarButton('다음'), findsOneWidget);
+
+    // 막대를 누르는 순간에도 함유율 칸이 포커스를 잃지 않아야 키보드가 내려갔다 다시 올라오지 않는다.
+    final gesture = await tester.startGesture(
+      tester.getCenter(_toolbarButton('다음')),
+    );
+    await tester.pump();
+    expect(materialInputs[0].percentFocusNode.hasFocus, isTrue);
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(materialInputs[1].nameFocusNode.hasFocus, isTrue);
+    expect(find.byType(NumberKeyboardToolbar), findsNothing);
+
+    // 마지막 행은 옮길 곳이 없어 [완료]만 있다.
+    await _tapField(tester, '40');
+    expect(_toolbarButton('다음'), findsNothing);
+    await tester.tap(_toolbarButton('완료'));
+    await tester.pumpAndSettle();
+    expect(materialInputs[1].percentFocusNode.hasFocus, isFalse);
+    expect(find.byType(NumberKeyboardToolbar), findsNothing);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('Android는 막대 없이 키보드 동작 키가 소재명 → 함유율 → 다음 행 순서를 따른다', (
+    tester,
+  ) async {
+    _usePhoneView(tester);
+    final materialInputs = MaterialInputCollection()
+      ..setFromMaterials({'면': 60, '폴리에스터': 40});
+    addTearDown(materialInputs.dispose);
+    // 앱처럼 목록 아이콘을 둔다. 없으면 기본 동작만으로도 함유율로 넘어가 이동 지정을 검사하지 못한다.
+    final catalog = await _loadedCatalog();
+    addTearDown(catalog.dispose);
+
+    await _pumpResultView(
+      tester,
+      materialInputs: materialInputs,
+      materialCatalog: catalog,
+    );
+    await _tapField(tester, '면');
+
+    await tester.testTextInput.receiveAction(TextInputAction.next);
+    await tester.pumpAndSettle();
+    expect(materialInputs[0].percentFocusNode.hasFocus, isTrue);
+    expect(find.byType(NumberKeyboardToolbar), findsNothing);
+
+    await tester.testTextInput.receiveAction(TextInputAction.next);
+    await tester.pumpAndSettle();
+    expect(materialInputs[1].nameFocusNode.hasFocus, isTrue);
+
+    await tester.testTextInput.receiveAction(TextInputAction.next);
+    await tester.pumpAndSettle();
+    expect(materialInputs[1].percentFocusNode.hasFocus, isTrue);
+
+    // 마지막 행 함유율은 '완료'로 키보드를 닫는다.
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(materialInputs[1].percentFocusNode.hasFocus, isFalse);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
+  testWidgets('입력란 바깥을 탭하면 키보드가 내려간다', (tester) async {
+    _usePhoneView(tester);
+    final materialInputs = MaterialInputCollection()
+      ..setFromMaterials({'면': 100});
+    addTearDown(materialInputs.dispose);
+
+    await _pumpResultView(tester, materialInputs: materialInputs);
+    await _tapField(tester, '100');
+    expect(materialInputs[0].percentFocusNode.hasFocus, isTrue);
+
+    await tester.tap(find.text('소재 및 혼용률'));
+    await tester.pumpAndSettle();
+    expect(materialInputs[0].percentFocusNode.hasFocus, isFalse);
+  });
+}
+
+ButtonStyleButton _addMaterialButton(WidgetTester tester) {
+  return tester.widget<ButtonStyleButton>(
+    find.ancestor(
+      of: find.text('소재 추가'),
+      matching: find.byWidgetPredicate((widget) => widget is ButtonStyleButton),
+    ),
+  );
+}
+
+Finder _toolbarButton(String label) {
+  return find.descendant(
+    of: find.byType(NumberKeyboardToolbar),
+    matching: find.text(label),
+  );
+}
+
+Future<void> _tapField(WidgetTester tester, String text) async {
+  final field = find.widgetWithText(TextFormField, text);
+  await tester.ensureVisible(field);
+  await tester.tap(field);
+  await tester.pumpAndSettle();
+}
+
+// iOS 커서는 깜빡임 애니메이션이 계속 돌아 pumpAndSettle이 끝나지 않을 수 있어 멈춥니다.
+void _stopCursorBlink() {
+  EditableText.debugDeterministicCursor = true;
+  addTearDown(() => EditableText.debugDeterministicCursor = false);
 }
 
 const _catalogItems = [

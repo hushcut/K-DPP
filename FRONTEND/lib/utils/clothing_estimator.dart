@@ -31,10 +31,20 @@ class ClothingEstimator {
     return materials.values.fold(0.0, (sum, value) => sum + value);
   }
 
+  // 소재 합계로 인정하는 범위다. 소수점 반올림 오차를 받아 준다.
+  static const double _materialsTotalMin = 99.5;
+  static const double _materialsTotalMax = 100.5;
+
   /// 소재 합계가 허용 범위인 99.5~100.5%인지 검사한다.
   static bool isMaterialsTotalValid(Map<String, double> materials) {
     final total = calculateMaterialsTotal(materials);
-    return total >= 99.5 && total <= 100.5;
+    return total >= _materialsTotalMin && total <= _materialsTotalMax;
+  }
+
+  /// 소재 합계가 허용 범위의 위쪽(100.5%)을 넘었는지 검사한다.
+  /// 넘었으면 소재를 더 추가해도 합계를 맞출 수 없다.
+  static bool isMaterialsTotalOver(Map<String, double> materials) {
+    return calculateMaterialsTotal(materials) > _materialsTotalMax;
   }
 
   /// 소재별 배출계수와 의류 무게를 가중 합산해 탄소 배출량을 추정한다.
