@@ -7,12 +7,15 @@ void dismissKeyboardOnTapOutside(PointerDownEvent event) {
   FocusManager.instance.primaryFocus?.unfocus();
 }
 
-/// 숫자 키패드 바로 위에 붙이는 [다음]·[완료] 막대입니다.
+/// 숫자 키패드 바로 위에 띄우는 [다음]·[완료] 버튼입니다.
 ///
-/// iOS 숫자 키패드에는 확인 키가 없어, 막대가 없으면 키보드를 끌어내려야만 닫을 수
+/// iOS 숫자 키패드에는 확인 키가 없어, 버튼이 없으면 키보드를 끌어내려야만 닫을 수
 /// 있습니다. Android 숫자 키보드에는 동작 키가 있으므로 [isNeeded]는 iOS에서만 참입니다.
 ///
-/// 막대는 [TextFieldTapRegion]으로 감싸 입력란의 일부로 취급합니다. 바깥 탭으로 키보드를
+/// 배경 띠 없이 둥근 버튼만 오른쪽에 띄웁니다. 겹쳐 띄우지 않고 버튼 높이만큼 자리를
+/// 차지해, 키보드 바로 위에 놓인 입력 칸을 가리지 않습니다.
+///
+/// 버튼은 [TextFieldTapRegion]으로 감싸 입력란의 일부로 취급합니다. 바깥 탭으로 키보드를
 /// 내리는 입력란에서 [다음]을 누를 때, 누르는 순간 키보드가 내려갔다가 다음 칸에서 다시
 /// 올라오지 않게 하기 위해서입니다.
 class NumberKeyboardToolbar extends StatelessWidget {
@@ -24,46 +27,62 @@ class NumberKeyboardToolbar extends StatelessWidget {
   /// 다음 입력란으로 옮깁니다. 없으면 [다음] 버튼을 그리지 않습니다.
   final VoidCallback? onNext;
 
-  /// 이 플랫폼의 숫자 키패드에 확인 키가 없어 막대가 필요한지 알려 줍니다.
+  /// 버튼의 최소 높이입니다. 손가락으로 누를 수 있는 크기(44pt)를 지킵니다.
+  static const double buttonHeight = 44;
+
+  /// 이 플랫폼의 숫자 키패드에 확인 키가 없어 버튼이 필요한지 알려 줍니다.
   static bool isNeeded(BuildContext context) =>
       Theme.of(context).platform == TargetPlatform.iOS;
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final borderColor = isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade300;
-    final buttonStyle = TextButton.styleFrom(
-      foregroundColor: AppPalette.accent,
-    );
+    final palette = AppPalette.of(context);
+    const minimumSize = Size(88, buttonHeight);
+    const shape = StadiumBorder();
+    final shadowColor = Colors.black.withValues(alpha: palette.isDark ? 0.6 : 0.25);
 
     return TextFieldTapRegion(
-      child: Material(
-        color: AppPalette.of(context).card,
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 44),
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          decoration: BoxDecoration(
-            border: Border(top: BorderSide(color: borderColor)),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              if (onNext != null)
-                TextButton(
-                  onPressed: onNext,
-                  style: buttonStyle,
-                  child: const Text('다음'),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            if (onNext != null) ...[
+              // [다음]은 바탕색 버튼이라 [완료]와 구분되고, 강조색 테두리로 떠 보입니다.
+              OutlinedButton(
+                onPressed: onNext,
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: palette.card,
+                  foregroundColor: AppPalette.accent,
+                  side: const BorderSide(color: AppPalette.accent, width: 1.5),
+                  minimumSize: minimumSize,
+                  shape: shape,
+                  elevation: 2,
+                  shadowColor: shadowColor,
                 ),
-              TextButton(
-                onPressed: onDone,
-                style: buttonStyle,
                 child: const Text(
-                  '완료',
-                  style: TextStyle(fontWeight: FontWeight.w700),
+                  '다음',
+                  style: TextStyle(fontWeight: FontWeight.w600),
                 ),
               ),
+              const SizedBox(width: 10),
             ],
-          ),
+            FilledButton(
+              onPressed: onDone,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppPalette.accent,
+                foregroundColor: Colors.white,
+                minimumSize: minimumSize,
+                shape: shape,
+                elevation: 3,
+                shadowColor: shadowColor,
+              ),
+              child: const Text(
+                '완료',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
         ),
       ),
     );

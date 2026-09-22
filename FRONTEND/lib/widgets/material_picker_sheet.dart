@@ -5,15 +5,18 @@ import 'package:flutter/material.dart';
 import '../services/material_catalog_api_service.dart';
 import '../services/material_catalog_controller.dart';
 import '../theme/app_palette.dart';
+import '../utils/material_name.dart';
 
 /// 소재 선택창을 열고 고른 소재를 반환합니다. 고르지 않고 닫으면 null입니다.
 ///
 /// 입력란 아래에 뜨는 추천 목록과 달리 시트가 키보드 높이만큼 올라가 목록이 가려지지 않고,
 /// 전체 소재를 스크롤해 볼 수 있습니다. [initialQuery]는 입력란에 적어 둔 글자입니다.
+/// [excludedNames]는 다른 줄에 이미 넣은 소재명으로, 목록에서 뺍니다([excludeMaterialCatalog]).
 Future<MaterialCatalogItem?> showMaterialPickerSheet({
   required BuildContext context,
   required MaterialCatalogController catalog,
   String initialQuery = '',
+  Iterable<String> excludedNames = const [],
 }) {
   final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -30,12 +33,41 @@ Future<MaterialCatalogItem?> showMaterialPickerSheet({
       return MaterialPickerSheet(
         catalog: catalog,
         initialQuery: initialQuery,
+        excludedNames: excludedNames,
         onSelected: (item) {
           Navigator.pop(sheetContext, item);
         },
       );
     },
   );
+}
+
+/// 다른 줄에 이미 넣은 소재를 목록에서 뺍니다.
+///
+/// 같은 소재인지는 글자가 아니라 표준명으로 봅니다(면 = 코튼 = cotton,
+/// [MaterialName.standardize]). 항목의 한글명·영문명·별칭 중 하나라도 [excludedNames]의
+/// 표준명과 같으면 뺍니다. 빈 이름은 무시하고, 뺄 것이 없으면 목록을 그대로 돌려줍니다.
+List<MaterialCatalogItem> excludeMaterialCatalog(
+  List<MaterialCatalogItem> items,
+  Iterable<String> excludedNames,
+) {
+  final excludedStandardNames = {
+    for (final name in excludedNames)
+      if (name.trim().isNotEmpty) MaterialName.standardize(name),
+  };
+  if (excludedStandardNames.isEmpty) return items;
+
+  bool isExcluded(MaterialCatalogItem item) {
+    final names = [item.nameKo, item.nameEn, ...item.aliases];
+    return names.any(
+      (name) => excludedStandardNames.contains(MaterialName.standardize(name)),
+    );
+  }
+
+  return [
+    for (final item in items)
+      if (!isExcluded(item)) item,
+  ];
 }
 
 /// 검색어로 소재를 거르고, 이름·별칭이 검색어와 같은 것 → 검색어로 시작하는 것 →
@@ -86,6 +118,7 @@ class MaterialPickerSheet extends StatefulWidget {
     required this.catalog,
     required this.onSelected,
     this.initialQuery = '',
+    this.excludedNames = const [],
   });
 
   final MaterialCatalogController catalog;
@@ -93,6 +126,9 @@ class MaterialPickerSheet extends StatefulWidget {
 
   /// 검색창에 미리 채워 둘 글자입니다.
   final String initialQuery;
+
+  /// 다른 줄에 이미 넣어 목록에서 뺄 소재명입니다.
+  final Iterable<String> excludedNames;
 
   @override
   State<MaterialPickerSheet> createState() => _MaterialPickerSheetState();
@@ -128,6 +164,9 @@ class _MaterialPickerSheetState extends State<MaterialPickerSheet> {
     final secondaryText = palette.textSecondary;
     final inputFillColor = isDark ? const Color(0xFF2A2A2E) : Colors.white;
     final maxSheetHeight = MediaQuery.sizeOf(context).height * 0.78;
+    final hasExcludedNames = widget.excludedNames.any(
+      (name) => name.trim().isNotEmpty,
+    );
 
     return SafeArea(
       top: false,
@@ -161,7 +200,9 @@ class _MaterialPickerSheetState extends State<MaterialPickerSheet> {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: Text(
-                      '한글명·영문명·별칭으로 찾을 수 있어요.',
+                      hasExcludedNames
+                          ? '한글명·영문명·별칭으로 찾을 수 있어요.\n다른 줄에 이미 넣은 소재는 목록에 없어요.'
+                          : '한글명·영문명·별칭으로 찾을 수 있어요.',
                       style: TextStyle(
                         color: secondaryText,
                         fontSize: 13,
@@ -245,15 +286,28 @@ class _MaterialPickerSheetState extends State<MaterialPickerSheet> {
         break;
     }
 
-    final results = rankMaterialCatalog(catalog.items, _queryController.text);
+    final query = _queryController.text;
+    final available = excludeMaterialCatalog(
+      catalog.items,
+      widget.excludedNames,
+    );
+    final results = rankMaterialCatalog(available, query);
 
     if (results.isEmpty) {
-      return _buildNotice(
-        message: catalog.items.isEmpty
-            ? '등록된 소재가 없어요.\n입력란에 직접 입력해 주세요.'
-            : '검색어에 맞는 소재가 없어요.\n입력란에 직접 입력할 수도 있어요.',
-        secondaryText: secondaryText,
-      );
+      // 다른 줄 소재를 빼서 비었을 때는 '검색어에 맞는 소재가 없다'고 하면 소재가 어디
+      // 갔는지 알 수 없으므로, 그 이유를 말합니다.
+      final String message;
+      if (catalog.items.isEmpty) {
+        message = '등록된 소재가 없어요.\n입력란에 직접 입력해 주세요.';
+      } else if (available.isEmpty) {
+        message = '남은 소재가 없어요.\n다른 줄에 이미 넣은 소재는 목록에서 빠져요.';
+      } else if (rankMaterialCatalog(catalog.items, query).isNotEmpty) {
+        message = '검색한 소재는 다른 줄에 이미 넣었어요.\n다른 소재를 찾거나 입력란에 직접 입력해 주세요.';
+      } else {
+        message = '검색어에 맞는 소재가 없어요.\n입력란에 직접 입력할 수도 있어요.';
+      }
+
+      return _buildNotice(message: message, secondaryText: secondaryText);
     }
 
     return ListView.builder(

@@ -7,6 +7,7 @@ import '../utils/clothing_estimator.dart';
 import '../utils/leading_zero_trimmer.dart';
 import '../utils/percent_limit_formatter.dart';
 import '../utils/scan_calculation_resolver.dart';
+import '../utils/scan_form_validator.dart';
 import 'material_edit_controller.dart';
 import 'material_input_collection.dart';
 import 'material_picker_sheet.dart';
@@ -669,10 +670,12 @@ class ScanResultView extends StatelessWidget {
     // 입력란으로 돌아와 키보드가 다시 뜹니다.
     FocusManager.instance.primaryFocus?.unfocus();
 
+    // 다른 줄에 이미 넣은 소재는 목록에서 뺍니다. 이 줄의 소재는 그대로 보입니다.
     final picked = await showMaterialPickerSheet(
       context: context,
       catalog: catalog,
       initialQuery: item.nameController.text,
+      excludedNames: _materialNamesOfOtherRows(item),
     );
 
     // 선택창이 열린 동안 이 행이 지워졌다면 컨트롤러가 이미 해제됐으므로 쓰지 않습니다.
@@ -684,7 +687,29 @@ class ScanResultView extends StatelessWidget {
     item.nameController.text = picked.nameKo;
   }
 
-  // iOS 숫자 키패드에는 확인 키가 없어, 함유율 칸에 포커스가 있는 동안 [다음]·[완료] 막대를
+  // 이 줄을 뺀 나머지 줄의 소재명입니다. 줄이 지워져 위치가 바뀌어도 맞게, 번호가 아니라
+  // 컨트롤러 자체로 이 줄을 가립니다.
+  List<String> _materialNamesOfOtherRows(MaterialEditController item) {
+    return [
+      for (var i = 0; i < materialInputs.length; i++)
+        if (!identical(materialInputs[i], item))
+          materialInputs[i].nameController.text,
+    ];
+  }
+
+  // 이 줄보다 앞에 있는 줄들의 소재명입니다. 같은 소재 오류를 뒤 줄에만 보이기 위한 비교 대상이며,
+  // 검증 시점의 글자를 읽도록 매번 새로 모읍니다(앞 줄을 고치면 뒤 줄 오류가 바로 사라집니다).
+  List<String> _materialNamesBeforeRow(MaterialEditController item) {
+    final names = <String>[];
+    for (var i = 0; i < materialInputs.length; i++) {
+      final row = materialInputs[i];
+      if (identical(row, item)) break;
+      names.add(row.nameController.text);
+    }
+    return names;
+  }
+
+  // iOS 숫자 키패드에는 확인 키가 없어, 함유율 칸에 포커스가 있는 동안 [다음]·[완료] 버튼을
   // 그립니다. 포커스가 바뀔 때마다 FocusManager가 알려 주므로 이 부분만 다시 그립니다.
   Widget _buildNumberKeyboardToolbar(BuildContext context) {
     if (!NumberKeyboardToolbar.isNeeded(context)) return const SizedBox.shrink();
@@ -739,7 +764,13 @@ class ScanResultView extends StatelessWidget {
           child: TextFormField(
             controller: item.nameController,
             focusNode: item.nameFocusNode,
-            validator: validateMaterialName,
+            // 상위 검증(빈 값)을 통과하면 앞 줄과 같은 소재인지 봅니다(면 = 코튼 = cotton).
+            validator: (value) =>
+                validateMaterialName(value) ??
+                ScanFormValidator.validateMaterialNameUnique(
+                  value,
+                  _materialNamesBeforeRow(item),
+                ),
             enabled: !isSaving,
             // 키보드의 '다음'은 같은 행의 함유율로 옮깁니다. 기본 동작(다음 포커스 대상)은
             // 목록 아이콘 같은 버튼으로 갈 수 있어 직접 지정합니다.

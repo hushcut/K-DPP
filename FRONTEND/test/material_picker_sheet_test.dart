@@ -23,6 +23,68 @@ void main() {
     expect(namesFor('없는소재'), isEmpty);
   });
 
+  test('다른 줄 소재는 한글명·영문명·별칭 어느 것으로 적었든 목록에서 빠진다', () {
+    List<String> namesAfter(List<String> excludedNames) =>
+        excludeMaterialCatalog(
+          _catalogItems,
+          excludedNames,
+        ).map((item) => item.nameKo).toList();
+
+    // 코튼 = 면, WOOL = 울, 우모 = 다운(별칭). 대소문자·앞뒤 공백은 무시한다.
+    expect(namesAfter(['코튼', ' WOOL ', '우모']), ['비스코스', '모달', '모헤어']);
+    // 부분 일치가 아니라 표준명이 같아야 빠진다 — '모'는 울의 별칭이지 모달·모헤어가 아니다.
+    expect(namesAfter(['모']), ['면', '비스코스', '모달', '다운', '모헤어']);
+    // 빈 이름은 무시하고, 뺄 것이 없으면 목록을 그대로 돌려준다.
+    expect(
+      identical(excludeMaterialCatalog(_catalogItems, ['', '  ']), _catalogItems),
+      isTrue,
+    );
+  });
+
+  testWidgets('다른 줄 소재가 있으면 안내를 덧붙이고, 검색한 소재가 그중 하나면 이유를 말한다', (
+    tester,
+  ) async {
+    _usePhoneView(tester);
+    final catalog = await _loadedCatalog();
+    addTearDown(catalog.dispose);
+
+    await _openPicker(tester, catalog, excludedNames: ['면']);
+
+    expect(
+      find.text('한글명·영문명·별칭으로 찾을 수 있어요.\n다른 줄에 이미 넣은 소재는 목록에 없어요.'),
+      findsOneWidget,
+    );
+    expect(_resultNames(tester), ['비스코스', '울', '모달', '다운', '모헤어']);
+
+    // '면'을 검색하면 목록엔 없지만 "검색어에 맞는 소재가 없다"는 말은 틀리다.
+    await tester.enterText(find.byType(TextField), '면');
+    await tester.pump();
+
+    expect(find.byType(ListTile), findsNothing);
+    expect(
+      find.text('검색한 소재는 다른 줄에 이미 넣었어요.\n다른 소재를 찾거나 입력란에 직접 입력해 주세요.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('다른 줄에 모든 소재를 넣었으면 남은 소재가 없다고 안내한다', (tester) async {
+    _usePhoneView(tester);
+    final catalog = await _loadedCatalog();
+    addTearDown(catalog.dispose);
+
+    await _openPicker(
+      tester,
+      catalog,
+      excludedNames: _catalogItems.map((item) => item.nameEn).toList(),
+    );
+
+    expect(find.byType(ListTile), findsNothing);
+    expect(
+      find.text('남은 소재가 없어요.\n다른 줄에 이미 넣은 소재는 목록에서 빠져요.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('입력란 글자로 검색이 채워진 채 열리고, 고른 소재를 반환한다', (tester) async {
     _usePhoneView(tester);
     final catalog = await _loadedCatalog();
@@ -192,6 +254,7 @@ Future<_PickResult> _openPicker(
   WidgetTester tester,
   MaterialCatalogController catalog, {
   String initialQuery = '',
+  List<String> excludedNames = const [],
 }) async {
   final picked = _PickResult();
 
@@ -206,6 +269,7 @@ Future<_PickResult> _openPicker(
                   context: context,
                   catalog: catalog,
                   initialQuery: initialQuery,
+                  excludedNames: excludedNames,
                 ).then((item) {
                   picked
                     ..completed = true
