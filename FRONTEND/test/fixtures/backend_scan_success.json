@@ -1,0 +1,14 @@
+{
+  "status": "success",
+  "message": "분석 완료",
+  "materials": {
+    "면": 80,
+    "폴리에스터": 20
+  },
+  "carbon_footprint": 8.54,
+  "unit": "kg CO2eq",
+  "care_instruction": "찬물 기계세탁 가능",
+  "saved_result_id": 13,
+  "title": "스캔한 의류",
+  "category": "상의"
+}

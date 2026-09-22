@@ -1,34 +1,44 @@
+// 앱 시작 준비, 전역 상태 등록, 테마와 이름 기반 라우트를 구성하는 진입 파일입니다.
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'login_screen.dart';
 import 'main_screen.dart';
-import 'report_detail_screen.dart';
 import 'splash_screen.dart';
 import 'email_login_screen.dart';
 import 'signup_screen.dart';
 import 'settings_screen.dart';
+import 'theme/app_palette.dart';
 import 'theme_provider.dart';
 import 'display_settings_screen.dart';
+import 'material_name_display_provider.dart';
 
+/// Flutter 바인딩과 화면 방향을 설정한 뒤 앱 전역 Provider를 주입합니다.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
   final closetProvider = ClosetProvider();
   final themeProvider = ThemeProvider();
+  final materialNameDisplayProvider = MaterialNameDisplayProvider();
   await themeProvider.loadThemeMode();
+  await materialNameDisplayProvider.load();
 
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: closetProvider),
         ChangeNotifierProvider.value(value: themeProvider),
+        ChangeNotifierProvider.value(value: materialNameDisplayProvider),
       ],
       child: const MyApp(),
     ),
   );
 }
 
+/// 현재 테마 설정을 반영해 K-DPP의 최상위 [MaterialApp]을 구성합니다.
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -37,7 +47,7 @@ class MyApp extends StatelessWidget {
       brightness: Brightness.light,
       scaffoldBackgroundColor: const Color(0xFFF8F9FC),
       colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF4A4EFE),
+        seedColor: AppPalette.accent,
         brightness: Brightness.light,
       ),
       useMaterial3: true,
@@ -52,7 +62,7 @@ class MyApp extends StatelessWidget {
       cardColor: const Color(0xFF1C1C1E),
       dividerColor: const Color(0xFF2C2C2E),
       colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF4A4EFE),
+        seedColor: AppPalette.accent,
         brightness: Brightness.dark,
         surface: const Color(0xFF1C1C1E),
       ),
@@ -97,15 +107,22 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // ThemeProvider가 알림을 보내면 MaterialApp의 themeMode도 즉시 갱신됩니다.
     return Consumer<ThemeProvider>(
       builder: (context, themeProvider, child) {
         return MaterialApp(
-          title: 'EcoLabel',
+          title: 'K-DPP',
           debugShowCheckedModeBanner: false,
           theme: _lightTheme(),
           darkTheme: _darkTheme(),
           themeMode: themeProvider.themeMode,
+          // 앱 문구가 전부 한국어라 앱 언어도 한국어로 고정합니다. 기본값(영어)이면
+          // TalkBack이 한국어 글자와 숫자를 영어 음성으로 읽습니다(2026-09-18 폰 확인).
+          locale: const Locale('ko', 'KR'),
+          supportedLocales: const [Locale('ko', 'KR')],
+          localizationsDelegates: GlobalMaterialLocalizations.delegates,
           initialRoute: '/splash',
+          // 스플래시부터 인증 화면과 메인 화면까지 앱의 주요 이동 경로입니다.
           routes: {
             '/splash': (context) => const SplashScreen(),
             '/login': (context) => const LoginScreen(),
@@ -114,7 +131,6 @@ class MyApp extends StatelessWidget {
             '/settings': (context) => const SettingsScreen(),
             '/display-settings': (context) => const DisplaySettingsScreen(),
             '/main': (context) => const MainScreen(),
-            '/report': (context) => const ReportDetailScreen(),
           },
         );
       },

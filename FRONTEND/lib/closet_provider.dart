@@ -1,40 +1,44 @@
+// 로그인 사용자별 옷장, 선택 의류, 인증 세션을 메모리와 로컬 저장소에 동기화하는 파일입니다.
+import 'dart:async';
 import 'dart:collection';
 import 'package:flutter/foundation.dart';
+import 'models/analysis_history_record.dart';
+import 'models/closet_sort_option.dart';
 import 'models/clothes.dart';
+import 'services/auth_session_storage_service.dart';
 import 'services/closet_storage_service.dart';
 
+/// 앱 전역에서 사용하는 옷장·사용자 상태를 보관하고 변경 시 화면에 알립니다.
 class ClosetProvider with ChangeNotifier {
   final ClosetStorage _storageService;
+  final AuthSessionStorage _authSessionStorage;
 
-  final List<Clothes> _items = [
-    Clothes(
-      title: '오가닉 코튼 맨투맨',
-      category: '상의',
-      health: 65,
-      materials: {'cotton': 100},
-      careInstruction: '30도 이하 물에서 세탁하세요.',
-      carbonFootprint: 15.5,
-    ),
-    Clothes(
-      title: '오래된 데님 팬츠',
-      category: '하의',
-      health: 10,
-      materials: {'cotton': 98, 'polyurethane': 2},
-      careInstruction: '단독 세탁 권장',
-      carbonFootprint: 25.0,
-    ),
-  ];
+  // 외부에서는 수정 불가능한 목록으로 노출하고, 모든 변경은 이 Provider를 거칩니다.
+  final List<Clothes> _items = [];
+
+  // 저장 실패 롤백이 자신보다 나중에 시작된 변경을 덮어쓰지 않도록,
+  // 목록·선택 상태를 바꾸는 모든 작업이 시작 시점에 올립니다.
+  int _mutationVersion = 0;
 
   Clothes? _selectedClothes;
   bool _isLoaded = false;
   String _userName = '홍길동';
+  // 설정에서 직접 바꾼 닉네임은 서버 프로필 동기화가 덮어쓰지 않게 표시합니다.
+  bool _isUserNameCustomized = false;
+  String _userEmail = 'honggildong@kdpp.com';
+  String? _closetOwnerEmail;
+  ClosetSortOption _closetSortOption = ClosetSortOption.eco;
 
-  ClosetProvider({ClosetStorage? storage})
-      : _storageService = storage ?? ClosetStorageService() {
-    if (_items.isNotEmpty) {
-      _selectedClothes = _items.last;
-    }
-  }
+  // 정렬 기준은 목록·선택 상태와 무관하므로 별도 카운터를 씁니다.
+  // _mutationVersion을 함께 올리면 진행 중이던 옷장 저장의 롤백이 건너뛰어집니다.
+  int _sortMutationVersion = 0;
+  AuthSession? _authSession;
+
+  ClosetProvider({
+    ClosetStorage? storage,
+    AuthSessionStorage? authSessionStorage,
+  }) : _storageService = storage ?? ClosetStorageService(),
+       _authSessionStorage = authSessionStorage ?? AuthSessionStorageService();
 
   UnmodifiableListView<Clothes> get items => UnmodifiableListView(_items);
 
@@ -42,7 +46,26 @@ class ClosetProvider with ChangeNotifier {
 
   int get count => _items.length;
 
-  Clothes? get latestItem => _items.isEmpty ? null : _items.last;
+  /// 등록 시각이 가장 최근인 의류를 반환하고, 시각이 없는 옛 데이터만 있으면
+  /// 이전과 같이 목록의 마지막 항목을 사용합니다.
+  Clothes? get latestItem {
+    if (_items.isEmpty) return null;
+
+    var latest = _items.last;
+    var latestTime = latest.registeredAt;
+
+    for (final item in _items) {
+      final registeredAt = item.registeredAt;
+      if (registeredAt == null) continue;
+
+      if (latestTime == null || registeredAt.isAfter(latestTime)) {
+        latest = item;
+        latestTime = registeredAt;
+      }
+    }
+
+    return latest;
+  }
 
   Clothes? get selectedClothes => _selectedClothes;
 
@@ -50,79 +73,586 @@ class ClosetProvider with ChangeNotifier {
 
   String get userName => _userName;
 
+  String get userEmail => _userEmail;
+
+  String? get accessToken => _authSession?.accessToken;
+
+  /// 옷장 목록에 적용 중인 정렬 기준입니다. 기기 단위 표시 설정이라
+  /// 계정을 바꾸거나 로그아웃해도 유지됩니다.
+  ClosetSortOption get closetSortOption => _closetSortOption;
+
+  bool get isAuthenticated => _authSession != null && !_authSession!.isExpired;
+
+  /// 기기에 표시할 닉네임을 갱신하고 로컬 저장소에도 기록합니다.
+  /// 사용자가 직접 바꾼 값이므로 이후 서버 프로필 동기화가 덮어쓰지 않습니다.
   Future<void> setUserName(String value) async {
+    final previousName = _userName;
+    final wasCustomized = _isUserNameCustomized;
     final trimmed = value.trim();
+
     _userName = trimmed.isEmpty ? '홍길동' : trimmed;
+    _isUserNameCustomized = true;
     notifyListeners();
-    await _storageService.saveUserName(_userName);
+
+    try {
+      // 이름이 저장된 뒤에만 '직접 수정' 표시를 남겨,
+      // 표시만 남고 이름은 안 남는 반쪽 상태를 막습니다.
+      await _storageService.saveUserName(_userName);
+      await _storageService.saveUserNameCustomized(true);
+    } catch (_) {
+      _userName = previousName;
+      _isUserNameCustomized = wasCustomized;
+      notifyListeners();
+      rethrow;
+    }
   }
 
+  /// 사용자 프로필을 저장하며 계정이 바뀌면 해당 이메일 소유자의 옷장을 불러옵니다.
+  Future<void> setUserProfile({
+    required String nickname,
+    required String email,
+  }) async {
+    final trimmedNickname = nickname.trim();
+    final trimmedEmail = email.trim();
+    final normalizedEmail = _normalizeEmail(trimmedEmail);
+
+    if (_authSession != null &&
+        normalizedEmail.isNotEmpty &&
+        _closetOwnerEmail != normalizedEmail) {
+      final previousEmail = _normalizeEmail(_userEmail);
+
+      // 실제로 다른 계정으로 바뀐 경우에는 이전 계정에서 남긴
+      // 닉네임 직접 수정 표시를 물려주지 않습니다.
+      if (previousEmail != normalizedEmail && _isUserNameCustomized) {
+        _isUserNameCustomized = false;
+        await _storageService.clearUserNameCustomized();
+      }
+
+      await _loadClosetForOwner(
+        normalizedEmail,
+        migrateLegacyData: previousEmail == normalizedEmail,
+      );
+    }
+
+    // 기기에서 직접 수정한 닉네임은 유지하고, 그 외에는 서버 닉네임을 따릅니다.
+    if (!_isUserNameCustomized) {
+      _userName = trimmedNickname.isEmpty ? '홍길동' : trimmedNickname;
+    }
+    _userEmail = trimmedEmail.isEmpty ? 'honggildong@kdpp.com' : trimmedEmail;
+    notifyListeners();
+
+    await Future.wait([
+      if (!_isUserNameCustomized) _storageService.saveUserName(_userName),
+      _storageService.saveUserEmail(_userEmail),
+    ]);
+  }
+
+  /// 로그인 응답으로 인증 세션을 만들고 프로필·토큰을 함께 저장합니다.
+  Future<void> setAuthenticatedUser({
+    required String nickname,
+    required String email,
+    required String accessToken,
+    required int expiresInSeconds,
+  }) async {
+    final session = AuthSession(
+      accessToken: accessToken,
+      expiresAt: DateTime.now().add(Duration(seconds: expiresInSeconds)),
+    );
+
+    _authSession = session;
+
+    try {
+      await setUserProfile(nickname: nickname, email: email);
+      await _authSessionStorage.saveSession(session);
+    } catch (error) {
+      // 절반만 로그인된 상태가 남지 않도록 메모리와 저장소의 세션을 함께 되돌립니다.
+      _authSession = null;
+
+      try {
+        await _authSessionStorage.clearSession();
+      } catch (clearError) {
+        debugPrint('로그인 롤백 중 세션 정리에 실패했습니다: $clearError');
+      }
+
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  /// 회원 탈퇴 뒤 이 기기에 남은 계정 전용 옷장까지 지우고 로그아웃 상태로 되돌립니다.
+  ///
+  /// 로그아웃은 다시 로그인할 것을 전제로 계정별 옷장을 남겨 두므로,
+  /// 탈퇴에서는 그 데이터까지 지워야 다른 사람이 같은 기기를 써도 남지 않습니다.
+  ///
+  /// 옷장 삭제가 실패해도 **세션 정리는 반드시 끝냅니다.** 삭제된 계정의 토큰이
+  /// 기기에 남으면 다음 실행에서 이미 없는 계정으로 복원을 시도하기 때문입니다.
+  /// 실패는 호출부가 사용자에게 알릴 수 있도록 마지막에 다시 던집니다.
+  Future<void> purgeAccountData() async {
+    // logout()이 이메일을 기본값으로 되돌리기 때문에 먼저 읽어 둡니다.
+    final ownerEmail = _closetOwnerEmail ?? _normalizeEmail(_userEmail);
+
+    Object? closetClearError;
+    StackTrace? closetClearStackTrace;
+
+    if (ownerEmail.isNotEmpty) {
+      try {
+        await _storageService.clearClothesListFor(ownerEmail);
+      } catch (error, stackTrace) {
+        closetClearError = error;
+        closetClearStackTrace = stackTrace;
+      }
+    }
+
+    await logout();
+
+    if (closetClearError != null) {
+      Error.throwWithStackTrace(
+        closetClearError,
+        closetClearStackTrace ?? StackTrace.current,
+      );
+    }
+  }
+
+  /// 메모리의 사용자·옷장 상태와 기기에 저장된 인증 정보를 초기화합니다.
   Future<void> logout() async {
+    _mutationVersion++;
+    _items.clear();
+    _selectedClothes = null;
+    _closetOwnerEmail = null;
     _userName = '홍길동';
+    _isUserNameCustomized = false;
+    _userEmail = 'honggildong@kdpp.com';
+    _authSession = null;
     notifyListeners();
-    await _storageService.clearUserName();
+    await Future.wait([
+      _storageService.clearUserName(),
+      _storageService.clearUserNameCustomized(),
+      _storageService.clearUserEmail(),
+      _authSessionStorage.clearSession(),
+    ]);
   }
 
+  /// 현재 옷장에 등록된 의류의 탄소 배출 추정값 합계입니다.
   double get totalCarbonFootprint {
     return _items.fold(0.0, (sum, item) => sum + item.carbonFootprint);
   }
 
+  /// 등록 의류가 없으면 0, 있으면 건강도 평균을 반환합니다.
   double get averageHealth {
     if (_items.isEmpty) return 0.0;
     final total = _items.fold<int>(0, (sum, item) => sum + item.health);
     return total / _items.length;
   }
 
-  Future<void> loadFromStorage() async {
-    final hasSavedData = await _storageService.hasSavedClothesList();
-    final savedItems = await _storageService.loadClothesList();
-    final savedUserName = await _storageService.loadUserName();
+  /// 정렬 기준을 즉시 반영한 뒤 다음 실행을 위해 저장합니다.
+  ///
+  /// 저장에 실패하면 이전 값으로 되돌리고 호출부에 알립니다. 다만 되돌리는 사이
+  /// 더 새로운 선택이 들어왔다면 그 선택을 덮어쓰지 않고, 호출부에도 알리지
+  /// 않습니다. 이미 버려진 선택의 실패를 사용자에게 알리면 화면에 적용된 기준과
+  /// 어긋나는 안내가 되기 때문입니다.
+  Future<void> setClosetSortOption(ClosetSortOption option) async {
+    if (_closetSortOption == option) return;
 
-    if (hasSavedData) {
-      _items
-        ..clear()
-        ..addAll(savedItems);
+    final mutationVersion = ++_sortMutationVersion;
+    final previousOption = _closetSortOption;
+    _closetSortOption = option;
+    notifyListeners();
+
+    try {
+      await _storageService.saveClosetSortOption(option);
+    } catch (error, stackTrace) {
+      debugPrint('정렬 기준을 저장하지 못했습니다: $error');
+      debugPrintStack(stackTrace: stackTrace);
+
+      if (mutationVersion == _sortMutationVersion) {
+        _closetSortOption = previousOption;
+        notifyListeners();
+        rethrow;
+      }
+    }
+  }
+
+  /// 저장된 프로필과 세션을 복원하고 유효한 계정의 전용 옷장을 불러옵니다.
+  Future<void> loadFromStorage() async {
+    // 서로 독립적인 저장소 읽기는 병렬로 실행해 시작 시간을 줄입니다.
+    final (
+      savedUserName,
+      savedUserEmail,
+      savedNameCustomized,
+      savedSortOption,
+    ) = await (
+      _storageService.loadUserName(),
+      _storageService.loadUserEmail(),
+      _storageService.loadUserNameCustomized(),
+      _storageService.loadClosetSortOption(),
+    ).wait;
+
+    _closetSortOption = savedSortOption;
+    AuthSession? savedAuthSession;
+
+    try {
+      savedAuthSession = await _authSessionStorage.loadSession();
+    } catch (error, stackTrace) {
+      debugPrint('인증 세션을 불러오지 못했습니다: $error');
+      debugPrintStack(stackTrace: stackTrace);
     }
 
     if (savedUserName != null && savedUserName.trim().isNotEmpty) {
       _userName = savedUserName.trim();
     }
 
-    _selectedClothes = _items.isNotEmpty ? _items.last : null;
+    _isUserNameCustomized = savedNameCustomized;
+
+    if (savedUserEmail != null && savedUserEmail.trim().isNotEmpty) {
+      _userEmail = savedUserEmail.trim();
+    }
+
+    if (savedAuthSession != null && !savedAuthSession.isExpired) {
+      _authSession = savedAuthSession;
+      final normalizedEmail = _normalizeEmail(savedUserEmail ?? '');
+
+      if (normalizedEmail.isNotEmpty) {
+        await _loadClosetForOwner(normalizedEmail, migrateLegacyData: true);
+      } else {
+        _clearClosetMemory();
+      }
+    } else {
+      _authSession = null;
+      _clearClosetMemory();
+
+      if (savedAuthSession != null) {
+        await _authSessionStorage.clearSession();
+      }
+    }
+
     _isLoaded = true;
     notifyListeners();
   }
 
+  // 로그인 계정이 있으면 계정별 공간에, 없으면 기존 공용 공간에 옷장을 저장합니다.
   Future<void> _persist() async {
-    await _storageService.saveClothesList(_items);
+    final ownerEmail = _closetOwnerEmail;
+
+    if (ownerEmail == null) {
+      await _storageService.saveClothesList(_items);
+      return;
+    }
+
+    await _storageService.saveClothesListFor(ownerEmail, _items);
   }
 
+  /// 새 의류를 목록과 현재 리포트 대상으로 등록한 뒤 저장합니다.
+  /// 저장이 실패하면 화면과 디스크가 어긋나지 않도록 목록에서 되돌립니다.
   Future<void> addClothes(Clothes newClothes) async {
+    final mutationVersion = ++_mutationVersion;
+    final previousSelected = _selectedClothes;
+
     _items.add(newClothes);
     _selectedClothes = newClothes;
     notifyListeners();
-    await _persist();
+
+    try {
+      await _persist();
+    } catch (_) {
+      // 더 새로운 변경이 이미 반영됐다면 낡은 상태로 되돌리지 않습니다.
+      if (mutationVersion == _mutationVersion) {
+        _items.remove(newClothes);
+        _selectedClothes = previousSelected;
+        notifyListeners();
+      }
+      rethrow;
+    }
   }
 
+  /// 객체 또는 서버 저장 ID로 대상 의류를 찾아 수정하고 선택 상태도 교체합니다.
+  /// 저장이 실패하면 화면과 디스크가 어긋나지 않도록 이전 값으로 되돌립니다.
+  Future<bool> updateClothes(Clothes target, Clothes updated) async {
+    var index = _items.indexOf(target);
+
+    if (index == -1 && target.savedResultId != null) {
+      index = _items.indexWhere(
+        (item) => item.savedResultId == target.savedResultId,
+      );
+    }
+
+    if (index == -1) {
+      return false;
+    }
+
+    final mutationVersion = ++_mutationVersion;
+    final previous = _items[index];
+    final previousSelected = _selectedClothes;
+
+    _items[index] = updated;
+
+    final isSelectedTarget =
+        identical(_selectedClothes, target) ||
+        _selectedClothes == target ||
+        (target.savedResultId != null &&
+            _selectedClothes?.savedResultId == target.savedResultId);
+
+    if (isSelectedTarget) {
+      _selectedClothes = updated;
+    }
+
+    notifyListeners();
+
+    try {
+      await _persist();
+    } catch (_) {
+      if (mutationVersion == _mutationVersion) {
+        _items[index] = previous;
+        _selectedClothes = previousSelected;
+        notifyListeners();
+      }
+      rethrow;
+    }
+
+    return true;
+  }
+
+  /// 서버 분석 이력과 로컬 항목을 저장 ID로 연결해 달라진 탄소·소재 값을 반영합니다.
+  Future<int> synchronizeServerHistory(
+    List<AnalysisHistoryRecord> history,
+  ) async {
+    if (history.isEmpty || _items.isEmpty) {
+      return 0;
+    }
+
+    final recordsById = {for (final record in history) record.id: record};
+    var updatedCount = 0;
+
+    // 저장 실패 시 되돌릴 상태입니다. 첫 변경이 일어날 때 붙잡아 둡니다.
+    List<Clothes>? previousItems;
+    Clothes? previousSelected;
+    var mutationVersion = _mutationVersion;
+
+    for (var index = 0; index < _items.length; index++) {
+      final current = _items[index];
+      final savedResultId = current.savedResultId;
+
+      if (savedResultId == null) {
+        continue;
+      }
+
+      final record = recordsById[savedResultId];
+
+      if (record == null || _matchesServerRecord(current, record)) {
+        continue;
+      }
+
+      // copyWith는 null을 "유지"로 해석해 서버의 null 범위값을 지우지 못하므로,
+      // 서버 기록 값을 그대로 반영하도록 새 인스턴스를 직접 만듭니다.
+      final updated = Clothes(
+        title: current.title,
+        category: current.category,
+        health: current.health,
+        materials: Map<String, double>.from(record.materials),
+        careInstruction: current.careInstruction,
+        carbonFootprint: record.carbonFootprint,
+        carbonFootprintSource: CarbonFootprintSource.server,
+        carbonFootprintMin: record.carbonFootprintMin,
+        carbonFootprintMax: record.carbonFootprintMax,
+        minWeightGram: record.minWeightGram,
+        maxWeightGram: record.maxWeightGram,
+        savedResultId: current.savedResultId,
+        registeredAt: current.registeredAt,
+        weightSource: current.weightSource,
+        calculationScope: current.calculationScope,
+        calculationBasis: current.calculationBasis,
+        calculationSource: current.calculationSource,
+        calculationNote: current.calculationNote,
+      );
+
+      if (updatedCount == 0) {
+        previousItems = List<Clothes>.from(_items);
+        previousSelected = _selectedClothes;
+        mutationVersion = ++_mutationVersion;
+      }
+
+      _items[index] = updated;
+
+      if (identical(_selectedClothes, current)) {
+        _selectedClothes = updated;
+      }
+
+      updatedCount++;
+    }
+
+    if (updatedCount > 0) {
+      notifyListeners();
+
+      try {
+        await _persist();
+      } catch (_) {
+        // 다른 변경 경로(추가·삭제·수정)는 모두 저장 실패 시 되돌리는데 이 경로만
+        // 빠져 있었습니다. 되돌리지 않으면 메모리에는 서버 값이, 저장소에는 옛 값이
+        // 남아 다음 실행에서 아무 안내 없이 옛 값으로 돌아갑니다.
+        final snapshot = previousItems;
+
+        if (mutationVersion == _mutationVersion && snapshot != null) {
+          _items
+            ..clear()
+            ..addAll(snapshot);
+          _selectedClothes = previousSelected;
+          notifyListeners();
+        }
+
+        rethrow;
+      }
+    }
+
+    return updatedCount;
+  }
+
+  bool _matchesServerRecord(Clothes clothes, AnalysisHistoryRecord record) {
+    return mapEquals(clothes.materials, record.materials) &&
+        clothes.carbonFootprint == record.carbonFootprint &&
+        clothes.carbonFootprintSource == CarbonFootprintSource.server &&
+        clothes.carbonFootprintMin == record.carbonFootprintMin &&
+        clothes.carbonFootprintMax == record.carbonFootprintMax &&
+        clothes.minWeightGram == record.minWeightGram &&
+        clothes.maxWeightGram == record.maxWeightGram;
+  }
+
+  // 계정 옷장을 불러오고, 요청이 있으면 예전 공용 옷장을 합친 뒤 과거 샘플 항목은 제거합니다.
+  Future<void> _loadClosetForOwner(
+    String ownerEmail, {
+    required bool migrateLegacyData,
+  }) async {
+    final normalizedEmail = _normalizeEmail(ownerEmail);
+
+    if (normalizedEmail.isEmpty) {
+      _clearClosetMemory();
+      return;
+    }
+
+    // 존재 확인과 로드를 한 번의 읽기로 처리해 시작 경로의 저장소 I/O를 줄입니다.
+    final accountItems = await _storageService.loadClothesListOrNullFor(
+      normalizedEmail,
+    );
+    final hasAccountData = accountItems != null;
+
+    // 예전 공용 옷장은 계정 옷장에 실제로 합쳐 저장한 뒤에만 비워서 유실을 막습니다.
+    final legacyItems = migrateLegacyData
+        ? await _storageService.loadClothesListOrNull()
+        : null;
+    final shouldClearLegacyData = legacyItems != null;
+
+    final savedItems = [...?accountItems, ...?legacyItems];
+    final migratedItems = savedItems
+        .where((item) => !_isLegacySampleClothes(item))
+        .toList();
+
+    _mutationVersion++;
+    _closetOwnerEmail = normalizedEmail;
+    _items
+      ..clear()
+      ..addAll(migratedItems);
+    _selectedClothes = _items.isNotEmpty ? _items.last : null;
+
+    if (!hasAccountData ||
+        shouldClearLegacyData ||
+        migratedItems.length != savedItems.length) {
+      await _storageService.saveClothesListFor(normalizedEmail, _items);
+    }
+
+    if (shouldClearLegacyData) {
+      await _storageService.clearClothesList();
+    }
+  }
+
+  void _clearClosetMemory() {
+    _mutationVersion++;
+    _items.clear();
+    _selectedClothes = null;
+    _closetOwnerEmail = null;
+  }
+
+  String _normalizeEmail(String value) {
+    return value.trim().toLowerCase();
+  }
+
+  bool _isLegacySampleClothes(Clothes clothes) {
+    final isOrganicCottonSample =
+        clothes.title == '오가닉 코튼 맨투맨' &&
+        clothes.category == '상의' &&
+        clothes.health == 65 &&
+        mapEquals(clothes.materials, const {'cotton': 100.0}) &&
+        clothes.careInstruction == '30도 이하 물에서 세탁하세요.' &&
+        clothes.carbonFootprint == 15.5 &&
+        clothes.savedResultId == null;
+
+    final isDenimSample =
+        clothes.title == '오래된 데님 팬츠' &&
+        clothes.category == '하의' &&
+        clothes.health == 10 &&
+        mapEquals(clothes.materials, const {
+          'cotton': 98.0,
+          'polyurethane': 2.0,
+        }) &&
+        clothes.careInstruction == '단독 세탁 권장' &&
+        clothes.carbonFootprint == 25.0 &&
+        clothes.savedResultId == null;
+
+    return isOrganicCottonSample || isDenimSample;
+  }
+
+  /// 상세 리포트에서 사용할 현재 의류를 선택합니다.
   void selectClothes(Clothes clothes) {
     _selectedClothes = clothes;
     notifyListeners();
   }
 
-  Future<void> removeClothes(Clothes target) async {
-    _items.remove(target);
+  /// 한 의류를 삭제하고 선택 대상이 사라지면 마지막 항목으로 보정합니다.
+  /// 같은 인스턴스가 없으면 서버 저장 ID로 다시 찾고, 실제 삭제 여부를 반환하며,
+  /// 저장이 실패하면 목록을 삭제 전으로 되돌립니다.
+  Future<bool> removeClothes(Clothes target) async {
+    var index = _items.indexOf(target);
+
+    if (index == -1 && target.savedResultId != null) {
+      index = _items.indexWhere(
+        (item) => item.savedResultId == target.savedResultId,
+      );
+    }
+
+    if (index == -1) {
+      return false;
+    }
+
+    final mutationVersion = ++_mutationVersion;
+    final removed = _items.removeAt(index);
+    final previousSelected = _selectedClothes;
 
     if (_items.isEmpty) {
       _selectedClothes = null;
-    } else if (_selectedClothes == target) {
+    } else if (identical(_selectedClothes, removed) ||
+        _selectedClothes == target) {
       _selectedClothes = _items.last;
     }
 
     notifyListeners();
-    await _persist();
+
+    try {
+      await _persist();
+    } catch (_) {
+      if (mutationVersion == _mutationVersion) {
+        _items.insert(index, removed);
+        _selectedClothes = previousSelected;
+        notifyListeners();
+      }
+      rethrow;
+    }
+
+    return true;
   }
 
+  /// 여러 의류를 한 번에 삭제해 알림과 저장 작업을 한 차례만 수행합니다.
+  /// 저장이 실패하면 목록과 선택 상태를 삭제 전으로 되돌립니다.
   Future<void> removeClothesBatch(List<Clothes> targets) async {
+    final mutationVersion = ++_mutationVersion;
+    final previousItems = List<Clothes>.from(_items);
+    final previousSelected = _selectedClothes;
     final targetSet = targets.toSet();
     _items.removeWhere((item) => targetSet.contains(item));
 
@@ -134,13 +664,34 @@ class ClosetProvider with ChangeNotifier {
     }
 
     notifyListeners();
-    await _persist();
+
+    try {
+      await _persist();
+    } catch (_) {
+      if (mutationVersion == _mutationVersion) {
+        _items
+          ..clear()
+          ..addAll(previousItems);
+        _selectedClothes = previousSelected;
+        notifyListeners();
+      }
+      rethrow;
+    }
   }
 
+  /// 사용자가 재배치한 전체 순서를 적용하고 계정별 옷장에 저장합니다.
+  /// 저장이 실패하면 다음 실행과 어긋나지 않도록 이전 순서로 되돌립니다.
   Future<void> setCustomOrder(List<Clothes> newOrder) async {
+    // 방어적 복사: newOrder가 items 게터(살아 있는 UnmodifiableListView)이면
+    // clear() 시점에 원본도 함께 비어 addAll이 아무것도 넣지 못한다.
+    final order = List<Clothes>.of(newOrder);
+    final mutationVersion = ++_mutationVersion;
+    final previousOrder = List<Clothes>.from(_items);
+    final previousSelected = _selectedClothes;
+
     _items
       ..clear()
-      ..addAll(newOrder);
+      ..addAll(order);
 
     if (_items.isEmpty) {
       _selectedClothes = null;
@@ -149,13 +700,34 @@ class ClosetProvider with ChangeNotifier {
     }
 
     notifyListeners();
-    await _persist();
+
+    try {
+      await _persist();
+    } catch (_) {
+      if (mutationVersion == _mutationVersion) {
+        _items
+          ..clear()
+          ..addAll(previousOrder);
+        _selectedClothes = previousSelected;
+        notifyListeners();
+      }
+      rethrow;
+    }
   }
 
+  /// 현재 계정의 모든 의류와 선택 상태를 지웁니다.
   Future<void> clearAllClothes() async {
+    _mutationVersion++;
     _items.clear();
     _selectedClothes = null;
     notifyListeners();
-    await _storageService.clearClothesList();
+
+    final ownerEmail = _closetOwnerEmail;
+    if (ownerEmail == null) {
+      await _storageService.clearClothesList();
+      return;
+    }
+
+    await _storageService.clearClothesListFor(ownerEmail);
   }
 }
