@@ -10,7 +10,7 @@ class MaterialEditController {
   // 소재명과 함유율 텍스트 필드에 연결되는 컨트롤러입니다.
   final TextEditingController nameController;
   final TextEditingController percentController;
-  /// 자동 완성 소재명 필드가 사용하는 포커스 노드입니다.
+  /// 소재명 필드가 사용하는 포커스 노드입니다.
   final FocusNode nameFocusNode;
 
   /// 이 행이 보유한 Flutter 리소스를 모두 해제합니다.

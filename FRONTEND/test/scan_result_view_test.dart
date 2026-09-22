@@ -107,6 +107,54 @@ void main() {
     expect(find.widgetWithText(TextFormField, '0.5'), findsOneWidget);
   });
 
+  testWidgets('함유율 칸은 100을 넘는 입력을 받지 않는다', (tester) async {
+    // 2026-09-22 요청: 저장 전 검증('0~100')만으로는 150 같은 값이 입력은 됐다.
+    final materialInputs = MaterialInputCollection()..addEmpty();
+    addTearDown(materialInputs.dispose);
+
+    await _pumpResultView(tester, materialInputs: materialInputs);
+    final percent = materialInputs[0].percentController;
+
+    await tester.enterText(find.widgetWithText(TextFormField, '0'), '100');
+    await tester.pumpAndSettle();
+    expect(percent.text, '100');
+
+    await tester.enterText(find.widgetWithText(TextFormField, '100'), '150');
+    await tester.pumpAndSettle();
+    expect(percent.text, '100');
+
+    await tester.enterText(find.widgetWithText(TextFormField, '100'), '99.5');
+    await tester.pumpAndSettle();
+    expect(percent.text, '99.5');
+
+    await tester.enterText(find.widgetWithText(TextFormField, '99.5'), '100.5');
+    await tester.pumpAndSettle();
+    expect(percent.text, '99.5');
+  });
+
+  testWidgets('이미 100을 넘게 채워진 함유율은 줄이는 입력만 받는다', (tester) async {
+    // 스캔 결과나 임시저장으로 100을 넘는 값이 들어와도 끝자리를 지워 고칠 수 있어야 한다.
+    final materialInputs = MaterialInputCollection()
+      ..setFromMaterials({'면': 1200});
+    addTearDown(materialInputs.dispose);
+
+    await _pumpResultView(tester, materialInputs: materialInputs);
+    final percent = materialInputs[0].percentController;
+
+    // 여전히 100을 넘지만 줄어드는 입력이라 받는다.
+    await tester.enterText(find.widgetWithText(TextFormField, '1200'), '120');
+    await tester.pumpAndSettle();
+    expect(percent.text, '120');
+
+    await tester.enterText(find.widgetWithText(TextFormField, '120'), '1205');
+    await tester.pumpAndSettle();
+    expect(percent.text, '120');
+
+    await tester.enterText(find.widgetWithText(TextFormField, '120'), '12');
+    await tester.pumpAndSettle();
+    expect(percent.text, '12');
+  });
+
   testWidgets('소재 입력 중에는 화면 전체를 다시 그리지 않고 합계만 갱신한다', (tester) async {
     final materialInputs = MaterialInputCollection()
       ..setFromMaterials({'cotton': 70});
@@ -362,7 +410,7 @@ void main() {
 
     expect(find.text('소재 선택'), findsNothing);
     expect(row.nameController.text, '면');
-    // 포커스가 돌아오면 키보드와 추천 목록이 다시 뜬다.
+    // 포커스가 돌아오면 키보드가 다시 뜬다.
     expect(row.nameFocusNode.hasFocus, isFalse);
   });
 
@@ -447,7 +495,9 @@ void main() {
     );
   });
 
-  testWidgets('입력란에 글자를 치면 기존 추천 목록이 뜨고, 고르면 한글 이름이 들어간다', (tester) async {
+  testWidgets('소재명을 입력해도 추천 목록이 뜨지 않고 입력한 그대로 남는다', (tester) async {
+    // 2026-09-22 폰 확인: 입력란 아래 추천 목록이 키보드에 가려 첫 항목만 보였다.
+    // 검색은 소재 선택창이 맡으므로 추천 목록은 없앴다.
     _usePhoneView(tester);
     final materialInputs = MaterialInputCollection()..addEmpty();
     addTearDown(materialInputs.dispose);
@@ -464,12 +514,9 @@ void main() {
     await tester.enterText(nameField, '코');
     await tester.pumpAndSettle();
 
-    expect(find.text('면 (cotton)'), findsOneWidget);
-
-    await tester.tap(find.text('면 (cotton)'));
-    await tester.pumpAndSettle();
-
-    expect(materialInputs[0].nameController.text, '면');
+    expect(find.text('면 (cotton)'), findsNothing);
+    expect(materialInputs[0].nameController.text, '코');
+    expect(find.byTooltip('목록에서 소재 고르기'), findsOneWidget);
   });
 
   testWidgets('저장 중에는 소재 선택창 아이콘을 누를 수 없고, 카탈로그가 없으면 아이콘이 없다', (

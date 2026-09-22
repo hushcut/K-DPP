@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../models/clothing_type_option.dart';
-import '../services/material_catalog_api_service.dart';
 import '../services/material_catalog_controller.dart';
 import '../theme/app_palette.dart';
 import '../utils/clothing_estimator.dart';
 import '../utils/leading_zero_trimmer.dart';
+import '../utils/percent_limit_formatter.dart';
 import '../utils/scan_calculation_resolver.dart';
 import 'material_edit_controller.dart';
 import 'material_input_collection.dart';
@@ -58,8 +58,8 @@ class ScanResultView extends StatelessWidget {
   final TextEditingController titleController;
   final ClothingTypeOption selectedClothingType;
   final MaterialInputCollection materialInputs;
-  /// 소재명 추천 목록과 소재 선택창이 함께 쓰는 서버 소재 카탈로그입니다.
-  /// 없으면 추천 목록이 뜨지 않고 선택창 아이콘도 보이지 않습니다.
+  /// 소재 선택창이 쓰는 서버 소재 카탈로그입니다.
+  /// 없으면 선택창 아이콘이 보이지 않습니다.
   final MaterialCatalogController? materialCatalog;
 
   // 원본 스캔의 관리 지침과 소재 구성입니다.
@@ -368,6 +368,7 @@ class ScanResultView extends StatelessWidget {
                             bottom: index == materialInputs.length - 1 ? 0 : 12,
                           ),
                           child: _buildMaterialRow(
+                            context,
                             index,
                             primaryText: primaryText,
                             secondaryText: secondaryText,
@@ -640,7 +641,7 @@ class ScanResultView extends StatelessWidget {
     if (catalog == null) return;
 
     // 열기 전에 키보드를 내립니다. 그대로 두면 선택창이 닫힐 때 포커스가
-    // 입력란으로 돌아와 키보드와 추천 목록이 다시 뜹니다.
+    // 입력란으로 돌아와 키보드가 다시 뜹니다.
     FocusManager.instance.primaryFocus?.unfocus();
 
     final picked = await showMaterialPickerSheet(
@@ -658,8 +659,9 @@ class ScanResultView extends StatelessWidget {
     item.nameController.text = picked.nameKo;
   }
 
-  // 소재명 입력(추천 목록·선택창 아이콘)과 함유율 입력, 항목 삭제 버튼으로 한 편집 행을 만듭니다.
+  // 소재명 입력(선택창 아이콘)과 함유율 입력, 항목 삭제 버튼으로 한 편집 행을 만듭니다.
   Widget _buildMaterialRow(
+    BuildContext context,
     int index, {
     required Color primaryText,
     required Color secondaryText,
@@ -671,118 +673,40 @@ class ScanResultView extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
-          child: RawAutocomplete<MaterialCatalogItem>(
-            textEditingController: item.nameController,
+          child: TextFormField(
+            controller: item.nameController,
             focusNode: item.nameFocusNode,
-            displayStringForOption: (option) => option.nameKo,
-            optionsBuilder: (textEditingValue) {
-              final catalogItems = materialCatalog?.items ?? const [];
-
-              if (catalogItems.isEmpty) {
-                return const Iterable<MaterialCatalogItem>.empty();
-              }
-
-              return catalogItems
-                  .where((option) => option.matches(textEditingValue.text))
-                  .take(8);
-            },
-            onSelected: (option) {
-              // 선택창과 같이 한글 표시명으로 넣습니다.
-              // 텍스트 변경은 materialInputs 리스너가 감지하므로 별도 알림이 필요 없습니다.
-              item.nameController.text = option.nameKo;
-            },
-            fieldViewBuilder:
-                (context, controller, focusNode, onFieldSubmitted) {
-                  return TextFormField(
-                    controller: controller,
-                    focusNode: focusNode,
-                    validator: validateMaterialName,
-                    enabled: !isSaving,
-                    style: TextStyle(color: primaryText, fontSize: 14),
-                    decoration: InputDecoration(
-                      filled: true,
-                      fillColor: inputFillColor,
-                      labelText: '소재명',
-                      hintText: '예: 면',
-                      labelStyle: TextStyle(color: secondaryText),
-                      hintStyle: TextStyle(color: secondaryText),
-                      isDense: true,
-                      contentPadding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-                      // 좁은 화면에서 오류 문구가 한 줄로 잘리지 않게 합니다.
-                      errorMaxLines: 2,
-                      suffixIcon: materialCatalog == null
+            validator: validateMaterialName,
+            enabled: !isSaving,
+            style: TextStyle(color: primaryText, fontSize: 14),
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: inputFillColor,
+              labelText: '소재명',
+              hintText: '예: 면',
+              labelStyle: TextStyle(color: secondaryText),
+              hintStyle: TextStyle(color: secondaryText),
+              isDense: true,
+              contentPadding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+              // 좁은 화면에서 오류 문구가 한 줄로 잘리지 않게 합니다.
+              errorMaxLines: 2,
+              suffixIcon: materialCatalog == null
+                  ? null
+                  : IconButton(
+                      onPressed: isSaving
                           ? null
-                          : IconButton(
-                              onPressed: isSaving
-                                  ? null
-                                  : () => _pickMaterialFromCatalog(
-                                      context,
-                                      item,
-                                    ),
-                              tooltip: '목록에서 소재 고르기',
-                              icon: Icon(
-                                Icons.format_list_bulleted_rounded,
-                                color: secondaryText,
-                                size: 20,
-                              ),
-                            ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
+                          : () => _pickMaterialFromCatalog(context, item),
+                      tooltip: '목록에서 소재 고르기',
+                      icon: Icon(
+                        Icons.format_list_bulleted_rounded,
+                        color: secondaryText,
+                        size: 20,
                       ),
                     ),
-                    onFieldSubmitted: (_) => onFieldSubmitted(),
-                  );
-                },
-            optionsViewBuilder: (context, onSelected, options) {
-              final optionList = options.toList(growable: false);
-
-              return Align(
-                alignment: Alignment.topLeft,
-                child: Material(
-                  elevation: 8,
-                  color: inputFillColor,
-                  borderRadius: BorderRadius.circular(10),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      minWidth: 190,
-                      maxWidth: 260,
-                      maxHeight: 260,
-                    ),
-                    child: ListView.separated(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      shrinkWrap: true,
-                      itemCount: optionList.length,
-                      separatorBuilder: (context, index) => Divider(
-                        height: 1,
-                        color: secondaryText.withValues(alpha: 0.16),
-                      ),
-                      itemBuilder: (context, optionIndex) {
-                        final option = optionList[optionIndex];
-
-                        return InkWell(
-                          onTap: () => onSelected(option),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
-                            ),
-                            child: Text(
-                              option.label,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: primaryText,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              );
-            },
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
           ),
         ),
         const SizedBox(width: 8),
@@ -795,7 +719,10 @@ class ScanResultView extends StatelessWidget {
             style: TextStyle(color: primaryText, fontSize: 14),
             textAlign: TextAlign.right,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            inputFormatters: const [LeadingZeroTrimmer()],
+            inputFormatters: const [
+              LeadingZeroTrimmer(),
+              PercentLimitFormatter(),
+            ],
             decoration: InputDecoration(
               filled: true,
               fillColor: inputFillColor,
