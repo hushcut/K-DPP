@@ -203,9 +203,7 @@ class ScanApiException implements Exception {
     Map<String, dynamic> detail,
   ) {
     final rawMaterials =
-        detail['partial_materials'] ??
-        detail['partialMaterials'] ??
-        detail['materials'];
+        detail['partial_materials'] ?? detail['partialMaterials'];
 
     if (rawMaterials is! Map) return const {};
 
@@ -325,25 +323,6 @@ class ScanApiService {
     }
 
     final payload = _extractPayload(decoded);
-    if (decoded['ai_success'] == false || payload['ai_success'] == false) {
-      throw ScanApiException(
-        type: ScanApiErrorType.aiRecognitionFailed,
-        statusCode: 200,
-        message:
-            ScanApiException._extractServerMessage(payload) ??
-            ScanApiException._extractServerMessage(decoded) ??
-            '라벨을 일부만 인식했습니다.',
-        partialMaterials: ScanApiException._extractPartialMaterials(payload),
-        careInstruction: ScanApiException._readDetailText(payload, const [
-          'care_instruction',
-          'careInstruction',
-        ]),
-        rawOcrPreview: ScanApiException._readDetailText(payload, const [
-          'raw_ocr_preview',
-          'rawOcrPreview',
-        ]),
-      );
-    }
     final result = ScanResult.fromJson(payload);
 
     if (result.materials.isEmpty) {
