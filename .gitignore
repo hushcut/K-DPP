@@ -394,3 +394,8 @@ QA_DATASET/
 # 로컬 인계 스킬은 GitHub에 올리지 않음
 /.agents/skills/handoff/
 /.claude/skills/handoff/
+
+# 로컬 작업 지침과 인계 문서는 GitHub에 올리지 않음
+/AGENTS.md
+/CLAUDE.md
+/docs/
