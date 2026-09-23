@@ -1,4 +1,6 @@
 // 홈·스캔·옷장 탭과 상세 리포트 전환을 한 화면에서 관리하는 앱의 메인 셸입니다.
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -7,9 +9,11 @@ import 'closet_screen.dart';
 import 'home_screen.dart';
 import 'models/clothes.dart';
 import 'models/main_screen_arguments.dart';
+import 'navigation_bar_opacity_provider.dart';
 import 'report_screen.dart';
 import 'scan_screen.dart';
 import 'theme/app_palette.dart';
+import 'widgets/frosted_surface.dart';
 import 'widgets/kdpp_logo_mark.dart';
 
 /// 하단 내비게이션의 선택 상태와 리포트 오버레이 표시 상태를 관리합니다.
@@ -36,8 +40,8 @@ class _MainScreenState extends State<MainScreen>
   // 탭을 바꿀 때마다 새 화면이 부드럽게 나타나도록 재생하는 전환 애니메이션입니다.
   late final AnimationController _tabTransitionController;
   late final Animation<double> _tabTransition;
-  // 이동 방향에 맞춰 새 화면이 들어오는 쪽을 정합니다.
-  double _tabSlideDirection = 1;
+  // 새 화면이 들어오는 쪽(본문 크기 대비 비율)입니다. 홈·옷장은 옆에서, 스캔은 아래에서 살짝 올라옵니다.
+  Offset _tabSlideBegin = const Offset(0.06, 0);
 
   @override
   void initState() {
@@ -64,13 +68,22 @@ class _MainScreenState extends State<MainScreen>
     if (index < 0 || index >= _tabCount) return;
 
     final isSameView = index == _selectedIndex && !_isShowingReport;
-    // 오른쪽 탭으로 가면 오른쪽에서, 왼쪽 탭으로 가면 왼쪽에서 들어옵니다.
-    final direction = index >= _selectedIndex ? 1.0 : -1.0;
+    // 스캔 탭은 옆에서 밀지 않습니다(2026-09-23 폰 확인: 오른쪽 위에서 밀려 나오는 것처럼 보였다).
+    // 들어갈 때는 내비 바가 내려가는 것과 짝이 맞게 아래에서 4% 살짝 떠오르고(사용자 요청),
+    // 나올 때는 밝기만 바뀝니다. 홈·옷장 사이에서는 가는 방향 쪽에서 들어옵니다.
+    final Offset slideBegin;
+    if (index == 1) {
+      slideBegin = const Offset(0, 0.04);
+    } else if (_selectedIndex == 1) {
+      slideBegin = Offset.zero;
+    } else {
+      slideBegin = Offset(index >= _selectedIndex ? 0.06 : -0.06, 0);
+    }
 
     setState(() {
       _selectedIndex = index;
       _isShowingReport = false;
-      _tabSlideDirection = direction;
+      _tabSlideBegin = slideBegin;
     });
 
     // 같은 탭을 다시 누른 경우에는 굳이 다시 재생하지 않습니다.
@@ -154,9 +167,11 @@ class _MainScreenState extends State<MainScreen>
         onOpenReport: _openReport,
         onOpenCloset: () => _selectTab(2),
       ),
-      ScanScreen(
-        isActive:
-            _selectedIndex == 1 && !_isShowingReport && !_isCoveredByRoute,
+      _ScanTabInsets(
+        child: ScanScreen(
+          isActive:
+              _selectedIndex == 1 && !_isShowingReport && !_isCoveredByRoute,
+        ),
       ),
       ClosetScreen(
         isActive:
@@ -182,7 +197,7 @@ class _MainScreenState extends State<MainScreen>
               opacity: _tabTransition,
               child: SlideTransition(
                 position: Tween<Offset>(
-                  begin: Offset(0.06 * _tabSlideDirection, 0),
+                  begin: _tabSlideBegin,
                   end: Offset.zero,
                 ).animate(_tabTransition),
                 child: IndexedStack(
@@ -323,6 +338,35 @@ class _MainScreenState extends State<MainScreen>
   }
 }
 
+/// 스캔 탭이 내비 바 높이 변화에 흔들리지 않도록 본문 하단 여백을 시스템 안전 영역만으로 고정합니다.
+///
+/// `extendBody: true`인 Scaffold는 본문의 하단 padding을 내비 바 높이로 채웁니다. 스캔 탭에서는
+/// 내비 바가 사라지므로 전환 애니메이션 동안 그 값이 매 프레임 줄어들어, 남는 높이를 나눠 배치하는
+/// 카메라 화면이 아래로 흘러내렸습니다(2026-09-23 폰 확인). 스캔 탭은 내비 바가 없는 상태가 기준이므로
+/// 처음부터 그 기준으로 그립니다.
+class _ScanTabInsets extends StatelessWidget {
+  const _ScanTabInsets({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    // 키보드가 올라오면 시스템 하단 여백은 키보드에 가려지므로 Flutter의 padding 계산과 같이 뺍니다.
+    final systemBottom = math.max(
+      0.0,
+      media.viewPadding.bottom - media.viewInsets.bottom,
+    );
+
+    return MediaQuery(
+      data: media.copyWith(
+        padding: media.padding.copyWith(bottom: systemBottom),
+      ),
+      child: child,
+    );
+  }
+}
+
 /// 좌우 탭과 가운데 돌출형 스캔 버튼을 배치하는 전용 하단 내비게이션입니다.
 class _KDppBottomNavigationBar extends StatelessWidget {
   const _KDppBottomNavigationBar({
@@ -337,6 +381,8 @@ class _KDppBottomNavigationBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final palette = AppPalette.of(context);
+    // 화면 설정에서 고른 값(60~100%). 100% 미만이면 뒤로 스크롤되는 내용이 흐리게 비칩니다.
+    final opacity = context.watch<NavigationBarOpacityProvider>().opacity;
 
     final pageBg = palette.background;
     final barColor = palette.card;
@@ -359,20 +405,19 @@ class _KDppBottomNavigationBar extends StatelessWidget {
                 left: 0,
                 right: 0,
                 bottom: 0,
-                child: Container(
-                  height: 70,
-                  decoration: BoxDecoration(
-                    color: barColor,
-                    borderRadius: BorderRadius.circular(26),
-                    border: Border.all(color: borderColor),
-                    boxShadow: [
-                      BoxShadow(
-                        color: shadowColor,
-                        blurRadius: 22,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
+                height: 70,
+                child: FrostedSurface(
+                  opacity: opacity,
+                  color: barColor,
+                  borderRadius: BorderRadius.circular(26),
+                  border: Border.all(color: borderColor),
+                  boxShadow: [
+                    BoxShadow(
+                      color: shadowColor,
+                      blurRadius: 22,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
                   child: Row(
                     children: [
                       Expanded(

@@ -7,7 +7,7 @@
         android:required="false" />
 
     <application
-        android:label="k_dpp"
+        android:label="${kdppAppLabel}"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false">

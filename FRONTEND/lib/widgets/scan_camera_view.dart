@@ -102,9 +102,11 @@ class ScanCameraView extends StatelessWidget {
                 height: availableHeight,
                 child: Column(
                   children: [
-                    // 남는 여백을 위쪽에 더 두어 촬영 UI가 화면 아래쪽에
-                    // 자리 잡도록 합니다.
-                    const Spacer(flex: 3),
+                    // 남는 높이를 위 2 : 아래 3으로 나눠 라벨 틀과 촬영 버튼을 화면 가운데보다
+                    // 위에 둡니다. 이전 3 : 1은 남는 높이가 큰 긴 화면(iPhone 16 Pro Max)에서
+                    // 촬영 UI가 지나치게 아래로 내려갔고, 3 : 2로는 달라진 것을 못 느꼈습니다
+                    // (2026-09-23 폰 확인 2회). 기종별 값 대신 비율로 두어 어느 화면이든 같은 인상을 줍니다.
+                    const Spacer(flex: 2),
                     const Text(
                       '케어 라벨을 프레임 안에 맞춰 촬영해 주세요',
                       textAlign: TextAlign.center,
@@ -276,7 +278,7 @@ class ScanCameraView extends StatelessWidget {
                         ],
                       ),
                     ),
-                    const Spacer(),
+                    const Spacer(flex: 3),
                   ],
                 ),
               ),
