@@ -275,7 +275,11 @@ def _apply_trailing_part_markers(infos: list[LineInfo]) -> list[LineInfo]:
     if not marker_rows or not material_rows:
         return infos
     trailing_layout = (
-        material_rows[0] < marker_rows[0] and material_rows[-1] < marker_rows[-1]
+        material_rows[0] < marker_rows[0]
+        and material_rows[-1] < marker_rows[-1]
+        # A ratio after the last marker belongs to its forward block even
+        # when OCR omitted that block's material name.
+        and not any(info.explicit_percent for info in infos[marker_rows[-1] + 1 :])
     )
 
     adjusted = list(infos)
@@ -464,6 +468,18 @@ def _best_candidates_by_part(
         if info.materials and info.index not in covered_rows
     }
 
+    # OCR can lose a material/part name but retain its standalone percentage.
+    # Do not let another complete block hide that missing composition (QA031).
+    # Limit this to ratio-only rows: care/marketing text is not fiber evidence.
+    orphan_ratio_parts = {
+        info.part for info in infos
+        if info.explicit_percent
+        and not info.materials
+        and not _TOKEN_PATTERN.search(info.normalized)
+        and info.index not in covered_rows
+        and not _is_metadata_line(info)
+    }
+
     parts: dict[str, dict[str, float | int]] = {}
     warnings: list[str] = []
     for part, candidate in best_by_part.items():
@@ -473,6 +489,9 @@ def _best_candidates_by_part(
         if part in unresolved_parts:
             warnings.append(f"{part}:unresolved_material_token")
             continue
+        if part in orphan_ratio_parts:
+            warnings.append(f"{part}:unpaired_ratio_rows")
+            continue
         if part in incomplete_parts:
             warnings.append(f"{part}:unpaired_material_rows")
             continue
@@ -480,7 +499,7 @@ def _best_candidates_by_part(
         parts[part] = normalized
         warnings.extend(f"{part}:{warning}" for warning in candidate_warnings)
 
-    expected_parts = {info.part for info in composition_rows} | {
+    expected_parts = orphan_ratio_parts | {info.part for info in composition_rows} | {
         info.marker_part for info in infos if info.marker_part is not None
     }
 

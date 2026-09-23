@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from apps.text import ocr_text
 from apps.text.parse_label import build_line_infos, parse_label
 
@@ -134,3 +136,37 @@ def test_material_touch_marketing_phrase_is_not_composition() -> None:
 
     assert result["status"] == "failed"
     assert result["materials"] == {}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "섬유의 조성 (혼용률)\n100%\n배산\n면\n95%\n폴리우레탄\n5%",
+        "섬유의 조성 (혼용률)\n100%\n배산 면 95%\n폴리우레탄 5%",
+        "100%\nCOTTON 95% SPANDEX 5%",
+        "COTTON 95% SPANDEX 5%\n100%",
+        "100%\nLINING POLYESTER 100%",
+    ],
+)
+def test_orphan_ratio_cannot_be_hidden_by_another_complete_block(text: str) -> None:
+    # Minimized QA031 evidence: OCR lost the shell material and part markers,
+    # leaving its 100% beside a complete contrast composition.
+    result = parse_label(text)
+
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "OUTSHELL\n100% COTTON",
+        "COTTON\n100%",
+        "COTTON\nPOLYESTER\n80%\n20%",
+        "COTTON 100%\nLINING\n20%",
+        "COTTON 100%\nMACHINE WASH 30%",
+    ],
+)
+def test_ratio_guard_preserves_complete_and_separate_part_evidence(text: str) -> None:
+    # QA003's photo says OUTSHELL / 100% COTTON; its stored answer is wrong.
+    assert parse_label(text)["status"] == "success"
