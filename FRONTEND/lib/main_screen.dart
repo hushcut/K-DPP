@@ -13,6 +13,7 @@ import 'navigation_bar_opacity_provider.dart';
 import 'report_screen.dart';
 import 'scan_screen.dart';
 import 'theme/app_palette.dart';
+import 'widgets/app_back_button.dart';
 import 'widgets/frosted_surface.dart';
 import 'widgets/kdpp_logo_mark.dart';
 
@@ -244,10 +245,14 @@ class _MainScreenState extends State<MainScreen>
         backgroundColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
-        leading: IconButton(
-          onPressed: _closeReport,
-          tooltip: '리포트 닫기',
-          icon: Icon(Icons.arrow_back, color: appBarIconColor),
+        leadingWidth: 52,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 8),
+          child: AppBackButton(
+            onPressed: _closeReport,
+            tooltip: '리포트 닫기',
+            color: appBarIconColor,
+          ),
         ),
         title: Text(
           '상세 리포트',
@@ -267,12 +272,16 @@ class _MainScreenState extends State<MainScreen>
       scrolledUnderElevation: 0,
       automaticallyImplyLeading: false,
       centerTitle: true,
+      leadingWidth: 52,
       // 스캔 화면에서는 하단 내비게이션이 없으므로 나가는 버튼을 제공합니다.
       leading: _isScanTabActive
-          ? IconButton(
-              onPressed: () => _selectTab(0),
-              tooltip: '스캔 화면 닫기',
-              icon: Icon(Icons.arrow_back, color: appBarIconColor),
+          ? Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: AppBackButton(
+                onPressed: () => _selectTab(0),
+                tooltip: '스캔 화면 닫기',
+                color: appBarIconColor,
+              ),
             )
           : null,
       title: const KdppLogoMark(size: 34),
