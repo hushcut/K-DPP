@@ -94,16 +94,58 @@ void main() {
         expect(result.careInstruction, '찬물 기계세탁 가능');
         expect(result.title, '스캔한 의류');
         expect(result.category, '상의');
-        expect(result.carbonFootprint, 8.54);
+        expect(result.carbonFootprint, isNull);
         expect(result.weightGram, isNull);
         expect(result.calculationMethod, isNull);
-        expect(result.unit, 'kg CO2eq');
-        expect(result.savedResultId, 13);
+        expect(result.unit, isNull);
+        expect(result.savedResultId, isNull);
       } finally {
         client.close();
       }
     });
 
+    test('routes a partial 200 response to manual correction', () async {
+      final responseBody = await _readFixture('backend_scan_partial.json');
+      final client = MockClient(
+        (_) async => http.Response(
+          responseBody,
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        ),
+      );
+      final service = ScanApiService(client: client);
+
+      try {
+        await expectLater(
+          service.scanLabel(imageFile: imageFile),
+          throwsA(
+            isA<ScanApiException>()
+                .having(
+                  (error) => error.type,
+                  'type',
+                  ScanApiErrorType.aiRecognitionFailed,
+                )
+                .having((error) => error.statusCode, 'statusCode', 200)
+                .having((error) => error.partialMaterials, 'partialMaterials', {
+                  '면': 50.0,
+                  '폴리에스터': 30.0,
+                })
+                .having(
+                  (error) => error.careInstruction,
+                  'careInstruction',
+                  '찬물 기계세탁 가능',
+                )
+                .having(
+                  (error) => error.rawOcrPreview,
+                  'rawOcrPreview',
+                  '면 50% 폴리에스터 30%',
+                ),
+          ),
+        );
+      } finally {
+        client.close();
+      }
+    });
     test(
       'maps the current backend 422 response to recognition failure',
       () async {
