@@ -527,6 +527,12 @@ class _CenterScanButton extends StatelessWidget {
                       clipBehavior: Clip.antiAlias,
                       child: InkWell(
                         onTap: onTap,
+                        // 누르는 동안 진한 파랑으로 어두워집니다. 짧은 탭은 강조가
+                        // 칠해지기 전에 끝나 물결만 보이므로 물결도 같은 색으로 칠하고,
+                        // Android 도 반짝이 대신 iOS 와 같은 원형 물결을 씁니다.
+                        highlightColor: AppPalette.accentPressed,
+                        splashColor: AppPalette.accentPressed,
+                        splashFactory: InkRipple.splashFactory,
                         child: const Icon(
                           Icons.camera_alt,
                           color: Colors.white,

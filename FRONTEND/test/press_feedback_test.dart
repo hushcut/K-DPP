@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart' show kPressTimeout;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
@@ -8,6 +9,7 @@ import 'package:k_dpp/material_name_display_provider.dart';
 import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/navigation_bar_opacity_provider.dart';
 import 'package:k_dpp/settings_screen.dart';
+import 'package:k_dpp/theme/app_palette.dart';
 import 'package:k_dpp/theme/app_theme.dart';
 import 'package:k_dpp/theme_provider.dart';
 import 'package:k_dpp/utils/clothing_type_catalog.dart';
@@ -284,6 +286,55 @@ void main() {
     });
   });
 
+  // 2026-09-24 사용자 결정: 기본 회색 강조가 파랑 위에 덮여 옅은 회보라로 보였다.
+  // 눌렀을 때 들어가는 느낌이 나게 강조와 물결을 모두 진한 파랑으로 바꾼다.
+  group('파란 원 버튼은 누르는 동안 진한 파랑이 된다', () {
+    final platforms = TargetPlatformVariant(<TargetPlatform>{
+      TargetPlatform.iOS,
+      TargetPlatform.android,
+    });
+
+    testWidgets('가운데 스캔 원', (tester) async {
+      await _pumpMainScreen(tester);
+      await _expectDarkBlueWhilePressed(tester, find.byIcon(Icons.camera_alt));
+    }, variant: platforms);
+
+    testWidgets('카메라 화면의 촬영 원', (tester) async {
+      var shootCount = 0;
+      await _pumpCameraView(
+        tester,
+        isScanning: false,
+        onPickFromGallery: () {},
+        onTakePicture: () => shootCount++,
+      );
+      await _expectDarkBlueWhilePressed(tester, find.byIcon(Icons.camera_alt));
+      expect(shootCount, 0);
+    }, variant: platforms);
+
+    testWidgets('촬영 원을 짧게 탭해도 진한 파랑이 보인다', (tester) async {
+      // 누름 강조는 kPressTimeout(100ms) 넘게 누르고 있어야 칠해지므로, 그보다 짧은 탭은
+      // 물결이 맡습니다. 촬영 원은 짧게 탭하는 버튼이라 따로 봅니다.
+      var shootCount = 0;
+      await _pumpCameraView(
+        tester,
+        isScanning: false,
+        onPickFromGallery: () {},
+        onTakePicture: () => shootCount++,
+      );
+
+      await tester.tap(find.byIcon(Icons.camera_alt));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final inkLayer =
+          Material.of(tester.element(find.byIcon(Icons.camera_alt)))
+              as RenderObject;
+      expect(inkLayer, paints..circle(color: AppPalette.accentPressed));
+      expect(inkLayer, _paintsInkOnlyIn(AppPalette.accentPressed));
+      expect(shootCount, 1);
+    }, variant: platforms);
+  });
+
   testWidgets('가운데 스캔 버튼은 원을 눌러도, 원 아래 글자를 눌러도 스캔 탭으로 간다', (
     tester,
   ) async {
@@ -364,6 +415,51 @@ Future<void> _pumpCameraView(
 /// [target] 을 감싼 가장 가까운 InkWell 입니다.
 Finder _inkOf(Finder target) =>
     find.ancestor(of: target, matching: find.byType(InkWell)).first;
+
+/// [icon] 이 든 원을 누르고 있는 동안 원에 칠해지는 누름 효과(강조·물결)가 모두 진한 파랑이고,
+/// 아이콘은 그 위에 남는지 봅니다. 끝에 누름을 취소하므로 탭은 일어나지 않습니다.
+Future<void> _expectDarkBlueWhilePressed(
+  WidgetTester tester,
+  Finder icon,
+) async {
+  final gesture = await tester.startGesture(tester.getCenter(icon));
+  // 누른 채 kPressTimeout 이 지나야 눌림이 시작되고, 강조는 200ms 에 걸쳐 짙어집니다.
+  await tester.pump(kPressTimeout);
+  await tester.pump(const Duration(milliseconds: 300));
+
+  // 효과는 원(Material)의 효과 층에, 아이콘보다 먼저 칠해집니다.
+  final inkLayer = Material.of(tester.element(icon)) as RenderObject;
+  expect(
+    inkLayer,
+    paints
+      ..rect(color: AppPalette.accentPressed)
+      ..paragraph(),
+  );
+  // 물결은 강조 아래에 깔리지만, 강조가 짙어지거나 옅어지는 동안 비쳐 보이고
+  // 빠르게 다시 누르면 강조 위에 새로 쌓이므로 물결도 진한 파랑이어야 합니다.
+  expect(inkLayer, _paintsInkOnlyIn(AppPalette.accentPressed));
+
+  await gesture.cancel();
+  await tester.pump(const Duration(milliseconds: 300));
+}
+
+/// 효과 층이 칠하는 네모·원(누름 강조와 물결)이 모두 [color] 인지 봅니다.
+/// 기본 회색 강조·물결이나 Android 반짝이 물결(셰이더로 칠함)이 섞이면 실패합니다.
+PaintPattern _paintsInkOnlyIn(Color color) =>
+    paints..everything((method, arguments) {
+      final paint = method == #drawRect
+          ? arguments[1]
+          : method == #drawCircle
+          ? arguments[2]
+          : null;
+      if (paint is! Paint) return true;
+      if (paint.shader != null) throw '$method 를 셰이더로 칠했습니다';
+      // Paint 는 색을 float32 로 담아 double 로 비교하면 어긋나므로 32비트 값으로 봅니다.
+      if (paint.color.toARGB32() != color.toARGB32()) {
+        throw '$method 를 ${paint.color} 로 칠했습니다';
+      }
+      return true;
+    });
 
 Clothes _clothes(String title, {required int health}) => Clothes(
   title: title,

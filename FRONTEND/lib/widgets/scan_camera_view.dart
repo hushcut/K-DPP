@@ -282,6 +282,14 @@ class ScanCameraView extends StatelessWidget {
                                           onTap: isScanning
                                               ? null
                                               : onTakePicture,
+                                          // 가운데 스캔 원과 같이 누름 강조·물결을
+                                          // 모두 진한 파랑으로 칠합니다
+                                          // (이유는 main_screen.dart).
+                                          highlightColor:
+                                              AppPalette.accentPressed,
+                                          splashColor: AppPalette.accentPressed,
+                                          splashFactory:
+                                              InkRipple.splashFactory,
                                           child: const SizedBox(
                                             width: 74,
                                             height: 74,
