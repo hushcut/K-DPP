@@ -8,8 +8,16 @@ import 'app_palette.dart';
 /// `backgroundColor: isDark ? … : …` 로 직접 넣으면 **여는 순간의 테마로 굳어**, 시트가 열린 채
 /// 시스템 밝기가 바뀌면 글자만 바뀌고 배경은 남습니다(2026-09-22 폰 확인). 테마에 두면
 /// 시트가 그릴 때마다 읽으므로 따라옵니다.
+///
+/// 버튼을 길게 누를 때 뜨는 툴팁은 끕니다([_tooltipTheme]).
 class AppTheme {
   const AppTheme._();
+
+  /// 길게 누를 때 뜨는 툴팁 말풍선을 끕니다(2026-09-24 사용자 요청: "<" 를 꾹 누르면 "리포트 닫기"가 뜸).
+  /// `tooltip:` 문구는 VoiceOver 가 읽는 버튼 이름과 테스트의 `find.byTooltip` 용으로 그대로 남습니다.
+  static const _tooltipTheme = TooltipThemeData(
+    triggerMode: TooltipTriggerMode.manual,
+  );
 
   static ThemeData light() {
     return ThemeData(
@@ -23,6 +31,7 @@ class AppTheme {
         backgroundColor: Colors.white,
         modalBackgroundColor: Colors.white,
       ),
+      tooltipTheme: _tooltipTheme,
       useMaterial3: true,
     );
   }
@@ -78,6 +87,7 @@ class AppTheme {
           ),
         ),
       ),
+      tooltipTheme: _tooltipTheme,
       useMaterial3: true,
     );
   }

@@ -211,22 +211,13 @@ extension _ClosetListViews on _ClosetScreenState {
   }) {
     final isSelected = _selectedItems.contains(item);
 
+    // 카드 색을 Container 로 칠하면 ListTile 의 누름 효과가 그 아래에 그려져 보이지 않습니다.
+    // 그림자만 바깥 상자에 두고, 색·테두리는 카드 전용 Material 위에 Ink 로 칠해 효과가 위에 보이게 합니다.
     return Semantics(
       selected: isSelected,
-      child: Container(
+      child: DecoratedBox(
         decoration: BoxDecoration(
-          color: isSelected
-              ? palette.selectedBgColor
-              : (isWarning ? palette.warningBgColor : palette.cardColor),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isSelected
-                ? AppPalette.accent
-                : (isWarning
-                      ? Colors.redAccent.shade200
-                      : palette.borderColor),
-            width: isSelected ? 2 : (isWarning ? 2 : 1),
-          ),
           boxShadow: [
             BoxShadow(
               color: palette.shadowColor,
@@ -235,116 +226,137 @@ extension _ClosetListViews on _ClosetScreenState {
             ),
           ],
         ),
-        child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 8,
-          ),
-          leading: Container(
-            width: 60,
-            height: 60,
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+          clipBehavior: Clip.antiAlias,
+          child: Ink(
             decoration: BoxDecoration(
               color: isSelected
-                  ? (palette.isDark
-                        ? const Color(0xFF1C1C1E)
-                        : Colors.white)
-                  : (isWarning
-                        ? (palette.isDark
-                              ? const Color(0xFF1C1C1E)
-                              : Colors.white)
-                        : palette.leadingBgColor),
-              borderRadius: BorderRadius.circular(12),
+                  ? palette.selectedBgColor
+                  : (isWarning ? palette.warningBgColor : palette.cardColor),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: isSelected
+                    ? AppPalette.accent
+                    : (isWarning
+                          ? Colors.redAccent.shade200
+                          : palette.borderColor),
+                width: isSelected ? 2 : (isWarning ? 2 : 1),
+              ),
             ),
-            child: Icon(
-              Icons.checkroom,
-              color: isSelected
-                  ? AppPalette.accent
-                  : (isWarning
-                        ? Colors.redAccent
-                        : palette.secondaryText),
-              size: 30,
-            ),
-          ),
-          title: Text(
-            title,
-            maxLines: 2,
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-              color: palette.primaryText,
-            ),
-          ),
-          subtitle: Padding(
-            padding: const EdgeInsets.only(top: 8.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  category,
-                  style: TextStyle(
-                    color: palette.secondaryText,
-                    fontSize: 12,
-                  ),
+            child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 8,
+              ),
+              leading: Container(
+                width: 60,
+                height: 60,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? (palette.isDark
+                            ? const Color(0xFF1C1C1E)
+                            : Colors.white)
+                      : (isWarning
+                            ? (palette.isDark
+                                  ? const Color(0xFF1C1C1E)
+                                  : Colors.white)
+                            : palette.leadingBgColor),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                const SizedBox(height: 4),
-                Row(
+                child: Icon(
+                  Icons.checkroom,
+                  color: isSelected
+                      ? AppPalette.accent
+                      : (isWarning
+                            ? Colors.redAccent
+                            : palette.secondaryText),
+                  size: 30,
+                ),
+              ),
+              title: Text(
+                title,
+                maxLines: 2,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  color: palette.primaryText,
+                ),
+              ),
+              subtitle: Padding(
+                padding: const EdgeInsets.only(top: 8.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(statusIcon, color: statusColor, size: 16),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        status,
-                        maxLines: 2,
-                        style: TextStyle(
-                          color: statusColor,
-                          fontWeight: isWarning
-                              ? FontWeight.bold
-                              : FontWeight.normal,
-                          fontSize: 13,
-                        ),
+                    Text(
+                      category,
+                      style: TextStyle(
+                        color: palette.secondaryText,
+                        fontSize: 12,
                       ),
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(statusIcon, color: statusColor, size: 16),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            status,
+                            maxLines: 2,
+                            style: TextStyle(
+                              color: statusColor,
+                              fontWeight: isWarning
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
+              ),
+              trailing: showDragHandle
+                  ? Icon(Icons.drag_handle, color: palette.secondaryText)
+                  : (_selectionMode
+                        ? Icon(
+                            isSelected
+                                ? Icons.check_circle
+                                : Icons.radio_button_unchecked,
+                            color: isSelected
+                                ? AppPalette.accent
+                                : palette.secondaryText,
+                          )
+                        : Icon(
+                            Icons.chevron_right,
+                            color: palette.secondaryText,
+                          )),
+              onTap: disableTap
+                  ? null
+                  : () {
+                      if (_selectionMode) {
+                        _toggleSelection(item);
+                        return;
+                      }
+
+                      context.read<ClosetProvider>().selectClothes(item);
+                      widget.onOpenReport(item);
+                    },
+              onLongPress: disableTap
+                  ? null
+                  : () {
+                      if (_selectionMode) {
+                        _toggleSelection(item);
+                        return;
+                      }
+
+                      _enterSelectionMode(item);
+                    },
             ),
           ),
-          trailing: showDragHandle
-              ? Icon(Icons.drag_handle, color: palette.secondaryText)
-              : (_selectionMode
-                    ? Icon(
-                        isSelected
-                            ? Icons.check_circle
-                            : Icons.radio_button_unchecked,
-                        color: isSelected
-                            ? AppPalette.accent
-                            : palette.secondaryText,
-                      )
-                    : Icon(
-                        Icons.chevron_right,
-                        color: palette.secondaryText,
-                      )),
-          onTap: disableTap
-              ? null
-              : () {
-                  if (_selectionMode) {
-                    _toggleSelection(item);
-                    return;
-                  }
-
-                  context.read<ClosetProvider>().selectClothes(item);
-                  widget.onOpenReport(item);
-                },
-          onLongPress: disableTap
-              ? null
-              : () {
-                  if (_selectionMode) {
-                    _toggleSelection(item);
-                    return;
-                  }
-
-                  _enterSelectionMode(item);
-                },
         ),
       ),
     );

@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 ///
 /// 흐림(BackdropFilter)은 매 프레임 뒤 화면을 다시 읽어 비용이 크므로, 비칠 것이 없는 100%에서는
 /// 걸지 않아 지금까지의 불투명한 바와 똑같이 그립니다.
+///
+/// [child] 는 투명 [Material] 위에 두어, 안의 [InkWell] 누름 효과가 바탕색 아래에 가려지지 않고 위에 보이게 합니다.
 class FrostedSurface extends StatelessWidget {
   const FrostedSurface({
     super.key,
@@ -40,7 +42,9 @@ class FrostedSurface extends StatelessWidget {
         borderRadius: borderRadius,
         border: border,
       ),
-      child: child,
+      child: child == null
+          ? null
+          : Material(type: MaterialType.transparency, child: child),
     );
 
     if (opacity < 1) {

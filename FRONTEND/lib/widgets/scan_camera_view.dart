@@ -201,27 +201,37 @@ class ScanCameraView extends StatelessWidget {
                                   height: 74,
                                   child: Align(
                                     alignment: Alignment.bottomCenter,
+                                    // 누름 효과는 보이는 네모에 그립니다. 네모 밖 여백을
+                                    // 누르면 바깥 GestureDetector 가 받습니다.
                                     child: ExcludeSemantics(
-                                      child: Container(
-                                        width: 54,
-                                        height: 54,
-                                        decoration: BoxDecoration(
-                                          color: Colors.white.withValues(
-                                            alpha: 0.14,
-                                          ),
+                                      child: Material(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.14,
+                                        ),
+                                        shape: RoundedRectangleBorder(
                                           borderRadius: BorderRadius.circular(
                                             14,
                                           ),
-                                          border: Border.all(
+                                          side: BorderSide(
                                             color: Colors.white.withValues(
                                               alpha: 0.45,
                                             ),
                                           ),
                                         ),
-                                        child: const Icon(
-                                          Icons.photo_library_outlined,
-                                          color: Colors.white,
-                                          size: 25,
+                                        clipBehavior: Clip.antiAlias,
+                                        child: InkWell(
+                                          onTap: isScanning
+                                              ? null
+                                              : onPickFromGallery,
+                                          child: const SizedBox(
+                                            width: 54,
+                                            height: 54,
+                                            child: Icon(
+                                              Icons.photo_library_outlined,
+                                              color: Colors.white,
+                                              size: 25,
+                                            ),
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -242,19 +252,12 @@ class ScanCameraView extends StatelessWidget {
                                 child: GestureDetector(
                                   behavior: HitTestBehavior.opaque,
                                   onTap: isScanning ? null : onTakePicture,
+                                  // 누름 효과는 원에 그리고, 원 밖 모서리를 누르면
+                                  // 바깥 GestureDetector 가 받습니다.
                                   child: ExcludeSemantics(
-                                    child: Container(
-                                      width: 74,
-                                      height: 74,
+                                    child: DecoratedBox(
                                       decoration: BoxDecoration(
-                                        color: isScanning
-                                            ? const Color(0xFF6B6B6B)
-                                            : AppPalette.accent,
                                         shape: BoxShape.circle,
-                                        border: Border.all(
-                                          color: Colors.white,
-                                          width: 4,
-                                        ),
                                         boxShadow: [
                                           BoxShadow(
                                             color: AppPalette.accent
@@ -264,10 +267,31 @@ class ScanCameraView extends StatelessWidget {
                                           ),
                                         ],
                                       ),
-                                      child: const Icon(
-                                        Icons.camera_alt,
-                                        color: Colors.white,
-                                        size: 30,
+                                      child: Material(
+                                        color: isScanning
+                                            ? const Color(0xFF6B6B6B)
+                                            : AppPalette.accent,
+                                        shape: const CircleBorder(
+                                          side: BorderSide(
+                                            color: Colors.white,
+                                            width: 4,
+                                          ),
+                                        ),
+                                        clipBehavior: Clip.antiAlias,
+                                        child: InkWell(
+                                          onTap: isScanning
+                                              ? null
+                                              : onTakePicture,
+                                          child: const SizedBox(
+                                            width: 74,
+                                            height: 74,
+                                            child: Icon(
+                                              Icons.camera_alt,
+                                              color: Colors.white,
+                                              size: 30,
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),

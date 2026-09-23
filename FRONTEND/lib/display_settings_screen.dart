@@ -249,44 +249,51 @@ class _ThemeModeTile extends StatelessWidget {
         : (isDark ? const Color(0xFF2C2C2E) : const Color(0xFFEAEAEA));
     final primaryText = palette.textPrimary;
 
+    // 칸 색을 Container 로 칠하면 누름 효과가 그 아래에 가려지므로 Ink 로 칠합니다.
     return Semantics(
       label: '$title 테마',
       button: true,
       selected: selected,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(24),
-        onTap: onTap,
-        child: ExcludeSemantics(
-          child: Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: cardColor,
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: borderColor, width: selected ? 1.6 : 1),
-            ),
-            child: Row(
-              children: [
-                preview,
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: primaryText,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(24),
+          onTap: onTap,
+          child: ExcludeSemantics(
+            child: Ink(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: cardColor,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color: borderColor,
+                  width: selected ? 1.6 : 1,
+                ),
+              ),
+              child: Row(
+                children: [
+                  preview,
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: primaryText,
+                      ),
                     ),
                   ),
-                ),
-                Icon(
-                  selected
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_off,
-                  color: selected
-                      ? AppPalette.accent
-                      : const Color(0xFF5F6368),
-                ),
-              ],
+                  Icon(
+                    selected
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_off,
+                    color: selected
+                        ? AppPalette.accent
+                        : const Color(0xFF5F6368),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -319,55 +326,65 @@ class _MaterialNameDisplayTile extends StatelessWidget {
         ? AppPalette.accent
         : (isDark ? const Color(0xFF2C2C2E) : const Color(0xFFEAEAEA));
 
+    // 칸 색을 Container 로 칠하면 누름 효과가 그 아래에 가려지므로 Ink 로 칠합니다.
     return Semantics(
       label: '소재 이름 $title, 예: $example',
       button: true,
       selected: selected,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onTap: onTap,
-        child: ExcludeSemantics(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            decoration: BoxDecoration(
-              color: cardColor,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: borderColor, width: selected ? 1.6 : 1),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: palette.textPrimary,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: onTap,
+          child: ExcludeSemantics(
+            child: Ink(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 18,
+                vertical: 14,
+              ),
+              decoration: BoxDecoration(
+                color: cardColor,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: borderColor,
+                  width: selected ? 1.6 : 1,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: palette.textPrimary,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        example,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: palette.textSecondary,
+                        const SizedBox(height: 4),
+                        Text(
+                          example,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: palette.textSecondary,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                Icon(
-                  selected
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_off,
-                  color: selected
-                      ? AppPalette.accent
-                      : const Color(0xFF5F6368),
-                ),
-              ],
+                  Icon(
+                    selected
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_off,
+                    color: selected
+                        ? AppPalette.accent
+                        : const Color(0xFF5F6368),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

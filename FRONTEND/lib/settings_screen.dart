@@ -441,14 +441,21 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
+  // 카드 색을 Container 로 칠하면 안의 ListTile 누름 효과가 그 아래에 그려져 보이지 않으므로,
+  // 카드 전용 Material 위에 Ink 로 칠해 효과가 위에 보이게 하고 둥근 모서리 밖은 잘라 냅니다.
   Widget _buildCard(List<Widget> children, Color background, Color border) {
-    return Container(
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: border),
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(24),
+      clipBehavior: Clip.antiAlias,
+      child: Ink(
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: border),
+        ),
+        child: Column(children: children),
       ),
-      child: Column(children: children),
     );
   }
 

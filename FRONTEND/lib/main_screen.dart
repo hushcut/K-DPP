@@ -508,9 +508,10 @@ class _CenterScanButton extends StatelessWidget {
                     color: pageBg,
                     shape: BoxShape.circle,
                   ),
-                  child: Container(
+                  // 누름 효과는 보이는 원에 그립니다. 원 밖(글자·여백)을 누르면
+                  // 바깥 GestureDetector 가 받습니다.
+                  child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: selected ? AppPalette.accentPressed : activeColor,
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
@@ -520,10 +521,18 @@ class _CenterScanButton extends StatelessWidget {
                         ),
                       ],
                     ),
-                    child: const Icon(
-                      Icons.camera_alt,
-                      color: Colors.white,
-                      size: 30,
+                    child: Material(
+                      color: selected ? AppPalette.accentPressed : activeColor,
+                      shape: const CircleBorder(),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: onTap,
+                        child: const Icon(
+                          Icons.camera_alt,
+                          color: Colors.white,
+                          size: 30,
+                        ),
+                      ),
                     ),
                   ),
                 ),
