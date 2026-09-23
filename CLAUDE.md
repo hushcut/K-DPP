@@ -7,4 +7,4 @@
 
 - 새 작업에 적합한 모델 등급과 이유를 간단히 추천하고 사용자의 선택을 따른다.
 - 커밋 메시지에 Claude 공동작성자 `Co-Authored-By` 줄을 넣지 않는다. PR 본문의 Claude 생성 표시도 사용자가 따로 요청한 경우에만 넣는다. 이 이유만으로 과거 커밋을 다시 쓰지 않는다.
-- 세션을 인계할 때는 `.claude/skills/handoff/SKILL.md`를 사용해 공통 `docs/HANDOFF.md`를 갱신한다. Codex 전용 파일을 덮어쓰지 않는다.
+- 세션을 인계할 때는 `AGENTS.md`의 공통 규칙에 따라 `docs/HANDOFF.md`를 갱신한다.

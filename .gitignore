@@ -390,3 +390,7 @@ QA_DATASET/
 !AI/kdpp_ai_ocr_integrated/requirements-text.lock
 !AI/kdpp_ai_ocr_integrated/requirements-symbol.lock
 !AI/kdpp_ai_ocr_integrated/requirements-ci.lock
+
+# 로컬 인계 스킬은 GitHub에 올리지 않음
+/.agents/skills/handoff/
+/.claude/skills/handoff/
