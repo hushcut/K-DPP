@@ -545,3 +545,17 @@ def test_complete_blocks_and_separate_lower_priority_parts_remain_valid(
     assert result["status"] == "success"
     assert result["materials"] == expected
 
+
+@pytest.mark.parametrize(
+    ("text", "source"),
+    [
+        ("COTTON 60%\nPOLYESTER 40%", "line_pairs"),
+        ("COTTON\n60%\nPOLYESTER 40%", "mixed_lines"),
+        ("COTTON\n100", "adjacent_lines"),
+    ],
+)
+def test_candidate_layout_source_is_preserved(text: str, source: str) -> None:
+    result = parse_label(text)
+
+    assert result["status"] == "success"
+    assert result["parse_evidence"]["source"] == source

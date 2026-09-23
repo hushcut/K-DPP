@@ -12,6 +12,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 MANIFEST_NAME = "runtime-manifest.json"
 RUNTIME_FILES = (
     "requirements.txt",
+    "requirements-text.lock",
     "apps/__init__.py",
     "apps/service/__init__.py",
     "apps/service/__main__.py",
@@ -19,6 +20,7 @@ RUNTIME_FILES = (
     "apps/service/main.py",
     "apps/service/response_contract.py",
     "apps/text/__init__.py",
+    "apps/text/composition_candidates.py",
     "apps/text/material_extraction.py",
     "apps/text/ocr_cache.py",
     "apps/text/ocr_candidates.py",

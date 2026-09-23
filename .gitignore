@@ -379,5 +379,14 @@ BACKEND/*.db-shm
 BACKEND/__pycache__/
 venv/
 
+# Local QA image datasets and generated comparison artifacts
+QA_DATASET/
+
 # Pytest base temporary workspaces
 .pytest-tmp-*/
+.test-artifacts/
+
+# AI dependency locks
+!AI/kdpp_ai_ocr_integrated/requirements-text.lock
+!AI/kdpp_ai_ocr_integrated/requirements-symbol.lock
+!AI/kdpp_ai_ocr_integrated/requirements-ci.lock

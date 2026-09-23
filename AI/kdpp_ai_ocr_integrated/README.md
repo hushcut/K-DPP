@@ -11,7 +11,7 @@ K-DPP의 OCR 소재 분석과 세탁기호 실험 기능을 모은 AI 모듈입�
 - 서비스 계정 JSON, 실제 데이터셋, 모델, OCR 캐시·출력물은 커밋하지 않습니다.
 - `ruff check --fix`나 `ruff format`으로 기존 코드를 일괄 변경하지 않습니다. 검사
   결과를 검토해 필요한 변경만 적용합니다.
-- 의존성 잠금 파일과 환경별 설치 정책은 별도 합의 후 도입합니다.
+- Python 3.12 환경은 텍스트·세탁기호 실험·CI 잠금 파일에서 필요한 설치 범위를 선택합니다.
 
 ## 현재 서비스 범위
 
@@ -60,7 +60,7 @@ kdpp_ai_ocr_integrated/
 
 ```bash
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements-dev.txt -r ..\..\BACKEND\requirements.txt
+.venv\Scripts\python.exe -m pip install -r requirements-ci.lock
 .venv\Scripts\python.exe -m ruff check .
 .venv\Scripts\python.exe -m pytest -q
 ```
@@ -69,14 +69,14 @@ python -m venv .venv
 설치합니다.
 
 ```bash
-.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install -r requirements-text.lock
 ```
 
 세탁기호 학습·평가 또는 `/v1/analyze-symbol` API가 필요한 환경은 선택 의존성을
 설치합니다.
 
 ```bash
-.venv\Scripts\python.exe -m pip install -r requirements-symbol.txt
+.venv\Scripts\python.exe -m pip install -r requirements-symbol.lock
 ```
 
 심볼 API는 텍스트 OCR 서비스의 기본 라우트에 포함되지 않습니다. 선택 의존성을
@@ -90,6 +90,31 @@ $env:KDPP_SYMBOL_MODEL_PATH = "models/symbol/best_symbol_model_exp.pt"
 
 `requirements-dev.txt`는 전체 테스트를 위해 세탁기호 의존성도 함께 설치합니다.
 
+### 의존성 잠금 정책
+
+`requirements.txt`, `requirements-symbol.txt`, `requirements-dev.txt`와
+`BACKEND/requirements.txt`는 직접 의존성의 허용 범위를 정하는 입력입니다.
+설치에는 Python 3.12 기준의 정확한 버전을 기록한 잠금 파일을 사용합니다.
+
+- `requirements-text.lock`: 기본 OCR 서비스와 파서만 설치합니다.
+- `requirements-symbol.lock`: 기본 OCR에 선택적인 세탁기호 실험 의존성을 더합니다.
+- `requirements-ci.lock`: AI 개발·전체 테스트와 백엔드 의존성을 함께 설치합니다.
+
+잠금 파일은 `uv==0.12.18`로 Windows와 Linux에 공통인 버전을 해석해 생성했습니다.
+직접 의존성이나 백엔드 요구사항을 바꾸면 해당 잠금 파일을 다시 만들고 함께 검증합니다.
+기존 잠금 파일을 출력 대상으로 쓰면 기존 버전을 유지하며, 의도적으로 올릴 때만
+`--upgrade-package`를 지정합니다. 잠금 파일을 손으로 고치지 않습니다.
+
+```powershell
+.venv\Scripts\python.exe -m pip install uv==0.12.18
+.venv\Scripts\uv.exe pip compile requirements.txt --universal --python-version 3.12 --no-header --no-annotate -o requirements-text.lock
+.venv\Scripts\uv.exe pip compile requirements-symbol.txt --universal --python-version 3.12 --no-header --no-annotate -o requirements-symbol.lock
+.venv\Scripts\uv.exe pip compile requirements-dev.txt ..\..\BACKEND\requirements.txt --universal --python-version 3.12 --no-header --no-annotate -o requirements-ci.lock
+```
+
+CI는 세 잠금 파일이 입력 요구사항과 맞는지 검사하고 `requirements-ci.lock`으로
+설치합니다. 잠금 파일은 패키지 **버전**을 고정하며 배포 파일 해시까지 고정하지는 않습니다.
+
 ### 텍스트 OCR 운영 번들
 
 운영 배포물은 저장소 전체를 복사하지 않고 명시된 텍스트 서비스 파일만 구성합니다.
@@ -98,7 +123,8 @@ $env:KDPP_SYMBOL_MODEL_PATH = "models/symbol/best_symbol_model_exp.pt"
 .venv\Scripts\python.exe -m scripts.build_text_runtime --output dist\text-runtime
 ```
 
-생성된 `dist/text-runtime`에는 텍스트 OCR 서비스와 기본 `requirements.txt`만 포함됩니다.
+생성된 `dist/text-runtime`에는 텍스트 OCR 서비스, 기본 `requirements.txt`와
+`requirements-text.lock`이 포함됩니다. 배포 환경은 잠금 파일로 의존성을 설치합니다.
 심볼 학습·평가, 합성 데이터 생성, QA 스크립트, 테스트, 데이터셋, 모델과 출력물은
 포함되지 않습니다. 배포 환경에서는 번들 디렉터리에서 다음 진입점을 사용합니다.
 

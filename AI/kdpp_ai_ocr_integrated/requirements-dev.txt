@@ -1,5 +1,5 @@
 -r requirements-symbol.txt
 
 httpx>=0.27,<1
-pytest>=8,<9
+pytest==9.0.2
 ruff>=0.6,<1
