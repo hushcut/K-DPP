@@ -1,4 +1,4 @@
-// 홈·스캔·옷장 탭과 상세 리포트 전환을 한 화면에서 관리하는 앱의 메인 셸입니다.
+// 홈·스캔·옷장 탭을 한 화면에서 관리하고, 상세 리포트를 그 위에 쌓아 여는 앱의 메인 셸입니다.
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -17,7 +17,7 @@ import 'widgets/app_back_button.dart';
 import 'widgets/frosted_surface.dart';
 import 'widgets/kdpp_logo_mark.dart';
 
-/// 하단 내비게이션의 선택 상태와 리포트 오버레이 표시 상태를 관리합니다.
+/// 하단 내비게이션의 선택 상태를 관리하고 상세 리포트·설정을 위에 쌓아 엽니다.
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key, this.initialArguments});
 
@@ -34,8 +34,9 @@ class _MainScreenState extends State<MainScreen>
 
   int _selectedIndex = 0;
   bool _didReadInitialArgs = false;
-  bool _isShowingReport = false;
-  // 설정 같은 라우트가 위에 열리는 동안 스캔 카메라를 멈추기 위한 표시입니다.
+  // 스캔 저장 직후처럼 진입하자마자 리포트를 쌓아 열어야 하는지 나타냅니다.
+  bool _shouldOpenInitialReport = false;
+  // 리포트·설정 같은 라우트가 위에 열리는 동안 스캔 카메라를 멈추기 위한 표시입니다.
   bool _isCoveredByRoute = false;
 
   // 탭을 바꿀 때마다 새 화면이 부드럽게 나타나도록 재생하는 전환 애니메이션입니다.
@@ -64,11 +65,10 @@ class _MainScreenState extends State<MainScreen>
     super.dispose();
   }
 
-  // 탭을 바꾸면 열려 있던 상세 리포트도 함께 닫습니다.
   void _selectTab(int index) {
     if (index < 0 || index >= _tabCount) return;
 
-    final isSameView = index == _selectedIndex && !_isShowingReport;
+    final isSameView = index == _selectedIndex;
     // 스캔 탭은 옆에서 밀지 않습니다(2026-09-23 폰 확인: 오른쪽 위에서 밀려 나오는 것처럼 보였다).
     // 들어갈 때는 내비 바가 내려가는 것과 짝이 맞게 아래에서 4% 살짝 떠오르고(사용자 요청),
     // 나올 때는 밝기만 바뀝니다. 홈·옷장 사이에서는 가는 방향 쪽에서 들어옵니다.
@@ -83,7 +83,6 @@ class _MainScreenState extends State<MainScreen>
 
     setState(() {
       _selectedIndex = index;
-      _isShowingReport = false;
       _tabSlideBegin = slideBegin;
     });
 
@@ -94,29 +93,50 @@ class _MainScreenState extends State<MainScreen>
   }
 
   /// 촬영에 집중할 수 있도록 하단 내비게이션을 감추는 스캔 화면 상태입니다.
-  bool get _isScanTabActive => _selectedIndex == 1 && !_isShowingReport;
+  bool get _isScanTabActive => _selectedIndex == 1;
 
-  // 선택 의류를 Provider에 기록한 뒤 탭 위에 상세 리포트를 표시합니다.
+  // 선택 의류를 Provider에 기록한 뒤 상세 리포트를 탭 위에 쌓아 엽니다.
+  // 설정처럼 라우트로 열어야 iOS 에서 왼쪽 끝을 밀어 닫을 수 있습니다(2026-09-24 사용자 결정).
   void _openReport(Clothes item) {
+    // 설정과 같은 방어입니다. 쌓이는 동안엔 라우트 장벽이 아래 탭을 막아 보통은 걸리지 않습니다.
+    if (_isCoveredByRoute) return;
+
     // 탭 트리가 유지되므로, 검색창 등에 남은 포커스와 키보드를 먼저 정리합니다.
     FocusManager.instance.primaryFocus?.unfocus();
     context.read<ClosetProvider>().selectClothes(item);
-
-    setState(() {
-      _isShowingReport = true;
-    });
+    _pushReport();
   }
 
-  void _closeReport() {
-    setState(() {
-      _isShowingReport = false;
-    });
+  Future<void> _pushReport() {
+    return _pushCoveringRoute(
+      () => Navigator.push<void>(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => _ReportPage(onDeleted: _handleReportDeleted),
+        ),
+      ),
+    );
   }
 
+  // 리포트에서 의류를 지우면 리포트가 닫히면서 옷장 탭이 보이게 합니다.
   void _handleReportDeleted() {
     setState(() {
       _selectedIndex = 2;
-      _isShowingReport = false;
+    });
+  }
+
+  // 위에 쌓은 라우트가 닫힐 때까지 카메라가 꺼지도록 열림 상태를 추적합니다.
+  Future<void> _pushCoveringRoute(Future<Object?> Function() push) async {
+    setState(() {
+      _isCoveredByRoute = true;
+    });
+
+    await push();
+
+    if (!mounted) return;
+
+    setState(() {
+      _isCoveredByRoute = false;
     });
   }
 
@@ -134,31 +154,22 @@ class _MainScreenState extends State<MainScreen>
   void _applyInitialArguments(Object? args) {
     if (args is MainScreenArguments) {
       _selectedIndex = _normalizeInitialIndex(args.initialIndex);
-      _isShowingReport =
+      _shouldOpenInitialReport =
           args.showReport &&
           context.read<ClosetProvider>().currentReportItem != null;
+      // 리포트가 뜨기 전 첫 프레임에도 스캔 카메라가 켜지지 않게 미리 덮인 상태로 둡니다.
+      _isCoveredByRoute = _shouldOpenInitialReport;
       return;
     }
 
     _selectedIndex = _normalizeInitialIndex(args is int ? args : 0);
   }
 
-  // 설정 화면이 닫힐 때까지 카메라가 꺼지도록 열림 상태를 추적합니다.
   Future<void> _openSettings() async {
     // 빠른 연속 탭으로 설정 화면이 두 번 쌓이지 않게 합니다.
     if (_isCoveredByRoute) return;
 
-    setState(() {
-      _isCoveredByRoute = true;
-    });
-
-    await Navigator.pushNamed(context, '/settings');
-
-    if (!mounted) return;
-
-    setState(() {
-      _isCoveredByRoute = false;
-    });
+    await _pushCoveringRoute(() => Navigator.pushNamed(context, '/settings'));
   }
 
   List<Widget> _buildTabScreens() {
@@ -169,101 +180,37 @@ class _MainScreenState extends State<MainScreen>
         onOpenCloset: () => _selectTab(2),
       ),
       _ScanTabInsets(
-        child: ScanScreen(
-          isActive:
-              _selectedIndex == 1 && !_isShowingReport && !_isCoveredByRoute,
-        ),
+        child: ScanScreen(isActive: _selectedIndex == 1 && !_isCoveredByRoute),
       ),
       ClosetScreen(
-        isActive:
-            _selectedIndex == 2 && !_isShowingReport && !_isCoveredByRoute,
+        isActive: _selectedIndex == 2 && !_isCoveredByRoute,
         onOpenReport: _openReport,
         onStartScan: () => _selectTab(1),
       ),
     ];
   }
 
-  // 리포트가 열려도 탭 트리는 Offstage로 유지해 작성 중 상태를 보존하고,
-  // 리포트 층만 AnimatedSwitcher로 위에 얹거나 걷어냅니다.
+  // 탭을 유지한 채(작성 중인 내용 보존) 화면만 부드럽게 나타나게 합니다.
+  // 리포트·설정은 이 화면 위에 라우트로 쌓이므로 탭 트리는 그대로 남습니다.
   Widget _buildBody() {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        Offstage(
-          offstage: _isShowingReport,
-          child: TickerMode(
-            enabled: !_isShowingReport,
-            // 탭을 유지한 채(작성 중인 내용 보존) 화면만 부드럽게 나타나게 합니다.
-            child: FadeTransition(
-              opacity: _tabTransition,
-              child: SlideTransition(
-                position: Tween<Offset>(
-                  begin: _tabSlideBegin,
-                  end: Offset.zero,
-                ).animate(_tabTransition),
-                child: IndexedStack(
-                  index: _selectedIndex,
-                  children: _buildTabScreens(),
-                ),
-              ),
-            ),
-          ),
+    return FadeTransition(
+      opacity: _tabTransition,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: _tabSlideBegin,
+          end: Offset.zero,
+        ).animate(_tabTransition),
+        child: IndexedStack(
+          index: _selectedIndex,
+          children: _buildTabScreens(),
         ),
-        AnimatedSwitcher(
-          duration: _transitionDuration,
-          switchInCurve: Curves.easeOutCubic,
-          switchOutCurve: Curves.easeInCubic,
-          transitionBuilder: (child, animation) {
-            final slideAnimation = Tween<Offset>(
-              begin: const Offset(0.04, 0),
-              end: Offset.zero,
-            ).animate(animation);
-
-            return FadeTransition(
-              opacity: animation,
-              child: SlideTransition(position: slideAnimation, child: child),
-            );
-          },
-          child: _isShowingReport
-              ? ReportScreen(
-                  key: const ValueKey('report'),
-                  onDeleted: _handleReportDeleted,
-                )
-              : const SizedBox.shrink(key: ValueKey('report-hidden')),
-        ),
-      ],
+      ),
     );
   }
 
   PreferredSizeWidget _buildAppBar(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final appBarIconColor = isDark ? Colors.white : const Color(0xFF1A1A1A);
-
-    if (_isShowingReport) {
-      return AppBar(
-        toolbarHeight: 44,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        leadingWidth: 52,
-        leading: Padding(
-          padding: const EdgeInsets.only(left: 8),
-          child: AppBackButton(
-            onPressed: _closeReport,
-            tooltip: '리포트 닫기',
-            color: appBarIconColor,
-          ),
-        ),
-        title: Text(
-          '상세 리포트',
-          style: TextStyle(
-            color: appBarIconColor,
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      );
-    }
 
     return AppBar(
       toolbarHeight: 56,
@@ -303,26 +250,26 @@ class _MainScreenState extends State<MainScreen>
           widget.initialArguments ?? ModalRoute.of(context)?.settings.arguments;
       _applyInitialArguments(args);
       _didReadInitialArgs = true;
+
+      if (_shouldOpenInitialReport) {
+        // 빌드 중에는 라우트를 쌓을 수 없으므로 첫 프레임 뒤에 엽니다.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _pushReport();
+        });
+      }
     }
 
     final palette = AppPalette.of(context);
     final scaffoldBg = palette.background;
 
-    // '/main'은 스택의 유일한 라우트라서, 리포트가 열려 있거나 스캔 화면일 때
-    // 시스템 뒤로가기가 앱을 종료하지 않고 이전 화면으로 돌아가게 합니다.
+    // '/main'은 스택의 유일한 라우트라서, 스캔 화면일 때 시스템 뒤로가기가
+    // 앱을 종료하지 않고 홈으로 돌아가게 합니다. 리포트는 제 라우트가 닫습니다.
     return PopScope(
-      canPop: !_isShowingReport && !_isScanTabActive,
+      canPop: !_isScanTabActive,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
 
-        if (_isShowingReport) {
-          _closeReport();
-          return;
-        }
-
-        if (_isScanTabActive) {
-          _selectTab(0);
-        }
+        _selectTab(0);
       },
       child: Scaffold(
         backgroundColor: scaffoldBg,
@@ -342,6 +289,51 @@ class _MainScreenState extends State<MainScreen>
                   onSelect: _selectTab,
                 ),
         ),
+      ),
+    );
+  }
+}
+
+/// 탭 위에 쌓아 여는 상세 리포트 화면입니다.
+///
+/// 라우트라서 "<"·시스템 뒤로가기·iOS 왼쪽 끝 밀기로 닫히고, 하단 메뉴까지 덮습니다.
+class _ReportPage extends StatelessWidget {
+  const _ReportPage({required this.onDeleted});
+
+  /// 의류를 지워 리포트가 닫힌 뒤 메인 화면이 할 일입니다.
+  final VoidCallback onDeleted;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final appBarIconColor = isDark ? Colors.white : const Color(0xFF1A1A1A);
+
+    return Scaffold(
+      backgroundColor: AppPalette.of(context).background,
+      appBar: AppBar(
+        toolbarHeight: 44,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        leadingWidth: 52,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 8),
+          child: AppBackButton(tooltip: '리포트 닫기', color: appBarIconColor),
+        ),
+        title: Text(
+          '상세 리포트',
+          style: TextStyle(
+            color: appBarIconColor,
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      body: ReportScreen(
+        onDeleted: () {
+          Navigator.pop(context);
+          onDeleted();
+        },
       ),
     );
   }

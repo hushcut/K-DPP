@@ -7,6 +7,8 @@ import 'package:k_dpp/material_name_display_provider.dart';
 import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/models/main_screen_arguments.dart';
 import 'package:k_dpp/navigation_bar_opacity_provider.dart';
+import 'package:k_dpp/scan_screen.dart';
+import 'package:k_dpp/widgets/app_back_button.dart';
 import 'package:provider/provider.dart';
 
 import 'helpers/fake_closet_storage.dart';
@@ -47,7 +49,7 @@ void main() {
     expect(find.text('홍길동 니트'), findsOneWidget);
   });
 
-  testWidgets('홈 최근 의류 카드를 누르면 하단바를 유지한 채 리포트를 연다', (tester) async {
+  testWidgets('홈 최근 의류 카드를 누르면 리포트를 하단 메뉴까지 덮는 새 화면으로 연다', (tester) async {
     final provider = ClosetProvider(storage: FakeClosetStorage());
     final clothes = Clothes(
       title: '홍길동 반팔 티셔츠',
@@ -80,12 +82,12 @@ void main() {
 
     expect(find.text('상세 리포트'), findsOneWidget);
     expect(find.text('홍길동 반팔 티셔츠'), findsOneWidget);
-    expect(find.text('홈'), findsOneWidget);
-    expect(find.text('스캔'), findsOneWidget);
-    expect(find.text('옷장'), findsOneWidget);
+    // 설정처럼 라우트로 쌓여 하단 메뉴는 가려진다(2026-09-24 사용자 결정 A안).
+    expect(find.text('홈'), findsNothing);
+    expect(find.text('옷장'), findsNothing);
   });
 
-  testWidgets('스캔 저장 후 메인 하단바를 유지한 채 리포트를 연다', (tester) async {
+  testWidgets('스캔 저장 후에는 스캔 탭 위에 리포트를 쌓아 열고, 그동안 카메라는 꺼 둔다', (tester) async {
     final provider = ClosetProvider(storage: FakeClosetStorage());
     final clothes = Clothes(
       title: '홍길동 코튼 셔츠',
@@ -118,9 +120,12 @@ void main() {
 
     expect(find.text('상세 리포트'), findsOneWidget);
     expect(find.text('홍길동 코튼 셔츠'), findsOneWidget);
-    expect(find.text('홈'), findsOneWidget);
-    expect(find.text('스캔'), findsOneWidget);
-    expect(find.text('옷장'), findsOneWidget);
+    expect(find.text('홈'), findsNothing);
+    // 리포트 아래는 스캔 탭이지만 가려져 있으므로 카메라를 켜지 않는다.
+    final scanScreen = tester.widget<ScanScreen>(
+      find.byType(ScanScreen, skipOffstage: false),
+    );
+    expect(scanScreen.isActive, isFalse);
   });
 
   testWidgets('리포트가 열린 상태의 시스템 뒤로가기는 앱을 닫는 대신 리포트를 닫는다', (tester) async {
@@ -198,8 +203,94 @@ void main() {
 
     expect(find.text('상세 리포트'), findsOneWidget);
 
-    // 리포트가 떠 있는 동안에도 탭 스택은 Offstage로 유지되어야 합니다.
+    // 리포트가 위에 쌓여 있는 동안에도 아래 메인 화면의 탭 스택은 유지되어야 합니다.
     expect(find.byType(IndexedStack, skipOffstage: false), findsOneWidget);
+  });
+
+  // 리포트는 설정처럼 라우트로 쌓인다(2026-09-24 사용자 결정 A안: iOS 에서 밀어서 닫히게).
+  group('리포트 라우트', () {
+    Future<ClosetProvider> pumpHomeWithClothes(WidgetTester tester) async {
+      final provider = ClosetProvider(storage: FakeClosetStorage());
+      await provider.addClothes(
+        Clothes(
+          title: '홍길동 린넨 셔츠',
+          category: '상의',
+          health: 82,
+          materials: {'linen': 100},
+          careInstruction: '찬물 세탁',
+          carbonFootprint: 2.1,
+        ),
+      );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: provider),
+            ChangeNotifierProvider(
+              create: (_) => MaterialNameDisplayProvider(),
+            ),
+            ChangeNotifierProvider(
+              create: (_) => NavigationBarOpacityProvider(),
+            ),
+          ],
+          child: const MaterialApp(home: MainScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('홍길동 린넨 셔츠'));
+      await tester.pumpAndSettle();
+      return provider;
+    }
+
+    testWidgets(
+      'iOS 에서 리포트 왼쪽 끝을 밀면 설정 화면처럼 닫히고 홈이 다시 보인다',
+      (tester) async {
+        await pumpHomeWithClothes(tester);
+        await tester.tap(find.text('홍길동 린넨 셔츠'));
+        await tester.pumpAndSettle();
+        expect(find.text('상세 리포트'), findsOneWidget);
+
+        // 화면 왼쪽 끝(뒤로 밀기 영역 20px 안)에서 오른쪽으로 끝까지 민다.
+        await tester.dragFrom(const Offset(5, 300), const Offset(600, 0));
+        await tester.pumpAndSettle();
+
+        expect(find.text('상세 리포트'), findsNothing);
+        expect(find.text('홈'), findsOneWidget);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+
+    testWidgets('리포트의 "<" 를 누르면 리포트가 닫힌다', (tester) async {
+      await pumpHomeWithClothes(tester);
+      await tester.tap(find.text('홍길동 린넨 셔츠'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(AppBackButton));
+      await tester.pumpAndSettle();
+
+      expect(find.text('상세 리포트'), findsNothing);
+      expect(find.text('홈'), findsOneWidget);
+    });
+
+    testWidgets('리포트에서 의류를 지우면 리포트가 닫히고 옷장 탭이 보인다', (tester) async {
+      final provider = await pumpHomeWithClothes(tester);
+      await tester.tap(find.text('홍길동 린넨 셔츠'));
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text('이 의류 삭제하기'),
+        300,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.tap(find.text('이 의류 삭제하기'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ElevatedButton, '삭제'));
+      await tester.pumpAndSettle();
+
+      expect(provider.items, isEmpty);
+      expect(find.text('상세 리포트'), findsNothing);
+      expect(find.text('내 옷장'), findsOneWidget);
+    });
   });
 
   // 아래는 스캔 탭 전환(D)과 하단 메뉴 반투명(F) 검증입니다.
