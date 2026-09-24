@@ -1,5 +1,6 @@
 // 등록 의류의 검색·정렬·다중 삭제·사용자 지정 순서를 제공하는 옷장 화면입니다.
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'closet_provider.dart';

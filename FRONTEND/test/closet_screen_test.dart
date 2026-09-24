@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -473,5 +474,116 @@ void main() {
     );
 
     semanticsHandle.dispose();
+  });
+
+  // 2026-09-24: 기본 모양은 카드+아래 여백을 배경색 네모 판째 들어 올려 "블럭"처럼 보였다(사용자 피드백).
+  group('순서 바꾸기에서 집어 든 카드', () {
+    Future<void> pumpReorderMode(WidgetTester tester) async {
+      final provider = ClosetProvider(
+        storage: FakeClosetStorage(),
+        authSessionStorage: FakeAuthSessionStorage(),
+      );
+      for (final title in ['홍길동 린넨 셔츠', '홍길동 데님 바지']) {
+        await provider.addClothes(
+          Clothes(
+            title: title,
+            category: '상의',
+            health: 88,
+            materials: {'linen': 100},
+            careInstruction: '찬물 세탁',
+            carbonFootprint: 2.1,
+          ),
+        );
+      }
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: provider,
+          child: MaterialApp(
+            home: Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('옷장 정렬'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('내 설정 순'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('편집'));
+      await tester.pumpAndSettle();
+    }
+
+    // 길게 눌러 집어 든 뒤 조금 움직이고, 들어 올리는 애니메이션이 끝날 때까지 기다린다.
+    Future<TestGesture> liftFirstCard(WidgetTester tester) async {
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.text('홍길동 린넨 셔츠')),
+      );
+      await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+      await gesture.moveBy(const Offset(0, 20));
+      await tester.pump(const Duration(milliseconds: 400));
+      return gesture;
+    }
+
+    Finder liftedScale() => find.byWidgetPredicate(
+      (widget) =>
+          widget is Transform &&
+          (widget.transform.getMaxScaleOnAxis() - 1.03).abs() < 0.001,
+    );
+
+    testWidgets('네모 판 없이 카드만 3% 커지고 카드 모서리를 따라 그림자가 진다', (tester) async {
+      await pumpReorderMode(tester);
+      final gesture = await liftFirstCard(tester);
+
+      expect(liftedScale(), findsOneWidget);
+      // 기본 모양의 배경색 네모 판(elevation 이 있는 Material)이 없어야 한다.
+      expect(
+        find.byWidgetPredicate(
+          (widget) => widget is Material && widget.elevation > 0,
+        ),
+        findsNothing,
+      );
+      expect(
+        find.byWidgetPredicate((widget) {
+          if (widget is! DecoratedBox) return false;
+          final decoration = widget.decoration;
+          return decoration is BoxDecoration &&
+              decoration.borderRadius == BorderRadius.circular(16) &&
+              (decoration.boxShadow?.any((s) => s.blurRadius == 22) ?? false);
+        }),
+        findsOneWidget,
+      );
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(liftedScale(), findsNothing);
+    });
+
+    testWidgets('집어 드는 순간 짧은 진동이 한 번 울린다', (tester) async {
+      final haptics = <String?>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'HapticFeedback.vibrate') {
+            haptics.add(call.arguments as String?);
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      await pumpReorderMode(tester);
+      final gesture = await liftFirstCard(tester);
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(haptics, ['HapticFeedbackType.mediumImpact']);
+    });
   });
 }

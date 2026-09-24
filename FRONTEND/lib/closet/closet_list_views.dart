@@ -117,6 +117,10 @@ extension _ClosetListViews on _ClosetScreenState {
     return ReorderableListView.builder(
       padding: _listPadding(context),
       itemCount: clothes.length,
+      // 집어 드는 순간 짧게 진동해 들렸다는 걸 손으로도 알게 합니다(2026-09-24 사용자 요청).
+      onReorderStart: (_) => HapticFeedback.mediumImpact(),
+      proxyDecorator: (child, index, animation) =>
+          _buildLiftedCard(child, animation, palette),
       onReorder: (oldIndex, newIndex) async {
         await _handleReorder(
           displayedItems: clothes,
@@ -150,6 +154,57 @@ extension _ClosetListViews on _ClosetScreenState {
           ),
         );
       },
+    );
+  }
+
+  /// 순서를 바꾸려고 집어 든 카드를 카드 모양 그대로 살짝 띄워 그립니다.
+  ///
+  /// 기본 모양은 카드와 아래 여백 12 를 배경색 네모 판(`Material(elevation: 6)`)째 들어 올려
+  /// 블럭처럼 보였습니다. 판 없이 카드만 3% 키우고 모서리 16 을 따라 그림자를 길게 드리웁니다
+  /// (2026-09-24 비교판 B, 사용자 선택). 내려놓을 때는 같은 애니메이션이 거꾸로 재생됩니다.
+  Widget _buildLiftedCard(
+    Widget child,
+    Animation<double> animation,
+    _ClosetPalette palette,
+  ) {
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, child) {
+        final t = Curves.easeOut.transform(animation.value);
+        final liftShadow = Colors.black.withValues(
+          alpha: (palette.isDark ? 0.45 : 0.14) * t,
+        );
+
+        // 오버레이에는 Material 조상이 없으므로 글자 스타일만 이어 주는 투명 Material 을 둡니다.
+        return Material(
+          type: MaterialType.transparency,
+          child: Transform.scale(
+            scale: 1 + 0.03 * t,
+            child: Stack(
+              children: [
+                // 아래 여백(12)을 뺀 카드 자리에만 그림자를 둡니다.
+                Positioned.fill(
+                  bottom: 12,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: liftShadow,
+                          blurRadius: 22 * t,
+                          offset: Offset(0, 10 * t),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                child!,
+              ],
+            ),
+          ),
+        );
+      },
+      child: child,
     );
   }
 
