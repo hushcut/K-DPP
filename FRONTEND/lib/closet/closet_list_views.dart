@@ -117,8 +117,13 @@ extension _ClosetListViews on _ClosetScreenState {
     return ReorderableListView.builder(
       padding: _listPadding(context),
       itemCount: clothes.length,
-      // 집어 드는 순간 짧게 진동해 들렸다는 걸 손으로도 알게 합니다(2026-09-24 사용자 요청).
-      onReorderStart: (_) => HapticFeedback.mediumImpact(),
+      // 집어 드는 순간 짧게 진동해 들렸다는 걸 손으로도 알게 하고(2026-09-24 사용자 요청),
+      // 끄는 동안 다른 카드를 밀어낼 때마다 더 가벼운 틱을 줍니다(2026-09-25 사용자 요청).
+      onReorderStart: (_) {
+        HapticFeedback.mediumImpact();
+        _reorderBumps.start();
+      },
+      onReorderEnd: (_) => _reorderBumps.stop(),
       proxyDecorator: (child, index, animation) =>
           _buildLiftedCard(child, animation, palette),
       onReorder: (oldIndex, newIndex) async {
@@ -135,22 +140,25 @@ extension _ClosetListViews on _ClosetScreenState {
         return Padding(
           key: ValueKey(item),
           padding: const EdgeInsets.only(bottom: 12.0),
-          child: _buildClosetItem(
-            context,
-            item: item,
-            title: item.title,
-            category: item.category,
-            status: item.health > 20
-                ? '건강 상태: ${item.health}%'
-                : '수명 만료 (배출 권장)',
-            statusColor: item.health > 20 ? Colors.green : Colors.redAccent,
-            statusIcon: item.health > 20
-                ? Icons.sentiment_satisfied_alt
-                : Icons.warning_amber_rounded,
-            isWarning: item.health <= 20,
-            showDragHandle: true,
-            disableTap: true,
-            palette: palette,
+          child: ReorderBumpProbe(
+            tracker: _reorderBumps,
+            child: _buildClosetItem(
+              context,
+              item: item,
+              title: item.title,
+              category: item.category,
+              status: item.health > 20
+                  ? '건강 상태: ${item.health}%'
+                  : '수명 만료 (배출 권장)',
+              statusColor: item.health > 20 ? Colors.green : Colors.redAccent,
+              statusIcon: item.health > 20
+                  ? Icons.sentiment_satisfied_alt
+                  : Icons.warning_amber_rounded,
+              isWarning: item.health <= 20,
+              showDragHandle: true,
+              disableTap: true,
+              palette: palette,
+            ),
           ),
         );
       },

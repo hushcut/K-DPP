@@ -8,6 +8,7 @@ import 'models/closet_sort_option.dart';
 import 'models/clothes.dart';
 import 'theme/app_palette.dart';
 import 'utils/material_name.dart';
+import 'widgets/reorder_bump_haptics.dart';
 
 part 'closet/closet_actions.dart';
 part 'closet/closet_body.dart';
@@ -41,6 +42,8 @@ class _ClosetScreenState extends State<ClosetScreen> {
   // 다중 선택과 순서 변경은 충돌하지 않도록 서로 배타적으로 관리합니다.
   bool _reorderMode = false;
   final Set<Clothes> _selectedItems = {};
+  // 순서 바꾸기 중 끌고 있는 카드가 다른 카드를 밀어낼 때마다 가벼운 틱을 줍니다.
+  final ReorderBumpTracker _reorderBumps = ReorderBumpTracker();
 
   /// 선택 모드 여부는 선택 집합에서 파생해 별도 동기화가 필요 없게 합니다.
   bool get _selectionMode => _selectedItems.isNotEmpty;
@@ -64,6 +67,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
 
   @override
   void dispose() {
+    _reorderBumps.stop();
     _searchController.removeListener(_handleSearchChanged);
     _searchController.dispose();
     super.dispose();

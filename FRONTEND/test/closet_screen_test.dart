@@ -478,12 +478,15 @@ void main() {
 
   // 2026-09-24: 기본 모양은 카드+아래 여백을 배경색 네모 판째 들어 올려 "블럭"처럼 보였다(사용자 피드백).
   group('순서 바꾸기에서 집어 든 카드', () {
-    Future<void> pumpReorderMode(WidgetTester tester) async {
+    Future<void> pumpReorderMode(
+      WidgetTester tester, {
+      List<String> titles = const ['홍길동 린넨 셔츠', '홍길동 데님 바지'],
+    }) async {
       final provider = ClosetProvider(
         storage: FakeClosetStorage(),
         authSessionStorage: FakeAuthSessionStorage(),
       );
-      for (final title in ['홍길동 린넨 셔츠', '홍길동 데님 바지']) {
+      for (final title in titles) {
         await provider.addClothes(
           Clothes(
             title: title,
@@ -515,9 +518,12 @@ void main() {
     }
 
     // 길게 눌러 집어 든 뒤 조금 움직이고, 들어 올리는 애니메이션이 끝날 때까지 기다린다.
-    Future<TestGesture> liftFirstCard(WidgetTester tester) async {
+    Future<TestGesture> liftFirstCard(
+      WidgetTester tester, {
+      String title = '홍길동 린넨 셔츠',
+    }) async {
       final gesture = await tester.startGesture(
-        tester.getCenter(find.text('홍길동 린넨 셔츠')),
+        tester.getCenter(find.text(title)),
       );
       await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
       await gesture.moveBy(const Offset(0, 20));
@@ -560,7 +566,8 @@ void main() {
       expect(liftedScale(), findsNothing);
     });
 
-    testWidgets('집어 드는 순간 짧은 진동이 한 번 울린다', (tester) async {
+    // 울린 진동 종류를 차례로 모은다(HapticFeedbackType.mediumImpact 등).
+    List<String?> recordHaptics(WidgetTester tester) {
       final haptics = <String?>[];
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         SystemChannels.platform,
@@ -577,6 +584,11 @@ void main() {
           null,
         ),
       );
+      return haptics;
+    }
+
+    testWidgets('집어 드는 순간 짧은 진동이 한 번 울린다', (tester) async {
+      final haptics = recordHaptics(tester);
 
       await pumpReorderMode(tester);
       final gesture = await liftFirstCard(tester);
@@ -584,6 +596,155 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(haptics, ['HapticFeedbackType.mediumImpact']);
+    });
+
+    // 2026-09-25 사용자 요청: 끄는 동안 부딪히는(밀어내는) 카드마다 가벼운 틱.
+    // 판정은 화면의 카드 글자 위치로 잰다. 끌고 있는 카드 아래의 카드는 제자리(0)와
+    // 한 칸 위(-간격) 두 곳만 쉬는 자리이고, 쉬는 자리를 떠나기 시작한 프레임에 틱이 울려야 한다.
+    group('끄는 동안 밀려나는 카드마다 가벼운 틱', () {
+      const titles = ['홍길동 카드 1', '홍길동 카드 2', '홍길동 카드 3', '홍길동 카드 4'];
+      const others = ['홍길동 카드 2', '홍길동 카드 3', '홍길동 카드 4'];
+
+      int ticks(List<String?> haptics) =>
+          haptics.where((h) => h == 'HapticFeedbackType.selectionClick').length;
+
+      testWidgets('카드가 밀려나기 시작하는 프레임마다 틱이 한 번씩 울리고, 내려놓을 때는 울리지 않는다', (
+        tester,
+      ) async {
+        // 자동 스크롤이 끼어들지 않게 화면을 넉넉히 키운다.
+        await tester.binding.setSurfaceSize(const Size(800, 1600));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final haptics = recordHaptics(tester);
+        await pumpReorderMode(tester, titles: titles);
+
+        double top(String title) => tester.getTopLeft(find.text(title)).dy;
+        final home = {for (final t in others) t: top(t)};
+        final gap = home['홍길동 카드 3']! - home['홍길동 카드 2']!;
+        bool atRest(double d) => d.abs() < 0.5 || (d + gap).abs() < 0.5;
+
+        final gesture = await liftFirstCard(tester, title: '홍길동 카드 1');
+        expect(ticks(haptics), 0, reason: '집어 들고 조금 움직인 것만으로는 틱이 없다');
+
+        var previous = {for (final t in others) t: top(t) - home[t]!};
+        final tickFrames = <int>[];
+        final leaveRestFrames = <int>[];
+        var frame = 0;
+
+        Future<void> moveInSteps(double distance) async {
+          final steps = (distance.abs() / 8).round();
+          for (var i = 0; i < steps; i++) {
+            final before = ticks(haptics);
+            await gesture.moveBy(Offset(0, distance.sign * 8));
+            await tester.pump(const Duration(milliseconds: 16));
+            frame++;
+
+            final now = {for (final t in others) t: top(t) - home[t]!};
+            if (others.any((t) => atRest(previous[t]!) && !atRest(now[t]!))) {
+              leaveRestFrames.add(frame);
+            }
+            if (ticks(haptics) > before) tickFrames.add(frame);
+            previous = now;
+          }
+          // 손가락을 멈추고 움직이던 카드가 자리를 잡을 때까지 기다린다.
+          await tester.pump(const Duration(milliseconds: 300));
+          previous = {for (final t in others) t: top(t) - home[t]!};
+        }
+
+        // 카드 두 장 높이만큼 내린다: 2·3번 카드가 차례로 한 칸씩 올라간다.
+        await moveInSteps(2 * gap - 20);
+        expect(ticks(haptics), 2);
+        expect(top('홍길동 카드 2') - home['홍길동 카드 2']!, closeTo(-gap, 0.5));
+        expect(top('홍길동 카드 3') - home['홍길동 카드 3']!, closeTo(-gap, 0.5));
+        expect(top('홍길동 카드 4') - home['홍길동 카드 4']!, closeTo(0, 0.5));
+
+        // 한 장 높이만큼 되돌린다: 3번 카드가 제자리로 돌아간다.
+        await moveInSteps(-gap);
+        expect(ticks(haptics), 3);
+        expect(top('홍길동 카드 3') - home['홍길동 카드 3']!, closeTo(0, 0.5));
+
+        expect(tickFrames, leaveRestFrames);
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        expect(ticks(haptics), 3, reason: '내려놓으며 카드들이 제자리로 돌아가는 건 밀어낸 게 아니다');
+        expect(haptics.first, 'HapticFeedbackType.mediumImpact');
+      });
+
+      testWidgets('자동 스크롤 중에도 밀려나는 카드에만 울리고, 스크롤만으로는 울리지 않는다', (tester) async {
+        await tester.binding.setSurfaceSize(const Size(800, 700));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final haptics = recordHaptics(tester);
+        final many = [for (var i = 1; i <= 9; i++) '홍길동 카드 $i'];
+        await pumpReorderMode(tester, titles: many);
+
+        final scrollable = Scrollable.of(tester.element(find.text('홍길동 카드 2')));
+        final pixelsAtStart = scrollable.position.pixels;
+
+        // 스크롤을 뺀 목록 내용 기준 위치. 아직 만들어지지 않은 카드는 null.
+        // 화면 바로 밖에 미리 만들어 둔 카드도 잰다 — 보이기 전에 밀려나기 시작할 수 있다.
+        double? contentTop(String title) {
+          final finder = find.text(title, skipOffstage: false);
+          if (finder.evaluate().isEmpty) return null;
+          return tester.getTopLeft(finder).dy + scrollable.position.pixels;
+        }
+
+        final gesture = await liftFirstCard(tester, title: '홍길동 카드 1');
+        final start = tester.getCenter(find.text('홍길동 카드 1'));
+        // 목록 아래 끝 가까이로 끌고 가서 멈춘다: 목록이 저절로 내려가며 카드들이 밀려난다.
+        final bottomEdge = tester
+            .getBottomLeft(find.byType(Scrollable).last)
+            .dy;
+        final target = bottomEdge - 10 - start.dy;
+
+        final firstSeen = <String, double>{};
+        var previous = <String, double>{};
+        final tickFrames = <int>[];
+        final leaveRestFrames = <int>[];
+        double? gap;
+
+        for (var frame = 1; frame <= 150; frame++) {
+          final before = ticks(haptics);
+          if (frame <= 20) {
+            await gesture.moveBy(Offset(0, target / 20));
+          }
+          await tester.pump(const Duration(milliseconds: 16));
+
+          final now = <String, double>{};
+          for (final t in many.skip(1)) {
+            final y = contentTop(t);
+            if (y == null) continue;
+            now[t] = y;
+            firstSeen.putIfAbsent(t, () => y);
+          }
+          gap ??= firstSeen['홍길동 카드 3']! - firstSeen['홍길동 카드 2']!;
+          bool atRest(String t, double y) {
+            final d = y - firstSeen[t]!;
+            return d.abs() < 0.5 || (d + gap!).abs() < 0.5;
+          }
+
+          final leftRest = now.keys.any(
+            (t) =>
+                previous.containsKey(t) &&
+                atRest(t, previous[t]!) &&
+                !atRest(t, now[t]!),
+          );
+          if (leftRest) leaveRestFrames.add(frame);
+          if (ticks(haptics) > before) tickFrames.add(frame);
+          previous = now;
+        }
+
+        expect(
+          scrollable.position.pixels,
+          greaterThan(pixelsAtStart + gap!),
+          reason: '자동 스크롤이 실제로 일어나야 이 테스트가 의미가 있다',
+        );
+        expect(tickFrames, isNotEmpty);
+        expect(tickFrames, leaveRestFrames);
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+      });
     });
   });
 }
