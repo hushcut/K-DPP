@@ -217,4 +217,53 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('긴 이름의 테스트용 친환경 혼방 아우터'), findsOneWidget);
   });
+
+  // 리포트는 하단 메뉴까지 덮는 라우트라(6d9ed80) 예전 메뉴 자리 140 대신 안전 영역만 비운다.
+  testWidgets('끝까지 내리면 삭제 버튼 아래 여백은 안전 영역 + 24다', (tester) async {
+    tester.view.physicalSize = const Size(440, 956);
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = const FakeViewPadding(bottom: 34);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPadding);
+
+    final provider = ClosetProvider(storage: FakeClosetStorage());
+    await provider.addClothes(
+      Clothes(
+        title: '여백 확인용 셔츠',
+        category: '상의',
+        health: 82,
+        materials: {'cotton': 100},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: 5.0,
+      ),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
+        child: const MaterialApp(home: Scaffold(body: ReportScreen())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final scrollable = tester.state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byType(SingleChildScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+    await tester.pump();
+
+    final deleteButton = tester.getRect(
+      find.widgetWithText(OutlinedButton, '이 의류 삭제하기'),
+    );
+    expect(956 - deleteButton.bottom, 34 + 24);
+  });
 }

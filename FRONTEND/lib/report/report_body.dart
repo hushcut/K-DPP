@@ -76,10 +76,13 @@ Widget _buildReportBody(
   final disposalGuide = _buildDisposalGuide(item);
   final mainMaterial = _mainMaterialLabel(materialEntries);
 
+  // 리포트는 하단 메뉴까지 덮는 라우트라 메뉴 자리 없이 기기 안전 영역만 비웁니다.
+  final bottomContentPadding = MediaQuery.paddingOf(context).bottom + 24;
+
   return Container(
     color: backgroundColor,
     child: SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 140),
+      padding: EdgeInsets.fromLTRB(24, 24, 24, bottomContentPadding),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
