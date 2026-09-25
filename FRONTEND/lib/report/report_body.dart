@@ -201,6 +201,40 @@ Widget _buildReportBody(
           const SizedBox(height: 24),
 
           Text(
+            '맞춤 관리 가이드',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: primaryText,
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          _buildGuideSection(
+            title: '세탁 및 관리 팁',
+            icon: Icons.local_laundry_service_outlined,
+            color: Colors.blue,
+            children: careTips,
+            primaryText: primaryText,
+            secondaryText: secondaryText,
+            cardColor: cardColor,
+            borderColor: borderColor,
+          ),
+          const SizedBox(height: 12),
+
+          _buildGuideSection(
+            title: '보관 팁',
+            icon: Icons.inventory_2_outlined,
+            color: Colors.deepPurple,
+            children: [storageTip],
+            primaryText: primaryText,
+            secondaryText: secondaryText,
+            cardColor: cardColor,
+            borderColor: borderColor,
+          ),
+          const SizedBox(height: 24),
+
+          Text(
             '생산·제조 탄소 배출량',
             style: TextStyle(
               fontSize: 18,
@@ -244,40 +278,6 @@ Widget _buildReportBody(
 
           _buildCalculationBasisCard(
             item,
-            primaryText: primaryText,
-            secondaryText: secondaryText,
-            cardColor: cardColor,
-            borderColor: borderColor,
-          ),
-          const SizedBox(height: 24),
-
-          Text(
-            '맞춤 관리 가이드',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: primaryText,
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          _buildGuideSection(
-            title: '세탁 및 관리 팁',
-            icon: Icons.local_laundry_service_outlined,
-            color: Colors.blue,
-            children: careTips,
-            primaryText: primaryText,
-            secondaryText: secondaryText,
-            cardColor: cardColor,
-            borderColor: borderColor,
-          ),
-          const SizedBox(height: 12),
-
-          _buildGuideSection(
-            title: '보관 팁',
-            icon: Icons.inventory_2_outlined,
-            color: Colors.deepPurple,
-            children: [storageTip],
             primaryText: primaryText,
             secondaryText: secondaryText,
             cardColor: cardColor,

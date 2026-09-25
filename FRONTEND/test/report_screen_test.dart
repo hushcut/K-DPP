@@ -55,6 +55,38 @@ void main() {
     expect(find.textContaining('면 80%'), findsWidgets);
   });
 
+  // 2026-09-24 사용자 요청: 맞춤 관리 가이드를 탄소 배출량보다 위에 둔다.
+  testWidgets('맞춤 관리 가이드는 요약 카드 아래, 생산·제조 탄소 배출량 위에 있다', (tester) async {
+    final provider = ClosetProvider(storage: FakeClosetStorage());
+    await provider.addClothes(
+      Clothes(
+        title: '순서 확인 셔츠',
+        category: '상의',
+        health: 82,
+        materials: {'cotton': 100},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: 3.0,
+      ),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
+        child: const MaterialApp(home: Scaffold(body: ReportScreen())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    double top(String text) => tester.getTopLeft(find.text(text)).dy;
+
+    expect(top('탄소 추정값'), lessThan(top('맞춤 관리 가이드')));
+    expect(top('맞춤 관리 가이드'), lessThan(top('생산·제조 탄소 배출량')));
+    expect(top('생산·제조 탄소 배출량'), lessThan(top('관리 정보')));
+  });
+
   testWidgets('상세 리포트에서 의류 이름과 세탁 지침을 수정할 수 있다', (tester) async {
     final provider = ClosetProvider(storage: FakeClosetStorage());
 
