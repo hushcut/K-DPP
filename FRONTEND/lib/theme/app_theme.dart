@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'app_palette.dart';
 
@@ -19,6 +20,27 @@ class AppTheme {
     triggerMode: TooltipTriggerMode.manual,
   );
 
+  /// 상태 표시줄(시각·와이파이·배터리) 아이콘 색은 테마 밝기를 따릅니다.
+  ///
+  /// 메인·스캔·리포트의 위 막대는 배경이 투명인데, AppBar 는 스타일을 따로 받지 않으면 배경색으로
+  /// 밝기를 어림합니다. 투명(0x00000000)은 검정으로 쳐서 라이트 모드에서도 흰 아이콘이 됐습니다
+  /// (2026-09-26 시뮬레이터 확인). 위 막대 뒤에는 늘 화면 배경이 비치므로 테마 밝기로 정합니다.
+  /// 배경을 진한 색으로 칠한 위 막대를 새로 만들면 그 AppBar 에 `systemOverlayStyle` 을 따로 줍니다.
+  ///
+  /// 상태 표시줄만 정하고 Android 아래 내비게이션 바는 건드리지 않습니다(Flutter 기본과 같게).
+  /// [SystemUiOverlayStyle.dark] 상수는 내비게이션 바를 검정으로 칠하므로 쓰지 않습니다.
+  static const _lightStatusBar = SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarBrightness: Brightness.light, // iOS: 밝은 배경 → 검은 아이콘
+    statusBarIconBrightness: Brightness.dark, // Android
+  );
+
+  static const _darkStatusBar = SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarBrightness: Brightness.dark, // iOS: 어두운 배경 → 흰 아이콘
+    statusBarIconBrightness: Brightness.light, // Android
+  );
+
   static ThemeData light() {
     return ThemeData(
       brightness: Brightness.light,
@@ -27,6 +49,7 @@ class AppTheme {
         seedColor: AppPalette.accent,
         brightness: Brightness.light,
       ),
+      appBarTheme: const AppBarTheme(systemOverlayStyle: _lightStatusBar),
       bottomSheetTheme: const BottomSheetThemeData(
         backgroundColor: Colors.white,
         modalBackgroundColor: Colors.white,
@@ -52,6 +75,7 @@ class AppTheme {
         backgroundColor: Color(0xFF121212),
         foregroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
+        systemOverlayStyle: _darkStatusBar,
         iconTheme: IconThemeData(color: Colors.white),
         titleTextStyle: TextStyle(
           color: Colors.white,
