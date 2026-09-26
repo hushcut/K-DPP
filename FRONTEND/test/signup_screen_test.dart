@@ -83,4 +83,26 @@ void main() {
     expect(find.byType(EmailLoginScreen, skipOffstage: false), findsOneWidget);
     expect(find.byType(SignupScreen, skipOffstage: false), findsNothing);
   });
+
+  testWidgets('자판 인셋이 앱바 아래를 다 덮어 본문 높이가 0 이 돼도 레이아웃 예외가 나지 않는다', (
+    tester,
+  ) async {
+    // iPhone 18 Pro Max(440×956pt, 3배) 크기. 이메일 로그인 화면과 같은 구조다.
+    tester.view.physicalSize = const Size(440 * 3, 956 * 3);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+
+    await pumpSignupScreen(tester);
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 956 * 3);
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 336 * 3);
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(TextFormField), findsNWidgets(4));
+  });
 }
