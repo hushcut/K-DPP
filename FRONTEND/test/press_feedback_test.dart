@@ -335,7 +335,7 @@ void main() {
     }, variant: platforms);
   });
 
-  testWidgets('가운데 스캔 버튼은 원을 눌러도, 원 아래 글자를 눌러도 스캔 탭으로 간다', (
+  testWidgets('가운데 스캔 버튼은 원을 눌러도, 원 아래 글자를 눌러도 스캔 화면을 연다', (
     tester,
   ) async {
     // 원에는 누름 효과(InkWell)를, 글자·여백에는 바깥 GestureDetector 를 두었으므로 둘 다 확인합니다.
@@ -346,9 +346,10 @@ void main() {
       expect(scanGuide, findsNothing);
 
       await tester.tap(target);
-      // 스캔 탭은 카메라를 찾다 테스트 환경에서 예외가 나므로 끝까지 기다리지 않습니다.
+      // 스캔 화면은 카메라를 찾다 테스트 환경에서 예외가 나므로 끝까지 기다리지 않고,
+      // 위에 쌓이는 라우트 전환(Android 기본은 500ms 넘음)보다 길게만 펌프합니다.
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 1000));
 
       expect(scanGuide, findsOneWidget, reason: '$target');
       await tester.pumpWidget(const SizedBox.shrink());

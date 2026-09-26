@@ -28,7 +28,7 @@ extension _ScanCaptureActions on _ScanScreenState {
 
     if (!mounted) return;
 
-    // 분석 중 다른 탭·화면으로 이동했다면 결과를 조용히 정리해,
+    // 분석 중 다른 화면(설정 등)이 위에 쌓였다면 결과를 조용히 정리해,
     // 닫을 수 없는 유형 선택창이 엉뚱한 화면 위에 뜨지 않게 합니다.
     if (!widget.isActive) {
       _returnToScanView();

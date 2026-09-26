@@ -9,11 +9,17 @@ import 'package:k_dpp/models/main_screen_arguments.dart';
 import 'package:k_dpp/navigation_bar_opacity_provider.dart';
 import 'package:k_dpp/scan_screen.dart';
 import 'package:k_dpp/widgets/app_back_button.dart';
+import 'package:k_dpp/widgets/scan_result_view.dart';
 import 'package:provider/provider.dart';
 
 import 'helpers/fake_closet_storage.dart';
 
 void main() {
+  // 스캔 화면은 카메라 준비 표시가 계속 돌 수 있어 settle 대신 라우트 전환
+  // (iOS 500ms, Android 기본은 그보다 김)보다 길게 펌프한다.
+  const routeTransition = Duration(milliseconds: 1000);
+  const scanGuide = '케어 라벨을 프레임 안에 맞춰 촬영해 주세요';
+
   testWidgets('홈 옷장 보기 버튼을 누르면 옷장 탭으로 이동한다', (tester) async {
     final provider = ClosetProvider(storage: FakeClosetStorage());
     final clothes = Clothes(
@@ -87,7 +93,9 @@ void main() {
     expect(find.text('옷장'), findsNothing);
   });
 
-  testWidgets('스캔 저장 후에는 스캔 탭 위에 리포트를 쌓아 열고, 그동안 카메라는 꺼 둔다', (tester) async {
+  testWidgets('스캔 저장 후에는 새 스캔 화면 위에 리포트를 쌓아 열고, 리포트를 닫으면 카메라를 켠다', (
+    tester,
+  ) async {
     final provider = ClosetProvider(storage: FakeClosetStorage());
     final clothes = Clothes(
       title: '홍길동 코튼 셔츠',
@@ -121,11 +129,75 @@ void main() {
     expect(find.text('상세 리포트'), findsOneWidget);
     expect(find.text('홍길동 코튼 셔츠'), findsOneWidget);
     expect(find.text('홈'), findsNothing);
-    // 리포트 아래는 스캔 탭이지만 가려져 있으므로 카메라를 켜지 않는다.
-    final scanScreen = tester.widget<ScanScreen>(
-      find.byType(ScanScreen, skipOffstage: false),
+    // 리포트 아래는 새 스캔 화면이지만 가려져 있으므로 카메라를 켜지 않는다.
+    ScanScreen scanScreen() =>
+        tester.widget<ScanScreen>(find.byType(ScanScreen, skipOffstage: false));
+    expect(scanScreen().isActive, isFalse);
+
+    // 리포트를 닫으면 바로 다음 옷을 찍을 수 있게 스캔 화면이 보인다.
+    await tester.tap(find.byTooltip('리포트 닫기'));
+    await tester.pump();
+    await tester.pump(routeTransition);
+
+    expect(find.text('상세 리포트'), findsNothing);
+    expect(find.text(scanGuide), findsOneWidget);
+    expect(scanScreen().isActive, isTrue);
+
+    // 스캔 화면을 닫으면 그 아래 홈이 나오고, 스캔 화면은 정리된다.
+    await tester.tap(find.byTooltip('스캔 화면 닫기'));
+    await tester.pump();
+    await tester.pump(routeTransition);
+
+    expect(find.text('홈'), findsOneWidget);
+    expect(find.byType(ScanScreen, skipOffstage: false), findsNothing);
+  });
+
+  testWidgets('스캔 저장 직후 리포트에서 의류를 지우면 스캔 화면까지 닫히고 옷장 탭이 보인다', (tester) async {
+    final provider = ClosetProvider(storage: FakeClosetStorage());
+    await provider.addClothes(
+      Clothes(
+        title: '홍길동 데님 재킷',
+        category: '아우터',
+        health: 70,
+        materials: {'cotton': 100},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: 6.3,
+      ),
     );
-    expect(scanScreen.isActive, isFalse);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+          ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
+        ],
+        child: const MaterialApp(
+          home: MainScreen(
+            initialArguments: MainScreenArguments(
+              initialIndex: 1,
+              showReport: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('이 의류 삭제하기'),
+      300,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.text('이 의류 삭제하기'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ElevatedButton, '삭제'));
+    await tester.pumpAndSettle();
+
+    expect(provider.items, isEmpty);
+    expect(find.text('상세 리포트'), findsNothing);
+    expect(find.byType(ScanScreen, skipOffstage: false), findsNothing);
+    expect(find.text('내 옷장'), findsOneWidget);
   });
 
   testWidgets('리포트가 열린 상태의 시스템 뒤로가기는 앱을 닫는 대신 리포트를 닫는다', (tester) async {
@@ -293,10 +365,11 @@ void main() {
     });
   });
 
-  // 아래는 스캔 탭 전환(D)과 하단 메뉴 반투명(F) 검증입니다.
+  // 아래는 탭 전환·스캔 화면과 하단 메뉴 반투명(F) 검증입니다.
   Future<ClosetProvider> pumpMainScreen(
     WidgetTester tester, {
     double navigationBarOpacity = NavigationBarOpacityProvider.defaultOpacity,
+    Map<String, WidgetBuilder> routes = const {},
   }) async {
     final provider = ClosetProvider(storage: FakeClosetStorage());
     final opacityProvider = NavigationBarOpacityProvider();
@@ -311,7 +384,7 @@ void main() {
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
           ChangeNotifierProvider.value(value: opacityProvider),
         ],
-        child: const MaterialApp(home: MainScreen()),
+        child: MaterialApp(home: const MainScreen(), routes: routes),
       ),
     );
     await tester.pumpAndSettle();
@@ -338,55 +411,172 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('스캔 탭에 들어갈 때는 아래에서 살짝 떠오르고, 나올 때는 밀지 않는다', (tester) async {
-    // 2026-09-23 폰 확인: 옆에서 밀면 카메라 화면이 오른쪽 위에서 밀려 나오는 것처럼 보였다.
-    // 사용자 요청으로 들어갈 때만 내비 바가 내려가는 것과 짝이 맞게 아래에서 4% 올라온다.
+  // 스캔은 탭이 아니라 리포트·설정처럼 위에 쌓는 화면이다(2026-09-26 사용자 결정 A안: iOS 에서 밀어서 닫히게).
+  testWidgets('가운데 스캔 버튼은 하단 메뉴까지 덮는 새 화면을 열고, "<" 로 닫으면 스캔 화면을 정리한다', (
+    tester,
+  ) async {
     await pumpMainScreen(tester);
 
     await tester.tap(find.text('스캔'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(routeTransition);
 
-    final entering = tester.widget<SlideTransition>(tabSlide()).position.value;
-    expect(entering.dx, 0);
-    expect(entering.dy, greaterThan(0));
-    expect(entering.dy, lessThanOrEqualTo(0.04));
-    // 스캔 탭은 카메라 준비 표시가 계속 돌 수 있어 settle 대신 전환 시간(260ms)보다 길게 펌프한다.
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('케어 라벨을 프레임 안에 맞춰 촬영해 주세요'), findsOneWidget);
+    expect(find.text(scanGuide), findsOneWidget);
+    // 라우트로 쌓여 하단 메뉴를 포함한 메인 화면은 가려진다.
+    expect(find.byType(MainScreen), findsNothing);
+    expect(find.text('홈'), findsNothing);
 
-    // 돌아갈 때도 마찬가지다.
     await tester.tap(find.byTooltip('스캔 화면 닫기'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(routeTransition);
 
-    expect(tester.widget<SlideTransition>(tabSlide()).position.value, Offset.zero);
-    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('홈'), findsOneWidget);
+    expect(find.byType(ScanScreen, skipOffstage: false), findsNothing);
   });
 
-  testWidgets('카메라 화면은 내비 바가 내려가는 동안 제자리에 있다', (tester) async {
-    // 홈 표시기 같은 시스템 하단 여백이 있는 폰을 흉내 냅니다. 내비 바가 줄어드는 동안
-    // Scaffold(extendBody)가 본문에 주는 하단 padding이 매 프레임 바뀌어도 카메라 UI는
-    // 시스템 여백만 기준으로 그려져야 합니다.
-    tester.view.padding = const FakeViewPadding(bottom: 34 * 3);
-    tester.view.devicePixelRatio = 3;
-    addTearDown(tester.view.reset);
+  testWidgets(
+    'iOS 에서 스캔 화면 왼쪽 끝을 밀면 리포트처럼 닫히고 들어왔던 탭이 다시 보인다',
+    (tester) async {
+      await pumpMainScreen(tester);
+      await tester.tap(find.text('옷장'));
+      await tester.pumpAndSettle();
 
-    await pumpMainScreen(tester);
+      await tester.tap(find.text('스캔'));
+      await tester.pump();
+      await tester.pump(routeTransition);
+      expect(find.text(scanGuide), findsOneWidget);
+
+      // 화면 왼쪽 끝(뒤로 밀기 영역 20px 안)에서 오른쪽으로 끝까지 민다.
+      await tester.dragFrom(const Offset(5, 300), const Offset(600, 0));
+      await tester.pump();
+      await tester.pump(routeTransition);
+
+      expect(find.byType(ScanScreen, skipOffstage: false), findsNothing);
+      expect(find.text('내 옷장'), findsOneWidget);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets('스캔 화면에서 설정을 열면 카메라를 끄고, 설정을 닫으면 다시 켠다', (tester) async {
+    await pumpMainScreen(
+      tester,
+      routes: {
+        '/settings': (_) => Scaffold(
+          appBar: AppBar(leading: const AppBackButton(tooltip: '설정 닫기')),
+          body: const Text('설정 화면'),
+        ),
+      },
+    );
 
     await tester.tap(find.text('스캔'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(routeTransition);
+    ScanScreen scanScreen() =>
+        tester.widget<ScanScreen>(find.byType(ScanScreen, skipOffstage: false));
+    expect(scanScreen().isActive, isTrue);
 
-    // 들어갈 때 본문 전체가 아래에서 떠오르므로, 탭 트리(IndexedStack) 기준 상대 위치로 잰다.
-    final guide = find.text('케어 라벨을 프레임 안에 맞춰 촬영해 주세요');
-    final stack = find.byType(IndexedStack);
-    final midTransition =
-        tester.getTopLeft(guide) - tester.getTopLeft(stack);
+    await tester.tap(find.byTooltip('설정'));
+    await tester.pump();
+    await tester.pump(routeTransition);
+    expect(find.text('설정 화면'), findsOneWidget);
+    expect(scanScreen().isActive, isFalse);
 
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byTooltip('설정 닫기'));
+    await tester.pump();
+    await tester.pump(routeTransition);
+    expect(find.text('설정 화면'), findsNothing);
+    expect(scanScreen().isActive, isTrue);
+  });
 
-    expect(tester.getTopLeft(guide) - tester.getTopLeft(stack), midTransition);
+  // 앨범에서 사진을 고른 것처럼 흉내 내 결과 입력 화면까지 들어간다. 없는 파일이라 분석이 실패해
+  // 직접 입력으로 넘어간다(서버 분석 실패와 같은 경로). 파일 읽기는 실제 입출력이라 runAsync 로 기다린다.
+  Future<void> openScanResultForm(WidgetTester tester) async {
+    const picker = MethodChannel('plugins.flutter.io/image_picker');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      picker,
+      (call) async => '/nonexistent/k-dpp-label.jpg',
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        picker,
+        null,
+      ),
+    );
+
+    await tester.tap(find.text('스캔'));
+    await tester.pump();
+    await tester.pump(routeTransition);
+
+    await tester.tap(find.byIcon(Icons.photo_library_outlined));
+    final typeOption = find.text('반팔 티셔츠');
+    for (var i = 0; i < 30 && typeOption.evaluate().isEmpty; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    // 종류 선택 시트가 다 올라온 뒤에 고른다(올라오는 도중엔 탭이 빗나간다).
+    await tester.pump(routeTransition);
+    await tester.tap(typeOption);
+    await tester.pump();
+    await tester.pump(routeTransition);
+
+    // '다시 촬영' 글자는 종류 선택 시트에도 있으므로 결과 화면 위젯으로 확인한다.
+    expect(find.byType(ScanResultView), findsOneWidget);
+    expect(find.byType(BottomSheet), findsNothing);
+  }
+
+  testWidgets(
+    '결과를 입력하는 동안에는 iOS 왼쪽 끝을 밀어도 스캔 화면이 닫히지 않는다',
+    (tester) async {
+      await pumpMainScreen(tester);
+      await openScanResultForm(tester);
+
+      await tester.dragFrom(const Offset(5, 300), const Offset(600, 0));
+      await tester.pump();
+      await tester.pump(routeTransition);
+
+      expect(find.byType(ScanResultView), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets('결과를 입력하는 동안 "<"·뒤로가기를 누르면 버릴지 묻고, 버리기로 해야 닫힌다', (tester) async {
+    await pumpMainScreen(tester);
+    await openScanResultForm(tester);
+
+    // "<" 에서 계속 작성하기를 고르면 입력 화면이 그대로 남는다.
+    await tester.tap(find.byTooltip('스캔 화면 닫기'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('작성 중인 내용을 버릴까요?'), findsOneWidget);
+
+    await tester.tap(find.text('계속 작성하기'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(ScanResultView), findsOneWidget);
+
+    // Android 시스템 뒤로가기에서 버리기로 하면 스캔 화면이 닫히고 홈이 보인다.
+    final backMessage = const JSONMethodCodec().encodeMethodCall(
+      const MethodCall('popRoute'),
+    );
+    await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+      'flutter/navigation',
+      backMessage,
+      (_) {},
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('작성 중인 내용을 버릴까요?'), findsOneWidget);
+
+    await tester.tap(find.text('버리고 닫기'));
+    await tester.pump();
+    await tester.pump(routeTransition);
+
+    expect(find.byType(ScanScreen, skipOffstage: false), findsNothing);
+    expect(find.text('홈'), findsOneWidget);
   });
 
   testWidgets('하단 메뉴는 설정한 불투명도로 뒤를 흐리게 비추고, 100%면 흐림 없이 그린다', (
