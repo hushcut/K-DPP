@@ -9,9 +9,15 @@ sentences.
 MATERIAL_ALIASES = {
     "cotton": [
         "cotton",
+        "pimacotton",
         "coton",
         "baumwolle",
+        "bambaki",
+        "bombaz",
+        "bomuld",
+        "bomull",
         "algodon",
+        "algodón",
         "algodao",
         "algodão",
         "katoen",

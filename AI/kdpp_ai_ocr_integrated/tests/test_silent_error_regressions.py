@@ -170,3 +170,10 @@ def test_orphan_ratio_cannot_be_hidden_by_another_complete_block(text: str) -> N
 def test_ratio_guard_preserves_complete_and_separate_part_evidence(text: str) -> None:
     # QA003's photo says OUTSHELL / 100% COTTON; its stored answer is wrong.
     assert parse_label(text)["status"] == "success"
+
+
+def test_leading_ratio_cannot_borrow_a_material_with_its_own_following_ratio() -> None:
+    # A damaged shell row can leave 100% just before a complete 95/5 block.
+    result = parse_label("100%\nCOTTON\n95%\nPOLYURETHANE\n5%")
+    assert result["status"] == "failed"
+    assert result["materials"] == {}

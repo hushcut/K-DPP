@@ -46,6 +46,8 @@ class CompositionCandidate:
             "stacked_columns": 2,
             "mixed_lines": 2,
             "adjacent_lines": 1,
+            "leading_ratio": 1,
+            "enclosing_ratios": 1,
         }.get(self.source, 0)
         return (
             1 if self.explicit_percent else 0,
@@ -364,6 +366,81 @@ def _adjacent_line_candidates(infos: list[LineInfo]) -> list[CompositionCandidat
     return candidates
 
 
+def _leading_ratio_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
+    """Pair adjacent explicit percentages printed before their material names.
+
+    Only a one-material pair or a fully bounded two-material block is
+    unambiguous; a partial block still has uncovered material rows.
+    """
+    candidates: list[CompositionCandidate] = []
+    for position, first in enumerate(infos):
+        if (
+            first.materials
+            or len(first.numbers) != 1
+            or not first.explicit_percent
+            or position + 1 >= len(infos)
+        ):
+            continue
+        second = infos[position + 1]
+        if (
+            second.part != first.part
+            or second.index != first.index + 1
+            or len(second.materials) != 1
+            or second.numbers
+        ):
+            continue
+        following_ratio = (
+            position + 2 < len(infos)
+            and infos[position + 2].part == first.part
+            and infos[position + 2].index == second.index + 1
+            and not infos[position + 2].materials
+            and infos[position + 2].explicit_percent
+        )
+        # A material with its own following ratio cannot also borrow a
+        # preceding ratio. Otherwise a damaged 100% row can validate the
+        # wrong 95/5 block (QA031).
+        if not following_ratio:
+            candidate = _pair_values(
+                first.part,
+                second.materials,
+                first.numbers,
+                source="leading_ratio",
+                explicit_percent=True,
+                start_index=first.index,
+                row_indices=(first.index, second.index),
+            )
+            if candidate:
+                candidates.append(candidate)
+
+        if position + 3 >= len(infos):
+            continue
+        third, fourth = infos[position + 2 : position + 4]
+        if (
+            third.part != first.part
+            or fourth.part != first.part
+            or third.index != second.index + 1
+            or fourth.index != third.index + 1
+            or len(third.materials) != 1
+            or third.numbers
+            or fourth.materials
+            or len(fourth.numbers) != 1
+            or not fourth.explicit_percent
+        ):
+            continue
+        candidate = _pair_values(
+            first.part,
+            (*second.materials, *third.materials),
+            (*first.numbers, *fourth.numbers),
+            source="enclosing_ratios",
+            explicit_percent=True,
+            start_index=first.index,
+            row_indices=(first.index, second.index, third.index, fourth.index),
+        )
+        if candidate:
+            candidates.append(candidate)
+    return candidates
+
+
 def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
     """Collect candidates from rows already filtered for metadata."""
 
@@ -375,6 +452,7 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
         _mixed_line_candidates,
         _stacked_column_candidates,
         _adjacent_line_candidates,
+        _leading_ratio_candidates,
     ):
         candidates.extend(collector(infos))
     return candidates

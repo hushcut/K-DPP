@@ -559,3 +559,59 @@ def test_candidate_layout_source_is_preserved(text: str, source: str) -> None:
 
     assert result["status"] == "success"
     assert result["parse_evidence"]["source"] == source
+
+
+def test_pima_cotton_is_cotton_only_with_a_complete_ratio() -> None:
+    result = parse_label("100% PIMACOTTON")
+    assert result["status"] == "success"
+    assert result["materials"] == {"cotton": 100}
+    assert parse_label("95% PIMACOTTON")["status"] == "failed"
+    assert parse_label("100% MODACRYLIC")["status"] == "failed"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("OUTSHELL\n100%\nCOTTON", {"cotton": 100}),
+        ("80%\nCOTTON\nPOLYESTER\n20%", {"cotton": 80, "polyester": 20}),
+    ],
+)
+def test_explicit_ratio_before_material_is_paired(text: str, expected: dict) -> None:
+    result = parse_label(text)
+    assert result["status"] == "success"
+    assert result["materials"] == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "80%\nCOTTON",
+        "100%\nCOTTON\nPOLYESTER",
+        "80%\nCOTTON\nPOLYESTER",
+    ],
+)
+def test_leading_ratio_cannot_hide_an_incomplete_material_row(text: str) -> None:
+    assert parse_label(text)["status"] == "failed"
+
+
+def test_multilingual_cotton_gloss_continues_one_complete_block() -> None:
+    result = parse_label(
+        "100% COTTON-COTON-\nALGODÓN - ALGODÃO -\n"
+        "KATOEN BAWEŁNA - BAVLNA\n-PAMUT-棉-綿100%日\n"
+        "KAPAS PUUVILLA -\nKOKVILNA MEDVILNE\nBOMULD - PUUVILLA -"
+    )
+    assert result["status"] == "success"
+    assert result["materials"] == {"cotton": 100}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "COTTON 100%\nCOTON",
+        "COTTON 100%\nCOTON-NYLON",
+        "COTTON 100%\nMODACRYLIC-COTON",
+        "COTTON 100%\nPOLYESTER 20%",
+    ],
+)
+def test_translation_rule_keeps_unconfirmed_fibers_rejected(text: str) -> None:
+    assert parse_label(text)["status"] == "failed"

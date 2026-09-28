@@ -15,6 +15,7 @@ from apps.text.material_extraction import (
     clean_ocr_preview,
     declared_part,
     extract_materials,
+    find_material_key,
     normalize_text,
     unresolved_material_tokens,
 )
@@ -410,6 +411,52 @@ def _normalize_candidate(
     return normalized, warnings
 
 
+def _translated_alias_rows(
+    infos: list[LineInfo], candidates: list[CompositionCandidate]
+) -> set[int]:
+    """Cover adjacent, ratio-free translations of a confirmed single fiber.
+
+    A translation line must contain two complete aliases for that same fiber.
+    An unrelated or unresolved material ends the group and still blocks the
+    composition under the normal unpaired-row rule.
+    """
+    by_index = {info.index: info for info in infos}
+    covered: set[int] = set()
+    anchors = (
+        candidate for candidate in candidates
+        if candidate.source == "same_line"
+        and candidate.explicit_percent
+        and len(candidate.materials) == 1
+    )
+    for candidate in anchors:
+        material = next(iter(candidate.materials))
+        for step in (-1, 1):
+            cursor = candidate.start_index + step
+            while (info := by_index.get(cursor)) is not None:
+                if (
+                    info.part != candidate.part
+                    or info.marker_part is not None
+                    or info.unresolved_materials
+                    or info.materials != (material,)
+                ):
+                    break
+                if info.numbers:
+                    if info.numbers != (100.0,) or not info.explicit_percent:
+                        break
+                else:
+                    if "%" in info.normalized or "％" in info.normalized:
+                        break
+                    aliases = [
+                        find_material_key(token)
+                        for token in _TOKEN_PATTERN.findall(info.normalized)
+                    ]
+                    if sum(alias == material for alias in aliases) < 2:
+                        break
+                    covered.add(info.index)
+                cursor += step
+    return covered
+
+
 def _best_candidates_by_part(
     text: str,
 ) -> tuple[
@@ -463,6 +510,7 @@ def _best_candidates_by_part(
     # A valid 100% row cannot hide an unpaired row before or after it. Keep
     # coverage from all complete blocks so multilingual repetitions remain valid.
     covered_rows = {index for candidate in candidates for index in candidate.row_indices}
+    covered_rows.update(_translated_alias_rows(infos, candidates))
     incomplete_parts = {
         info.part for info in composition_rows
         if info.materials and info.index not in covered_rows
