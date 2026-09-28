@@ -256,16 +256,36 @@ _PART_MARKER_PATTERNS = {
     for part, aliases in PART_PATTERNS.items()
 }
 
+# These short labels also appear inside fiber names, product descriptions,
+# or care instructions without naming a composition part.
+_SHORT_PART_MARKERS = {"솜", "립", "袖", "표면"}
+
+
+def is_part_marker_match(text: str, match: re.Match[str]) -> bool:
+    """Reject short markers embedded in words, but keep joined marker+fiber OCR."""
+    if match.group().casefold() not in _SHORT_PART_MARKERS:
+        return True
+    if match.start() > 0 and text[match.start() - 1].isalpha():
+        return False
+    if match.end() < len(text) and text[match.end()].isalpha():
+        suffix = _TOKEN_PATTERN.match(text, match.end())
+        return suffix is not None and find_material_key(suffix.group()) is not None
+    return True
+
 
 def declared_part(line: str) -> str | None:
     """Part explicitly named on a line, or ``None`` when no marker appears.
 
-    An ASCII marker must stand on its own so a word that merely contains one
-    (``distributed`` holding ``rib``) does not retag a composition row.
+    ASCII markers and the short non-ASCII markers above must not retag a row
+    merely because they occur inside another word.
     """
     normalized = normalize_text(line)
     for part, patterns in _PART_MARKER_PATTERNS.items():
-        if any(pattern.search(normalized) for pattern in patterns):
+        if any(
+            is_part_marker_match(normalized, match)
+            for pattern in patterns
+            for match in pattern.finditer(normalized)
+        ):
             return part
     return None
 

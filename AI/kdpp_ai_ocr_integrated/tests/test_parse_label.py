@@ -1,6 +1,7 @@
 import pytest
 
-from apps.text.parse_label import parse_label
+from apps.text.composition_candidates import CompositionCandidate
+from apps.text.parse_label import build_line_infos, parse_label
 
 
 def test_same_line_composition_is_parsed() -> None:
@@ -17,6 +18,14 @@ def test_alternating_material_and_ratio_lines_are_paired() -> None:
     assert result["status"] == "success"
     assert result["materials"] == {"cotton": 80, "polyester": 20}
     assert result["parse_evidence"]["source"] == "alternating_lines"
+
+
+def test_alternating_lines_rank_with_other_explicit_pairs() -> None:
+    def candidate(source: str) -> CompositionCandidate:
+        return CompositionCandidate("generic", {"cotton": 100}, source, True, 0)
+
+    assert candidate("alternating_lines").score[3] == candidate("line_pairs").score[3]
+    assert candidate("alternating_lines").score > candidate("adjacent_lines").score
 
 
 def test_stacked_material_and_ratio_columns_are_paired() -> None:
@@ -241,6 +250,53 @@ def test_part_marker_inside_a_longer_word_is_not_a_part() -> None:
     assert result["status"] == "success"
     assert result["materials"] == {"cotton": 100}
     assert result["parts"]["lining"] == {"polyester": 100}
+
+
+@pytest.mark.parametrize(
+    ("text", "materials"),
+    [
+        ("솜털 100%", {"down": 100}),
+        ("클립\n면 100%", {"cotton": 100}),
+        ("표면과 마찰 주의\n면 100%", {"cotton": 100}),
+        ("七分袖\n綿 100%", {"cotton": 100}),
+    ],
+)
+def test_short_part_marker_inside_another_word_does_not_retag_composition(
+    text: str, materials: dict[str, int]
+) -> None:
+    result = parse_label(text)
+
+    assert result["status"] == "success"
+    assert result["selected_part"] == "generic"
+    assert result["materials"] == materials
+
+
+def test_embedded_part_word_does_not_split_a_composition_line() -> None:
+    infos = build_line_infos("면 100% 표면과 마찰 주의")
+
+    assert len(infos) == 1
+    assert infos[0].marker_part is None
+
+
+@pytest.mark.parametrize(
+    ("text", "part", "materials"),
+    [
+        ("솜: 폴리에스터 100%", "filling", {"polyester": 100}),
+        ("립 면 100%", "rib", {"cotton": 100}),
+        ("袖 綿 100%", "sleeve", {"cotton": 100}),
+        ("표면: 면 100%", "outer", {"cotton": 100}),
+        ("표면면 100%", "outer", {"cotton": 100}),
+        ("배색면 100%", "color_block", {"cotton": 100}),
+    ],
+)
+def test_short_part_marker_still_recognizes_explicit_composition(
+    text: str, part: str, materials: dict[str, int]
+) -> None:
+    result = parse_label(text)
+
+    assert result["status"] == "success"
+    assert result["selected_part"] == part
+    assert result["materials"] == materials
 
 
 def test_faux_leather_is_not_confirmed_as_leather() -> None:

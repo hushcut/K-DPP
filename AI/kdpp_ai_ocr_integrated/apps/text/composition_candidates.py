@@ -43,6 +43,7 @@ class CompositionCandidate:
         source_rank = {
             "same_line": 3,
             "line_pairs": 2,
+            "alternating_lines": 2,
             "stacked_columns": 2,
             "mixed_lines": 2,
             "adjacent_lines": 1,

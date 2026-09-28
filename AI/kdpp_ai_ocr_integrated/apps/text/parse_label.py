@@ -16,6 +16,7 @@ from apps.text.material_extraction import (
     declared_part,
     extract_materials,
     find_material_key,
+    is_part_marker_match,
     normalize_text,
     unresolved_material_tokens,
 )
@@ -254,7 +255,11 @@ def _split_part_markers(text: str) -> str:
     for marker in sorted(markers, key=len, reverse=True):
         prepared = re.sub(
             rf"(?i)(?<!^)(?<!\n)(?<![a-z])({re.escape(marker)})(?![a-z])",
-            r"\n\1",
+            lambda match: (
+                "\n" + match.group()
+                if is_part_marker_match(prepared, match)
+                else match.group()
+            ),
             prepared,
         )
     return prepared
