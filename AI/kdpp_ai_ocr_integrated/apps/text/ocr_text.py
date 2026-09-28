@@ -226,7 +226,7 @@ def _resolve_credential_path(
 
     path = Path(value).expanduser().resolve()
     if not path.is_file():
-        raise OcrConfigurationError(f"Google Vision 서비스 계정 키를 찾을 수 없습니다: {path}")
+        raise OcrConfigurationError("Google Vision 서비스 계정 키를 찾을 수 없습니다.")
     return str(path), path.stat().st_mtime_ns
 
 

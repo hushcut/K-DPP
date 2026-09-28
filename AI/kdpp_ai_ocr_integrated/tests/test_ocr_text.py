@@ -160,6 +160,26 @@ def test_explicit_credentials_do_not_mutate_environment(monkeypatch, tmp_path) -
     assert os.environ["GOOGLE_APPLICATION_CREDENTIALS"] == str(environment_key)
 
 
+@pytest.mark.parametrize("use_environment", [False, True])
+def test_missing_credentials_error_does_not_expose_path(
+    monkeypatch, tmp_path, use_environment
+) -> None:
+    missing_key = tmp_path / "private-service-account-key.json"
+    if use_environment:
+        monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(missing_key))
+        credential_path = None
+    else:
+        monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+        credential_path = str(missing_key)
+
+    with pytest.raises(ocr_text.OcrConfigurationError) as error:
+        ocr_text._resolve_credential_path(credential_path)
+
+    assert "서비스 계정 키" in str(error.value)
+    assert str(missing_key) not in str(error.value)
+    assert missing_key.name not in str(error.value)
+
+
 @pytest.mark.parametrize(
     ("status_code", "expected_exception"),
     [
