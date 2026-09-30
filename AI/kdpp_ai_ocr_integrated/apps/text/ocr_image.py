@@ -183,8 +183,8 @@ def _encode_preprocessed_image(
     buffer = BytesIO()
     save_options: dict[str, Any] = {"format": image_format, "optimize": True}
     if image_format == "JPEG":
-        # 반사 보정은 등화 처리 뒤 PNG 압축 효율이 낮다. OCR 후보 전송 지연을
-        # 줄이기 위해 텍스트 가독성을 보존하는 수준으로 JPEG 압축을 사용한다.
+        # 천 무늬가 남은 큰 PNG의 압축·전송 지연을 줄인다. 실사진 비교에서
+        # 소재 결과가 유지된 품질로 OCR 후보를 인코딩한다.
         save_options["quality"] = 92
     image.save(buffer, **save_options)
     return buffer.getvalue()
@@ -199,13 +199,82 @@ def preprocess_image_bytes(content: bytes) -> bytes:
         image = image.filter(
             ImageFilter.UnsharpMask(radius=1.4, percent=150, threshold=3)
         )
-        return _encode_preprocessed_image(image)
+        return _encode_preprocessed_image(image, image_format="JPEG")
     except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
         raise ImageTooLargeError(
             "OCR 전처리 범위를 넘는 고해상도 이미지입니다."
         ) from exc
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise InvalidImageError("OCR 전처리 중 이미지 디코딩에 실패했습니다.") from exc
+    except MemoryError as exc:
+        raise ImageTooLargeError(
+            "OCR 전처리 중 이미지가 너무 커서 메모리가 부족합니다."
+        ) from exc
+
+
+def preprocess_denoised_image_bytes(content: bytes) -> bytes:
+    """천의 미세 무늬를 완화하는 축소·중앙값 필터 OCR 후보를 만든다.
+
+    라벨을 자르지 않고 전체 부위 문맥을 유지한다. 작은 글자가 소실될 수
+    있으므로 기본 후보가 실패한 경우에만 사용하는 선택적 후보이다.
+    """
+
+    try:
+        image = _prepare_image_for_ocr(content).convert("L")
+        image.thumbnail((1800, 2400), Image.Resampling.LANCZOS)
+        image = image.filter(ImageFilter.MedianFilter(3))
+        image = ImageOps.autocontrast(image, cutoff=1)
+        return _encode_preprocessed_image(image, image_format="JPEG")
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        raise ImageTooLargeError(
+            "OCR 전처리 범위를 넘는 고해상도 이미지입니다."
+        ) from exc
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise InvalidImageError(
+            "노이즈 완화 OCR 전처리 중 이미지 디코딩에 실패했습니다."
+        ) from exc
+    except MemoryError as exc:
+        raise ImageTooLargeError(
+            "OCR 전처리 중 이미지가 너무 커서 메모리가 부족합니다."
+        ) from exc
+
+
+def preprocess_rotated_image_bytes(content: bytes) -> bytes:
+    """전체 라벨을 -3도 회전해 OCR의 부위·소재·비율 행 분할을 재시도한다.
+
+    실제 기울기를 추정하는 보정은 아니다. 글자를 자르지 않도록 캔버스를
+    확장하고, 확장 뒤에도 기존 전처리 크기 제한을 적용한다.
+    """
+
+    try:
+        image = _prepare_image_for_ocr(content).convert("L")
+        image = image.rotate(
+            -3, resample=Image.Resampling.BICUBIC, expand=True, fillcolor=255
+        )
+        width, height = image.size
+        scale = min(
+            1.0,
+            math.sqrt(MAX_PREPROCESSED_PIXELS / (width * height)),
+            MAX_PREPROCESSED_DIMENSION / max(width, height),
+        )
+        if scale < 1.0:
+            image = image.resize(
+                (max(1, int(width * scale)), max(1, int(height * scale))),
+                Image.Resampling.LANCZOS,
+            )
+        image = ImageOps.autocontrast(image)
+        image = image.filter(
+            ImageFilter.UnsharpMask(radius=1.4, percent=150, threshold=3)
+        )
+        return _encode_preprocessed_image(image, image_format="JPEG")
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        raise ImageTooLargeError(
+            "OCR 전처리 범위를 넘는 고해상도 이미지입니다."
+        ) from exc
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise InvalidImageError(
+            "미세 회전 OCR 전처리 중 이미지 디코딩에 실패했습니다."
+        ) from exc
     except MemoryError as exc:
         raise ImageTooLargeError(
             "OCR 전처리 중 이미지가 너무 커서 메모리가 부족합니다."

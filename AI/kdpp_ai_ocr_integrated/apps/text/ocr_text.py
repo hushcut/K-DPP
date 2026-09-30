@@ -39,8 +39,10 @@ from apps.text.ocr_image import (
     MIN_OCR_WIDTH,
     SUPPORTED_IMAGE_FORMATS,
     ValidatedImage,
+    preprocess_denoised_image_bytes,
     preprocess_image_bytes,
     preprocess_reflection_image_bytes,
+    preprocess_rotated_image_bytes,
     read_image_bytes,
     validate_image_bytes,
 )
@@ -68,6 +70,8 @@ __all__ = [
     "UnsupportedImageError",
     "ValidatedImage",
     "preprocess_image_bytes",
+    "preprocess_denoised_image_bytes",
+    "preprocess_rotated_image_bytes",
     "preprocess_reflection_image_bytes",
     "read_image_bytes",
     "reflection_ocr_enabled",
@@ -84,6 +88,8 @@ OCR_CANDIDATE_TIMEOUT_SECONDS = {
     "original": 10.0,
     "preprocessed": 8.0,
     "reflection": 7.0,
+    "denoised": 5.0,
+    "rotated": 5.0,
 }
 
 
@@ -91,6 +97,20 @@ def reflection_ocr_enabled(value: str | None = None) -> bool:
     """환경 설정값이 세 번째 반사 보정 OCR 후보를 활성화하는지 반환한다."""
 
     configured = os.getenv("KDPP_ENABLE_REFLECTION_OCR", "") if value is None else value
+    return configured.strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def denoised_ocr_enabled(value: str | None = None) -> bool:
+    """실패 후보 뒤의 노이즈 완화 OCR을 명시적으로 활성화한다."""
+
+    configured = os.getenv("KDPP_ENABLE_DENOISED_OCR", "") if value is None else value
+    return configured.strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def rotated_ocr_enabled(value: str | None = None) -> bool:
+    """실패 후보 뒤의 미세 회전 OCR을 명시적으로 활성화한다."""
+
+    configured = os.getenv("KDPP_ENABLE_ROTATED_OCR", "") if value is None else value
     return configured.strip().casefold() in {"1", "true", "yes", "on"}
 
 
@@ -392,6 +412,8 @@ def run_ocr_bytes(
     offline: bool = False,
     cache_label: str = "",
     enable_reflection: bool | None = None,
+    enable_denoised: bool | None = None,
+    enable_rotated: bool | None = None,
 ) -> OcrResult:
     """한 이미지에서 원본/전처리 OCR 후보 중 파서 관점의 최선 결과를 반환한다."""
 
@@ -407,6 +429,10 @@ def run_ocr_bytes(
         if enable_reflection is None
         else enable_reflection
     )
+    use_denoised = (
+        denoised_ocr_enabled() if enable_denoised is None else enable_denoised
+    )
+    use_rotated = rotated_ocr_enabled() if enable_rotated is None else enable_rotated
 
     client: Any | None = None
     external_call_count = 0
@@ -591,6 +617,45 @@ def run_ocr_bytes(
                             "반사 보정 OCR에 실패하여 기존 후보를 유지했습니다."
                         )
 
+    for source, enabled, preprocess, failure_warning in (
+        (
+            "denoised", use_denoised, preprocess_denoised_image_bytes,
+            "노이즈 완화 OCR에 실패하여 기존 후보를 유지했습니다.",
+        ),
+        (
+            "rotated", use_rotated, preprocess_rotated_image_bytes,
+            "미세 회전 OCR에 실패하여 기존 후보를 유지했습니다.",
+        ),
+    ):
+        if not enabled or any(
+            candidate.parser_status == "success" for candidate in candidates
+        ):
+            continue
+        try:
+            if remaining_timeout_seconds() <= 0:
+                record_total_timeout(source)
+                raise OcrTotalTimeoutError("전체 OCR 시간 제한을 초과했습니다.")
+            processed = preprocess(validated.content)
+            if remaining_timeout_seconds() <= 0:
+                record_total_timeout(source)
+                raise OcrTotalTimeoutError("전체 OCR 시간 제한을 초과했습니다.")
+            candidates.extend(
+                _build_payload_candidates(
+                    source,
+                    run_tracked_candidate(source, processed),
+                )
+            )
+            ocr_candidate_count += 1
+        except (
+            InvalidImageError,
+            OcrCacheMissError,
+            OcrServiceError,
+            MemoryError,
+        ) as exc:
+            if not isinstance(exc, OcrTotalTimeoutError):
+                attempt_failures.append(f"{source}:{type(exc).__name__}")
+                processing_warnings.append(failure_warning)
+
     best = max(candidates, key=lambda candidate: candidate.score)
     ocr_confidence = (
         "high"
@@ -603,6 +668,10 @@ def run_ocr_bytes(
     if best.source != "original":
         if best.source == "reflection":
             result_warnings.append("반사 보정된 이미지의 OCR 결과를 사용했습니다.")
+        elif best.source == "denoised":
+            result_warnings.append("노이즈를 완화한 이미지의 OCR 결과를 사용했습니다.")
+        elif best.source == "rotated":
+            result_warnings.append("미세 회전한 이미지의 OCR 결과를 사용했습니다.")
         else:
             result_warnings.append("전처리된 이미지의 OCR 결과를 사용했습니다.")
     if best.layout_used:
