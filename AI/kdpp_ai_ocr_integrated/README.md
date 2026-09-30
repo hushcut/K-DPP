@@ -133,8 +133,9 @@ python -m apps.service
 ```
 
 pytest에는 `/api/scan`의 AI 연결 검사도 포함되므로, 전체 검증에는 백엔드 의존성이
-필요합니다. 이 검사는 `raw_ocr_text`만 사용하며 Google Vision 호출이나 실제 DB 저장을 하지
-않습니다.
+필요합니다. 연결 검사는 테스트 수집 단계에서 백엔드를 import하지 않고, 실행 시 임시
+SQLite DB를 설정한 뒤 불러옵니다. `raw_ocr_text`와 모의 OCR로 현재 스캔 응답·업로드
+검증·파싱 실패를 확인하며, Google Vision 실호출이나 사용자 DB 저장을 하지 않습니다.
 
 `GOOGLE_APPLICATION_CREDENTIALS` 또는 `--credentials`에 지정하는 Google Vision
 서비스 계정 JSON은 개인 로컬 경로에서만 사용해야 하며, 저장소에 추가하면 안 됩니다.
