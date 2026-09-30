@@ -1,5 +1,7 @@
 # K-DPP Backend API Contract
 
+추가 경로: [탄소 계산 v2 API](CARBON_V2_API.md). v1의 계산 경로는 유지하며, v2는 선정된 정책을 사용하고 계산 근거를 이력에 저장한다.
+
 기준 브랜치: `develop(중간통합)`
 
 이 문서는 프론트엔드, 백엔드, AI/OCR 파트가 같은 응답 구조를 기준으로 연동하기 위한 API 계약서입니다.
@@ -360,4 +362,3 @@ Authorization: Bearer <token>
 기존 연동 호환용 API입니다. 소재 혼용률만 받아 탄소배출계수를 계산하고 저장합니다.
 
 최종 의류 탄소배출량은 무게 정보가 포함된 `POST /api/carbon/calculate`를 사용합니다.
-

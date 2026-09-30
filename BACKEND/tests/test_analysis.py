@@ -321,6 +321,16 @@ def test_scan_rejects_unsupported_image_type(client):
     assert body["error_code"] == "UNSUPPORTED_IMAGE_FORMAT"
 
 
+def test_scan_accepts_generic_binary_mime_for_supported_image_extension(client):
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "application/octet-stream")},
+        data={"raw_ocr_text": "COTTON 100%"},
+    )
+
+    assert response.status_code == 200
+
+
 def test_scan_material_failure_returns_partial_context(client):
     response = client.post(
         "/api/scan",

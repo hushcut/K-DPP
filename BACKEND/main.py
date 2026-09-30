@@ -16,6 +16,7 @@ import hashlib
 import secrets
 import database
 import init_data
+from carbon.api import build_router, history_provenance
 
 AI_MODULE_PATH = Path(__file__).resolve().parents[1] / "AI" / "kdpp_ai_ocr_integrated"
 if AI_MODULE_PATH.exists() and str(AI_MODULE_PATH) not in sys.path:
@@ -44,6 +45,7 @@ DEFAULT_ERROR_CODES = {
     503: "AI_MODULE_FAILED",
 }
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+SUPPORTED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 MATERIAL_FACTOR_SOURCE = "K-DPP backend material carbon factor table (development estimates)"
 CALCULATION_SCOPE = "material_production_estimate"
 CLOTHING_TYPE_OPTIONS = [
@@ -204,7 +206,10 @@ async def request_validation_error_code_handler(
             "status": "error",
             "error_code": error_code,
             "message": message,
-            "detail": exc.errors(),
+            "detail": [
+                {key: error[key] for key in ("type", "loc", "msg") if key in error}
+                for error in exc.errors()
+            ],
         },
     )
 
@@ -549,6 +554,7 @@ def build_analysis_response(
 
 def serialize_analysis_result(result: database.AnalysisResult) -> dict:
     return {
+        **history_provenance(result),
         "id": result.id,
         "user_id": result.user_id,
         "materials": json.loads(result.materials),
@@ -567,7 +573,14 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
     if raw_ocr_text and raw_ocr_text.strip():
         return raw_ocr_text.strip()
 
-    if image.content_type and image.content_type not in SUPPORTED_IMAGE_TYPES:
+    suffix = Path(image.filename or "").suffix.lower()
+    has_supported_type = image.content_type in SUPPORTED_IMAGE_TYPES
+    is_generic_image_upload = (
+        image.content_type in {None, "", "application/octet-stream"}
+        and suffix in SUPPORTED_IMAGE_SUFFIXES
+    )
+
+    if not has_supported_type and not is_generic_image_upload:
         raise HTTPException(
             status_code=415,
             detail=build_error_detail(
@@ -586,7 +599,7 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
             },
         )
 
-    suffix = Path(image.filename or "label.jpg").suffix or ".jpg"
+    suffix = suffix or ".jpg"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
         shutil.copyfileobj(image.file, temp_file)
         temp_path = temp_file.name
@@ -930,3 +943,6 @@ def get_clothing_types():
         "unit": "g",
         "items": CLOTHING_TYPE_OPTIONS,
     }
+
+
+app.include_router(build_router(get_db, get_current_user, CLOTHING_TYPE_OPTIONS))

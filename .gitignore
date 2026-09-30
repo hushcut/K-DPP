@@ -374,6 +374,7 @@ app.*.symbols
 
 BACKEND/k_dpp.db
 BACKEND/.pytest_k_dpp.db
+BACKEND/k_dpp.before-*.db
 BACKEND/*.db-journal
 BACKEND/*.db-wal
 BACKEND/*.db-shm

@@ -158,6 +158,8 @@ def seed_materials():
             if material is None:
                 material = database.Material(name_en=item["name_en"], name_ko=item["name_ko"])
                 db.add(material)
+            else:
+                continue
 
             material.name_ko = item["name_ko"]
             material.aliases = json.dumps(item["aliases"], ensure_ascii=False)
