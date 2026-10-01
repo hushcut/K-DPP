@@ -649,7 +649,7 @@ void main() {
     // 휴지통(지름 56)은 숨은 막대의 왼쪽 끝·세로 가운데에 선다.
     final trash = find
         .ancestor(
-          of: find.byTooltip('선택한 의류 지우기'),
+          of: find.byIcon(Icons.delete_outline),
           matching: find.byType(FrostedSurface),
         )
         .first;
@@ -664,7 +664,7 @@ void main() {
     expect(tester.getRect(bar()), barRect);
     expect(navIgnored(), isFalse);
     expect(find.semantics.byLabel('홈'), findsOne);
-    expect(find.byTooltip('선택한 의류 지우기'), findsNothing);
+    expect(find.byIcon(Icons.delete_outline), findsNothing);
     semantics.dispose();
   });
 

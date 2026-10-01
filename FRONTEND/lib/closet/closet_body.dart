@@ -240,10 +240,15 @@ extension _ClosetBody on _ClosetScreenState {
             ],
             child: IconButton(
               onPressed: canDelete ? _deleteSelectedItems : null,
-              // 확인창 제목('선택한 의류 삭제')과 겹치지 않는 이름입니다.
-              tooltip: '선택한 의류 지우기',
               color: Colors.redAccent,
-              icon: const Icon(Icons.delete_outline, size: 26),
+              // 이름은 tooltip 대신 아이콘 낭독 이름으로 줍니다. iOS VoiceOver 는 tooltip 만 있고 누를 수
+              // 없는 칸을 건너뛰어, 아무것도 고르지 않았을 때 휴지통이 사라집니다(2026-10-02).
+              // 확인창 제목('선택한 의류 삭제')과 겹치지 않는 이름입니다.
+              icon: const Icon(
+                Icons.delete_outline,
+                size: 26,
+                semanticLabel: '선택한 의류 지우기',
+              ),
             ),
           ),
         ),

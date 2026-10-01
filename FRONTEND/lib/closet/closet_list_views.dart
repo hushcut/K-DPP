@@ -297,130 +297,130 @@ extension _ClosetListViews on _ClosetScreenState {
 
     // 카드 색을 Container 로 칠하면 ListTile 의 누름 효과가 그 아래에 그려져 보이지 않습니다.
     // 그림자만 바깥 상자에 두고, 색·테두리는 카드 전용 Material 위에 Ink 로 칠해 효과가 위에 보이게 합니다.
-    return Semantics(
-      selected: isSelected,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: palette.shadowColor,
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Material(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(16),
-          clipBehavior: Clip.antiAlias,
-          child: Ink(
-            decoration: BoxDecoration(
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: palette.shadowColor,
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: Ink(
+          decoration: BoxDecoration(
+            color: isSelected
+                ? palette.selectedBgColor
+                : (isWarning ? palette.warningBgColor : palette.cardColor),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
               color: isSelected
-                  ? palette.selectedBgColor
-                  : (isWarning ? palette.warningBgColor : palette.cardColor),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: isSelected
-                    ? AppPalette.accent
-                    : (isWarning
-                          ? Colors.redAccent.shade200
-                          : palette.borderColor),
-                width: isSelected ? 2 : (isWarning ? 2 : 1),
-              ),
+                  ? AppPalette.accent
+                  : (isWarning
+                        ? Colors.redAccent.shade200
+                        : palette.borderColor),
+              width: isSelected ? 2 : (isWarning ? 2 : 1),
             ),
-            child: _withDragHandle(
-              dragHandleIndex: dragHandleIndex,
-              palette: palette,
-              child: ListTile(
-                contentPadding: EdgeInsets.fromLTRB(
-                  16,
-                  8,
-                  dragHandleIndex == null ? 16 : 0,
-                  8,
+          ),
+          child: _withDragHandle(
+            dragHandleIndex: dragHandleIndex,
+            palette: palette,
+            child: ListTile(
+              // 선택 상태는 ListTile 이 낭독기에 알립니다. 카드를 Semantics(selected:) 로 따로 감싸면
+              // ListTile 자체의 selected 와 겹쳐 칸이 둘로 갈라지고, '선택됨'·순서 이동이 이름 없는
+              // 바깥 칸에 붙어 iOS VoiceOver 가 읽지 못하거나 말 없이 멈춥니다(2026-10-02).
+              // 안쪽 글자·아이콘 색은 모두 직접 지정이라 selected 의 기본 색은 화면에 드러나지 않습니다.
+              selected: isSelected,
+              contentPadding: EdgeInsets.fromLTRB(
+                16,
+                8,
+                dragHandleIndex == null ? 16 : 0,
+                8,
+              ),
+              leading: Container(
+                width: 60,
+                height: 60,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? (palette.isDark
+                            ? const Color(0xFF1C1C1E)
+                            : Colors.white)
+                      : (isWarning
+                            ? (palette.isDark
+                                  ? const Color(0xFF1C1C1E)
+                                  : Colors.white)
+                            : palette.leadingBgColor),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                leading: Container(
-                  width: 60,
-                  height: 60,
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? (palette.isDark
-                              ? const Color(0xFF1C1C1E)
-                              : Colors.white)
-                        : (isWarning
-                              ? (palette.isDark
-                                    ? const Color(0xFF1C1C1E)
-                                    : Colors.white)
-                              : palette.leadingBgColor),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    Icons.checkroom,
-                    color: isSelected
-                        ? AppPalette.accent
-                        : (isWarning
-                              ? Colors.redAccent
-                              : palette.secondaryText),
-                    size: 30,
-                  ),
+                child: Icon(
+                  Icons.checkroom,
+                  color: isSelected
+                      ? AppPalette.accent
+                      : (isWarning ? Colors.redAccent : palette.secondaryText),
+                  size: 30,
                 ),
-                title: Text(
-                  title,
-                  maxLines: 2,
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                    color: palette.primaryText,
-                  ),
+              ),
+              title: Text(
+                title,
+                maxLines: 2,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  color: palette.primaryText,
                 ),
-                subtitle: Padding(
-                  padding: const EdgeInsets.only(top: 8.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        category,
-                        style: TextStyle(
-                          color: palette.secondaryText,
-                          fontSize: 12,
-                        ),
+              ),
+              subtitle: Padding(
+                padding: const EdgeInsets.only(top: 8.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      category,
+                      style: TextStyle(
+                        color: palette.secondaryText,
+                        fontSize: 12,
                       ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(statusIcon, color: statusColor, size: 16),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              status,
-                              maxLines: 2,
-                              style: TextStyle(
-                                color: statusColor,
-                                fontWeight: isWarning
-                                    ? FontWeight.bold
-                                    : FontWeight.normal,
-                                fontSize: 13,
-                              ),
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(statusIcon, color: statusColor, size: 16),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            status,
+                            maxLines: 2,
+                            style: TextStyle(
+                              color: statusColor,
+                              fontWeight: isWarning
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                              fontSize: 13,
                             ),
                           ),
-                        ],
-                      ),
-                    ],
-                  ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-                trailing: trailing,
-                // 꾹 누르기에는 따로 뜻을 두지 않습니다. 꾹 눌렀다 그 자리에서 떼면 탭과 같습니다
-                // (iOS 목록 기본, Flutter 탭 인식기는 오래 눌러도 거절하지 않음 — gestures/tap.dart).
-                onTap: () {
-                  if (_selectionMode) {
-                    _toggleSelection(item);
-                    return;
-                  }
-
-                  context.read<ClosetProvider>().selectClothes(item);
-                  widget.onOpenReport(item);
-                },
               ),
+              trailing: trailing,
+              // 꾹 누르기에는 따로 뜻을 두지 않습니다. 꾹 눌렀다 그 자리에서 떼면 탭과 같습니다
+              // (iOS 목록 기본, Flutter 탭 인식기는 오래 눌러도 거절하지 않음 — gestures/tap.dart).
+              onTap: () {
+                if (_selectionMode) {
+                  _toggleSelection(item);
+                  return;
+                }
+
+                context.read<ClosetProvider>().selectClothes(item);
+                widget.onOpenReport(item);
+              },
             ),
           ),
         ),

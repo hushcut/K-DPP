@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:ui' show Tristate;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
@@ -1192,6 +1194,88 @@ void main() {
       expect(tester.takeException(), isNull);
       expectApart(find.text('1개 선택됨'), [find.widgetWithText(TextButton, '취소')]);
     });
+
+    testWidgets('낭독기에서 카드 하나는 이름이 있는 한 칸이고, 순서 이동·선택됨도 그 칸에 붙는다', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      // 카드 이름으로 시작하는 칸. 카드마다 꼭 하나여야 이름 없는 칸이 따로 끼지 않는다.
+      SemanticsFinder cardNodes(String title) => find.semantics.byPredicate(
+        (node) => node.label.startsWith('$title\n'),
+      );
+      SemanticsData cardData(String title) {
+        expect(cardNodes(title), findsOne, reason: title);
+        return cardNodes(title).evaluate().single.getSemanticsData();
+      }
+
+      await _pumpCloset(
+        tester,
+        clothes: _numbered(2),
+        sort: ClosetSortOption.custom,
+      );
+
+      // 내 설정 순 평소: 순서 이동 동작은 카드 수만큼 있고, 모두 이름·누르기가 있는 카드 칸에 있다.
+      // (iOS VoiceOver 는 동작만 있는 이름 없는 칸에도 멈춰, 카드마다 말 없는 칸이 하나씩 낀다.)
+      expect(
+        find.semantics.byAction(SemanticsAction.customAction),
+        findsExactly(2),
+      );
+      for (final title in ['홍길동 카드 1', '홍길동 카드 2']) {
+        final data = cardData(title);
+        expect(
+          data.hasAction(SemanticsAction.customAction),
+          isTrue,
+          reason: title,
+        );
+        expect(data.hasAction(SemanticsAction.tap), isTrue, reason: title);
+      }
+
+      // 선택 모드: '선택됨' 은 고른 카드 칸에 붙고, 이름 없는 칸에 따로 있지 않다.
+      // (iOS 는 이름도 동작도 없는 칸을 건너뛰어 그 '선택됨' 을 읽지 못한다.)
+      await tester.tap(find.text('선택'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('홍길동 카드 1'));
+      await tester.pumpAndSettle();
+      expect(cardData('홍길동 카드 1').flagsCollection.isSelected, Tristate.isTrue);
+      expect(cardData('홍길동 카드 2').flagsCollection.isSelected, Tristate.isFalse);
+      expect(
+        find.semantics.byPredicate(
+          (node) =>
+              node.label.isEmpty &&
+              node.getSemanticsData().flagsCollection.isSelected ==
+                  Tristate.isTrue,
+        ),
+        findsNothing,
+      );
+      semantics.dispose();
+    });
+
+    testWidgets('휴지통은 아무것도 고르지 않아도 낭독기가 이름으로 찾고(누를 수 없음), 이름을 한 번만 읽는다', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      await _pumpCloset(tester, clothes: _numbered(2));
+      await tester.tap(find.text('선택'));
+      await tester.pumpAndSettle();
+
+      // iOS VoiceOver 는 이름·값·힌트·동작이 없는 칸을 건너뛴다 — tooltip 만으로는 찾지 못한다.
+      final trash = find.semantics.byLabel('선택한 의류 지우기');
+      expect(trash, findsOne);
+      var data = trash.evaluate().single.getSemanticsData();
+      // 이름과 tooltip 이 함께 있으면 iOS 는 둘을 이어 같은 말을 두 번 읽는다.
+      expect(data.tooltip, isEmpty);
+      expect(data.flagsCollection.isButton, isTrue);
+      expect(data.flagsCollection.isEnabled, Tristate.isFalse);
+      expect(data.hasAction(SemanticsAction.tap), isFalse);
+
+      await tester.tap(find.text('홍길동 카드 1'));
+      await tester.pumpAndSettle();
+      expect(trash, findsOne);
+      data = trash.evaluate().single.getSemanticsData();
+      expect(data.flagsCollection.isEnabled, Tristate.isTrue);
+      expect(data.hasAction(SemanticsAction.tap), isTrue);
+      semantics.dispose();
+    });
   });
 }
 
@@ -1248,9 +1332,12 @@ Future<ClosetProvider> _pumpCloset(
   return provider;
 }
 
-/// 선택 모드 왼쪽 아래 휴지통. 툴팁은 확인창 제목('선택한 의류 삭제')과 다르게 둔다.
+/// 선택 모드 왼쪽 아래 휴지통(낭독 이름 '선택한 의류 지우기' 는 위 낭독기 테스트가 본다).
 Finder _trashButton() => find.ancestor(
-  of: find.byTooltip('선택한 의류 지우기'),
+  of: find.descendant(
+    of: find.byType(ClosetScreen),
+    matching: find.byIcon(Icons.delete_outline),
+  ),
   matching: find.byType(IconButton),
 );
 
