@@ -10,9 +10,11 @@ import 'package:k_dpp/closet_provider.dart';
 import 'package:k_dpp/closet_screen.dart';
 import 'package:k_dpp/models/closet_sort_option.dart';
 import 'package:k_dpp/models/clothes.dart';
+import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:k_dpp/widgets/reorder_bump_haptics.dart';
 import 'package:provider/provider.dart';
 
+import 'helpers/app_banner_expect.dart';
 import 'helpers/fake_auth_session_storage.dart';
 import 'helpers/fake_closet_storage.dart';
 
@@ -34,6 +36,7 @@ void main() {
         ChangeNotifierProvider.value(
           value: provider,
           child: MaterialApp(
+            builder: AppBannerHost.builder,
             home: Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
           ),
         ),
@@ -99,6 +102,7 @@ void main() {
       ChangeNotifierProvider.value(
         value: provider,
         child: MaterialApp(
+          builder: AppBannerHost.builder,
           home: Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
         ),
       ),
@@ -115,7 +119,11 @@ void main() {
     // 화면이 Provider를 그대로 따르므로 되돌림이 즉시 보인다.
     // 화면만 새 기준을 유지하면 나중에 화면이 재생성될 때 말없이 바뀐다.
     expect(find.textContaining('현재 정렬: 친환경 순'), findsOneWidget);
-    expect(find.text('정렬 방식을 저장하지 못해 이전 기준으로 되돌렸어요.'), findsOneWidget);
+    expectAppBanner(
+      tester,
+      '정렬 방식을 저장하지 못해 이전 기준으로 되돌렸어요.',
+      AppBannerKind.failure,
+    );
   });
 
   testWidgets('빈 옷장에서는 스캔 탭으로 이동하는 버튼을 제공한다', (tester) async {
@@ -126,6 +134,7 @@ void main() {
       ChangeNotifierProvider.value(
         value: provider,
         child: MaterialApp(
+          builder: AppBannerHost.builder,
           home: Scaffold(
             body: ClosetScreen(
               onOpenReport: (_) {},
@@ -176,6 +185,7 @@ void main() {
       ChangeNotifierProvider.value(
         value: provider,
         child: MaterialApp(
+          builder: AppBannerHost.builder,
           home: Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
         ),
       ),
@@ -236,6 +246,7 @@ void main() {
       ChangeNotifierProvider.value(
         value: provider,
         child: MaterialApp(
+          builder: AppBannerHost.builder,
           home: Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
         ),
       ),
@@ -284,6 +295,7 @@ void main() {
       ChangeNotifierProvider.value(
         value: provider,
         child: MaterialApp(
+          builder: AppBannerHost.builder,
           home: Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
         ),
       ),
@@ -319,6 +331,7 @@ void main() {
       ChangeNotifierProvider.value(
         value: provider,
         child: MaterialApp(
+          builder: AppBannerHost.builder,
           home: Scaffold(
             body: ClosetScreen(onOpenReport: (_) {}),
           ),
@@ -340,7 +353,7 @@ void main() {
     await tester.tap(find.widgetWithText(ElevatedButton, '삭제'));
     await tester.pumpAndSettle();
 
-    expect(find.text('1개의 의류가 삭제되었습니다.'), findsOneWidget);
+    expectAppBanner(tester, '1개의 의류가 삭제되었습니다.', AppBannerKind.success);
     expect(provider.items.map((c) => c.title), ['홍길동 남길 셔츠']);
     expect(find.textContaining('개 선택됨'), findsNothing);
     expect(find.text('내 옷장'), findsOneWidget);
@@ -369,6 +382,7 @@ void main() {
       ChangeNotifierProvider.value(
         value: provider,
         child: MaterialApp(
+          builder: AppBannerHost.builder,
           home: Scaffold(
             body: ClosetScreen(onOpenReport: (_) {}),
           ),
@@ -413,6 +427,7 @@ void main() {
       ChangeNotifierProvider.value(
         value: provider,
         child: MaterialApp(
+          builder: AppBannerHost.builder,
           home: Scaffold(
             body: ClosetScreen(onOpenReport: (_) {}),
           ),
@@ -441,6 +456,7 @@ void main() {
       ChangeNotifierProvider.value(
         value: provider,
         child: MaterialApp(
+          builder: AppBannerHost.builder,
           home: Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
         ),
       ),
@@ -515,6 +531,7 @@ void main() {
         ChangeNotifierProvider.value(
           value: provider,
           child: MaterialApp(
+            builder: AppBannerHost.builder,
             home: Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
           ),
         ),
@@ -1144,7 +1161,11 @@ void main() {
       storage.gate!.complete();
       await tester.pumpAndSettle();
 
-      expect(find.text('의류 삭제를 저장하지 못했어요. 다시 시도해 주세요.'), findsOneWidget);
+      expectAppBanner(
+        tester,
+        '의류 삭제를 저장하지 못했어요. 다시 시도해 주세요.',
+        AppBannerKind.failure,
+      );
       expect(provider.items, hasLength(1));
       expect(find.text('1개 선택됨'), findsOneWidget);
       expect(tester.widget<IconButton>(_trashButton()).onPressed, isNotNull);
@@ -1157,7 +1178,7 @@ void main() {
       await confirmDelete();
       await tester.pumpAndSettle();
 
-      expect(find.text('1개의 의류가 삭제되었습니다.'), findsOneWidget);
+      expectAppBanner(tester, '1개의 의류가 삭제되었습니다.', AppBannerKind.success);
       expect(provider.items, isEmpty);
       expect(find.textContaining('개 선택됨'), findsNothing);
       await tester.pumpAndSettle(const Duration(seconds: 5));
@@ -1322,6 +1343,7 @@ Future<ClosetProvider> _pumpCloset(
     ChangeNotifierProvider.value(
       value: provider,
       child: MaterialApp(
+        builder: AppBannerHost.builder,
         home: Scaffold(
           body: ClosetScreen(onOpenReport: onOpenReport ?? (_) {}),
         ),

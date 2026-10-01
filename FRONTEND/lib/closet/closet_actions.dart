@@ -186,8 +186,9 @@ extension _ClosetActions on _ClosetScreenState {
           ..addAll(targets.where(restoredItems.contains));
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('의류 삭제를 저장하지 못했어요. 다시 시도해 주세요.')),
+      AppBanner.of(context).show(
+        '의류 삭제를 저장하지 못했어요. 다시 시도해 주세요.',
+        kind: AppBannerKind.failure,
       );
       return;
     }
@@ -197,9 +198,9 @@ extension _ClosetActions on _ClosetScreenState {
     _updateState(() => _deleteInProgress = false);
     _setSelectionMode(false);
 
-    ScaffoldMessenger.of(
+    AppBanner.of(
       context,
-    ).showSnackBar(SnackBar(content: Text('$deleteCount개의 의류가 삭제되었습니다.')));
+    ).show('$deleteCount개의 의류가 삭제되었습니다.', kind: AppBannerKind.success);
   }
 
   /// 보이는 항목만 재정렬해도 숨겨진 항목의 상대 위치는 그대로 보존합니다.
@@ -243,8 +244,9 @@ extension _ClosetActions on _ClosetScreenState {
     } catch (_) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('변경한 순서를 저장하지 못했어요. 다시 시도해 주세요.')),
+      AppBanner.of(context).show(
+        '변경한 순서를 저장하지 못했어요. 다시 시도해 주세요.',
+        kind: AppBannerKind.failure,
       );
     }
   }

@@ -113,9 +113,9 @@ extension _ScanCaptureActions on _ScanScreenState {
       failureMessage: message,
     );
 
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    // 결과 화면 아래 카드에도 같은 문장이 있지만, 맨 위에 실제 원인을 보이고
+    // 낭독기에도 읽히는 곳은 배너뿐이라 그대로 띄운다(DECISIONS 88 ④).
+    AppBanner.of(context).show(message, kind: AppBannerKind.failure);
   }
 
   /// 유형 선택 취소 시 분석 상태를 지우고 카메라 화면으로 돌아갑니다.
@@ -164,9 +164,8 @@ extension _ScanCaptureActions on _ScanScreenState {
 
     switch (captureResult) {
       case ScanCaptureBlocked(:final message):
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(message)));
+        // '카메라를 준비하고 있어요' — 실패가 아니라 잠시 기다리라는 안내다.
+        AppBanner.of(context).show(message, kind: AppBannerKind.info);
 
         await _cameraLifecycle.initialize();
         return;
@@ -178,9 +177,7 @@ extension _ScanCaptureActions on _ScanScreenState {
         return;
 
       case ScanCaptureFailure(:final message):
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(message)));
+        AppBanner.of(context).show(message, kind: AppBannerKind.failure);
         return;
 
       case ScanCaptureSelected(
@@ -238,9 +235,7 @@ extension _ScanCaptureActions on _ScanScreenState {
         return;
 
       case ScanCaptureFailure(:final message):
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(message)));
+        AppBanner.of(context).show(message, kind: AppBannerKind.failure);
         _cameraLifecycle.startIfNeeded();
         return;
 

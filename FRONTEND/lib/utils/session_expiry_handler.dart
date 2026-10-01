@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../closet_provider.dart';
+import '../widgets/app_banner.dart';
 
 /// 만료된 로그인 세션을 정리하고 사용자를 로그인 화면으로 돌려보내는 공통 처리기다.
 class SessionExpiryHandler {
@@ -16,7 +17,7 @@ class SessionExpiryHandler {
   }) async {
     final provider = context.read<ClosetProvider>();
     final navigator = Navigator.of(context);
-    final messenger = ScaffoldMessenger.of(context);
+    final banner = AppBanner.of(context);
 
     // 저장소 정리가 실패해도 화면 이동과 안내는 반드시 수행합니다.
     // logout()은 메모리 상태를 먼저 비우므로, 여기서 예외가 그대로 올라가면
@@ -34,16 +35,13 @@ class SessionExpiryHandler {
     if (!context.mounted) return;
 
     navigator.pushNamedAndRemoveUntil('/login', (route) => false);
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            storageCleanupFailed
-                ? '$message (저장된 로그인 정보 정리는 완료하지 못했습니다)'
-                : message,
-          ),
-        ),
-      );
+    // 배너는 Navigator 위에 있어 로그인 화면으로 넘어가도 남고, 앞 알림은 바로 바뀐다.
+    // 만료는 사용자가 요청하지 않은 상태 변화라 안내, 정리까지 못 했으면 실패다.
+    banner.show(
+      storageCleanupFailed
+          ? '$message (저장된 로그인 정보 정리는 완료하지 못했습니다)'
+          : message,
+      kind: storageCleanupFailed ? AppBannerKind.failure : AppBannerKind.info,
+    );
   }
 }

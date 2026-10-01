@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'services/auth_api_service.dart';
 import 'theme/app_palette.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/app_banner.dart';
 
 /// 닉네임·이메일·비밀번호를 입력받는 회원가입 폼 화면입니다.
 class SignupScreen extends StatefulWidget {
@@ -147,17 +148,16 @@ class _SignupScreenState extends State<SignupScreen> {
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('회원가입이 완료되었습니다. 로그인해 주세요.')));
+      AppBanner.of(context).show(
+        '회원가입이 완료되었습니다. 로그인해 주세요.',
+        kind: AppBannerKind.success,
+      );
 
       _navigateBackToEmailLogin(email: email);
     } on AuthApiException catch (error) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.userMessage)));
+      AppBanner.of(context).show(error.userMessage, kind: AppBannerKind.failure);
     } finally {
       if (mounted) {
         setState(() {

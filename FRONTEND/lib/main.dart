@@ -15,6 +15,7 @@ import 'theme_provider.dart';
 import 'display_settings_screen.dart';
 import 'material_name_display_provider.dart';
 import 'navigation_bar_opacity_provider.dart';
+import 'widgets/app_banner.dart';
 
 /// Flutter 바인딩과 화면 방향을 설정한 뒤 앱 전역 Provider를 주입합니다.
 Future<void> main() async {
@@ -62,6 +63,8 @@ class MyApp extends StatelessWidget {
           locale: const Locale('ko', 'KR'),
           supportedLocales: const [Locale('ko', 'KR')],
           localizationsDelegates: GlobalMaterialLocalizations.delegates,
+          // 알림은 Navigator 위 공용 배너로 띄워 화면을 넘어가도 남게 합니다(AppBanner).
+          builder: AppBannerHost.builder,
           initialRoute: '/splash',
           // 스플래시부터 인증 화면과 메인 화면까지 앱의 주요 이동 경로입니다.
           routes: {

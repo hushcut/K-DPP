@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
 import 'package:k_dpp/utils/session_expiry_handler.dart';
+import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:provider/provider.dart';
 
+import 'helpers/app_banner_expect.dart';
 import 'helpers/fake_auth_session_storage.dart';
 import 'helpers/fake_closet_storage.dart';
 
@@ -26,6 +28,7 @@ void main() {
       ChangeNotifierProvider.value(
         value: provider,
         child: MaterialApp(
+          builder: AppBannerHost.builder,
           initialRoute: '/main',
           routes: {
             '/main': (context) => Scaffold(
@@ -49,7 +52,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('로그인 화면'), findsOneWidget);
-    expect(find.text(SessionExpiryHandler.defaultMessage), findsOneWidget);
+    expectAppBanner(
+      tester,
+      SessionExpiryHandler.defaultMessage,
+      AppBannerKind.info,
+    );
     expect(provider.isAuthenticated, isFalse);
     expect(provider.accessToken, isNull);
   });

@@ -8,6 +8,7 @@ import 'theme/app_palette.dart';
 import 'theme_provider.dart';
 import 'utils/material_name.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/app_banner.dart';
 import 'widgets/frosted_surface.dart';
 
 /// [ThemeProvider]·[NavigationBarOpacityProvider]·[MaterialNameDisplayProvider]의 현재 값을
@@ -21,13 +22,14 @@ class DisplaySettingsScreen extends StatelessWidget {
     NavigationBarOpacityProvider navigationBarOpacityProvider,
     double opacity,
   ) async {
-    final messenger = ScaffoldMessenger.of(context);
+    final banner = AppBanner.of(context);
 
     try {
       await navigationBarOpacityProvider.setOpacity(opacity);
     } catch (_) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('하단 메뉴 설정을 저장하지 못했어요. 다시 시도해 주세요.')),
+      banner.show(
+        '하단 메뉴 설정을 저장하지 못했어요. 다시 시도해 주세요.',
+        kind: AppBannerKind.failure,
       );
     }
   }
@@ -38,13 +40,14 @@ class DisplaySettingsScreen extends StatelessWidget {
     ThemeProvider themeProvider,
     ThemeMode mode,
   ) async {
-    final messenger = ScaffoldMessenger.of(context);
+    final banner = AppBanner.of(context);
 
     try {
       await themeProvider.setThemeMode(mode);
     } catch (_) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('테마 설정을 저장하지 못했어요. 다시 시도해 주세요.')),
+      banner.show(
+        '테마 설정을 저장하지 못했어요. 다시 시도해 주세요.',
+        kind: AppBannerKind.failure,
       );
     }
   }
@@ -55,15 +58,14 @@ class DisplaySettingsScreen extends StatelessWidget {
     MaterialNameDisplayProvider materialNameDisplayProvider,
     MaterialNameDisplay display,
   ) async {
-    final messenger = ScaffoldMessenger.of(context);
+    final banner = AppBanner.of(context);
 
     try {
       await materialNameDisplayProvider.setDisplay(display);
     } catch (_) {
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text('소재 이름 표시 설정을 저장하지 못했어요. 다시 시도해 주세요.'),
-        ),
+      banner.show(
+        '소재 이름 표시 설정을 저장하지 못했어요. 다시 시도해 주세요.',
+        kind: AppBannerKind.failure,
       );
     }
   }

@@ -9,6 +9,7 @@ import 'package:k_dpp/models/main_screen_arguments.dart';
 import 'package:k_dpp/navigation_bar_opacity_provider.dart';
 import 'package:k_dpp/scan_screen.dart';
 import 'package:k_dpp/widgets/app_back_button.dart';
+import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:k_dpp/widgets/frosted_surface.dart';
 import 'package:k_dpp/widgets/scan_result_view.dart';
 import 'package:provider/provider.dart';
@@ -40,7 +41,10 @@ void main() {
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
           ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
         ],
-        child: const MaterialApp(home: MainScreen()),
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: MainScreen(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -75,7 +79,10 @@ void main() {
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
           ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
         ],
-        child: const MaterialApp(home: MainScreen()),
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: MainScreen(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -116,6 +123,7 @@ void main() {
           ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
         ],
         child: MaterialApp(
+          builder: AppBannerHost.builder,
           home: const MainScreen(
             initialArguments: MainScreenArguments(
               initialIndex: 1,
@@ -174,6 +182,7 @@ void main() {
           ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
         ],
         child: const MaterialApp(
+          builder: AppBannerHost.builder,
           home: MainScreen(
             initialArguments: MainScreenArguments(
               initialIndex: 1,
@@ -221,6 +230,7 @@ void main() {
           ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
         ],
         child: const MaterialApp(
+          builder: AppBannerHost.builder,
           home: MainScreen(
             initialArguments: MainScreenArguments(showReport: true),
           ),
@@ -266,6 +276,7 @@ void main() {
           ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
         ],
         child: const MaterialApp(
+          builder: AppBannerHost.builder,
           home: MainScreen(
             initialArguments: MainScreenArguments(showReport: true),
           ),
@@ -306,7 +317,10 @@ void main() {
               create: (_) => NavigationBarOpacityProvider(),
             ),
           ],
-          child: const MaterialApp(home: MainScreen()),
+          child: const MaterialApp(
+            builder: AppBannerHost.builder,
+            home: MainScreen(),
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -385,7 +399,11 @@ void main() {
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
           ChangeNotifierProvider.value(value: opacityProvider),
         ],
-        child: MaterialApp(home: const MainScreen(), routes: routes),
+        child: MaterialApp(
+          builder: AppBannerHost.builder,
+          home: const MainScreen(),
+          routes: routes,
+        ),
       ),
     );
     await tester.pumpAndSettle();

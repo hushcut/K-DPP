@@ -57,22 +57,19 @@ Future<void> _confirmDelete(
     // 저장 실패 시 Provider가 목록을 되돌리므로 리포트에 머물며 재시도를 안내합니다.
     if (!context.mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('의류 삭제를 저장하지 못했어요. 다시 시도해 주세요.')),
+    AppBanner.of(context).show(
+      '의류 삭제를 저장하지 못했어요. 다시 시도해 주세요.',
+      kind: AppBannerKind.failure,
     );
     return;
   }
 
   if (!context.mounted) return;
 
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text(
-        wasRemoved
-            ? '"${item.title}"이(가) 삭제되었습니다.'
-            : '이미 옷장에서 삭제된 의류예요.',
-      ),
-    ),
+  // 이미 지워져 있었다면 요청과 상관없이 알게 된 상태라 안내다.
+  AppBanner.of(context).show(
+    wasRemoved ? '"${item.title}"이(가) 삭제되었습니다.' : '이미 옷장에서 삭제된 의류예요.',
+    kind: wasRemoved ? AppBannerKind.success : AppBannerKind.info,
   );
 
   if (onDeleted != null) {
