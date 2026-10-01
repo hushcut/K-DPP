@@ -830,6 +830,10 @@ def serialize_analysis_result(result: database.AnalysisResult) -> dict:
         "max_weight_grams": result.max_weight_grams,
         "unit": result.unit or "kg CO2eq",
         "unknown_materials": json.loads(result.unknown_materials or "[]"),
+        # 저장한 반올림 전 계수를 그대로 내보냅니다(계산 응답은 소수 둘째 자리).
+        # 버전 기록 전에 저장된 결과는 둘 다 null 입니다.
+        "carbon_factor": result.carbon_factor,
+        "factor_version": result.factor_version,
         # naive UTC를 그대로 내보내면 클라이언트가 기기 시간대로 오해하므로
         # UTC 오프셋(+00:00)을 붙여 직렬화합니다.
         "created_at": (
@@ -1303,6 +1307,9 @@ def calculate_carbon_range(
         unit="kg CO2eq",
         raw_ocr_text=request.raw_ocr_text,
         unknown_materials="[]",
+        # 계수표가 바뀐 뒤에도 이 결과가 어떤 계수로 계산됐는지 구분할 수 있게 남깁니다.
+        carbon_factor=mixed_factor,
+        factor_version=init_data.FACTOR_VERSION,
     )
     db.add(result)
     db.commit()
@@ -1313,6 +1320,7 @@ def calculate_carbon_range(
         "message": "탄소배출량 계산 완료",
         "materials": request.materials,
         "carbon_factor": round(mixed_factor, 2),
+        "factor_version": init_data.FACTOR_VERSION,
         "carbon_footprint": carbon_midpoint,
         "average_carbon_footprint": carbon_midpoint,
         "carbon_footprint_min": carbon_min,

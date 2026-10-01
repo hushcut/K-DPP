@@ -7,6 +7,12 @@ TEXTILE_UNIT = "kg CO2eq/kg textile"
 
 # Development estimates used to keep the scan-to-report flow working.
 # Replace carbon_factor values with team-approved source data before final reporting.
+#
+# Saved with every analysis result so results from different factor tables stay apart.
+# Bump it in the same commit that changes the table (name_en, carbon_factor or TEXTILE_UNIT);
+# tests/test_factor_version.py fails until the new version and its fingerprint are added.
+FACTOR_VERSION = "dev-estimate-v1"
+
 MATERIAL_SEEDS = [
     {
         "name_ko": "\uba74",

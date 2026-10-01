@@ -90,6 +90,10 @@ class AnalysisResult(Base):
     raw_ocr_text = Column(Text)
     unknown_materials = Column(Text, nullable=False, default="[]")
     created_at = Column(DateTime, nullable=False, default=utc_now)
+    # 계산에 쓴 반올림 전 혼합 계수와 계수표 버전(init_data.FACTOR_VERSION).
+    # 버전 기록 전에 저장된 행은 둘 다 NULL 입니다.
+    carbon_factor = Column(Float, nullable=True)
+    factor_version = Column(String, nullable=True)
 
 
 def ensure_schema():
@@ -150,6 +154,9 @@ def ensure_schema():
             "raw_ocr_text": "TEXT",
             "unknown_materials": "TEXT DEFAULT '[]' NOT NULL",
             "created_at": "DATETIME",
+            # 기본값 없이 추가해 기존 행은 NULL(버전 기록 전)로 남깁니다.
+            "carbon_factor": "FLOAT",
+            "factor_version": "VARCHAR",
         }
 
         for column_name, column_sql in missing_columns.items():

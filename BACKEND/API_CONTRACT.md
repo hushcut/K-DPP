@@ -232,6 +232,7 @@ Authorization: Bearer <token>
     "polyester": 20
   },
   "carbon_factor": 8.54,
+  "factor_version": "dev-estimate-v1",
   "carbon_footprint": 1.49,
   "average_carbon_footprint": 1.49,
   "carbon_footprint_min": 0.85,
@@ -271,6 +272,9 @@ Authorization: Bearer <token>
   "saved_result_id": 13
 }
 ```
+
+- `carbon_factor`: 혼합 소재 계수를 소수 둘째 자리로 반올림한 값입니다. 이력에는 반올림 전 값이 저장됩니다.
+- `factor_version`: 계산에 쓴 소재 계수표의 버전(`init_data.py` 의 `FACTOR_VERSION`)입니다. 계수표가 바뀌면 함께 올라갑니다.
 
 ## GET /materials
 
@@ -345,11 +349,34 @@ Authorization: Bearer <token>
       "max_weight_grams": 250,
       "unit": "kg CO2eq",
       "unknown_materials": [],
+      "carbon_factor": 8.54,
+      "factor_version": "dev-estimate-v1",
       "created_at": "2026-06-04T12:00:00"
+    },
+    {
+      "id": 12,
+      "user_id": 1,
+      "materials": {
+        "cotton": 100
+      },
+      "carbon_footprint": 1.46,
+      "carbon_footprint_min": 0.83,
+      "carbon_footprint_max": 2.08,
+      "min_weight_grams": 100,
+      "max_weight_grams": 250,
+      "unit": "kg CO2eq",
+      "unknown_materials": [],
+      "carbon_factor": null,
+      "factor_version": null,
+      "created_at": "2026-06-03T12:00:00"
     }
   ]
 }
 ```
+
+- `carbon_factor`: 계산에 쓴 혼합 소재 계수를 **반올림하지 않고** 저장한 값입니다(계산 응답의 `carbon_factor` 는 소수 둘째 자리).
+- `factor_version`: 계산에 쓴 소재 계수표의 버전입니다.
+- 계수표 버전을 기록하기 전에 저장된 결과는 두 값이 모두 `null` 입니다(그때의 개발용 추정값으로 계산된 결과).
 
 ## GET /me/history
 
