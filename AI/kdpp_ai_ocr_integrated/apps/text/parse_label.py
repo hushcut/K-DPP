@@ -99,12 +99,13 @@ COMPOSITION_HINTS = {
     "品質表示",
 }
 
+_RATIO_NUMBER = r"([-+−]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+))"
 _PERCENT_PATTERN = re.compile(
-    r"(?<![a-z0-9])([0-9]{1,3}(?:\.[0-9]+)?)\s*[%％]",
+    rf"(?<![a-z0-9.+−-])(?<![0-9],){_RATIO_NUMBER}\s*[%％]",
     re.IGNORECASE,
 )
 _PLAIN_NUMBER_PATTERN = re.compile(
-    r"(?<![a-z0-9])([0-9]{1,3}(?:\.[0-9]+)?)(?![a-z0-9])",
+    rf"(?<![a-z0-9.+−-])(?<![0-9],){_RATIO_NUMBER}(?![a-z0-9.]|,[0-9])",
     re.IGNORECASE,
 )
 # A wash temperature carries no percent marker, so it would otherwise be free
@@ -185,11 +186,10 @@ def _is_metadata_line(info: LineInfo) -> bool:
 
 def extract_numbers(line: str, allow_plain_numbers: bool = False) -> list[float]:
     normalized = normalize_text(line)
-    percentage_matches = [
-        match
-        for match in _PERCENT_PATTERN.finditer(normalized)
-        if 0 < float(match.group(1)) <= 100
-    ]
+    normalized = normalized.replace("−", "-")
+    # Retain invalid values: dropping them can make an incomplete block look valid.
+    # An attached minus is a sign; a spaced dash (COTTON - 100%) is a separator.
+    percentage_matches = list(_PERCENT_PATTERN.finditer(normalized))
     percentages = [float(match.group(1)) for match in percentage_matches]
     # A bare number is only inferred as a ratio on a row without care text:
     # ``SPANDEX 30 MACHINE WASH`` may be a wash temperature, not 30%.
@@ -221,8 +221,7 @@ def extract_numbers(line: str, allow_plain_numbers: bool = False) -> list[float]
                 continue
 
             value = float(match.group(1))
-            if 0 < value <= 100:
-                values_by_position.append((start, value))
+            values_by_position.append((start, value))
 
         values_by_position.sort(key=lambda item: item[0])
         if len(values_by_position) == material_count:
@@ -240,7 +239,6 @@ def extract_numbers(line: str, allow_plain_numbers: bool = False) -> list[float]
     return [
         float(match.group(1))
         for match in _PLAIN_NUMBER_PATTERN.finditer(_mask_temperatures(normalized))
-        if 0 < float(match.group(1)) <= 100
     ]
 
 
@@ -409,10 +407,7 @@ def _normalize_candidate(
 
     normalized: dict[str, float | int] = {}
     for material, value in values.items():
-        rounded = round(value, 1)
-        normalized[material] = (
-            int(rounded) if float(rounded).is_integer() else rounded
-        )
+        normalized[material] = int(value) if float(value).is_integer() else value
     return normalized, warnings
 
 
@@ -480,6 +475,12 @@ def _best_candidates_by_part(
 
     for candidate in candidates:
         current = best_by_part.get(candidate.part)
+        # Scores choose the clearest representation of an agreed composition;
+        # they cannot resolve contradictory declarations for the same part.
+        if current is not None and _equivalent_composition(
+            candidate.materials
+        ) != _equivalent_composition(current.materials):
+            ambiguous_parts.add(candidate.part)
         candidate_rank = (
             *candidate.score[:3],
             _context_rank(candidate, heading_indices),
@@ -496,11 +497,6 @@ def _best_candidates_by_part(
         )
         if current is None or candidate_rank > current_rank:
             best_by_part[candidate.part] = candidate
-            ambiguous_parts.discard(candidate.part)
-        elif candidate_rank == current_rank and _equivalent_composition(
-            candidate.materials
-        ) != _equivalent_composition(current.materials):
-            ambiguous_parts.add(candidate.part)
 
     # A row naming a fiber the table cannot resolve has no trustworthy
     # material/ratio mapping: its ratio would silently move to a neighbour.
@@ -533,9 +529,21 @@ def _best_candidates_by_part(
         and not _is_metadata_line(info)
     }
 
+    # A malformed composition row must also block a different, complete block
+    # in the same part. Keep lower-priority parts independent of a valid shell.
+    invalid_ratio_parts = {
+        info.part for info in infos
+        if (info.materials or not _TOKEN_PATTERN.search(info.normalized))
+        and (info.explicit_percent or info.materials)
+        and not _is_metadata_line(info)
+        and any(not 0 < number <= 100 for number in info.numbers)
+    }
+
     parts: dict[str, dict[str, float | int]] = {}
-    warnings: list[str] = []
+    warnings: list[str] = [f"{part}:invalid_ratio" for part in sorted(invalid_ratio_parts)]
     for part, candidate in best_by_part.items():
+        if part in invalid_ratio_parts:
+            continue
         if part in ambiguous_parts:
             warnings.append(f"{part}:ambiguous_composition_candidates")
             continue
@@ -552,7 +560,7 @@ def _best_candidates_by_part(
         parts[part] = normalized
         warnings.extend(f"{part}:{warning}" for warning in candidate_warnings)
 
-    expected_parts = orphan_ratio_parts | {info.part for info in composition_rows} | {
+    expected_parts = invalid_ratio_parts | orphan_ratio_parts | {info.part for info in composition_rows} | {
         info.marker_part for info in infos if info.marker_part is not None
     }
 
@@ -577,6 +585,8 @@ def normalize_percentages(
         explicit_percent=True,
         start_index=0,
     )
+    if any(not 0 < value <= 100 for value in candidate.materials.values()):
+        return {}
     if abs(candidate.total - 100.0) > EXACT_RATIO_TOLERANCE:
         return {}
     normalized, _ = _normalize_candidate(candidate)
@@ -594,8 +604,8 @@ def choose_representative_materials(
 
 
 def parse_materials(text: str) -> dict[str, float | int]:
-    _, materials = choose_representative_materials(parse_parts(text))
-    return materials
+    """Expose materials only after the same safety checks as the label response."""
+    return parse_label(text)["materials"]
 
 
 def format_materials_korean(
@@ -610,7 +620,7 @@ def format_materials_korean(
         percent_text = (
             str(int(percent))
             if float(percent).is_integer()
-            else f"{float(percent):.1f}"
+            else str(float(percent))
         )
         parts.append(f"{korean} {percent_text}%")
     return ", ".join(parts)
@@ -619,13 +629,30 @@ def format_materials_korean(
 def parse_care(text: str) -> str:
     normalized = normalize_text(text)
     found: set[str] = set()
-
+    matches: list[tuple[int, int, str]] = []
     for korean, aliases in CARE_RULES.items():
-        if any(alias.casefold() in normalized for alias in aliases):
-            found.add(korean)
+        for alias in aliases:
+            phrase = r"\s+".join(re.escape(word) for word in alias.casefold().split())
+            for match in re.finditer(rf"(?<![a-z]){phrase}(?![a-z])", normalized):
+                matches.append((match.start(), match.end(), korean))
 
-    for matched_rule in tuple(found):
-        found.difference_update(CARE_CONFLICTS.get(matched_rule, set()))
+    # Match prohibitions and specific methods before their embedded general
+    # phrases (HAND WASH COLD contains WASH COLD; 손세탁 금지 contains 세탁 금지).
+    occupied: list[tuple[int, int]] = []
+    for start, end, korean in sorted(
+        matches, key=lambda item: (item[2].endswith("금지"), item[1] - item[0]), reverse=True
+    ):
+        if any(start < right and end > left for left, right in occupied):
+            continue
+        occupied.append((start, end))
+        if not korean.endswith("금지") and re.search(
+            r"\b(?:not|no|never|don't|dont)\s*$", normalized[:start]
+        ):
+            continue
+        found.add(korean)
+
+    blocked = {rule for matched in found for rule in CARE_CONFLICTS.get(matched, set())}
+    found.difference_update(blocked)
 
     return "; ".join(rule for rule in CARE_RULES if rule in found)
 

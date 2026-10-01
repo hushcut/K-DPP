@@ -347,6 +347,13 @@ CARE_RULES = {
         "물세탁 금지",
         "세탁 금지",
     ],
+    "기계세탁 금지": [
+        "do not machine wash", "don't machine wash", "no machine wash",
+        "기계세탁 금지", "기계 세탁 금지",
+    ],
+    "손세탁 금지": [
+        "do not hand wash", "don't hand wash", "no hand wash", "손세탁 금지",
+    ],
     "표백 금지": [
         "do not bleach",
         "no bleach",
@@ -369,6 +376,7 @@ CARE_RULES = {
     ],
     "드라이클리닝 금지": [
         "do not dry clean",
+        "do not dryclean",
         "no dry clean",
         "드라이클리닝 금지",
         "드라이 크리닝 금지",
@@ -380,6 +388,9 @@ CARE_RULES = {
     ],
     "찬물 기계세탁": [
         "machine wash cold",
+    ],
+    "찬물 손세탁": ["hand wash cold", "cold hand wash", "찬물 손세탁", "냉수 손세탁"],
+    "찬물 세탁": [
         "wash cold",
         "cold wash",
         "찬물 세탁",
@@ -387,6 +398,9 @@ CARE_RULES = {
     ],
     "미온수 기계세탁": [
         "machine wash warm",
+    ],
+    "미온수 손세탁": ["hand wash warm", "warm hand wash", "미온수 손세탁"],
+    "미온수 세탁": [
         "wash warm",
         "미온수 세탁",
     ],
@@ -425,7 +439,12 @@ CARE_RULES = {
 # Negative or more-specific rules remove contradictory/general rules that are
 # substrings of the same OCR text.
 CARE_CONFLICTS = {
-    "물세탁 금지": {"기계세탁", "찬물 기계세탁", "미온수 기계세탁", "손세탁"},
+    "물세탁 금지": {
+        "기계세탁", "찬물 기계세탁", "미온수 기계세탁", "손세탁",
+        "찬물 손세탁", "미온수 손세탁", "찬물 세탁", "미온수 세탁",
+    },
+    "기계세탁 금지": {"기계세탁", "찬물 기계세탁", "미온수 기계세탁"},
+    "손세탁 금지": {"손세탁", "찬물 손세탁", "미온수 손세탁"},
     "건조기 사용 금지": {
         "건조기 사용",
         "저온 건조기",
@@ -435,8 +454,10 @@ CARE_CONFLICTS = {
     "다림질 금지": {"저온 다림질", "중온 다림질", "고온 다림질"},
     "드라이클리닝 금지": {"드라이클리닝", "드라이클리닝 전용"},
     "드라이클리닝 전용": {"드라이클리닝"},
-    "찬물 기계세탁": {"기계세탁"},
-    "미온수 기계세탁": {"기계세탁"},
+    "찬물 기계세탁": {"기계세탁", "찬물 세탁"},
+    "미온수 기계세탁": {"기계세탁", "미온수 세탁"},
+    "찬물 손세탁": {"손세탁", "찬물 세탁"},
+    "미온수 손세탁": {"손세탁", "미온수 세탁"},
     "저온 건조기": {"건조기 사용"},
     "중온 건조기": {"건조기 사용"},
     "고온 건조기": {"건조기 사용"},

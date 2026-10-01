@@ -194,13 +194,14 @@ def test_spatially_split_material_keeps_ratio_order_on_same_line() -> None:
         assert result["materials"] == {"cotton": 95, "polyurethane": 5}
 
 
-def test_complete_multimaterial_candidate_beats_later_standalone_candidate() -> None:
+def test_multimaterial_and_standalone_declarations_conflict() -> None:
     result = parse_label(
         "리오셀 70%\n나일론 30%\n혼용율 폴리에스터 100%"
     )
 
-    assert result["status"] == "success"
-    assert result["materials"] == {"lyocell": 70, "nylon": 30}
+    assert result["status"] == "failed"
+    assert result["error_code"] == "ambiguous_composition"
+    assert result["materials"] == {}
 
 
 def test_incomplete_outer_does_not_promote_lining_to_the_whole_garment() -> None:
