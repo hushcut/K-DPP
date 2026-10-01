@@ -55,7 +55,7 @@ class ReorderBumpTracker {
       if (probe._observe()) bumped = true;
     }
     // 한 프레임에 여러 장이 함께 밀리면 틱은 한 번만 줍니다.
-    if (bumped) HapticFeedback.selectionClick();
+    if (bumped) HapticFeedback.lightImpact();
   }
 }
 
