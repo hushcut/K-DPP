@@ -9,6 +9,7 @@ import 'package:k_dpp/models/main_screen_arguments.dart';
 import 'package:k_dpp/navigation_bar_opacity_provider.dart';
 import 'package:k_dpp/scan_screen.dart';
 import 'package:k_dpp/widgets/app_back_button.dart';
+import 'package:k_dpp/widgets/frosted_surface.dart';
 import 'package:k_dpp/widgets/scan_result_view.dart';
 import 'package:provider/provider.dart';
 
@@ -577,6 +578,94 @@ void main() {
 
     expect(find.byType(ScanScreen, skipOffstage: false), findsNothing);
     expect(find.text('홈'), findsOneWidget);
+  });
+
+  // 2026-10-01 DECISIONS 75: 선택 모드에선 하단 메뉴를 높이는 남긴 채 아래로 밀어 숨기고,
+  // 그 막대 자리 왼쪽에 휴지통을 띄운다(참고: Apple Music 플레이리스트 편집).
+  testWidgets('옷장 선택 모드에서는 하단 메뉴를 높이를 남긴 채 내려 숨기고, 막대 자리 왼쪽에 휴지통을 띄운다', (
+    tester,
+  ) async {
+    // iPhone 처럼 위 62·아래 34 안전 영역을 둔다.
+    tester.view.padding = const FakeViewPadding(top: 62, bottom: 34);
+    tester.view.viewPadding = const FakeViewPadding(top: 62, bottom: 34);
+    addTearDown(tester.view.resetPadding);
+    addTearDown(tester.view.resetViewPadding);
+    final semantics = tester.ensureSemantics();
+
+    final provider = await pumpMainScreen(tester);
+    for (var i = 1; i <= 12; i++) {
+      await provider.addClothes(
+        Clothes(
+          title: '홍길동 카드 $i',
+          category: '상의',
+          health: 88,
+          materials: {'cotton': 100},
+          careInstruction: '찬물 세탁',
+          carbonFootprint: i.toDouble(),
+        ),
+      );
+    }
+    await tester.tap(find.text('옷장'));
+    await tester.pumpAndSettle();
+
+    final screenHeight =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    Finder bar() => find
+        .ancestor(
+          of: find.text('홈', skipOffstage: false),
+          matching: find.byType(FrostedSurface),
+        )
+        .first;
+    double listBottomPadding() =>
+        (tester.widget<ListView>(find.byType(ListView).first).padding!
+                as EdgeInsets)
+            .bottom;
+    bool navIgnored() => tester
+        .widgetList<IgnorePointer>(
+          find.ancestor(
+            of: find.text('홈', skipOffstage: false),
+            matching: find.byType(IgnorePointer),
+          ),
+        )
+        .any((w) => w.ignoring);
+
+    final barRect = tester.getRect(bar());
+    final paddingBefore = listBottomPadding();
+    expect(navIgnored(), isFalse);
+    // 낭독기 읽기 트리에서 찾는다(위젯 속성만 보는 bySemanticsLabel 은 빠졌는지 모른다).
+    expect(find.semantics.byLabel('홈'), findsOne);
+
+    await tester.tap(find.text('선택'));
+    await tester.pumpAndSettle();
+
+    // 메뉴는 화면 밖으로 내려가고, 누를 수도 낭독기로 읽을 수도 없다.
+    expect(tester.getRect(bar()).top, greaterThanOrEqualTo(screenHeight));
+    expect(navIgnored(), isTrue);
+    expect(find.semantics.byLabel('홈'), findsNothing);
+    expect(find.semantics.byLabel('스캔'), findsNothing);
+    // 높이는 남아 있어 목록 아래 여백이 그대로다(출렁이지 않는다).
+    expect(listBottomPadding(), paddingBefore);
+
+    // 휴지통(지름 56)은 숨은 막대의 왼쪽 끝·세로 가운데에 선다.
+    final trash = find
+        .ancestor(
+          of: find.byTooltip('선택한 의류 지우기'),
+          matching: find.byType(FrostedSurface),
+        )
+        .first;
+    final trashRect = tester.getRect(trash);
+    expect(trashRect.size, const Size(56, 56));
+    expect(trashRect.left, closeTo(barRect.left, 0.5));
+    expect(trashRect.center.dy, closeTo(barRect.center.dy, 0.5));
+
+    await tester.tap(find.text('취소'));
+    await tester.pumpAndSettle();
+
+    expect(tester.getRect(bar()), barRect);
+    expect(navIgnored(), isFalse);
+    expect(find.semantics.byLabel('홈'), findsOne);
+    expect(find.byTooltip('선택한 의류 지우기'), findsNothing);
+    semantics.dispose();
   });
 
   testWidgets('하단 메뉴는 설정한 불투명도로 뒤를 흐리게 비추고, 100%면 흐림 없이 그린다', (

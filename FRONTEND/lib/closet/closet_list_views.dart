@@ -99,13 +99,17 @@ extension _ClosetListViews on _ClosetScreenState {
     );
   }
 
-  /// 사용자 지정 순서를 드래그로 바꾸는 목록입니다.
+  /// 내 설정 순에서 카드 오른쪽 ≡ 손잡이를 잡아 끌면 바로 순서가 바뀌는 목록입니다.
+  ///
+  /// 카드 어디를 꾹 눌러도 끌리던 기본 동작(모바일의 지연 리스너)은 끕니다. 꾹 누르기가 정렬마다
+  /// 다른 뜻이 되지 않게, 끌기는 손잡이에서만 시작합니다(2026-10-01 DECISIONS 74).
   Widget _buildReorderableClothesList(
     BuildContext context,
     List<Clothes> clothes,
     List<Clothes> originalOrder, {
     required String emptyMessage,
     required _ClosetPalette palette,
+    required Key storageKey,
   }) {
     if (clothes.isEmpty) {
       return _buildEmptyListState(
@@ -115,12 +119,15 @@ extension _ClosetListViews on _ClosetScreenState {
     }
 
     return ReorderableListView.builder(
+      key: storageKey,
       padding: _listPadding(context),
       itemCount: clothes.length,
-      // 집어 드는 순간 짧게 진동해 들렸다는 걸 손으로도 알게 하고(2026-09-24 사용자 요청),
+      buildDefaultDragHandles: false,
+      // 집어 드는 순간 진동해 들렸다는 걸 손으로도 알게 하고(2026-09-24 사용자 요청),
       // 끄는 동안 다른 카드를 밀어낼 때마다 더 가벼운 틱을 줍니다(2026-09-25 사용자 요청).
+      // 2026-10-01 둘 다 한 단계 강하게(medium → heavy, 틱 selectionClick → lightImpact).
       onReorderStart: (_) {
-        HapticFeedback.mediumImpact();
+        HapticFeedback.heavyImpact();
         _reorderBumps.start();
       },
       onReorderEnd: (_) => _reorderBumps.stop(),
@@ -155,8 +162,7 @@ extension _ClosetListViews on _ClosetScreenState {
                   ? Icons.sentiment_satisfied_alt
                   : Icons.warning_amber_rounded,
               isWarning: item.health <= 20,
-              showDragHandle: true,
-              disableTap: true,
+              dragHandleIndex: index,
               palette: palette,
             ),
           ),
@@ -222,6 +228,7 @@ extension _ClosetListViews on _ClosetScreenState {
     List<Clothes> clothes, {
     required String emptyMessage,
     required _ClosetPalette palette,
+    required Key storageKey,
   }) {
     if (clothes.isEmpty) {
       return _buildEmptyListState(
@@ -231,6 +238,7 @@ extension _ClosetListViews on _ClosetScreenState {
     }
 
     return ListView.builder(
+      key: storageKey,
       padding: _listPadding(context),
       itemCount: clothes.length,
       itemBuilder: (context, index) {
@@ -259,6 +267,8 @@ extension _ClosetListViews on _ClosetScreenState {
   }
 
   /// 의류의 분류·건강 상태와 선택·경고·재정렬 상태를 한 행에 표시합니다.
+  ///
+  /// [dragHandleIndex] 가 있으면(내 설정 순 평소) 오른쪽 끝에 그 위치의 ≡ 손잡이를 둡니다.
   Widget _buildClosetItem(
     BuildContext context, {
     required Clothes item,
@@ -269,10 +279,21 @@ extension _ClosetListViews on _ClosetScreenState {
     required IconData statusIcon,
     required _ClosetPalette palette,
     bool isWarning = false,
-    bool showDragHandle = false,
-    bool disableTap = false,
+    int? dragHandleIndex,
   }) {
     final isSelected = _selectedItems.contains(item);
+    final Widget? trailing;
+    if (_selectionMode) {
+      trailing = Icon(
+        isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+        color: isSelected ? AppPalette.accent : palette.secondaryText,
+      );
+    } else if (dragHandleIndex != null) {
+      // 손잡이가 '>' 자리에 섭니다.
+      trailing = null;
+    } else {
+      trailing = Icon(Icons.chevron_right, color: palette.secondaryText);
+    }
 
     // 카드 색을 Container 로 칠하면 ListTile 의 누름 효과가 그 아래에 그려져 보이지 않습니다.
     // 그림자만 바깥 상자에 두고, 색·테두리는 카드 전용 Material 위에 Ink 로 칠해 효과가 위에 보이게 합니다.
@@ -308,120 +329,135 @@ extension _ClosetListViews on _ClosetScreenState {
                 width: isSelected ? 2 : (isWarning ? 2 : 1),
               ),
             ),
-            child: ListTile(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 8,
-              ),
-              leading: Container(
-                width: 60,
-                height: 60,
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? (palette.isDark
-                            ? const Color(0xFF1C1C1E)
-                            : Colors.white)
-                      : (isWarning
-                            ? (palette.isDark
-                                  ? const Color(0xFF1C1C1E)
-                                  : Colors.white)
-                            : palette.leadingBgColor),
-                  borderRadius: BorderRadius.circular(12),
+            child: _withDragHandle(
+              dragHandleIndex: dragHandleIndex,
+              palette: palette,
+              child: ListTile(
+                contentPadding: EdgeInsets.fromLTRB(
+                  16,
+                  8,
+                  dragHandleIndex == null ? 16 : 0,
+                  8,
                 ),
-                child: Icon(
-                  Icons.checkroom,
-                  color: isSelected
-                      ? AppPalette.accent
-                      : (isWarning
-                            ? Colors.redAccent
-                            : palette.secondaryText),
-                  size: 30,
+                leading: Container(
+                  width: 60,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? (palette.isDark
+                              ? const Color(0xFF1C1C1E)
+                              : Colors.white)
+                        : (isWarning
+                              ? (palette.isDark
+                                    ? const Color(0xFF1C1C1E)
+                                    : Colors.white)
+                              : palette.leadingBgColor),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.checkroom,
+                    color: isSelected
+                        ? AppPalette.accent
+                        : (isWarning
+                              ? Colors.redAccent
+                              : palette.secondaryText),
+                    size: 30,
+                  ),
                 ),
-              ),
-              title: Text(
-                title,
-                maxLines: 2,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                  color: palette.primaryText,
+                title: Text(
+                  title,
+                  maxLines: 2,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: palette.primaryText,
+                  ),
                 ),
-              ),
-              subtitle: Padding(
-                padding: const EdgeInsets.only(top: 8.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      category,
-                      style: TextStyle(
-                        color: palette.secondaryText,
-                        fontSize: 12,
+                subtitle: Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        category,
+                        style: TextStyle(
+                          color: palette.secondaryText,
+                          fontSize: 12,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Icon(statusIcon, color: statusColor, size: 16),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            status,
-                            maxLines: 2,
-                            style: TextStyle(
-                              color: statusColor,
-                              fontWeight: isWarning
-                                  ? FontWeight.bold
-                                  : FontWeight.normal,
-                              fontSize: 13,
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(statusIcon, color: statusColor, size: 16),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              status,
+                              maxLines: 2,
+                              style: TextStyle(
+                                color: statusColor,
+                                fontWeight: isWarning
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                                fontSize: 13,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ],
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
+                trailing: trailing,
+                // 꾹 누르기에는 따로 뜻을 두지 않습니다. 꾹 눌렀다 그 자리에서 떼면 탭과 같습니다
+                // (iOS 목록 기본, Flutter 탭 인식기는 오래 눌러도 거절하지 않음 — gestures/tap.dart).
+                onTap: () {
+                  if (_selectionMode) {
+                    _toggleSelection(item);
+                    return;
+                  }
+
+                  context.read<ClosetProvider>().selectClothes(item);
+                  widget.onOpenReport(item);
+                },
               ),
-              trailing: showDragHandle
-                  ? Icon(Icons.drag_handle, color: palette.secondaryText)
-                  : (_selectionMode
-                        ? Icon(
-                            isSelected
-                                ? Icons.check_circle
-                                : Icons.radio_button_unchecked,
-                            color: isSelected
-                                ? AppPalette.accent
-                                : palette.secondaryText,
-                          )
-                        : Icon(
-                            Icons.chevron_right,
-                            color: palette.secondaryText,
-                          )),
-              onTap: disableTap
-                  ? null
-                  : () {
-                      if (_selectionMode) {
-                        _toggleSelection(item);
-                        return;
-                      }
-
-                      context.read<ClosetProvider>().selectClothes(item);
-                      widget.onOpenReport(item);
-                    },
-              onLongPress: disableTap
-                  ? null
-                  : () {
-                      if (_selectionMode) {
-                        _toggleSelection(item);
-                        return;
-                      }
-
-                      _enterSelectionMode(item);
-                    },
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// 카드 오른쪽 끝에 ≡ 손잡이를 붙입니다. 손잡이가 없으면 카드를 그대로 돌려줍니다.
+  ///
+  /// 손잡이는 카드 누름 영역(ListTile) 밖의 형제라서 탭만 하면 아무 일도 없고, 카드 누름 효과도
+  /// 번쩍이지 않습니다. 잡고 움직이면 기다림 없이 바로 끌립니다.
+  Widget _withDragHandle({
+    required int? dragHandleIndex,
+    required _ClosetPalette palette,
+    required Widget child,
+  }) {
+    if (dragHandleIndex == null) return child;
+
+    return Row(
+      children: [
+        Expanded(child: child),
+        ReorderableDragStartListener(
+          index: dragHandleIndex,
+          // 아이콘 글자 모양만이 아니라 48×48 칸 전체에서 잡히게 바탕을 채웁니다(투명).
+          child: ColoredBox(
+            color: Colors.transparent,
+            child: Padding(
+              // 아이콘 오른쪽 끝을 다른 정렬의 '>' 와 같은 자리(카드 안쪽 16)에 맞춥니다.
+              padding: const EdgeInsets.only(right: 4),
+              child: SizedBox.square(
+                dimension: 48,
+                child: Icon(Icons.drag_handle, color: palette.secondaryText),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

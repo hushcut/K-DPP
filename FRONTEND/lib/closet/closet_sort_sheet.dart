@@ -64,10 +64,6 @@ extension _ClosetSortSheet on _ClosetScreenState {
 
     final provider = context.read<ClosetProvider>();
 
-    if (selected != ClosetSortOption.custom) {
-      _updateState(() => _reorderMode = false);
-    }
-
     // Provider가 값을 먼저 반영하고 알리므로 화면은 곧바로 새 기준으로 그려집니다.
     // 저장에 실패하면 Provider가 되돌리고, 화면도 같은 값을 보므로 함께 되돌아갑니다.
     try {

@@ -12,6 +12,7 @@ import 'report_screen.dart';
 import 'scan_screen.dart';
 import 'theme/app_palette.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/bottom_navigation_metrics.dart';
 import 'widgets/frosted_surface.dart';
 import 'widgets/kdpp_logo_mark.dart';
 
@@ -39,6 +40,9 @@ class _MainScreenState extends State<MainScreen>
   // 이 화면이 위에 쌓은 스캔·리포트·설정 라우트 수입니다. 스캔 저장 직후에는 스캔 화면과
   // 리포트가 함께 쌓이므로, 둘 다 닫혀야 덮이지 않은 것으로 봅니다.
   int _coveringRouteCount = 0;
+  // 옷장이 선택 모드인지입니다. 옷장 화면이 바꾸고, 이 화면은 하단 메뉴를 숨기는 데 씁니다.
+  // 한 값을 둘이 함께 보아야 어긋나지 않습니다(콜백으로 부모를 다시 그리면 빌드 중 호출이 생김).
+  final ValueNotifier<bool> _closetSelectionMode = ValueNotifier<bool>(false);
 
   // 탭을 바꿀 때마다 새 화면이 부드럽게 나타나도록 재생하는 전환 애니메이션입니다.
   late final AnimationController _tabTransitionController;
@@ -63,6 +67,7 @@ class _MainScreenState extends State<MainScreen>
   @override
   void dispose() {
     _tabTransitionController.dispose();
+    _closetSelectionMode.dispose();
     super.dispose();
   }
 
@@ -204,6 +209,7 @@ class _MainScreenState extends State<MainScreen>
       ),
       ClosetScreen(
         isActive: _selectedIndex == 2 && !_isCoveredByRoute,
+        selectionMode: _closetSelectionMode,
         onOpenReport: _openReport,
         onStartScan: _openScan,
       ),
@@ -257,9 +263,18 @@ class _MainScreenState extends State<MainScreen>
       extendBody: true,
       appBar: _buildMainAppBar(context, onOpenSettings: _openSettings),
       body: _buildBody(),
-      bottomNavigationBar: _KDppBottomNavigationBar(
-        selectedIndex: _selectedIndex,
-        onSelect: _selectTab,
+      // 옷장 선택 모드에서는 메뉴를 아래로 밀어 숨기고 그 자리에 옷장의 휴지통이 섭니다(2026-10-01).
+      // 높이는 그대로 두어야 본문 아래 여백(= 메뉴 자리)이 출렁이지 않고 휴지통 위치도 맞습니다.
+      bottomNavigationBar: ValueListenableBuilder<bool>(
+        valueListenable: _closetSelectionMode,
+        builder: (context, selecting, navigationBar) => _HideableBottomBar(
+          hidden: _selectedIndex == 2 && selecting,
+          child: navigationBar!,
+        ),
+        child: _KDppBottomNavigationBar(
+          selectedIndex: _selectedIndex,
+          onSelect: _selectTab,
+        ),
       ),
     );
   }
@@ -382,6 +397,37 @@ class _ReportPage extends StatelessWidget {
   }
 }
 
+/// 하단 메뉴를 자리(높이)는 남긴 채 아래로 밀어 숨깁니다.
+///
+/// 숨은 동안에는 누를 수 없고, 낭독기·키보드 초점에서도 빠집니다.
+/// 높이를 줄이는 방식(AnimatedSize)은 본문 아래 여백이 함께 줄어 목록이 출렁입니다.
+class _HideableBottomBar extends StatelessWidget {
+  const _HideableBottomBar({required this.hidden, required this.child});
+
+  final bool hidden;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      ignoring: hidden,
+      child: ExcludeSemantics(
+        excluding: hidden,
+        child: ExcludeFocus(
+          excluding: hidden,
+          child: AnimatedSlide(
+            // 메뉴 높이만큼(1.0)만 내리면 위로 번지는 스캔 버튼 그림자가 화면 아래 끝에 비칩니다.
+            offset: hidden ? const Offset(0, 1.3) : Offset.zero,
+            duration: _MainScreenState._transitionDuration,
+            curve: Curves.easeOutCubic,
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 좌우 탭과 가운데 돌출형 스캔 버튼을 배치하는 전용 하단 내비게이션입니다.
 class _KDppBottomNavigationBar extends StatelessWidget {
   const _KDppBottomNavigationBar({
@@ -409,9 +455,14 @@ class _KDppBottomNavigationBar extends StatelessWidget {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+        padding: const EdgeInsets.fromLTRB(
+          BottomNavigationMetrics.horizontalMargin,
+          0,
+          BottomNavigationMetrics.horizontalMargin,
+          BottomNavigationMetrics.bottomMargin,
+        ),
         child: SizedBox(
-          height: 94,
+          height: BottomNavigationMetrics.boxHeight,
           child: Stack(
             clipBehavior: Clip.none,
             alignment: Alignment.bottomCenter,
@@ -420,7 +471,7 @@ class _KDppBottomNavigationBar extends StatelessWidget {
                 left: 0,
                 right: 0,
                 bottom: 0,
-                height: 70,
+                height: BottomNavigationMetrics.barHeight,
                 child: FrostedSurface(
                   opacity: opacity,
                   color: barColor,
