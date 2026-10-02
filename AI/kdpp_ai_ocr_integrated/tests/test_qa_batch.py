@@ -1,3 +1,5 @@
+import csv
+
 import pytest
 
 from apps.text.ocr_cache import OcrTextCache
@@ -160,7 +162,10 @@ def test_main_processes_answer_key_images_only_by_default(monkeypatch, tmp_path)
             "status": "success",
             "materials": {"cotton": 100},
             "confidence": {"ocr": "high", "parser": "high"},
-            "ocr": {"source": "original"},
+            "ocr": {
+                "source": "original", "external_call_count": 2,
+                "rpc_attempt_count": 5, "retry_count": 3,
+            },
         }, True
 
     output_path = tmp_path / "results.csv"
@@ -184,6 +189,11 @@ def test_main_processes_answer_key_images_only_by_default(monkeypatch, tmp_path)
     assert called_names == [matched_image.name]
     assert "QA001.jpg" in output_path.read_text(encoding="utf-8-sig")
     assert "OTHER.jpg" not in output_path.read_text(encoding="utf-8-sig")
+    with output_path.open(encoding="utf-8-sig") as output:
+        row = next(csv.DictReader(output))
+    assert row["ocr_external_call_count"] == "2"
+    assert row["ocr_rpc_attempt_count"] == "5"
+    assert row["ocr_retry_count"] == "3"
 
 
 def test_main_exits_nonzero_after_unexpected_image_exception(monkeypatch, tmp_path) -> None:

@@ -129,6 +129,7 @@ class OcrMetadata:
     retry_count: int = 0
     elapsed_ms: int = 0
     attempts: tuple["OcrAttempt", ...] = ()
+    rpc_attempt_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -141,6 +142,7 @@ class OcrAttempt:
     external_call: bool
     failure_code: str = ""
     retry_count: int = 0
+    rpc_attempt_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -156,6 +158,7 @@ class OcrPayload:
     text: str
     layout_text: str = ""
     retry_count: int = 0
+    rpc_attempt_count: int | None = None
 
 
 def _parse_candidate(text: str) -> dict:
@@ -281,48 +284,59 @@ def _run_google_ocr(
     *,
     timeout_seconds: float = OCR_TIMEOUT_SECONDS,
 ) -> OcrPayload:
+    deadline = time.monotonic() + timeout_seconds
     from google.api_core import exceptions as google_exceptions
     from google.api_core import retry as google_retry
     from google.cloud import vision
 
     image = vision.Image(content=content)
     image_context = vision.ImageContext(language_hints=LANGUAGE_HINTS)
-    retry_count = 0
-
-    def record_retry(_exc: Exception) -> None:
-        nonlocal retry_count
-        retry_count += 1
-
-    retry = google_retry.Retry(
-        predicate=google_retry.if_exception_type(
-            google_exceptions.ServiceUnavailable,
-            google_exceptions.DeadlineExceeded,
-            google_exceptions.InternalServerError,
-        ),
-        initial=0.5,
-        maximum=2.0,
-        multiplier=2.0,
-        deadline=timeout_seconds,
-        on_error=record_retry,
+    rpc_attempt_count = 0
+    backoffs = google_retry.exponential_sleep_generator(
+        initial=0.5, maximum=2.0, multiplier=2.0,
     )
 
     try:
-        response = client.document_text_detection(
-            image=image,
-            image_context=image_context,
-            retry=retry,
-            timeout=timeout_seconds,
-        )
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise OcrTimeoutError("Google Vision OCR 요청 시간이 초과되었습니다.")
+            rpc_attempt_count += 1
+            try:
+                # Disable SDK retries: each actual RPC gets the budget left
+                # after previous attempts and backoff, rather than the first timeout.
+                response = client.document_text_detection(
+                    image=image, image_context=image_context,
+                    retry=None, timeout=remaining,
+                )
+            except (
+                google_exceptions.ServiceUnavailable,
+                google_exceptions.DeadlineExceeded,
+                google_exceptions.InternalServerError,
+            ):
+                remaining = deadline - time.monotonic()
+                delay = next(backoffs)
+                if remaining <= 0 or delay >= remaining:
+                    raise
+                time.sleep(delay)
+                continue
+            if time.monotonic() > deadline:
+                raise OcrTimeoutError("Google Vision OCR 요청 시간이 초과되었습니다.")
+            break
         return OcrPayload(
             text=_extract_response_text(response).strip(),
             layout_text=_extract_response_layout_text(response).strip(),
-            retry_count=retry_count,
+            retry_count=max(0, rpc_attempt_count - 1),
+            rpc_attempt_count=rpc_attempt_count,
         )
-    except OcrServiceError:
+    except OcrServiceError as exc:
+        exc.retry_count = max(0, rpc_attempt_count - 1)
+        exc.rpc_attempt_count = rpc_attempt_count
         raise
     except OcrConfigurationError:
         raise
     except (google_exceptions.GoogleAPIError, TimeoutError) as exc:
+        retry_count = max(0, rpc_attempt_count - 1)
         cause = getattr(exc, "cause", None) or exc
         if isinstance(
             cause,
@@ -335,11 +349,13 @@ def _run_google_ocr(
             raise OcrQuotaExceededError(
                 "Google Vision OCR 사용량 한도를 초과했습니다.",
                 retry_count=retry_count,
+                rpc_attempt_count=rpc_attempt_count,
             ) from exc
         if isinstance(cause, (google_exceptions.DeadlineExceeded, TimeoutError)):
             raise OcrTimeoutError(
                 "Google Vision OCR 요청 시간이 초과되었습니다.",
                 retry_count=retry_count,
+                rpc_attempt_count=rpc_attempt_count,
             ) from exc
         if isinstance(
             cause,
@@ -351,10 +367,12 @@ def _run_google_ocr(
             raise OcrUnavailableError(
                 "Google Vision OCR 서비스를 일시적으로 사용할 수 없습니다.",
                 retry_count=retry_count,
+                rpc_attempt_count=rpc_attempt_count,
             ) from exc
         raise OcrServiceError(
             "Google Vision OCR 요청에 실패했습니다.",
             retry_count=retry_count,
+            rpc_attempt_count=rpc_attempt_count,
         ) from exc
 
 
@@ -465,6 +483,7 @@ def run_ocr_bytes(
         timeout_seconds: float,
     ) -> OcrPayload:
         nonlocal client, external_call_count
+        candidate_deadline = time.monotonic() + timeout_seconds
         # QA 재실행에서 동일 이미지에 대한 외부 OCR 호출과 비용을 피한다.
         if ocr_cache is not None and not refresh_ocr_cache:
             cached_entry = ocr_cache.get_entry(candidate_content)
@@ -483,14 +502,27 @@ def run_ocr_bytes(
             client = _get_vision_client(
                 *_resolve_credential_path(credential_path)
             )
-        external_call_count += 1
-        payload = _coerce_ocr_payload(
-            _run_google_ocr(
-                client,
-                candidate_content,
-                timeout_seconds=timeout_seconds,
-            )
+        remaining = min(
+            candidate_deadline - time.monotonic(), remaining_timeout_seconds(),
         )
+        if remaining <= 0:
+            error_type = (
+                OcrTotalTimeoutError if remaining_timeout_seconds() <= 0 else OcrTimeoutError
+            )
+            raise error_type("OCR 요청 시간 제한을 초과했습니다.", rpc_attempt_count=0)
+        external_call_count += 1
+        try:
+            payload = _coerce_ocr_payload(
+                _run_google_ocr(
+                    client,
+                    candidate_content,
+                    timeout_seconds=remaining,
+                )
+            )
+        except OcrServiceError as exc:
+            if exc.rpc_attempt_count == 0:
+                external_call_count -= 1
+            raise
         if ocr_cache is not None:
             ocr_cache.put(
                 candidate_content,
@@ -505,6 +537,16 @@ def run_ocr_bytes(
         """Measure each candidate without exposing provider exception messages."""
 
         external_calls_before = external_call_count
+
+        def rpc_count(value: OcrPayload | Exception) -> int:
+            count = getattr(value, "rpc_attempt_count", None)
+            if count is not None:
+                return count
+            # Older text-only test doubles represent one RPC plus actual retries.
+            return (
+                1 + getattr(value, "retry_count", 0)
+                if external_call_count > external_calls_before else 0
+            )
         attempt_started_at = time.monotonic()
         timeout_seconds = min(
             OCR_CANDIDATE_TIMEOUT_SECONDS[source],
@@ -533,6 +575,7 @@ def run_ocr_bytes(
                     external_call=external_call_count > external_calls_before,
                     failure_code=_attempt_failure_code(exc),
                     retry_count=getattr(exc, "retry_count", 0),
+                    rpc_attempt_count=rpc_count(exc),
                 )
             )
             raise
@@ -544,6 +587,7 @@ def run_ocr_bytes(
                     elapsed_ms=round((time.monotonic() - attempt_started_at) * 1000),
                     external_call=external_call_count > external_calls_before,
                     retry_count=payload.retry_count,
+                    rpc_attempt_count=rpc_count(payload),
                 )
             )
             return payload
@@ -695,6 +739,7 @@ def run_ocr_bytes(
             retry_count=sum(attempt.retry_count for attempt in attempts),
             elapsed_ms=round((time.monotonic() - started_at) * 1000),
             attempts=tuple(attempts),
+            rpc_attempt_count=sum(attempt.rpc_attempt_count for attempt in attempts),
         ),
     )
 

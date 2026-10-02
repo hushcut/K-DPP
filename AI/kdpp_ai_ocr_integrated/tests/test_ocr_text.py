@@ -213,6 +213,7 @@ def test_response_error_status_is_classified(
 def test_google_ocr_classifies_provider_exception(
     provider_error,
     expected_exception,
+    monkeypatch,
 ) -> None:
     from google.api_core import exceptions as google_exceptions
 
@@ -223,8 +224,12 @@ def test_google_ocr_classifies_provider_exception(
         "unavailable": google_exceptions.ServiceUnavailable("unavailable"),
     }
 
+    clock = {"now": 0.0}
+    monkeypatch.setattr(ocr_text.time, "monotonic", lambda: clock["now"])
+
     class FailingClient:
-        def document_text_detection(self, **_kwargs):
+        def document_text_detection(self, **kwargs):
+            clock["now"] += kwargs["timeout"]
             raise errors[provider_error]
 
     with pytest.raises(expected_exception):
@@ -254,16 +259,23 @@ def test_google_ocr_records_retry_count_on_success(monkeypatch) -> None:
         lambda _response: "COTTON 100%",
     )
     monkeypatch.setattr(ocr_text, "_extract_response_layout_text", lambda _response: "")
+    monkeypatch.setattr(ocr_text.time, "sleep", lambda _seconds: None)
 
     class RetrySuccessClient:
+        calls = 0
+
         def document_text_detection(self, **kwargs):
-            kwargs["retry"]._on_error(google_exceptions.ServiceUnavailable("retry"))
+            assert kwargs["retry"] is None
+            self.calls += 1
+            if self.calls == 1:
+                raise google_exceptions.ServiceUnavailable("retry")
             return object()
 
     payload = ocr_text._run_google_ocr(RetrySuccessClient(), image_bytes())
 
     assert payload.text == "COTTON 100%"
     assert payload.retry_count == 1
+    assert payload.rpc_attempt_count == 2
 
 
 def test_high_confidence_original_uses_one_paid_ocr_call(monkeypatch) -> None:

@@ -24,9 +24,13 @@ class OcrConfigurationError(OcrError):
 class OcrServiceError(OcrError):
     """Google Vision could not complete the OCR request."""
 
-    def __init__(self, message: str, *, retry_count: int = 0) -> None:
+    def __init__(
+        self, message: str, *, retry_count: int = 0,
+        rpc_attempt_count: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.retry_count = retry_count
+        self.rpc_attempt_count = rpc_attempt_count
 
 
 class OcrQuotaExceededError(OcrServiceError):
