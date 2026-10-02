@@ -688,12 +688,27 @@ def _best_candidates_by_part(
                 for material, ratio in zip(info.materials, info.numbers)
             )
     rejections: dict[str, set[str]] = {}
-    for part in expected_parts - parts.keys() - ambiguous_parts - orphan_ratio_parts:
+    # 충돌과 잔여 비율은 전용 메타데이터로 해소한다. 같은 부위의 다른
+    # 거절 사유까지 제외하면 숫자 복원만으로 미등록 소재·수치 오류가 숨겨진다.
+    independent_reasons = {
+        "invalid_composition_evidence": invalid_evidence_parts,
+        "invalid_ratio": invalid_ratio_parts,
+        "unresolved_material_token": unresolved_parts,
+        "unpaired_material_rows": incomplete_parts,
+    }
+    for part in expected_parts - parts.keys():
         reasons = {
             warning.split(":", 1)[1] for warning in warnings
             if warning.startswith(f"{part}:")
-        }
-        rejections[part] = reasons or {"unpaired_material_rows"}
+        } - {"ambiguous_composition_candidates", "unpaired_ratio_rows"}
+        reasons.update(
+            reason for reason, affected_parts in independent_reasons.items()
+            if part in affected_parts
+        )
+        if not reasons and part not in ambiguous_parts | orphan_ratio_parts:
+            reasons.add("unpaired_material_rows")
+        if reasons:
+            rejections[part] = reasons
     for part, reasons in (rejected_composition_parts or {}).items():
         parts.pop(part, None)
         expected_parts.add(part)

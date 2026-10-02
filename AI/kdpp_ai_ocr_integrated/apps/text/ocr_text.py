@@ -169,6 +169,15 @@ class OcrPayload:
     rpc_attempt_count: int | None = None
 
 
+@dataclass(frozen=True)
+class _CandidateDecision:
+    best: OcrCandidate
+    status: str
+    conflicting_parts: tuple[str, ...]
+    unpaired_ratio_parts: tuple[str, ...]
+    rejected_composition_parts: dict[str, tuple[str, ...]]
+
+
 def _parse_candidate(text: str) -> dict:
     from apps.text.parse_label import parse_label
 
@@ -210,6 +219,57 @@ def _build_candidate(
         parse_candidate=_parse_candidate,
         layout_used=layout_used,
     )
+
+
+def _assess_candidates(candidates: list[OcrCandidate]) -> _CandidateDecision:
+    """후보 전체의 거절 근거를 최종 파서와 같은 기준으로 판단한다."""
+
+    best = max(candidates, key=lambda candidate: candidate.score)
+    conflicting_parts = find_conflicting_parts(candidates)
+    unpaired_ratio_parts = find_unpaired_ratio_parts(candidates)
+    rejected_composition_parts = find_rejected_composition_parts(
+        candidates, selected_part=best.selected_part,
+    )
+    status = best.parser_status
+    if conflicting_parts or unpaired_ratio_parts or rejected_composition_parts:
+        from apps.text.parse_label import parse_label
+
+        status = parse_label(
+            best.text,
+            conflicting_parts=conflicting_parts,
+            unpaired_ratio_parts=unpaired_ratio_parts,
+            rejected_composition_parts=rejected_composition_parts,
+        )["status"]
+    return _CandidateDecision(
+        best, status, conflicting_parts, unpaired_ratio_parts, rejected_composition_parts,
+    )
+
+
+def _needs_composition_retry(decision: _CandidateDecision) -> bool:
+    """최종 성공은 중단하고, 연결 누락을 복원할 기회가 남으면 재시도한다."""
+
+    if decision.status == "success":
+        return False
+    if decision.best.parser_status != "success":
+        return True
+    from apps.text.parse_label import PART_PRIORITY
+
+    selected = decision.best.selected_part
+    relevant_parts = set(
+        PART_PRIORITY[:PART_PRIORITY.index(selected) + 1]
+        if selected in PART_PRIORITY else PART_PRIORITY
+    )
+    # 이미 성공 문구가 있어도 확정된 상충·소재·수치 오류는 추가 OCR로
+    # 해소되지 않는다. 안감의 오류는 확인된 겉감 복원을 막지 않는다.
+    if relevant_parts.intersection(decision.conflicting_parts):
+        return False
+    if any(
+        set(reasons) - {"unpaired_material_rows"}
+        for part, reasons in decision.rejected_composition_parts.items()
+        if part in relevant_parts
+    ):
+        return False
+    return True
 
 
 def _extract_response_text(response: Any) -> str:
@@ -606,10 +666,13 @@ def run_ocr_bytes(
     )
     ocr_candidate_count = 1
 
-    # 원본 파싱이 충분히 신뢰할 만할 때는 전처리 OCR 호출을 생략한다.
-    # 어려운 사진만 재시도해 비용과 지연을 제한한다.
-    original = max(candidates, key=lambda candidate: candidate.score)
-    if original.parser_status != "success" or original.parser_confidence != "high":
+    # 개별 성공 후보가 있어도 최종 안전 판정에서 연결 누락이 남으면 복원한다.
+    decision = _assess_candidates(candidates)
+    original = decision.best
+    if (
+        original.parser_status != "success" or original.parser_confidence != "high"
+        or _needs_composition_retry(decision)
+    ):
         try:
             if remaining_timeout_seconds() <= 0:
                 record_total_timeout("preprocessed")
@@ -637,11 +700,8 @@ def run_ocr_bytes(
                     "전처리 OCR에 실패하여 원본 OCR 결과를 유지했습니다."
                 )
         else:
-            # 기본 전처리까지 조성을 만들지 못한 경우에만 반사 보정 후보를
-            # 추가한다. 성공한 후보가 있으면 불필요한 Vision 호출을 하지 않는다.
-            if use_reflection and not any(
-                candidate.parser_status == "success" for candidate in candidates
-            ):
+            # 기본 전처리 후에도 최종 판단이 복원 가능한 실패이면 추가한다.
+            if use_reflection and _needs_composition_retry(_assess_candidates(candidates)):
                 try:
                     if remaining_timeout_seconds() <= 0:
                         record_total_timeout("reflection")
@@ -679,9 +739,7 @@ def run_ocr_bytes(
             "미세 회전 OCR에 실패하여 기존 후보를 유지했습니다.",
         ),
     ):
-        if not enabled or any(
-            candidate.parser_status == "success" for candidate in candidates
-        ):
+        if not enabled or not _needs_composition_retry(_assess_candidates(candidates)):
             continue
         try:
             if remaining_timeout_seconds() <= 0:
@@ -708,22 +766,14 @@ def run_ocr_bytes(
                 attempt_failures.append(f"{source}:{type(exc).__name__}")
                 processing_warnings.append(failure_warning)
 
-    best = max(candidates, key=lambda candidate: candidate.score)
-    conflicting_parts = find_conflicting_parts(candidates)
-    unpaired_ratio_parts = find_unpaired_ratio_parts(candidates)
-    rejected_composition_parts = find_rejected_composition_parts(
-        candidates, selected_part=best.selected_part,
+    decision = _assess_candidates(candidates)
+    best = decision.best
+    conflicting_parts = decision.conflicting_parts
+    unpaired_ratio_parts = decision.unpaired_ratio_parts
+    rejected_composition_parts = decision.rejected_composition_parts
+    rejected_representative = decision.status != "success" and bool(
+        conflicting_parts or unpaired_ratio_parts or rejected_composition_parts
     )
-    rejected_representative = False
-    if rejected_composition_parts:
-        from apps.text.parse_label import parse_label
-
-        rejected_representative = parse_label(
-            best.text,
-            conflicting_parts=conflicting_parts,
-            unpaired_ratio_parts=unpaired_ratio_parts,
-            rejected_composition_parts=rejected_composition_parts,
-        )["status"] != "success"
     ocr_confidence = (
         "low"
         if rejected_representative
