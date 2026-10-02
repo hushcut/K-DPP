@@ -1,0 +1,127 @@
+[
+  {
+    "id": "QA002",
+    "source_ids": [
+      "QA002"
+    ],
+    "ocr_excerpt": "100% COTTON-COTON-\nALGODÓN - ALGODÃO -\nCOTONE-BAUMWOLLE -\nKATOEN BAWEŁNA - BAVLNA\n- XлОПок- BAMBAKI PAMUK\n-PAMUT-棉-綿100%日\nKAPAS BOMBAZ PUUVILL -\nKOKVILNA MEDVILNE\nBOMULD - PUUVILLA-\nBOMULL-BUMBAC",
+    "status": "success",
+    "materials": {
+      "cotton": 100
+    }
+  },
+  {
+    "id": "QA020",
+    "source_ids": [
+      "QA020"
+    ],
+    "ocr_excerpt": "혼용율 겉감\n100%\n면",
+    "status": "success",
+    "materials": {
+      "cotton": 100
+    },
+    "selected_part": "outer"
+  },
+  {
+    "id": "QA044",
+    "source_ids": [
+      "QA044"
+    ],
+    "ocr_excerpt": "80%\n면(Cotton)\n포리 (Polyester)\n20%",
+    "status": "success",
+    "materials": {
+      "cotton": 80,
+      "polyester": 20
+    }
+  },
+  {
+    "id": "PIMA_COTTON",
+    "source_ids": [
+      "QA053",
+      "QA054",
+      "QA061",
+      "QA062",
+      "QA063"
+    ],
+    "ocr_excerpt": "100% PIMACOTTON",
+    "status": "success",
+    "materials": {
+      "cotton": 100
+    }
+  },
+  {
+    "id": "QA094",
+    "source_ids": [
+      "QA094"
+    ],
+    "ocr_excerpt": "100% BAMBAKI--baumwolle - bomuld - bombaž-\nalgodón-coton-cotton - algodão - katoen - cotone-",
+    "status": "success",
+    "materials": {
+      "cotton": 100
+    }
+  },
+  {
+    "id": "QA095",
+    "source_ids": [
+      "QA095"
+    ],
+    "ocr_excerpt": "100% BAMBAKI-]-baumwolle - bomuld - bombaž-\nalgodón - coton - cotton - algodão - katoen - cotone-",
+    "status": "success",
+    "materials": {
+      "cotton": 100
+    }
+  },
+  {
+    "id": "QA098",
+    "source_ids": [
+      "QA098"
+    ],
+    "ocr_excerpt": "100% BAMBAKI-\"-baumwolle - bomuld - bombaž-\nalgodón - coton - cotton - algodão - katoen - cotone-",
+    "status": "success",
+    "materials": {
+      "cotton": 100
+    }
+  },
+  {
+    "id": "QA003",
+    "source_ids": [
+      "QA003"
+    ],
+    "ocr_excerpt": "OUTSHELL\n100% COTTON",
+    "status": "success",
+    "materials": {
+      "cotton": 100
+    },
+    "selected_part": "outer"
+  },
+  {
+    "id": "QA031",
+    "source_ids": [
+      "QA031"
+    ],
+    "ocr_excerpt": "100%\n배산\n면\n95%\n폴리우레탄\n5%",
+    "status": "failed",
+    "materials": {},
+    "error_code": "composition_not_found"
+  },
+  {
+    "id": "QA083",
+    "source_ids": [
+      "QA083"
+    ],
+    "ocr_excerpt": "겉감\n100%)\n배색 면\n95%\n폴리우레탄\n5%",
+    "status": "failed",
+    "materials": {},
+    "error_code": "incomplete_part_composition"
+  },
+  {
+    "id": "QA015",
+    "source_ids": [
+      "QA015"
+    ],
+    "ocr_excerpt": "혼용율 폴리에스터2%, 폴리우레탄 6%",
+    "status": "failed",
+    "materials": {},
+    "error_code": "composition_not_found"
+  }
+]

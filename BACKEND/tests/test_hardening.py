@@ -3,6 +3,8 @@
 import threading
 from datetime import timedelta
 
+import pytest
+
 import database
 import main
 
@@ -106,19 +108,40 @@ def test_expired_token_returns_401_instead_of_anonymous_save(client):
     assert response.status_code == 401
 
 
-def test_scan_flags_partial_ratio(client):
+@pytest.mark.parametrize(
+    ("raw_text", "expected_status", "expected_materials"),
+    [
+        ("COTTON 50% POLYESTER 30%", 422, {}),
+        ("COTTON 50% POLYESTER 50%", 200, {"cotton": 50, "polyester": 50}),
+    ],
+)
+def test_scan_requires_complete_enhancement_composition(
+    client, raw_text, expected_status, expected_materials
+):
     token = _login_token(client)
     response = client.post(
         "/api/scan",
         files={"image": ("label.jpg", b"test-image", "image/jpeg")},
-        data={"raw_ocr_text": "COTTON 50% POLYESTER 30%"},
+        data={"raw_ocr_text": raw_text},
         headers={"Authorization": f"Bearer {token}"},
     )
     body = response.json()
 
-    assert response.status_code == 200
-    assert body["ai_success"] is False
-    assert body["analysis_failure_reason"] == "RATIO_INCOMPLETE"
+    assert response.status_code == expected_status
+    if expected_status == 422:
+        # enhancement 파서는 합계 80%를 조성 후보로 확정하지 않는다.
+        assert body["status"] == "error"
+        assert body["error_code"] == "MATERIAL_EXTRACTION_FAILED"
+        payload = body["detail"]
+        assert payload["partial_materials"] == {}
+        assert payload["ai_success"] is False
+    else:
+        assert body["status"] == "success"
+        assert body["ai_success"] is True
+        assert body["analysis_failure_reason"] is None
+        payload = body
+    assert payload["materials"] == expected_materials
+    assert payload["raw_ocr_preview"] == raw_text
 
 
 def test_scan_rejects_missing_content_type(client):
