@@ -118,6 +118,46 @@ def test_extra_ratio_in_preprocessing_cannot_be_hidden_by_successful_original(mo
     assert analysis["ocr"]["unpaired_ratio_parts"] == ["generic"]
 
 
+@pytest.mark.parametrize(
+    ("raw", "complete", "part"),
+    [
+        ("COTTON 100%\n50", "COTTON 100%", "generic"),
+        ("COTTON 100%\n100", "COTTON 100%", "generic"),
+        ("COMPOSITION\nCOTTON 95% SPANDEX 5%\n50,5",
+         "COMPOSITION\nCOTTON 95% SPANDEX 5%", "generic"),
+        ("OUTER COTTON 100%\n50", "OUTER COTTON 100%", "outer"),
+    ],
+)
+@pytest.mark.parametrize("source", ["layout", "preprocessed"])
+def test_candidate_cannot_discard_unpaired_numbers_without_percent(
+    monkeypatch, raw, complete, part, source,
+):
+    payloads = (
+        [ocr_text.OcrPayload(raw, complete)]
+        if source == "layout" else [raw, complete]
+    )
+    result, calls = run_with_payloads(monkeypatch, payloads)
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["status"] == "failed"
+    assert analysis["materials"] == {}
+    assert analysis["ocr"]["unpaired_ratio_parts"] == [part]
+    assert analysis["confidence"] == {"ocr": "low", "parser": "low"}
+    assert len(calls) == (1 if source == "layout" else 2)
+
+
+@pytest.mark.parametrize("metadata", ["SIZE\n50", "RN 12345"])
+def test_metadata_numbers_do_not_create_unpaired_ratio_evidence(monkeypatch, metadata):
+    result, _calls = run_with_payloads(monkeypatch, [ocr_text.OcrPayload(
+        f"COTTON 100%\n{metadata}", "COTTON 100%",
+    )])
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["status"] == "success"
+    assert analysis["materials"] == {"cotton": 100}
+    assert analysis["ocr"]["unpaired_ratio_parts"] == []
+
+
 def test_duplicate_unpaired_ratio_requires_another_consumed_occurrence(monkeypatch):
     result, _calls = run_with_payloads(monkeypatch, [ocr_text.OcrPayload(
         "COTTON 100%\n100%", "COTTON 100%",
@@ -132,6 +172,9 @@ def test_duplicate_unpaired_ratio_requires_another_consumed_occurrence(monkeypat
     ("raw", "layout", "expected"),
     [
         ("COTTON 100%\n100%", "COTTON 100%\n면 100%", {"cotton": 100}),
+        ("COTTON 100%\n100", "COTTON 100%\n면 100%", {"cotton": 100}),
+        ("COTTON 95% SPANDEX 5%\n100",
+         "겉감 면 100%\n배색 면 95% 폴리우레탄 5%", {"cotton": 100}),
         ("COTTON 95% SPANDEX 5%\n100%",
          "겉감 면 100%\n배색 면 95% 폴리우레탄 5%", {"cotton": 100}),
     ],

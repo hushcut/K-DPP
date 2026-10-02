@@ -205,13 +205,16 @@ def test_scan_preserves_successful_ocr_metadata_without_saving(
     assert scan_db.committed is False
 
 
+@pytest.mark.parametrize("ratio_row", ["100%", "100", "50"])
 def test_scan_keeps_unpaired_ratio_evidence_on_material_failure(
-    backend_main, scan_db, monkeypatch,
+    backend_main, scan_db, monkeypatch, ratio_row,
 ) -> None:
     monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_args: object())
     monkeypatch.setattr(
         ocr_text, "_run_google_ocr",
-        lambda *_args, **_kwargs: ocr_text.OcrPayload("COTTON 100%\n100%", "COTTON 100%"),
+        lambda *_args, **_kwargs: ocr_text.OcrPayload(
+            f"COTTON 100%\n{ratio_row}", "COTTON 100%",
+        ),
     )
     with pytest.raises(HTTPException) as raised:
         backend_main.scan_label(

@@ -40,7 +40,7 @@ def test_text_runtime_bundle_imports_without_repository_source(tmp_path) -> None
     build_runtime_bundle(output_dir)
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(output_dir)
-    environment.pop("KDPP_ENABLE_SYMBOL_API", None)
+    environment["KDPP_ENABLE_SYMBOL_API"] = "1"
 
     completed = subprocess.run(
         [
@@ -49,8 +49,10 @@ def test_text_runtime_bundle_imports_without_repository_source(tmp_path) -> None
             (
                 "from apps.service.main import app; "
                 "paths = app.openapi()['paths']; "
-                "assert '/v1/analyze-label' in paths; "
-                "assert '/v1/analyze-symbol' not in paths"
+                "assert set(paths) == {'/health', '/v1/parse-text', '/v1/analyze-label'}; "
+                "import sys; "
+                "assert not any(name.split('.')[0] in {'torch', 'torchvision'} "
+                "for name in sys.modules)"
             ),
         ],
         cwd=output_dir,

@@ -1,6 +1,10 @@
-# K-DPP Frontend Scan API Contract
+# K-DPP 공통 스캔 API 계약
 
 이 문서는 Flutter 프론트엔드가 FastAPI 백엔드와 스캔/탄소 계산을 연동할 때 기준으로 삼는 계약입니다.
+
+스캔 계약 확인 기준: 2026-10-02, `ai-integration`의 `50b85c1` 및 잔여 숫자 검증 보완.
+실제 응답은 `BACKEND/main.py`의 `scan_label`, `parse_label_materials`,
+`extract_label_input`과 공통 예외 처리기를 기준으로 확인합니다.
 
 ## 실행 주소
 
@@ -41,10 +45,20 @@ Authorization: Bearer <token>
 
 | 필드 | 형식 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `image` | image file | O | 의류 케어 라벨 사진 |
-| `raw_ocr_text` | string | X | OCR 테스트용 원문 |
+| `image` | 이미지 파일 | O | JPEG/PNG/WebP 의류 케어 라벨 사진, 최대 10MB |
+| `raw_ocr_text` | 문자열 | X | OCR 테스트용 원문, 최대 4000자 |
 
-### Success Response
+`raw_ocr_text`를 보내도 인증·이미지 첨부·Content-Type·용량 검사는 적용됩니다.
+
+### 성공 응답
+
+HTTP 200은 파서가 성공하고 `parse_evidence.composition_status`가 `confirmed`이며,
+각 소재 비율이 유한한 숫자이고 `0 초과 100 이하`, 합계가 정확히 `100%`일 때만 반환합니다.
+숫자 문자열·불리언·NaN·무한대는 허용하지 않으며, 부족하거나 초과한 합계를 보정하지 않습니다.
+성공 시 `ai_success`는 `true`, `analysis_failure_reason`은 `null`입니다.
+
+아래는 `raw_ocr_text`에 `COTTON 80% POLYESTER 20%`를 보낸 예시입니다.
+사진 OCR 경로에서는 `ocr`에 후보 출처·충돌·미연결 비율·호출 횟수 등의 메타데이터가 추가됩니다.
 
 ```json
 {
@@ -63,10 +77,31 @@ Authorization: Bearer <token>
       "display_name": "면",
       "ratio": 80,
       "is_supported": true
+    },
+    {
+      "original_name": "polyester",
+      "standard_name": "polyester",
+      "display_name": "폴리에스터",
+      "ratio": 20,
+      "is_supported": true
     }
   ],
   "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
   "raw_ocr_preview": "COTTON 80% POLYESTER 20%",
+  "warnings": [],
+  "confidence": {
+    "ocr": "unknown",
+    "parser": "high"
+  },
+  "parse_evidence": {
+    "observed_ratios": {"generic": [80.0, 20.0]},
+    "unpaired_ratio_parts": [],
+    "composition_status": "confirmed",
+    "source": "same_line",
+    "ratio_total_before_normalization": 100,
+    "explicit_percent": true
+  },
+  "ocr": {},
   "clothing": {
     "name": "스캔한 의류",
     "category": "상의"
@@ -108,6 +143,9 @@ Authorization: Bearer <token>
 
 ## 2. 스캔 오류
 
+소재 미인식·조성 충돌·미연결 비율·유효하지 않은 혼용률 합계는 HTTP 422로 반환합니다.
+다음은 `raw_ocr_text`가 `CARE LABEL TEXT`일 때의 소재 추출 실패 예시입니다.
+
 ```json
 {
   "status": "error",
@@ -120,86 +158,83 @@ Authorization: Bearer <token>
     "partial_materials": {},
     "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
     "raw_ocr_preview": "CARE LABEL TEXT",
-    "ai_success": false
+    "ai_success": false,
+    "parser_error_code": "composition_not_found",
+    "warnings": [],
+    "confidence": {"ocr": "unknown", "parser": "low"},
+    "parse_evidence": {
+      "observed_ratios": {},
+      "unpaired_ratio_parts": []
+    },
+    "ocr": {}
   }
 }
 ```
 
-프론트 주요 분기:
+### 오류 코드와 프론트 처리
 
-> **이 표가 스캔 오류 계약의 단일 출처입니다** (2026-09-08 지정).
-> `BACKEND/API_CONTRACT.md`의 error_code 목록은 백엔드 내부 참고용이며, 두 문서가
-> 어긋나면 이 표가 우선합니다.
->
-> **`error_code` 열은 백엔드 내부 규약이고 프론트 동작의 근거가 아닙니다.**
-> `FRONTEND/lib`·`test` 전체에서 `error_code`/`errorCode` 검색 결과가 0건입니다.
-> 프론트가 응답 본문에서 읽는 것은 `message`/`detail`/`error`/`reason`뿐이고,
-> 그마저 화면 문구로 쓰이지 않습니다(`userMessage`는 enum 고정 문자열).
-> **프론트 동작을 가르는 유일한 축은 HTTP 상태코드입니다.**
+이 표는 현재 통합 브랜치의 스캔 오류 계약입니다.
+`BACKEND/API_CONTRACT.md`와 설명이 다르면 실제 구현을 확인해 두 문서를 함께 맞춥니다.
+프론트는 `error_code`가 아니라 HTTP 상태코드로 오류 유형을 구분합니다.
+따라서 아래에서 같은 HTTP 상태를 쓰는 오류들은 현재 앱에서 같은 안내 흐름을 탑니다.
 
-| HTTP | error_code | 프론트 처리 |
-| --- | --- | --- |
-| 400 | `BAD_REQUEST` | 사진 처리 실패 안내(다른 사진 선택 유도) |
-| 401 | `AUTH_REQUIRED` | **세션 만료로 판정** — 로그아웃 후 재로그인 유도 |
-| 403 | `AUTH_REQUIRED` | **권한 없음 안내만 표시(로그아웃하지 않음)** |
-| 413 | `PAYLOAD_TOO_LARGE` | 사진 용량 초과 안내 (상한 10MB) |
-| 415 | `UNSUPPORTED_IMAGE_FORMAT` | 지원하지 않는 이미지 안내 (JPEG/PNG/WebP만 허용) ※ |
-| 422 | `MATERIAL_EXTRACTION_FAILED` | 소재 직접 입력 흐름 |
-| 502 | `OCR_FAILED` | 소재 직접 입력 안내 + `다시 촬영` 버튼 제공 |
-| 503 | `AI_MODULE_FAILED` | **전용 분기 없음** — 아래 '그 외 5xx'와 같게 처리됨 |
-| 504 | `OCR_TIMEOUT` | 시간 초과 안내 + 직접 입력 유도 (**백엔드 미구현, 프론트만 준비됨**) |
-| 500 · 그 외 5xx | — | 일시적 서버 문제 안내 (`statusCode >= 500` 폴백) |
+| HTTP | `error_code` | 발생 조건 | 프론트 처리 |
+| --- | --- | --- | --- |
+| 400 | `BAD_REQUEST` | 그 밖의 잘못된 요청 | 다른 사진 선택 안내 |
+| 401 | `AUTH_REQUIRED` | 인증 누락·만료 | 세션 삭제 후 재로그인 유도 |
+| 403 | `AUTH_REQUIRED` | 권한 부족에 대비한 예약 코드 | 안내만 표시, 세션 유지 |
+| 413 | `PAYLOAD_TOO_LARGE` | 이미지 용량 10MB 초과 | 사진 용량 초과 안내 |
+| 415 | `UNSUPPORTED_IMAGE_FORMAT` | JPEG/PNG/WebP 이외의 Content-Type | 지원 형식 안내 |
+| 422 | `MATERIAL_EXTRACTION_FAILED` | 조성 미확정·충돌·미연결 비율·혼용률 합계 오류 | 소재 직접 입력 흐름 |
+| 422 | `IMAGE_MISSING`, `VALIDATION_ERROR` | 이미지 누락 또는 요청 형식·상한 위반 | 현재는 다른 422와 같은 직접 입력 흐름 |
+| 502 | `OCR_NOT_CONFIGURED` | Google Vision 설정·인증 구성 오류 | OCR 실패 안내, 직접 입력·재촬영 유도 |
+| 502 | `OCR_QUOTA_EXCEEDED` | Google Vision 사용량 한도 초과 | OCR 실패 안내, 직접 입력·재촬영 유도 |
+| 502 | `OCR_FAILED` | 그 밖의 OCR 처리 실패 | OCR 실패 안내, 직접 입력·재촬영 유도 |
+| 503 | `AI_MODULE_FAILED` | AI OCR·분석·파서 모듈 import 실패 | 일반 서버 오류 안내 |
+| 503 | `OCR_SERVICE_UNAVAILABLE` | Google Vision 일시 장애 | 일반 서버 오류 안내 |
+| 504 | `OCR_TIMEOUT` | Google Vision 또는 전체 OCR 처리 시간 초과 | 시간 초과 안내, 직접 입력·재촬영 유도 |
+| 500 · 그 외 5xx | `SERVER_ERROR` 등 | 그 밖의 서버 오류 | 일반 서버 오류 안내 |
 
-**503에 대한 주의**: 프론트에 503 전용 case가 없어 `statusCode >= 500` 폴백을 타고
-500·504와 **똑같은 문구**가 나옵니다. 이전 판에 적혀 있던 "서버/AI 모듈 문제 안내"는
-구현되지 않은 내용이었습니다(2026-09-08 정정).
+**503과 504는 실제로 반환하는 상태입니다.** 앱은 503 전용 분기가 없어 일반 서버 오류로
+처리하지만, 504에는 별도의 시간 초과 안내가 있습니다. AI의 전체 OCR 처리 예산은 25초,
+앱의 업로드 요청 상한은 35초입니다.
 
-**503이 실제로 나는 경우**: 서버 기동 시 `from apps.text...` import 실패 한 가지뿐입니다
-(`BACKEND/main.py:882`, `:938`). OCR 미설정·한도 초과·Vision 장애는 전부 **502 `OCR_FAILED`**로
-나갑니다(`:922-932`가 `run_ocr` 실행 중 모든 예외를 `except Exception`으로 잡음).
+### 성공·실패 응답의 판단 근거
 
-**504는 현재 백엔드가 내지 않고, 프론트에만 처리 경로가 있습니다**(403과 같은 형태).
-AI 계층에는 타임아웃이 있으나(`ksw/ai-ocr-enhancement`의 `OCR_TIMEOUT_SECONDS = 20`)
-develop에는 없고, 프론트 상한은 35초입니다.
+- `/api/scan`은 OCR 문자열뿐 아니라 `analyze_ocr_result()`가 만든 충돌·미연결 비율
+  메타데이터를 소비합니다. 문자열 전용 호출에서 발생한 `OcrCompositionError`도
+  소재 미확정으로 처리하여 최종 HTTP 422로 반환합니다.
+- `parser_error_code`는 `ambiguous_composition`, `composition_not_found` 등의 세부 실패 원인입니다.
+  `warnings`, `confidence`, `parse_evidence`, `ocr`는 성공과 소재 추출 실패 응답에 함께 전달합니다.
+- 후보가 `%` 없는 숫자 행을 빠뜨려도 이미 감지한 잔여 비율을 지우지 않습니다.
+  다른 후보가 같은 비율 값과 개수를 모두 조성에 연결해야 미연결 상태를 해소합니다.
+- 대표 부위가 충돌하거나 미확정이면 성공으로 반환하지 않습니다. 안감 등 낮은 우선순위
+  부위만 불확실하고 겉감이 확인되면, 불확실한 부위를 제외한 겉감은 성공할 수 있습니다.
+- 합계가 불완전한 조성을 `200 + ai_success: false` 또는 `RATIO_INCOMPLETE`로 반환하는
+  이전 스캔 경로는 사용하지 않습니다. 스캔 성공 자체가 합계 검증을 통과한 결과입니다.
 
-`AI_REQUESTS.md` F-4 요청에 따라 2026-09-08에 프론트에 `case 504:`를 추가했습니다
-(`scan_api_service.dart`, 브랜치 `jw/scan-partial-prefill`). 예고대로 새 enum은 만들지
-않고 기존 `ScanApiErrorType.timeout`을 재사용하므로, 통신 시간 초과와 같은 문구
-("분석이 예상보다 오래 걸렸어요. 다시 시도하거나 직접 입력해 주세요.")가 나갑니다.
-즉 502·503과 후속 흐름은 같고 문구만 시간 초과에 맞게 달라집니다.
+### 422 `detail`의 프론트 사용
 
-### 422 `detail`의 프론트 사용 (2026-09-08 추가)
-
-직접 입력 폼은 `detail`의 아래 세 필드를 초기값으로 씁니다
+소재 추출 실패의 직접 입력 폼은 `detail`의 아래 필드를 초기값으로 사용합니다
 (`scan_api_service.dart` → `scan_draft_service.dart` → `scan_result_view.dart`).
 
-| 필드 | 폼 반영 | 현재 실제로 오는 값 |
+| 필드 | 폼 반영 | 현재 반환 값 |
 | --- | --- | --- |
-| `partial_materials` | 소재·혼용률 입력 줄 | **항상 `{}`** |
-| `care_instruction` | 관리 지침 문구 | 항상 상수 `'라벨 표기법에 맞춰 관리하세요.'` |
-| `raw_ocr_preview` | '인식된 라벨 원문' 카드 | AI가 읽어낸 라벨 글자 (상한 220자) |
+| `partial_materials` | 소재·혼용률 입력 줄 | 항상 `{}` |
+| `care_instruction` | 관리 지침 문구 | 인식된 관리 지침, 없으면 기본 문구 |
+| `raw_ocr_preview` | 인식된 라벨 원문 카드 | 제한된 OCR 미리보기 |
 
-**`partial_materials`는 이 경로에서 채워질 수 없습니다.** 422는 `materials`가 비었을
-때만 나고(`main.py:951`), 실패 응답을 만드는 AI `failed_response`도 `materials`·`parts`를
-`{}`로 고정합니다(develop·enhancement 공통). 즉 오늘 이 필드로 프리필되는 값은 없습니다.
-프론트는 값이 오면 그대로 채우도록 배선만 해 뒀으므로, AI 파서가 부분 인식 결과를
-실패 응답에 담기 시작하면 프론트 변경 없이 동작합니다.
+`materials`와 `partial_materials`는 소재 추출 실패 시 항상 비웁니다.
+실패한 조성을 부분 정답처럼 채우지 않으므로 사용자가 소재·비율을 직접 입력해야 합니다.
+`care_instruction`은 파서의 `care_text` 또는 `care_instruction`을 읽으며,
+둘 다 없거나 비어 있으면 `라벨 표기법에 맞춰 관리하세요.`를 사용합니다.
+프론트는 소재 추출 실패의 근거 필드를 진단 화면에 모두 표시하지는 않습니다.
+요청 형식 오류의 422는 `detail`이 검증 오류 목록이며, 위 소재 실패 객체와 구분해야 합니다.
 
-`care_instruction`도 마찬가지로 지금은 상수입니다 — develop `failed_response`에는
-`care_text` 키 자체가 없습니다. enhancement는 실패 시에도 `parse_care()`를 돌려 실제
-지침을 담지만 키 이름이 `care_instruction`이라, 백엔드가 두 키를 모두 읽도록 함께
-고쳤습니다(`main.py:950-956`).
+### 지원 이미지 형식
 
-**실제로 부분 인식이 일어나는 경로는 422가 아니라 200입니다.** 소재를 찾았으나 합계가
-100이 아니면 `ai_success: false` + `analysis_failure_reason: "RATIO_INCOMPLETE"`로
-**200**이 나가고, 프론트는 이미 그 소재를 폼에 채웁니다. 다만 프론트가 `ai_success`를
-읽지 않아 화면에는 "스캔 완료!"로 표시되고, 저장 단계에서야 합계 경고를 만납니다
-(미해결, 백로그).
-
-※ **415의 WebP 허용은 백엔드 상수(`main.py:52`) 기준입니다.** AI 계층은 JPEG/PNG만 받습니다
-(`ksw/ai-ocr-enhancement`의 `SUPPORTED_IMAGE_FORMATS`). 현재는 백엔드가 OCR 텍스트를
-직접 다루므로 문제되지 않지만, HTTP 서비스로 전환하면 정합이 필요합니다
-(`docs/AI_REQUESTS.md` F-6).
+백엔드는 JPEG/PNG/WebP Content-Type을 허용하고, AI 이미지 검증·전처리도 WebP를 지원합니다.
+백엔드와 AI 사이에 WebP 지원을 따로 추가해야 하는 미완료 작업은 없습니다.
 
 ## 2-1. 인증 오류 (401 / 403)
 

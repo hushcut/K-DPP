@@ -1,6 +1,6 @@
 # K-DPP AI OCR 통합 모듈
 
-K-DPP의 OCR 소재 분석과 세탁기호 실험 기능을 모은 AI 모듈입니다.
+K-DPP의 OCR 소재·혼용률 분석과 텍스트 관리 지침 파싱을 제공하는 AI 모듈입니다.
 
 ## 2026-10-02 AI 통합 기준
 
@@ -26,7 +26,6 @@ K-DPP의 OCR 소재 분석과 세탁기호 실험 기능을 모은 AI 모듈입�
 
 기존 보고서와 날짜별 결과는 당시 코드·옵션의 기록입니다. 통합된 코드의 실사진
 성능은 같은 정답지·OCR 캐시 또는 별도의 실제 OCR 평가로 다시 확인해야 합니다.
-세탁기호 분류기는 아래에 설명한 별도 실험 경로로 유지합니다.
 
 ## 팀 공통 규칙
 
@@ -37,7 +36,7 @@ K-DPP의 OCR 소재 분석과 세탁기호 실험 기능을 모은 AI 모듈입�
 - 서비스 계정 JSON, 실제 데이터셋, 모델, OCR 캐시·출력물은 커밋하지 않습니다.
 - `ruff check --fix`나 `ruff format`으로 기존 코드를 일괄 변경하지 않습니다. 검사
   결과를 검토해 필요한 변경만 적용합니다.
-- Python 3.12 환경은 텍스트·세탁기호 실험·CI 잠금 파일에서 필요한 설치 범위를 선택합니다.
+- Python 3.12 환경은 텍스트 OCR·개발/CI 잠금 파일에서 필요한 설치 범위를 선택합니다.
 
 ## 현재 서비스 범위
 
@@ -48,17 +47,6 @@ K-DPP의 OCR 소재 분석과 세탁기호 실험 기능을 모은 AI 모듈입�
 라벨 이미지 -> Google Vision OCR -> 소재/혼용률 파서 -> 소재 분석 결과
 ```
 
-`apps/symbol/`의 ResNet18 세탁기호 분류기는 별도 실험 기능입니다. 이 모델은
-전체 라벨에서 세탁기호 위치를 찾지 못하며, 이미 잘라낸 단일 세탁기호 이미지만
-입력으로 받습니다. 따라서 현재 탄소배출량 계산 흐름에는 연결되어 있지 않습니다.
-
-### OCR과 세탁기호 경로를 분리하는 이유
-
-OCR 소재 분석은 전체 의류 라벨 이미지에서 텍스트를 읽고 혼용률을 구조화하는
-서비스 경로입니다. 반면 세탁기호 분류는 잘라낸 기호 이미지와 별도 모델 가중치가
-필요한 실험 경로입니다. 두 입력 조건과 배포 준비 수준이 다르므로, OCR 요청에서
-세탁기호 모델을 미리 불러오거나 그 오류가 OCR을 막지 않도록 분리합니다.
-
 ## 폴더 구조
 
 ```text
@@ -66,16 +54,11 @@ kdpp_ai_ocr_integrated/
   apps/
     service/                 # FastAPI 서비스 경계와 응답 형식
     text/                    # 이미지 검증, OCR, 소재/혼용률 파싱, OCR QA 계약
-    symbol/                  # 세탁기호 ResNet18 실험 코드
   scripts/
     audit_ocr_qa_dataset.py   # OCR QA 정답지 품질 감사
-    audit_symbol_dataset.py  # 세탁기호 데이터셋 품질 감사
-    check_split_leakage.py   # train/valid/test 누수 검사
     run_ai_checks.py         # 문법, 테스트, 데이터 검사 실행 도구
     run_combined_batch.py    # 이미지 폴더 일괄 분석 도구
     run_qa_batch.py          # OCR/파서 단위 QA 도구
-  data/                      # 로컬 세탁기호 학습 데이터 위치, Git 추적 제외
-  models/                    # 로컬 모델 가중치 위치, Git 추적 제외
   outputs/                   # QA·평가 결과와 OCR 캐시 위치, Git 추적 제외
 ```
 
@@ -103,39 +86,19 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-텍스트 OCR과 소재 파서만 실행할 때는 PyTorch가 포함되지 않은 기본 의존성을
-설치합니다.
+텍스트 OCR과 소재 파서만 실행할 때는 기본 의존성을 설치합니다.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-text.lock
 ```
 
-세탁기호 학습·평가 또는 `/v1/analyze-symbol` API가 필요한 환경은 선택 의존성을
-설치합니다.
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-symbol.lock
-```
-
-심볼 API는 텍스트 OCR 서비스의 기본 라우트에 포함되지 않습니다. 선택 의존성을
-설치한 뒤 실행 환경에서 명시적으로 활성화합니다.
-
-```powershell
-$env:KDPP_ENABLE_SYMBOL_API = "1"
-$env:KDPP_SYMBOL_MODEL_PATH = "models/symbol/best_symbol_model_exp.pt"
-.\.venv\Scripts\python.exe -m apps.service
-```
-
-`requirements-dev.txt`는 전체 테스트를 위해 세탁기호 의존성도 함께 설치합니다.
-
 ### 의존성 잠금 정책
 
-`requirements.txt`, `requirements-symbol.txt`, `requirements-dev.txt`와
+`requirements.txt`, `requirements-dev.txt`와
 `BACKEND/requirements.txt`는 직접 의존성의 허용 범위를 정하는 입력입니다.
 설치에는 Python 3.12 기준의 정확한 버전을 기록한 잠금 파일을 사용합니다.
 
 - `requirements-text.lock`: 기본 OCR 서비스와 파서만 설치합니다.
-- `requirements-symbol.lock`: 기본 OCR에 선택적인 세탁기호 실험 의존성을 더합니다.
 - `requirements-ci.lock`: AI 개발·전체 테스트와 백엔드 의존성을 함께 설치합니다.
 
 잠금 파일은 `uv==0.12.18`로 Windows와 Linux에 공통인 버전을 해석해 생성했습니다.
@@ -146,11 +109,10 @@ $env:KDPP_SYMBOL_MODEL_PATH = "models/symbol/best_symbol_model_exp.pt"
 ```powershell
 .\.venv\Scripts\python.exe -m pip install uv==0.12.18
 .\.venv\Scripts\uv.exe pip compile requirements.txt --universal --python-version 3.12 --no-header --no-annotate -o requirements-text.lock
-.\.venv\Scripts\uv.exe pip compile requirements-symbol.txt --universal --python-version 3.12 --no-header --no-annotate -o requirements-symbol.lock
 .\.venv\Scripts\uv.exe pip compile requirements-dev.txt ..\..\BACKEND\requirements.txt --universal --python-version 3.12 --no-header --no-annotate -o requirements-ci.lock
 ```
 
-CI는 세 잠금 파일이 입력 요구사항과 맞는지 검사하고 `requirements-ci.lock`으로
+CI는 두 잠금 파일이 입력 요구사항과 맞는지 검사하고 `requirements-ci.lock`으로
 설치합니다. 잠금 파일은 패키지 **버전**을 고정하며 배포 파일 해시까지 고정하지는 않습니다.
 
 ### 텍스트 OCR 운영 번들
@@ -163,7 +125,7 @@ CI는 세 잠금 파일이 입력 요구사항과 맞는지 검사하고 `requir
 
 생성된 `dist/text-runtime`에는 텍스트 OCR 서비스, 기본 `requirements.txt`와
 `requirements-text.lock`이 포함됩니다. 배포 환경은 잠금 파일로 의존성을 설치합니다.
-심볼 학습·평가, 합성 데이터 생성, QA 스크립트, 테스트, 데이터셋, 모델과 출력물은
+합성 데이터 생성, QA 스크립트, 테스트, 데이터셋과 출력물은
 포함되지 않습니다. 배포 환경에서는 번들 디렉터리에서 다음 진입점을 사용합니다.
 
 ```powershell
@@ -196,7 +158,6 @@ AI 폴더에서 다음 명령으로 실행합니다. 이미지 OCR은 실행 환
 | `GET /health` | 서비스 상태와 API 버전 확인 |
 | `POST /v1/parse-text` | JSON의 `text` 필드로 이미 추출한 텍스트 파싱 |
 | `POST /v1/analyze-label` | multipart의 `file` 필드로 이미지 업로드·OCR·파싱 |
-| `POST /v1/analyze-symbol` | 명시적으로 활성화한 경우에만 단일 세탁기호 분류 |
 
 텍스트 파싱 요청 예시입니다.
 
@@ -494,72 +455,8 @@ AI 편집본도 같은 원본을 공유하므로 독립 실사진 평가로 계�
 짝지어 집계합니다. 이 역시 `original_text`를 파서에 넣는 검사이므로, 시각 OCR 성능의
 증거가 아니라 파서 규칙의 회귀 지표입니다.
 
-## 세탁기호 ResNet18 실험
-
-### 데이터 계약
-
-로컬 데이터셋은 아래 형태로 둡니다.
-
-```text
-data/
-  train/
-  valid/
-  test/
-```
-
-각 분할(`train`·`valid`·`test`)에는 `_classes.csv`와 CSV가 참조하는 이미지 파일이 있어야 합니다.
-`_classes.csv`는 `filename` 열 뒤에 0 또는 1 값의 클래스 열을 같은 순서로 가져야 합니다.
-모든 클래스 값이 0인 행도 정상적인 음성 샘플이므로 삭제하지 않습니다.
-
-새 데이터셋은 원본 이미지와 증강·중복 이미지를 같은 분할에 유지하는 그룹 기반 분할을
-권장합니다. 권장 시작 비율은 train 70%, valid 15%, test 15%이며, 실제 데이터 구조에
-따라 달라질 수 있습니다.
-
-학습 전에는 다음 감사를 실행합니다.
-
-```powershell
-.\.venv\Scripts\python.exe -m scripts.audit_symbol_dataset --data-dir data
-```
-
-이 도구는 분할별 수량·비율, 클래스별 양성 샘플, 음성 샘플, 다중 라벨 행,
-원본명·SHA-256 기준 누수를 확인합니다. 학습도 양성 샘플이 없는 선언 클래스가 있으면
-중단합니다.
-
-### 학습과 평가
-
-```powershell
-.\.venv\Scripts\python.exe -m apps.symbol.train_symbol_experiment
-.\.venv\Scripts\python.exe -m apps.symbol.evaluate_symbol `
-  --model models/symbol/best_symbol_model_exp.pt `
-  --split valid
-```
-
-검증 지표는 전체·관측 클래스별 F1 평균(macro-F1), 전체 판정을 통합한 F1(micro-F1),
-이미지별 모든 라벨의 일치율(exact match)을 함께 확인합니다. 전체 클래스 macro-F1은 검증 데이터에 한 번도 나오지 않은 클래스가
-좋은 점수에 가려지는 것을 막고, 관측 클래스 macro-F1은 실제 등장한 클래스에서의
-분류 품질을 따로 읽게 합니다. 희귀 클래스가 있는 다중 라벨 데이터에서는 클래스별
-판정 일치율(Hamming accuracy)만으로 모델을 선택하지 않습니다.
-
-현재 기본 체크포인트 경로는 `models/symbol/best_symbol_model_exp.pt` 하나입니다.
-실험별 체크포인트·설정·지표를 별도 폴더로 보존하는 버전 관리와 여러 백본 모델의 비교는 아직
-완료되지 않았습니다.
-
-## 현재 확인되지 않은 사항
-
-저장소에는 실제 `data/` 폴더와 모델 가중치가 포함되어 있지 않습니다. 따라서 아래
-정보는 현재 코드만으로 확인할 수 없습니다.
-
-- 데이터 출처와 라이선스
-- 총 이미지 수와 클래스별 분포
-- 실제 train/valid/test 분할 결과와 누수 검사 결과
-- 증강 방식과 라벨링·검수 기준
-- ResNet18 및 다른 백본의 실제 성능 비교 결과
-
-이 정보는 실제 데이터셋 경로가 준비된 뒤 감사 결과와 함께 데이터 카드로 작성합니다.
-
 ## 알려진 한계와 다음 작업
 
-- 세탁기호 모델은 전체 라벨에서 기호 위치를 검출하지 않습니다.
 - 현재 DPP 사용자 흐름은 소재 OCR 분석만 사용합니다.
 - AI 단위 QA와 `/api/scan` 통합 QA는 위에 명시한 측정 범위·허용 오차를 각각 적용합니다.
 - 백엔드의 조성 실패 오류 매핑과 통합 QA의 인증 헤더 지원은 후속 작업입니다.

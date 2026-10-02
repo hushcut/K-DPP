@@ -585,9 +585,14 @@ def _best_candidates_by_part(
     }
 
     observed_ratios: dict[str, list[float]] = {}
+    # % 없는 숫자 행도 잔여 비율 검사와 같은 기준으로 비교 근거에 남긴다.
     for info in infos:
         if not _is_metadata_line(info) and (
-            info.materials or (info.explicit_percent and _is_ratio_only_composition_row(info))
+            info.materials
+            or (
+                (info.explicit_percent or info.numbers)
+                and _is_ratio_only_composition_row(info)
+            )
         ):
             observed_ratios.setdefault(info.part, []).extend(float(value) for value in info.numbers)
     ratio_evidence = {
