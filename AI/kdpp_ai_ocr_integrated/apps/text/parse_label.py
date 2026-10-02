@@ -182,6 +182,7 @@ def _is_metadata_line(info: LineInfo) -> bool:
         info.unresolved_materials
         or (info.materials and "%" in info.normalized)
         or (info.invalid_evidence and _has_invalid_numeric_row(info))
+        or _is_unresolved_percent_row(info)
     ):
         return False
     # A product code, origin, date or size can share a row with the fiber
@@ -406,13 +407,26 @@ def _is_ratio_only_composition_row(info: LineInfo) -> bool:
 
 
 def _is_unresolved_percent_row(info: LineInfo) -> bool:
-    """미등록 소재처럼 해석되지 않은 단어가 붙은 독립 퍼센트 행을 확인한다."""
+    """유효 비율을 읽지 못해도 미등록 소재의 퍼센트 표기는 보존한다."""
+
+    metadata_header = _METADATA_HEADER_PATTERN.fullmatch(info.normalized)
+    if (
+        metadata_header
+        and _looks_like_non_composition_number(info.normalized)
+        and not _TOKEN_PATTERN.search(metadata_header.group("value"))
+    ):
+        # Retain numeric-only fields already treated as metadata. Any fiber
+        # words on the same row still require composition validation.
+        return False
 
     return (
         not info.materials
-        and info.explicit_percent
-        and not _is_metadata_line(info)
+        and "%" in _strip_excluded_segments(info.normalized)
+        # Only strictly classified metadata is safe to discard. Product/date
+        # text on a shared row must not hide an unknown fiber declaration.
+        and not info.is_metadata
         and not _mentions_care(info.normalized)
+        and not any(phrase in info.normalized for phrase in DESCRIPTIVE_MATERIAL_PHRASES)
         and not _is_ratio_only_composition_row(info)
     )
 

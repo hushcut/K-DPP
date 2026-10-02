@@ -21,6 +21,58 @@ def test_unregistered_fiber_percentage_blocks_same_part(unknown_row, placement):
         [100.0, .5 if unknown_row == "OLEFIN .5%" else 50.0]
     )
 
+@pytest.mark.parametrize("unknown_row", [
+    "OLEFIN 0%", "OLEFIN -5%", "OLEFIN 101%",
+    "OLEFIN 100.000000000000000001%", "OLEFIN 1..5%",
+    "0% OLEFIN", "-5% OLEFIN", "101% OLEFIN",
+])
+@pytest.mark.parametrize("placement", ["before", "after"])
+def test_invalid_unknown_fiber_percentage_cannot_disappear(unknown_row, placement):
+    text = f"{unknown_row}\nCOTTON 100%" if placement == "before" else f"COTTON 100%\n{unknown_row}"
+    result = parse_label(text)
+    assert result["status"] == "failed", result
+    assert result["materials"] == {}
+    assert parse_materials(text) == {}
+
+
+@pytest.mark.parametrize("unknown_row", [
+    "품번 AB123 OLEFIN 50%", "OLEFIN 50% 품번 AB123",
+    "제조국 중국 OLEFIN 50%", "OLEFIN 50% 제조국 중국",
+    "제조년월 2024년 OLEFIN 50%", "OLEFIN 50% 제조년월 2024년",
+    "製造年月 2024 OLEFIN 50%", "OLEFIN 50% 製造年月 2024",
+    "2024 OLEFIN 50%", "OLEFIN 50% 2024",
+    "호칭 OLEFIN 0%", "호칭 57% OLEFIN 38%",
+])
+@pytest.mark.parametrize("placement", ["before", "after"])
+def test_metadata_on_unknown_percentage_row_cannot_hide_composition(unknown_row, placement):
+    text = f"{unknown_row}\nCOTTON 100%" if placement == "before" else f"COTTON 100%\n{unknown_row}"
+    result = parse_label(text)
+    assert result["status"] == "failed", result
+    assert result["materials"] == {}
+    assert parse_materials(text) == {}
+
+
+@pytest.mark.parametrize("unknown_row", [
+    "OLEFIN 101%", "OLEFIN 1..5%", "품번 AB123 OLEFIN 50%",
+])
+def test_invalid_unknown_outer_cannot_fall_back_to_lining(unknown_row):
+    result = parse_label(f"OUTER {unknown_row}\nLINING COTTON 100%")
+    assert result["status"] == "failed", result
+    assert result["materials"] == {}
+
+
+@pytest.mark.parametrize("unknown_row", [
+    "OLEFIN 101%", "OLEFIN 1..5%", "품번 AB123 OLEFIN 50%",
+])
+def test_invalid_unknown_lining_keeps_confirmed_outer(unknown_row):
+    result = parse_label(f"OUTER COTTON 100%\nLINING {unknown_row}")
+    assert result["status"] == "success", result
+    assert result["selected_part"] == "outer"
+    assert result["materials"] == {"cotton": 100}
+    assert result["parts"] == {"outer": {"cotton": 100}}
+    assert any(warning.startswith("lining:") for warning in result["warnings"])
+
+
 def test_unknown_outer_does_not_fall_back_to_confirmed_lining():
     result = parse_label("OUTER OLEFIN 100%\nLINING COTTON 100%")
     assert result["status"] == "failed"
@@ -44,6 +96,8 @@ def test_unknown_lining_keeps_confirmed_outer_and_warning():
     "SHRINKAGE 3%", "SHRINKAGE\n3%", "수축률 3% 이하",
     "WASH AT 30°C", "세탁 온도 30도", "WASH IN 100% COLD WATER",
     "COTTON FEEL 100%", "품번 AB1234", "제조년월 2024년",
+    "제조국 중국", "製造年月 2024", "2024", "STYLE AB123 OLEFIN",
+    "호칭 57% 38% 5%",
 ])
 def test_explicit_metadata_does_not_block_confirmed_composition(metadata):
     result = parse_label(f"COTTON 100%\n{metadata}")
@@ -56,6 +110,10 @@ def test_explicit_metadata_does_not_block_confirmed_composition(metadata):
     ("COTTON\nPOLYESTER\n80%\n20%", {"cotton": 80, "polyester": 20}),
     ("COTTON 100%\n면 100%", {"cotton": 100}),
     ("COTTON 98.7% SPANDEX 1.3%", {"cotton": 98.7, "spandex": 1.3}),
+    ("품번 AB123 COTTON 100%", {"cotton": 100}),
+    ("COTTON 100% 품번 AB123", {"cotton": 100}),
+    ("제조년월 2024년 COTTON 100%", {"cotton": 100}),
+    ("COTTON 100% 제조년월 2024년", {"cotton": 100}),
 ])
 def test_supported_compositions_are_preserved(text, materials):
     result = parse_label(text)
@@ -66,6 +124,13 @@ def test_supported_compositions_are_preserved(text, materials):
 @pytest.mark.parametrize("text", [
     "COTTON 100%\nOLEFIN 50%",
     "OUTER OLEFIN 100%\nLINING COTTON 100%",
+    "COTTON 100%\nOLEFIN 0%",
+    "COTTON 100%\nOLEFIN -5%",
+    "COTTON 100%\nOLEFIN 101%",
+    "COTTON 100%\nOLEFIN 100.000000000000000001%",
+    "COTTON 100%\nOLEFIN 1..5%",
+    "COTTON 100%\n품번 AB123 OLEFIN 50%",
+    "COTTON 100%\nOLEFIN 50% 2024",
 ])
 def test_unregistered_fiber_failure_preserves_service_response_contract(text):
     response = analyze_label_text(text)
@@ -76,7 +141,11 @@ def test_unregistered_fiber_failure_preserves_service_response_contract(text):
     with TestClient(app, raise_server_exceptions=False) as client:
         result = client.post("/v1/parse-text", json={"text": text})
     assert result.status_code == 422
-    assert result.json()["materials"] == {}
+    body = result.json()
+    assert body["status"] == "failed"
+    assert body["materials"] == {}
+    assert body["parts"] == {}
+    assert body["selected_part"] == ""
 
 
 @pytest.mark.parametrize("text", [
