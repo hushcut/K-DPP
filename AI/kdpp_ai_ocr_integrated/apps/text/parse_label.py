@@ -1,474 +1,802 @@
 import re
-from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import replace, dataclass
+from decimal import Decimal, InvalidOperation
 
-from apps.text.rules import CARE_RULES, MATERIAL_ALIASES, MATERIAL_KOREAN, OCR_CORRECTIONS
+from apps.text.ratio_contract import EXACT_RATIO_TOTAL, has_exact_total
+
+from apps.text.composition_candidates import (
+    CompositionCandidate,
+    LineInfo,
+    _collect_candidates,
+    equivalent_composition as _equivalent_composition,
+)
+
+from apps.text.material_extraction import (
+    PART_PATTERNS,
+    ALIAS_TO_MATERIAL,
+    _material_evidence,
+    _strip_excluded_segments,
+    _TOKEN_PATTERN,
+    clean_ocr_preview,
+    declared_part,
+    extract_materials,
+    find_material_key,
+    is_part_marker_match,
+    normalize_text,
+    unresolved_material_tokens,
+)
+from apps.text.rules import (
+    CARE_CONFLICTS,
+    CARE_RULES,
+    MATERIAL_KOREAN,
+)
 
 
-PART_PATTERNS = {
-    "outer": ["\uac89\uac10", "\uac89 \uac10", "\uc678\ud53c", "\ud45c\uba74", "\ubcf8\uccb4", "\ubab8\ud310", "\ubcf8\ud53c", "shell", "outshell", "outer", "face", "main fabric", "\u672c\u4f53", "\u9762\u6599"],
-    "lining": ["\uc548\uac10", "\uc548 \uac10", "\ub0b4\ud53c", "lining", "lning", "uning", "un ing", "\u88cf\u5730", "\u91cc\u6599", "\u88e1\u6599"],
-    "filling": ["\ucda9\uc804\uc7ac", "\ucda9\uc804\uc81c", "\ucda9\uc804", "\uc19c", "filling", "fill", "\u4e2d\u308f\u305f", "\u586b\u5145"],
-    "pocket": ["\uc8fc\uba38\ub2c8\uac10", "\uc8fc\uba38\ub2c8", "pocket"],
-    "rib": ["\ub9bd", "\ub9ac\ube0c", "rib"],
-    "sleeve": ["\uc18c\ub9e4", "sleeve"],
-    "color_block": ["\ubc30\uc0c9", "contrast", "\u914d\u8272"],
+PART_PRIORITY = [
+    "outer",
+    "generic",
+    "lining",
+    "filling",
+    "pocket",
+    "rib",
+    "sleeve",
+    "color_block",
+]
+
+NON_COMPOSITION_WORDS = {
+    "제품명",
+    "제조년월",
+    "제조국",
+    "수입자",
+    "판매자",
+    "품번",
+    "호칭",
+    "신체치수",
+    "가슴둘레",
+    "허리둘레",
+    "검사필",
+    "产品名称",
+    "產品名稱",
+    "货号",
+    "貨號",
+    "型号",
+    "型號",
+    "尺码",
+    "尺碼",
+    "生产日期",
+    "生產日期",
+    "製造年月",
+    "製造国",
+    "製造國",
+    "品番",
+    "サイズ",
 }
 
-NOISE_WORDS = {
-    "\uc81c\ud488", "\uc81c\ud488\uba85", "\uc81c\uc870", "\uc81c\uc870\ub144\uc6d4", "\uc81c\uc870\uad6d", "\uc218\uc785\uc790", "\ud310\ub9e4\uc790", "\ud488\ubc88", "\ud638\uce6d",
-    "\uc2e0\uccb4\uce58\uc218", "\uac00\uc2b4\ub458\ub808", "\ud5c8\ub9ac\ub458\ub808", "\uac80\uc0ac", "\ud544", "\uc8fc\uc758", "\ucde8\uae09\uc8fc\uc758", "\uc138\ud0c1",
-    "\uc2ec\uc9c0", "\ubcf4\uac15\uc7ac", "\uc0c1\ud45c", "\ubb34\ub2ac", "\ubc34\ub4dc", "\ub808\uc774\uc2a4", "\uc790\uc218", "\uc7a5\uc2dd", "\uc81c\uc678",
+# Marketing copy can contain a material name and a percentage-like decoration
+# without declaring fiber content. Treat these phrases as non-composition so
+# a false positive is not returned as a confirmed material ratio.
+DESCRIPTIVE_MATERIAL_PHRASES = {
+    "silk touch",
+    "cotton feel",
+    "polyester look",
+    "wool like",
+    "wool-like",
 }
 
+COMPOSITION_HINTS = {
+    "섬유의 조성",
+    "혼용률",
+    "혼용율",
+    "소재",
+    "composition",
+    "fabric content",
+    "material",
+    "materials",
+    "fiber content",
+    "纤维成分",
+    "纖維成分",
+    "面料成分",
+    "材质",
+    "材質",
+    "組成表示",
+    "混用率",
+    "品質表示",
+}
 
-@dataclass
-class LineInfo:
-    index: int
-    raw: str
-    normalized: str
-    part: str
-    materials: list[str]
-    numbers: list[float]
+_RATIO_ROW_LABELS = COMPOSITION_HINTS | {
+    normalize_text(alias) for aliases in PART_PATTERNS.values() for alias in aliases
+}
+_RATIO_ROW_LABEL_PATTERN = re.compile(
+    "|".join(
+        rf"(?<![a-z]){re.escape(label)}(?![a-z])" if label.isascii() else re.escape(label)
+        for label in sorted(_RATIO_ROW_LABELS, key=len, reverse=True)
+    )
+)
+
+_RATIO_NUMBER = r"([-+−]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+))"
+_PERCENT_PATTERN = re.compile(
+    rf"(?<![a-z0-9.+−-])(?<![0-9],){_RATIO_NUMBER}\s*[%％]",
+    re.IGNORECASE,
+)
+_PLAIN_NUMBER_PATTERN = re.compile(
+    rf"(?<![a-z0-9.+−-])(?<![0-9],){_RATIO_NUMBER}(?![a-z0-9.]|,[0-9])",
+    re.IGNORECASE,
+)
+# A wash temperature carries no percent marker, so it would otherwise be free
+# to complete a partial composition (``COTTON 70% SPANDEX 30°C``).
+_TEMPERATURE_PATTERN = re.compile(
+    r"(?<![a-z0-9])[0-9]{1,3}(?:\.[0-9]+)?\s*(?:°c|°f|도(?![가-힣]))",
+    re.IGNORECASE,
+)
 
 
-def normalize_text(text: str) -> str:
-    if not text:
-        return ""
-    normalized = text.lower()
-    normalized = normalized.replace("\uff1a", ":").replace("\uff05", "%")
-    normalized = normalized.replace("\u00b7", " ").replace("/", " ")
-    normalized = re.sub(r"\s+", " ", normalized).strip()
-    for wrong, correct in OCR_CORRECTIONS.items():
-        normalized = re.sub(rf"\b{re.escape(wrong)}\b", correct, normalized)
-    return normalized
+_CARE_PHRASES = tuple(
+    {alias.casefold() for aliases in CARE_RULES.values() for alias in aliases}
+)
+# Number safety needs broader context than the phrases used to display care
+# instructions. These words alone do not imply a specific care recommendation.
+_CARE_CONTEXT_PATTERN = re.compile(
+    r"(?<![a-z])(?:wash(?:ing)?|rinse|bleach(?:ing)?|iron(?:ing)?|dry(?:ing)?)(?![a-z])"
+    r"|세탁|표백|다림질|건조|드라이"
+    r"|水洗|洗涤|洗滌|漂白|熨|烘|干洗|乾洗"
+    r"|洗濯|手洗|アイロン|乾燥|ドライ"
+)
 
 
-def clean_ocr_preview(text: str, max_len: int = 220) -> str:
-    if not text:
-        return ""
-    preview = re.sub(r"\s+", " ", text.replace("\n", " ")).strip()
-    return preview if len(preview) <= max_len else preview[:max_len] + "..."
+def _mentions_care(line: str) -> bool:
+    """Whether a row also carries care text, whose numbers are not ratios."""
+
+    return bool(_CARE_CONTEXT_PATTERN.search(line)) or any(
+        phrase in line for phrase in _CARE_PHRASES
+    )
 
 
-def find_material_key(word: str) -> str | None:
-    token = word.lower().strip(" .,:;/()[]{}<>|+-_=*\"'")
-    token = OCR_CORRECTIONS.get(token, token)
+def _mask_temperatures(line: str) -> str:
+    """Blank temperature values, keeping every other offset unchanged."""
 
-    if not token:
-        return None
-    if token in NOISE_WORDS:
-        return None
-    if len(token) < 2 and token.isascii():
-        return None
+    return _TEMPERATURE_PATTERN.sub(lambda match: " " * len(match.group(0)), line)
 
-    for material_key, aliases in MATERIAL_ALIASES.items():
-        for alias in aliases:
-            alias = alias.lower().strip()
-            if not alias:
+
+def _looks_like_non_composition_number(line: str) -> bool:
+    if any(word in line for word in NON_COMPOSITION_WORDS):
+        return True
+    if any(phrase in line for phrase in DESCRIPTIVE_MATERIAL_PHRASES):
+        return True
+    if re.search(r"\b(?:19|20)\d{2}\b", line):
+        return True
+    if re.search(r"\d+(?:\.\d+)?\s*(?:cm|mm|kg|g|호|년|월|일)\b", line):
+        return True
+    return False
+
+
+def _is_metadata_line(info: LineInfo) -> bool:
+    """Whether an OCR row is safe to skip while pairing composition rows."""
+
+    if info.is_metadata:
+        return True
+    if any(phrase in info.normalized for phrase in DESCRIPTIVE_MATERIAL_PHRASES):
+        return True
+    # A product code, origin, date or size can share a row with the fiber
+    # content. Every material still carries its own explicit percent there,
+    # and ``extract_numbers`` has already kept only those percent values.
+    if (
+        info.materials
+        and info.explicit_percent
+        and len(info.materials) == len(info.numbers)
+    ):
+        return False
+    if _looks_like_non_composition_number(info.normalized):
+        return True
+    if info.materials or info.explicit_percent or (info.invalid_evidence and "%" in info.normalized and _is_ratio_only_composition_row(info)):
+        return False
+
+    # Product codes often appear between a material and its percentage in
+    # Vision's paragraph order. They contain letters with digits, or several
+    # bare numeric groups, but never form a material/ratio pair by themselves.
+    has_letters = bool(re.search(r"[a-z가-힣一-龥ぁ-んァ-ン]", info.normalized))
+    has_digits = bool(re.search(r"\d", info.normalized))
+    if has_letters and has_digits:
+        return True
+    return len(_PLAIN_NUMBER_PATTERN.findall(info.normalized)) >= 2
+
+
+def extract_numbers(line: str, allow_plain_numbers: bool = False) -> list[Decimal]:
+    numbers, invalid, _, _ = _read_numbers(
+        line,
+        allow_plain_numbers=allow_plain_numbers,
+    )
+    return [] if invalid else list(numbers)
+
+
+def _split_part_markers(text: str) -> str:
+    markers = {
+        alias
+        for aliases in PART_PATTERNS.values()
+        for alias in aliases
+        if len(alias) >= 2
+    }
+    prepared_lines: list[str] = []
+    for line in text.split("\n"):
+        prepared_line = line
+        for marker in sorted(markers, key=len, reverse=True):
+            suffix = re.search(
+                rf"(?i)({_part_alias_pattern(marker)})"
+                r"[\s)\]}>:;,./|\-‐‑‒–—]*$",
+                prepared_line,
+            )
+            if not suffix or suffix.start() == 0:
                 continue
-            if token == alias:
-                return material_key
-            if alias.isascii() and len(alias) >= 4 and alias in token:
-                return material_key
-            if not alias.isascii() and len(alias) >= 2 and alias in token and len(token) <= 8:
-                return material_key
-            if alias in {"綿", "棉", "毛", "麻", "絹"} and alias in token and len(token) <= 8:
-                return material_key
-    return None
+
+            composition = prepared_line[: suffix.start()].rstrip(
+                " \t([{<:;,./|-‐‑‒–—"
+            )
+            if extract_materials(composition):
+                prepared_line = f"{composition} {suffix.group(1)}"
+                break
+        prepared_lines.append(prepared_line)
+
+    prepared = "\n".join(prepared_lines)
+    for marker in sorted(markers, key=len, reverse=True):
+        prepared = re.sub(
+            rf"(?i)(?<!^)(?<!\n)({_part_alias_pattern(marker)})"
+            r"(?=[^\n]*[0-9a-zà-ÿ가-힣一-龥ぁ-んァ-ン])",
+            lambda match: "\n" + match.group() if is_part_marker_match(prepared, match) else match.group(),
+            prepared,
+        )
+    return prepared
 
 
-def detect_part(line: str, current_part: str) -> str:
-    for part, aliases in PART_PATTERNS.items():
-        if any(alias.lower() in line for alias in aliases):
-            return part
-    return current_part
+def _apply_trailing_part_markers(infos: list[LineInfo]) -> list[LineInfo]:
+    """Retag composition rows on labels that print the part marker after them.
 
+    ``100% COTTON LINING`` names the row before the marker, while
+    ``表地 / 55% モダール`` and ``면 100% / 안감 / 폴리 100%`` name the rows after
+    it. A label is read marker-after only when it opens with a composition row
+    and closes with a standalone marker; otherwise the forward scan stands.
+    """
 
-def extract_numbers(line: str, allow_plain_numbers: bool) -> list[float]:
-    nums = []
-    for match in re.finditer(r"(?<![a-z0-9])([0-9]{1,3})(?:\s*%)", line):
-        value = float(match.group(1))
-        if 0 < value <= 100:
-            nums.append(value)
+    marker_rows = [
+        position for position, info in enumerate(infos) if info.is_standalone_marker
+    ]
+    material_rows = [position for position, info in enumerate(infos) if info.materials]
+    if not marker_rows or not material_rows:
+        return infos
+    trailing_layout = (
+        material_rows[0] < marker_rows[0]
+        and material_rows[-1] < marker_rows[-1]
+        # A ratio after the last marker belongs to its forward block even
+        # when OCR omitted that block's material name.
+        and not any(info.explicit_percent for info in infos[marker_rows[-1] + 1 :])
+    )
 
-    if nums:
-        return nums
+    adjusted = list(infos)
+    for position, next_marker in zip(marker_rows, [*marker_rows[1:], len(infos)]):
+        marker_part = infos[position].marker_part
+        # An outer marker that owns no row before the next marker can only be
+        # naming the row printed before it (``면 100% 겉감 / 안감 / ...``). Other
+        # parts are not inferred: a stray ``배색`` must not claim the main row.
+        orphan_outer = marker_part == "outer" and not any(
+            info.materials for info in infos[position + 1 : next_marker]
+        )
+        if position == 0 or not (trailing_layout or orphan_outer):
+            continue
 
-    if not allow_plain_numbers:
-        return []
+        # A trailing marker owns the whole preceding composition, including
+        # alternating rows and stacked ratio columns. Stop at a part boundary
+        # or unrelated text; metadata between composition rows can be skipped.
+        block_positions: list[int] = []
+        for cursor in range(position - 1, -1, -1):
+            previous = infos[cursor]
+            if previous.marker_part is not None:
+                # A composition that explicitly names its part must not have
+                # only its continuation rows reassigned to another part.
+                if previous.materials or previous.unresolved_materials:
+                    block_positions.clear()
+                break
+            if previous.materials or previous.unresolved_materials or previous.numbers:
+                block_positions.append(cursor)
+            elif _mentions_care(previous.normalized) or not _is_metadata_line(previous):
+                break
 
-    for match in re.finditer(r"(?<![a-z0-9])([0-9]{1,3})(?!\s*(?:cm|mm|kg|\ud638|\ub144|\uc6d4|\uc77c|\ubc88|[a-z0-9]))", line):
-        value = float(match.group(1))
-        if 0 < value <= 100:
-            nums.append(value)
-
-    # OCR often turns 100% into 10086, 10090, 10000, or cotton 2000.
-    if not nums:
-        if re.search(r"(?<![0-9])100[0-9]{2}(?![0-9])", line):
-            nums.append(100.0)
-        elif re.search(r"(?<![0-9])2000(?![0-9])", line):
-            nums.append(100.0)
-    return nums
-
-
-def extract_materials(line: str) -> list[str]:
-    tokens = re.findall(r"[a-zA-Z]+|[\uac00-\ud7a3]+|[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff]+", line)
-    found = []
-    for token in tokens:
-        material = find_material_key(token)
-        if material:
-            found.append(material)
-    return list(dict.fromkeys(found))
+        for cursor in block_positions:
+            adjusted[cursor] = replace(infos[cursor], part=marker_part)
+    return adjusted
 
 
 def build_line_infos(text: str) -> list[LineInfo]:
-    infos = []
+    infos: list[LineInfo] = []
     current_part = "generic"
-    prepared = text or ""
-    split_markers = [
-        "shell", "outshell", "lining", "lning", "uning", "outer",
-        "\uac89\uac10", "\uc548\uac10", "\uc678\ud53c", "\ub0b4\ud53c", "\ucda9\uc804\uc7ac", "\ucda9\uc804\uc81c",
-        "\u672c\u4f53", "\u9762\u6599", "\u91cc\u6599", "\u88e1\u6599",
-    ]
-    for marker in split_markers:
-        prepared = re.sub(rf"(?i)(?<!^)\b({re.escape(marker)})\b", r"\n\1", prepared)
-    raw_lines = prepared.replace("\r", "\n").split("\n")
-
-    for idx, raw in enumerate(raw_lines):
+    pending_metadata_kind = None
+    prepared = _split_part_markers(normalize_text(text))
+    raw_lines = prepared.split("\n")
+    content_indices = [i for i, raw in enumerate(raw_lines) if normalize_text(raw)]
+    last_content_index = content_indices[-1] if content_indices else -1
+    for index, raw in enumerate(raw_lines):
         normalized = normalize_text(raw)
         if not normalized:
             continue
-        current_part = detect_part(normalized, current_part)
-        materials = extract_materials(normalized)
-        allow_plain = bool(materials) or current_part != "generic"
-        numbers = extract_numbers(normalized, allow_plain_numbers=allow_plain)
-        infos.append(LineInfo(idx, raw.strip(), normalized, current_part, materials, numbers))
-    return infos
+        is_metadata, pending_metadata_kind = _classify_metadata_line(normalized, pending_metadata_kind)
+        inferred_metadata = False
+        if not is_metadata and _is_unlabeled_korean_garment_size(
+            normalized, infos[-1] if infos else None, is_last_line=index == last_content_index,
+        ):
+            is_metadata = inferred_metadata = True
+        marker_part = None if is_metadata else declared_part(normalized)
+        current_part = marker_part or current_part
+        composition_text = "" if is_metadata else _strip_excluded_segments(normalized)
+        materials = tuple(extract_materials(composition_text))
+        number_only_line = not materials and not _TOKEN_PATTERN.search(composition_text)
+        numbers, invalid_evidence, explicit_percent, number_evidence = _read_numbers(
+            composition_text, allow_plain_numbers=bool(materials) or number_only_line,
+        )
+        invalid_evidence |= bool(_IMITATION_LEATHER_PATTERN.search(composition_text))
+        if materials and not numbers:
+            invalid_evidence |= not _contains_only_known_phrases(composition_text, _MATERIAL_ONLY_LINE_CONTEXTS)
+        if materials and numbers and len(materials) == len(numbers):
+            invalid_evidence |= not _same_line_pairing_is_supported(composition_text, number_evidence)
+        infos.append(LineInfo(
+            index=index, raw=raw.strip(), normalized=normalized, part=current_part,
+            materials=materials, numbers=numbers, explicit_percent=explicit_percent,
+            unresolved_materials=tuple(unresolved_material_tokens(composition_text)),
+            marker_part=marker_part, invalid_evidence=invalid_evidence,
+            is_metadata=is_metadata, inferred_metadata=inferred_metadata,
+        ))
+    return _apply_trailing_part_markers(infos)
 
 
-def _as_pair_dict(materials: list[str], numbers: list[float]) -> dict[str, float]:
-    pair = defaultdict(float)
-    if len(materials) == len(numbers):
-        for material, number in zip(materials, numbers):
-            pair[material] += number
-    elif len(materials) == 1 and numbers:
-        pair[materials[0]] += numbers[0]
-    elif len(numbers) > 1:
-        for material, number in zip(materials, numbers):
-            pair[material] += number
-    return dict(pair)
+def _is_ratio_only_composition_row(info: LineInfo) -> bool:
+    """조성 제목·부위명 외에는 소재 없이 비율만 남은 행인지 확인한다."""
 
-
-def _is_duplicate_composition(existing: dict[str, float], candidate: dict[str, float]) -> bool:
-    if not existing or not candidate:
+    if info.materials:
         return False
-    if set(existing) != set(candidate):
-        return False
-    existing_total = sum(existing.values())
-    candidate_total = sum(candidate.values())
-    if not (90 <= existing_total <= 110 and 90 <= candidate_total <= 110):
-        return False
-    for key in candidate:
-        existing_ratio = existing[key] * 100 / existing_total
-        candidate_ratio = candidate[key] * 100 / candidate_total
-        if abs(existing_ratio - candidate_ratio) > 15:
-            return False
-    return True
+    text = _strip_excluded_segments(info.normalized)
+    remaining = _RATIO_ROW_LABEL_PATTERN.sub(
+        lambda match: " " if is_part_marker_match(text, match) else match.group(),
+        text,
+    )
+    return not _TOKEN_PATTERN.search(remaining)
 
 
-def add_pairs(result: dict[str, defaultdict[str, float]], part: str, materials: list[str], numbers: list[float]) -> bool:
-    if not materials or not numbers:
-        return False
-
-    pair = _as_pair_dict(materials, numbers)
-    if not pair:
-        return False
-    if any(value <= 0 or value > 100 for value in pair.values()):
-        return False
-
-    if _is_duplicate_composition(dict(result[part]), pair):
-        return True
-
-    for material, number in pair.items():
-        result[part][material] += number
-    return True
+def _composition_heading_indices(infos: list[LineInfo]) -> list[int]:
+    return [
+        info.index
+        for info in infos
+        if any(hint.casefold() in info.normalized for hint in COMPOSITION_HINTS)
+    ]
 
 
-def parse_parts(text: str) -> dict[str, dict[str, float]]:
+def _context_rank(
+    candidate: CompositionCandidate,
+    heading_indices: list[int],
+) -> int:
+    """Prefer a material block immediately following a composition heading.
+
+    The heading is only a tie-breaker: labels without a heading and valid
+    composition blocks elsewhere remain accepted.
+    """
+    for heading_index in heading_indices:
+        distance = candidate.start_index - heading_index
+        if distance == 0:
+            return 2
+        if 0 < distance <= 6:
+            return 1
+    return 0
+
+
+def _normalize_candidate(
+    candidate: CompositionCandidate,
+) -> tuple[dict[str, float | int], list[str]]:
+    warnings: list[str] = []
+    values = candidate.materials
+
+    if not candidate.explicit_percent:
+        warnings.append("ratio_marker_inferred")
+
+    normalized: dict[str, float | int] = {}
+    for material, value in values.items():
+        decimal_value = Decimal(str(value))
+        normalized[material] = int(decimal_value) if decimal_value == decimal_value.to_integral_value() else float(decimal_value)
+    if not has_exact_total(normalized.values()):
+        return {}, [*warnings, "ratio_precision_loss"]
+    return normalized, warnings
+
+
+def _translated_alias_rows(
+    infos: list[LineInfo], candidates: list[CompositionCandidate]
+) -> set[int]:
+    """Cover adjacent, ratio-free translations of a confirmed single fiber.
+
+    A translation line must contain two complete aliases for that same fiber.
+    An unrelated or unresolved material ends the group and still blocks the
+    composition under the normal unpaired-row rule.
+    """
+    by_index = {info.index: info for info in infos}
+    covered: set[int] = set()
+    anchors = (
+        candidate for candidate in candidates
+        if candidate.source == "same_line"
+        and candidate.explicit_percent
+        and len(candidate.materials) == 1
+    )
+    for candidate in anchors:
+        material = next(iter(candidate.materials))
+        for step in (-1, 1):
+            cursor = candidate.start_index + step
+            while (info := by_index.get(cursor)) is not None:
+                if (
+                    info.part != candidate.part
+                    or info.marker_part is not None
+                    or info.unresolved_materials
+                    or info.materials != (material,)
+                ):
+                    break
+                if info.numbers:
+                    if info.numbers != (100.0,) or not info.explicit_percent:
+                        break
+                else:
+                    if "%" in info.normalized or "％" in info.normalized:
+                        break
+                    aliases = [
+                        find_material_key(token)
+                        for token in _TOKEN_PATTERN.findall(info.normalized)
+                    ]
+                    if sum(alias == material for alias in aliases) < 2:
+                        break
+                    covered.add(info.index)
+                cursor += step
+    return covered
+
+
+def _best_candidates_by_part(
+    text: str,
+    *,
+    conflicting_parts: tuple[str, ...] = (),
+    unpaired_ratio_parts: tuple[str, ...] = (),
+) -> tuple[
+    dict[str, dict[str, float | int]],
+    dict[str, CompositionCandidate],
+    list[str],
+    set[str],
+    dict,
+]:
     infos = build_line_infos(text)
-    result: dict[str, defaultdict[str, float]] = defaultdict(lambda: defaultdict(float))
+    candidates = []
+    segment = []
+    body_measurement_block = False
+    for info in infos:
+        # A complete body-measurement block is ignorable; an isolated SIZE
+        # header must never bridge a material to a later percentage.
+        if any(word in info.normalized for word in ("신체치수", "가슴둘레", "허리둘레")):
+            body_measurement_block = True
+        if info.is_metadata and not body_measurement_block:
+            candidates.extend(_collect_candidates(segment))
+            segment = []
+        elif not _is_metadata_line(info) and not info.invalid_evidence:
+            segment.append(info)
+            if info.materials or info.numbers:
+                body_measurement_block = False
+    candidates.extend(_collect_candidates(segment))
+    heading_indices = _composition_heading_indices(infos)
+    best_by_part: dict[str, CompositionCandidate] = {}
+    ambiguous_parts: set[str] = set(conflicting_parts)
 
-    used = set()
-    for pos, info in enumerate(infos):
-        if add_pairs(result, info.part, info.materials, info.numbers):
-            used.add(pos)
+    for candidate in candidates:
+        current = best_by_part.get(candidate.part)
+        # Scores choose the clearest representation of an agreed composition;
+        # they cannot resolve contradictory declarations for the same part.
+        if current is not None and _equivalent_composition(
+            candidate.materials
+        ) != _equivalent_composition(current.materials):
+            ambiguous_parts.add(candidate.part)
+        candidate_rank = (
+            *candidate.score[:3],
+            _context_rank(candidate, heading_indices),
+            candidate.score[3],
+        )
+        current_rank = (
+            (
+                *current.score[:3],
+                _context_rank(current, heading_indices),
+                current.score[3],
+            )
+            if current
+            else None
+        )
+        if current is None or candidate_rank > current_rank:
+            best_by_part[candidate.part] = candidate
 
-    # Column layout: material names can be stacked first, followed by stacked ratios.
-    # Example: "polyester / polyurethane / 94% / 6%".
-    for pos, info in enumerate(infos):
-        if pos in used or not info.materials or info.numbers:
+    # A row naming a fiber the table cannot resolve has no trustworthy
+    # material/ratio mapping: its ratio would silently move to a neighbour.
+    composition_rows = [
+        info for info in infos
+        if (info.materials or info.unresolved_materials) and not _is_metadata_line(info)
+    ]
+    unresolved_parts = {
+        info.part for info in composition_rows if info.unresolved_materials
+    }
+    # Every recognized material row must belong to a complete candidate.
+    # A valid 100% row cannot hide an unpaired row before or after it. Keep
+    # coverage from all complete blocks so multilingual repetitions remain valid.
+    covered_rows = {index for candidate in candidates for index in candidate.row_indices}
+    covered_rows.update(_translated_alias_rows(infos, candidates))
+    incomplete_parts = {
+        info.part for info in composition_rows
+        if info.materials and info.index not in covered_rows
+    }
+
+    # OCR can lose a material/part name but retain its standalone percentage.
+    # Do not let another complete block hide that missing composition (QA031).
+    # 조성 제목·부위명만 붙은 비율 행도 포함한다. 세탁·홍보·제품 정보는 제외한다.
+    orphan_ratio_parts = set(unpaired_ratio_parts) | {
+        info.part for info in infos
+        if (info.explicit_percent or info.numbers)
+        and not info.materials
+        and _is_ratio_only_composition_row(info)
+        and info.index not in covered_rows
+        and not _is_metadata_line(info)
+    }
+
+    observed_ratios: dict[str, list[float]] = {}
+    for info in infos:
+        if not _is_metadata_line(info) and (
+            info.materials or (info.explicit_percent and _is_ratio_only_composition_row(info))
+        ):
+            observed_ratios.setdefault(info.part, []).extend(float(value) for value in info.numbers)
+    ratio_evidence = {
+        "observed_ratios": observed_ratios,
+        "unpaired_ratio_parts": sorted(orphan_ratio_parts),
+    }
+
+    # A malformed composition row must also block a different, complete block
+    # in the same part. Keep lower-priority parts independent of a valid shell.
+    invalid_ratio_parts = {
+        info.part for info in infos
+        if (info.materials or _is_ratio_only_composition_row(info))
+        and (info.explicit_percent or info.materials or "%" in info.normalized)
+        and not _is_metadata_line(info)
+        and any(
+            not 0 < Decimal(match.group(1)) <= 100
+            for match in _PERCENT_PATTERN.finditer(_strip_excluded_segments(info.normalized).replace("−", "-"))
+        )
+    }
+
+    invalid_evidence_parts = {
+        info.part for info in infos if info.invalid_evidence and not _is_metadata_line(info)
+        and (info.materials or "%" in info.normalized
+             or (re.fullmatch(r"[0-9]+", info.normalized) and 0 < int(info.normalized) <= 125))
+    }
+    parts: dict[str, dict[str, float | int]] = {}
+    warnings: list[str] = [
+        *(f"{part}:invalid_composition_evidence" for part in sorted(invalid_evidence_parts)),
+        *(f"{part}:unresolved_material_token" for part in sorted(unresolved_parts - best_by_part.keys())),
+        *(f"{part}:invalid_ratio" for part in sorted(invalid_ratio_parts)),
+        *(f"{part}:unpaired_ratio_rows"
+          for part in sorted(orphan_ratio_parts - best_by_part.keys())),
+        *(f"{part}:ambiguous_composition_candidates"
+          for part in sorted(ambiguous_parts - best_by_part.keys())),
+    ]
+    for part, candidate in best_by_part.items():
+        if part in invalid_ratio_parts or part in invalid_evidence_parts:
             continue
-        material_block = []
-        material_positions = []
-        cursor = pos
-        while cursor < len(infos):
-            cur = infos[cursor]
-            if cursor in used or cur.part != info.part or cur.numbers or not cur.materials:
-                break
-            material_block.extend(cur.materials)
-            material_positions.append(cursor)
-            cursor += 1
-        number_block = []
-        number_positions = []
-        while cursor < len(infos):
-            cur = infos[cursor]
-            if cursor in used or cur.part != info.part or cur.materials or not cur.numbers:
-                break
-            number_block.extend(cur.numbers)
-            number_positions.append(cursor)
-            cursor += 1
-        if len(material_block) > 1 and len(material_block) == len(number_block):
-            if add_pairs(result, info.part, material_block, number_block):
-                used.update(material_positions)
-                used.update(number_positions)
-
-    for pos, info in enumerate(infos):
-        if pos in used or not info.materials:
+        if part in ambiguous_parts:
+            warnings.append(f"{part}:ambiguous_composition_candidates")
             continue
-        near_numbers = []
-        for next_pos in range(pos + 1, min(pos + 4, len(infos))):
-            nxt = infos[next_pos]
-            if nxt.materials and nxt.part != info.part:
-                break
-            if nxt.numbers:
-                near_numbers.extend(nxt.numbers)
-                used.add(next_pos)
-                if len(near_numbers) >= len(info.materials):
-                    break
-        if add_pairs(result, info.part, info.materials, near_numbers):
-            used.add(pos)
-
-    for pos, info in enumerate(infos):
-        if pos in used or not info.numbers:
+        if part in unresolved_parts:
+            warnings.append(f"{part}:unresolved_material_token")
             continue
-        near_materials = []
-        for next_pos in range(pos + 1, min(pos + 4, len(infos))):
-            nxt = infos[next_pos]
-            if nxt.numbers and nxt.part != info.part:
-                break
-            if nxt.materials:
-                near_materials.extend(nxt.materials)
-                used.add(next_pos)
-                if len(near_materials) >= len(info.numbers):
-                    break
-        if add_pairs(result, info.part, near_materials, info.numbers):
-            used.add(pos)
+        if part in orphan_ratio_parts:
+            warnings.append(f"{part}:unpaired_ratio_rows")
+            continue
+        if part in incomplete_parts:
+            warnings.append(f"{part}:unpaired_material_rows")
+            continue
+        normalized, candidate_warnings = _normalize_candidate(candidate)
+        warnings.extend(f"{part}:{warning}" for warning in candidate_warnings)
+        if normalized:
+            parts[part] = normalized
 
-    return {part: dict(values) for part, values in result.items() if values}
+    expected_parts = (
+        invalid_evidence_parts | invalid_ratio_parts | orphan_ratio_parts | ambiguous_parts
+        | {info.part for info in composition_rows}
+        | {info.marker_part for info in infos if info.marker_part is not None}
+    )
+
+    if any(info.inferred_metadata for info in infos):
+        warnings.append("unlabeled_garment_size_inferred")
+    return parts, best_by_part, warnings, expected_parts, ratio_evidence
 
 
-def normalize_percentages(materials: dict[str, float]) -> dict[str, float | int]:
-    if not materials:
+def parse_parts(text: str) -> dict[str, dict[str, float | int]]:
+    parts, _, _, _, _ = _best_candidates_by_part(text)
+    return parts
+
+
+def normalize_percentages(
+    materials: dict[str, Decimal | float | int],
+) -> dict[str, float | int]:
+    if not has_exact_total(materials.values()):
         return {}
 
-    total = sum(float(value) for value in materials.values())
-    normalized_values = dict(materials)
-
-    if len(normalized_values) == 1 and 50 <= total <= 100:
-        only_key = next(iter(normalized_values))
-        normalized_values[only_key] = 100.0
-    elif len(normalized_values) == 2 and total < 30:
-        keys = list(normalized_values.keys())
-        values = [float(normalized_values[key]) for key in keys]
-        if 0 < values[1] <= 15:
-            normalized_values[keys[0]] = 100.0 - values[1]
-        elif 0 < values[0] <= 15:
-            normalized_values[keys[1]] = 100.0 - values[0]
-    elif 95 <= total <= 105 or total > 100:
-        normalized_values = {key: float(value) * 100 / total for key, value in normalized_values.items()}
-
-    normalized = {}
-    for key, value in normalized_values.items():
-        if value <= 0:
-            continue
-        rounded = round(float(value), 1)
-        normalized[key] = int(rounded) if float(rounded).is_integer() else rounded
+    candidate = CompositionCandidate(
+        part="generic",
+        materials={key: Decimal(str(value)) for key, value in materials.items()},
+        source="same_line",
+        explicit_percent=True,
+        start_index=0,
+    )
+    normalized, _ = _normalize_candidate(candidate)
     return normalized
 
 
-def choose_representative_materials(parts: dict[str, dict[str, float]]) -> tuple[str, dict[str, float | int]]:
-    if not parts:
-        return "", {}
-
-    priority = ["outer", "generic", "lining", "filling", "pocket", "rib", "sleeve", "color_block"]
-    for part in priority:
-        if part in parts:
-            normalized = normalize_percentages(parts[part])
-            if normalized:
-                return part, normalized
-
-    best_part = min(parts, key=lambda name: abs(sum(parts[name].values()) - 100))
-    return best_part, normalize_percentages(parts[best_part])
-
-
-
-def infer_materials_from_context(text: str) -> tuple[str, dict[str, float | int]]:
-    text_n = normalize_text(text)
-    if not text_n:
-        return "", {}
-
-    found_materials = []
-    for line in text_n.split("\n"):
-        found_materials.extend(extract_materials(line))
-    found_materials = list(dict.fromkeys(found_materials))
-
-    if len(found_materials) == 1:
-        if re.search(r"(?<![0-9])100\s*%|single|only|cotona", text_n):
-            return "inferred", {found_materials[0]: 100}
-
-    has_composition_context = any(
-        keyword in text_n
-        for keyword in ["섬유", "혼용", "품질표시", "품질 표시", "composition", "fabric", "shell"]
-    )
-    if has_composition_context and re.search(r"(?<![0-9])100\s*%(?![0-9])", text_n):
-        return "inferred", {"cotton": 100}
-
+def choose_representative_materials(
+    parts: dict[str, dict[str, float | int]],
+) -> tuple[str, dict[str, float | int]]:
+    for part in PART_PRIORITY:
+        materials = parts.get(part)
+        if materials:
+            return part, materials
     return "", {}
 
-def infer_missing_cotton_polyester_pair(text: str) -> tuple[str, dict[str, float | int]]:
-    text_n = normalize_text(text)
-    if not text_n:
-        return "", {}
 
-    polyester_pattern = r"(?:폴리에스터|플리에스터|리메스타|polyester|poliester|polyster)"
-    has_composition_context = any(
-        keyword in text_n
-        for keyword in ["섬유", "혼용", "품질표시", "품질 표시", "composition", "fabric", "shell"]
-    )
-    has_material_context = bool(re.search(polyester_pattern, text_n)) or "면" in text_n or bool(re.search(r"\bcotton\b", text_n))
-    if not (has_composition_context or has_material_context):
-        return "", {}
-
-    pattern = rf"(?<![0-9])([1-9][0-9]?)\s*%\s*.{{0,18}}?{polyester_pattern}\s*.{{0,10}}?([1-9][0-9]?)\s*%?"
-    for match in re.finditer(pattern, text_n):
-        first = float(match.group(1))
-        second = float(match.group(2))
-        if 95 <= first + second <= 105 and first >= second:
-            return "inferred", {
-                "cotton": int(first) if first.is_integer() else first,
-                "polyester": int(second) if second.is_integer() else second,
-            }
-
-    cotton_pattern = r"(?:면|cotton|coton|algodon|algodao|pamuk|cotone|baumwolle|katoen|bawe|kapas)"
-    pattern = rf"(?<![0-9])([1-9][0-9]?)\s*%\s*.{{0,10}}?{cotton_pattern}\s*.{{0,10}}?([1-9][0-9]?)\s*%?"
-    for match in re.finditer(pattern, text_n):
-        first = float(match.group(1))
-        second = float(match.group(2))
-        if 95 <= first + second <= 105 and first >= second:
-            return "inferred", {
-                "cotton": int(first) if first.is_integer() else first,
-                "polyester": int(second) if second.is_integer() else second,
-            }
-
-    return "", {}
 def parse_materials(text: str) -> dict[str, float | int]:
-    _, materials = choose_representative_materials(parse_parts(text))
-    inferred_part, inferred_materials = infer_missing_cotton_polyester_pair(text)
-    if inferred_materials and (not materials or set(materials) in ({"polyester"}, {"cotton"})):
-        return inferred_materials
-    return materials
+    """Expose materials only after the same safety checks as the label response."""
+    return parse_label(text)["materials"]
 
 
-def format_materials_korean(material_dict: dict[str, float | int]) -> str:
-    if not material_dict:
-        return ""
-
+def format_materials_korean(
+    material_dict: dict[str, float | int],
+) -> str:
     parts = []
-    for material, percent in sorted(material_dict.items(), key=lambda item: (-float(item[1]), item[0])):
+    for material, percent in sorted(
+        material_dict.items(),
+        key=lambda item: (-float(item[1]), item[0]),
+    ):
         korean = MATERIAL_KOREAN.get(material, material)
-        percent_text = str(int(percent)) if float(percent).is_integer() else f"{float(percent):.1f}"
+        percent_text = (
+            str(int(percent))
+            if float(percent).is_integer()
+            else str(float(percent))
+        )
         parts.append(f"{korean} {percent_text}%")
     return ", ".join(parts)
 
 
 def parse_care(text: str) -> str:
-    text_n = normalize_text(text)
-    found = []
-
+    normalized = normalize_text(text)
+    found: set[str] = set()
+    matches: list[tuple[int, int, str]] = []
     for korean, aliases in CARE_RULES.items():
-        if any(alias.lower() in text_n for alias in aliases):
-            found.append(korean)
+        for alias in aliases:
+            phrase = r"\s+".join(re.escape(word) for word in alias.casefold().split())
+            for match in re.finditer(rf"(?<![a-z]){phrase}(?![a-z])", normalized):
+                matches.append((match.start(), match.end(), korean))
 
-    return "; ".join(dict.fromkeys(found))
+    # Match prohibitions and specific methods before their embedded general
+    # phrases (HAND WASH COLD contains WASH COLD; 손세탁 금지 contains 세탁 금지).
+    occupied: list[tuple[int, int]] = []
+    for start, end, korean in sorted(
+        matches, key=lambda item: (item[2].endswith("금지"), item[1] - item[0]), reverse=True
+    ):
+        if any(start < right and end > left for left, right in occupied):
+            continue
+        occupied.append((start, end))
+        if not korean.endswith("금지") and re.search(
+            r"\b(?:not|no|never|don't|dont)\s*$", normalized[:start]
+        ):
+            continue
+        found.add(korean)
 
+    blocked = {rule for matched in found for rule in CARE_CONFLICTS.get(matched, set())}
+    found.difference_update(blocked)
 
-def estimate_ocr_confidence(text: str, materials: dict[str, float | int]) -> str:
-    if not text or not materials:
-        return "low"
-
-    total = sum(float(value) for value in materials.values())
-    if 95 <= total <= 105 and len(clean_ocr_preview(text)) >= 15:
-        return "high"
-    return "medium"
-
-
-def estimate_expected_life_months(materials: dict[str, float | int]) -> int | None:
-    if not materials:
-        return None
-
-    base_life = {
-        "cotton": 36,
-        "polyester": 48,
-        "nylon": 48,
-        "wool": 60,
-        "linen": 48,
-        "silk": 30,
-        "rayon": 30,
-        "viscose": 30,
-        "acrylic": 36,
-        "spandex": 24,
-        "polyurethane": 24,
-        "modal": 36,
-        "lyocell": 42,
-        "cashmere": 60,
-        "leather": 72,
-        "down": 42,
-        "feather": 36,
-    }
-
-    total = sum(float(value) for value in materials.values())
-    if total <= 0:
-        return None
-
-    weighted = 0.0
-    for material, percent in materials.items():
-        weighted += base_life.get(material, 36) * (float(percent) / total)
-    return int(round(weighted))
+    return "; ".join(rule for rule in CARE_RULES if rule in found)
 
 
-def failed_response(raw_text: str = "") -> dict:
-    return {
+def failed_response(
+    raw_text: str = "",
+    *,
+    error_code: str = "composition_not_found",
+    message: str = "소재 혼용률을 신뢰할 수 있게 인식하지 못했습니다.",
+    warnings: list[str] | None = None,
+    parse_evidence: dict | None = None,
+) -> dict:
+    care_instruction = parse_care(raw_text)
+    result = {
         "status": "failed",
-        "message": "\uc18c\uc7ac \ud63c\uc6a9\ub960\uc744 \uc778\uc2dd\ud558\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4.",
+        "error_code": error_code,
+        "message": message,
         "materials": {},
         "materials_korean": "",
         "raw_ocr_preview": clean_ocr_preview(raw_text),
+        "confidence": {
+            "ocr": "unknown",
+            "parser": "low",
+        },
+        "warnings": list(warnings or []),
+        "care_instruction": care_instruction,
+        "care_instructions": [
+            item.strip()
+            for item in care_instruction.split(";")
+            if item.strip()
+        ],
+        "parts": {},
     }
+    if parse_evidence is not None:
+        result["parse_evidence"] = parse_evidence
+    return result
 
 
-def parse_label(text: str) -> dict:
-    parts_raw = parse_parts(text)
-    selected_part, materials = choose_representative_materials(parts_raw)
-    inferred_part, inferred_materials = infer_missing_cotton_polyester_pair(text)
-    if inferred_materials and (not materials or set(materials) in ({"polyester"}, {"cotton"})):
-        selected_part, materials = inferred_part, inferred_materials
+def parse_label(
+    text: str,
+    *,
+    conflicting_parts: tuple[str, ...] = (),
+    unpaired_ratio_parts: tuple[str, ...] = (),
+) -> dict:
+    """OCR 후보의 상충 부위도 포함해 최종 대표 조성을 안전하게 판단한다."""
+
+    if not text or not text.strip():
+        return failed_response(
+            "",
+            error_code="ocr_text_empty",
+            message="OCR에서 라벨 텍스트를 추출하지 못했습니다.",
+        )
+
+    parts, candidates, warnings, expected_parts, ratio_evidence = _best_candidates_by_part(
+        text, conflicting_parts=conflicting_parts, unpaired_ratio_parts=unpaired_ratio_parts,
+    )
+    selected_part, materials = choose_representative_materials(parts)
     if not materials:
-        selected_part, materials = infer_materials_from_context(text)
-    if not materials:
-        return failed_response(text)
+        error_code = (
+            "ambiguous_composition"
+            if any("ambiguous_composition_candidates" in item for item in warnings)
+            else "composition_not_found"
+        )
+        message = (
+            "서로 다른 소재 조성 후보가 있어 자동으로 선택하지 않았습니다."
+            if error_code == "ambiguous_composition"
+            else "소재 혼용률을 신뢰할 수 있게 인식하지 못했습니다."
+        )
+        return failed_response(
+            text,
+            error_code=error_code,
+            message=message,
+            warnings=warnings,
+            parse_evidence=ratio_evidence,
+        )
 
-    parts = {part: normalize_percentages(values) for part, values in parts_raw.items()}
+    # The label names a more representative part (an outer shell above a
+    # lining) whose composition never resolved. Substituting the part that
+    # happened to add up would report a lining as the whole garment.
+    unconfirmed_parts = [
+        part
+        for part in PART_PRIORITY[: PART_PRIORITY.index(selected_part)]
+        if part in expected_parts and part not in parts
+    ]
+    if unconfirmed_parts:
+        return failed_response(
+            text,
+            error_code="incomplete_part_composition",
+            message=(
+                "겉감 등 대표 부위의 혼용률을 확인하지 못해 "
+                "다른 부위 값을 대신 사용하지 않았습니다."
+            ),
+            warnings=[
+                *warnings,
+                *(f"{part}:composition_not_confirmed" for part in unconfirmed_parts),
+            ],
+            parse_evidence=ratio_evidence,
+        )
+
+    selected_candidate = candidates[selected_part]
+    parser_confidence = (
+        "high"
+        if selected_candidate.explicit_percent
+        and has_exact_total(selected_candidate.materials.values())
+        and selected_candidate.source == "same_line"
+        and "unlabeled_garment_size_inferred" not in warnings
+        else "medium"
+    )
+    care_instruction = parse_care(text)
 
     return {
         "status": "success",
@@ -476,10 +804,387 @@ def parse_label(text: str) -> dict:
         "materials_korean": format_materials_korean(materials),
         "raw_ocr_preview": clean_ocr_preview(text),
         "confidence": {
-            "ocr": estimate_ocr_confidence(text, materials),
+            "ocr": "unknown",
+            "parser": parser_confidence,
         },
-        "care_text": parse_care(text),
-        "expected_life_months": estimate_expected_life_months(materials),
+        "warnings": warnings,
+        "care_instruction": care_instruction,
+        "care_instructions": [
+            item.strip()
+            for item in care_instruction.split(";")
+            if item.strip()
+        ],
         "selected_part": selected_part,
         "parts": parts,
+        "parse_evidence": {
+            **ratio_evidence,
+            "composition_status": "confirmed",
+            "source": selected_candidate.source,
+            "ratio_total_before_normalization": int(selected_candidate.total),
+            "explicit_percent": selected_candidate.explicit_percent,
+        },
     }
+
+
+_NUMBER_VALUE_PATTERN = re.compile(r"(?:[0-9]+(?:[.,][0-9]+)?|[.,][0-9]+)")
+_NUMBER_CANDIDATE_PATTERN = re.compile(
+    r"[+\-−]?(?:[0-9]+(?:[.,][0-9]+)?|[.,][0-9]+)(?:\s*%)?"
+)
+_MEASUREMENT_UNIT_PATTERN = re.compile(
+    r"\s*(?:°(?:\s*[cf])?|[cf]|degrees?(?:\s*[cf])?|"
+    r"deg(?:\s*[cf])?|celsius|fahrenheit|"
+    r"cm|mm|kg|mg|g|lb|lbs|oz|호|년|월|일|번|원|円|元|도)(?:\b|$)",
+    re.IGNORECASE,
+)
+_IMITATION_LEATHER_PATTERN = re.compile(
+    r"(?<![a-z])(?:faux|fake|synthetic|artificial|imitation|vegan|pu|pvc)"
+    r"[\s\-‐‑‒–—_/]*(?:leather(?![a-z])|가죽|피혁|레더)|"
+    r"(?:인조|합성|모조|비건)[\s\-‐‑‒–—_/]*(?:가죽|피혁|레더)|"
+    r"(?:人造|合成|人工|仿)[\s\-‐‑‒–—_/]*(?:皮革|革)|"
+    r"(?:フェイク|合成|人工|ヴィーガン)[\s\-‐‑‒–—_/]*(?:レザー|皮革)|"
+    r"(?<![a-z])simili[\s\-‐‑‒–—_/]*cuir(?![a-z])|"
+    r"(?<![a-z])kunst[\s\-‐‑‒–—_/]*leder(?![a-z])",
+    re.IGNORECASE,
+)
+_INEXACT_SIGNS = "+-−±∓‐‑‒–—<>≤≥≦≧~≈≃∼"
+_PLAIN_NUMBER_METADATA_PREFIX = re.compile(
+    r"(?:\b(?:size|style|model|sku|lot|item|date|price|wash|iron|dry|"
+    r"bleach|rn|ca|made|year|no)\b|제품명|제조년월|제조국|품번|호칭|"
+    r"수입자|판매자|신체치수|가슴둘레|허리둘레|검사필)"
+    r"\s*[:#.\-]?\s*$",
+    re.IGNORECASE,
+)
+_METADATA_HEADER_PATTERN = re.compile(
+    r"(?:(?P<size>size(?![a-z])|사이즈|호칭)|"
+    r"(?P<shrinkage>shrinkage(?:\s+rate)?(?![a-z])|수축률|수축율))"
+    r"\s*[:=]?\s*(?P<value>.*)",
+)
+_METADATA_VALUE_PATTERNS = {
+    "size": re.compile(
+        r"(?:[0-9]+(?:[.,][0-9]+)?"
+        r"(?:\s*[-/x×]\s*[0-9]+(?:[.,][0-9]+)?)*\s*(?:cm|mm|호)?|"
+        r"[2-9]?x{0,3}[sl]|m|free|one\s*size)"
+    ),
+    "shrinkage": re.compile(
+        r"(?:[<>≤≥~±+\-]|up\s+to|max(?:imum)?|less\s+than|최대)?\s*"
+        r"[0-9]+(?:[.,][0-9]+)?\s*%(?:\s*(?:이하|미만|max(?:imum)?))?"
+    ),
+}
+# 한국 의류 호칭에서 흔한 5단위 값만 무표기 사이즈 후보로 인정한다.
+_UNLABELED_KOREAN_GARMENT_SIZE_VALUES = {
+    str(value) for value in range(80, 125, 5)
+}
+_RATIO_PAIR_DESCRIPTORS = {
+    "organic",
+    "recycled",
+    "combed",
+    "certified",
+    "pure",
+    "fiber",
+    "fibre",
+    "content",
+    "blend",
+    "of",
+    "and",
+    "유기농",
+    "재생",
+    "섬유",
+    "함량",
+    "혼방",
+    "및",
+}
+_RATIO_PREFIX_CONTEXTS = {
+    *COMPOSITION_HINTS,
+    *(alias for aliases in PART_PATTERNS.values() for alias in aliases),
+    "fiber",
+    "fibre",
+    "fabric",
+    "content",
+    "body",
+    "組成",
+    "組成表示",
+    "纤维",
+    "纤维成分",
+    "成分",
+}
+_EXPLICIT_PART_HEADER_CONTEXTS = _RATIO_PREFIX_CONTEXTS | {
+    "fabric",
+    "재질",
+}
+
+
+
+_MATERIAL_ONLY_LINE_CONTEXTS = set(ALIAS_TO_MATERIAL) | _RATIO_PAIR_DESCRIPTORS | _EXPLICIT_PART_HEADER_CONTEXTS
+
+@dataclass(frozen=True)
+class NumberEvidence:
+    value: Decimal
+    start: int
+    end: int
+    explicit_percent: bool
+
+
+def _part_alias_pattern(alias: str) -> str:
+    escaped = re.escape(alias.casefold())
+    if alias.isascii():
+        return rf"(?<![a-z]){escaped}(?![a-z])"
+    return escaped
+
+
+def _has_explicit_unknown_material_marker(
+    line: str,
+    numbers: tuple[Decimal, ...],
+) -> bool:
+    if not numbers or not extract_materials(line):
+        return False
+    if any(marker in line for marker in ("알 수 없는 소재", "未知繊維", "未知纤维")):
+        return True
+    return re.search(r"\bunknown\b", line, re.IGNORECASE) is not None
+
+
+def _read_numbers(
+    line: str,
+    *,
+    allow_plain_numbers: bool,
+) -> tuple[tuple[Decimal, ...], bool, bool, tuple[NumberEvidence, ...]]:
+    normalized = normalize_text(line)
+    material_evidence = _material_evidence(normalized)
+    matches = list(_NUMBER_CANDIDATE_PATTERN.finditer(normalized))
+    explicit_matches = [
+        match for match in matches if match.group().strip().endswith("%")
+    ]
+    invalid = False
+
+    def parse_match(
+        match: re.Match[str],
+    ) -> tuple[NumberEvidence | None, bool]:
+        token = match.group().strip()
+        has_percent = token.endswith("%")
+        value_text = token.removesuffix("%").strip()
+        # A comma immediately after a fiber separates the next ratio, not a fractional value.
+        if value_text.startswith(",") and _material_evidence(normalized[:match.start()]):
+            value_text = value_text[1:]
+        prefix = normalized[: match.start()].rstrip()
+        suffix = normalized[match.end() :]
+        comma_prefix = _strip_excluded_segments(prefix)
+        comma_materials = _material_evidence(comma_prefix)
+        valid_material_comma = (
+            prefix.endswith(",")
+            and bool(comma_materials)
+            and comma_prefix[comma_materials[-1].end :].strip() == ","
+        )
+        if _MEASUREMENT_UNIT_PATTERN.match(suffix):
+            return None, False
+        if not has_percent and (
+            _PLAIN_NUMBER_METADATA_PREFIX.search(prefix)
+            or re.fullmatch(r"(?:19|20)\d{2}", value_text)
+        ):
+            return None, False
+
+        malformed = (
+            not _NUMBER_VALUE_PATTERN.fullmatch(value_text)
+            or re.match(r"[0-9%]", suffix) is not None
+            or re.match(r"[.,](?=[0-9.,])", suffix) is not None
+            or (not has_percent and re.match(r"[a-z]", suffix) is not None)
+            or re.match(r"\s*%", suffix) is not None
+            or (
+                prefix
+                and prefix[-1] in "0123456789.,"
+                and not valid_material_comma
+            )
+            or (prefix and prefix[-1] in _INEXACT_SIGNS and not (
+                prefix.endswith("-") and match.start() > 0
+                and normalized[match.start() - 1].isspace() and _material_evidence(prefix[:-1])
+            ))
+            or (suffix.strip() and suffix.strip()[0] in _INEXACT_SIGNS)
+        )
+        if malformed:
+            return None, True
+
+        try:
+            value = Decimal(value_text.replace(",", "."))
+        except InvalidOperation:
+            return None, True
+        if not value.is_finite() or not Decimal(0) < value <= EXACT_RATIO_TOTAL:
+            return None, True
+
+        return NumberEvidence(
+            value=value,
+            start=match.start(),
+            end=match.end(),
+            explicit_percent=has_percent,
+        ), False
+
+    explicit_values: list[NumberEvidence] = []
+    for match in explicit_matches:
+        evidence, match_invalid = parse_match(match)
+        invalid = invalid or match_invalid
+        if evidence is not None:
+            explicit_values.append(evidence)
+
+    invalid = invalid or normalized.count("%") != len(explicit_matches)
+    values = list(explicit_values)
+    material_count = len(material_evidence)
+
+    # Plain numbers are considered only when explicit percentages do not
+    # already account for every recognized material. This keeps identifiers,
+    # years, and RN numbers from invalidating an otherwise complete ratio.
+    needs_plain_values = not explicit_matches or material_count > len(values)
+    if _mentions_care(normalized) and (
+        explicit_matches or not any(phrase in normalized for phrase in _CARE_PHRASES)
+    ):
+        needs_plain_values = False
+    if allow_plain_numbers and needs_plain_values:
+        for match in matches:
+            if match in explicit_matches:
+                continue
+            evidence, match_invalid = parse_match(match)
+            invalid = invalid or match_invalid
+            if evidence is not None:
+                values.append(evidence)
+
+    evidence = tuple(sorted(values, key=lambda item: item.start))
+    result = tuple(item.value for item in evidence)
+    invalid = invalid or _has_explicit_unknown_material_marker(normalized, result)
+    explicit_percent = bool(evidence) and all(
+        item.explicit_percent for item in evidence
+    )
+    return result, invalid, explicit_percent, evidence
+
+
+def _contains_only_known_phrases(text: str, phrases: set[str]) -> bool:
+    remainder = normalize_text(text)
+    # Use the same normalized aliases and OCR corrections as extraction. This
+    # preserves multilingual names such as bombaž that normalize to bombaz.
+    if phrases is _MATERIAL_ONLY_LINE_CONTEXTS:
+        for evidence in reversed(_material_evidence(remainder)):
+            remainder = remainder[:evidence.start] + " " * (evidence.end - evidence.start) + remainder[evidence.end:]
+    for phrase in sorted(phrases, key=len, reverse=True):
+        if phrase.isascii():
+            remainder = re.sub(
+                rf"(?<![a-z]){re.escape(phrase.casefold())}(?![a-z])",
+                " ",
+                remainder,
+            )
+        else:
+            remainder = remainder.replace(phrase.casefold(), " ")
+    return _TOKEN_PATTERN.search(remainder) is None
+
+
+def _same_line_pairing_is_supported(
+    line: str,
+    numbers: tuple[NumberEvidence, ...],
+) -> bool:
+    materials = _material_evidence(line)
+    if not materials or len(materials) != len(numbers):
+        return False
+
+    # A flattened material column followed by its ratio column is supported,
+    # but an unknown fiber or a ratio-first list cannot silently shift pairs.
+    if (
+        len(materials) > 1
+        and materials[-1].end <= numbers[0].start
+        and _contains_only_known_phrases(line[:materials[0].start], _RATIO_PREFIX_CONTEXTS)
+        and all(
+            _contains_only_known_phrases(line[left.end:right.start], _RATIO_PAIR_DESCRIPTORS)
+            for left, right in zip(materials, materials[1:])
+        )
+        and _contains_only_known_phrases(line[materials[-1].end:numbers[0].start], _RATIO_PAIR_DESCRIPTORS)
+        and all(
+            re.fullmatch(r"[\s,;:/|]*", line[left.end:right.start])
+            for left, right in zip(numbers, numbers[1:])
+        )
+    ):
+        return True
+
+    material_first = all(
+        material.end <= number.start
+        and _contains_only_known_phrases(
+            line[material.end : number.start],
+            _RATIO_PAIR_DESCRIPTORS,
+        )
+        and (
+            index == len(materials) - 1
+            or (
+                number.end <= materials[index + 1].start
+                and _contains_only_known_phrases(
+                    line[number.end : materials[index + 1].start],
+                    _RATIO_PAIR_DESCRIPTORS,
+                )
+            )
+        )
+        for index, (material, number) in enumerate(zip(materials, numbers))
+    )
+    if material_first:
+        return True
+
+    ratio_first = all(
+        number.end <= material.start
+        and _contains_only_known_phrases(
+            line[number.end : material.start],
+            _RATIO_PAIR_DESCRIPTORS,
+        )
+        and (
+            index == len(numbers) - 1
+            or (
+                material.end <= numbers[index + 1].start
+                and _contains_only_known_phrases(
+                    line[material.end : numbers[index + 1].start],
+                    _RATIO_PAIR_DESCRIPTORS,
+                )
+            )
+        )
+        for index, (number, material) in enumerate(zip(numbers, materials))
+    )
+    if not ratio_first:
+        return False
+
+    return _contains_only_known_phrases(
+        line[: numbers[0].start],
+        _RATIO_PREFIX_CONTEXTS,
+    )
+
+
+def _classify_metadata_line(
+    line: str, pending_kind: str | None
+) -> tuple[bool, str | None]:
+    """명시한 항목의 값만 제외하며, 헤더의 대기 상태는 바로 다음 줄에만 적용한다."""
+    header = _METADATA_HEADER_PATTERN.fullmatch(line)
+    if header:
+        kind = "size" if header.group("size") else "shrinkage"
+        value = header.group("value").strip()
+        if not value:
+            return True, kind
+    elif pending_kind:
+        kind, value = pending_kind, line
+    else:
+        return False, None
+
+    value = value.strip(" \t()[]")
+    return _METADATA_VALUE_PATTERNS[kind].fullmatch(value) is not None, None
+
+
+def _is_unlabeled_korean_garment_size(
+    line: str,
+    previous: LineInfo | None,
+    *,
+    is_last_line: bool,
+) -> bool:
+    if (
+        not is_last_line
+        or line not in _UNLABELED_KOREAN_GARMENT_SIZE_VALUES
+        or previous is None
+        or previous.is_metadata
+        or previous.invalid_evidence
+        or not previous.explicit_percent
+        or not previous.materials
+        or len(previous.materials) != len(previous.numbers)
+        or len(set(previous.materials)) != len(previous.materials)
+        or not has_exact_total(previous.numbers)
+    ):
+        return False
+
+    return any(
+        find_material_key(match.group())
+        for match in re.finditer(r"[가-힣]+", previous.normalized)
+    )

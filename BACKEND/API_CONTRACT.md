@@ -30,6 +30,10 @@
 - `IMAGE_MISSING`: 이미지 파일 누락
 - `UNSUPPORTED_IMAGE_FORMAT`: 지원하지 않는 이미지 형식
 - `OCR_FAILED`: OCR 처리 실패
+- `OCR_NOT_CONFIGURED`: Google Vision 설정 오류 (502)
+- `OCR_QUOTA_EXCEEDED`: Google Vision 사용 한도 초과 (502)
+- `OCR_TIMEOUT`: OCR 요청 시간 초과 (504)
+- `OCR_SERVICE_UNAVAILABLE`: OCR 서비스 일시 장애 (503)
 - `AI_MODULE_FAILED`: AI/OCR 모듈 로드 실패
 - `MATERIAL_EXTRACTION_FAILED`: 소재 혼용률 추출 실패
 - `MATERIAL_NOT_FOUND`: DB에 없는 소재
@@ -116,6 +120,12 @@ Authorization: Bearer <token>
 
 테스트 목적으로 OCR을 건너뛰려면 `raw_ocr_text` form field를 함께 보낼 수 있습니다.
 
+실제 이미지 경로는 OCR 원문뿐 아니라 후보 사이의 조성 충돌과 소재에 연결되지
+않은 비율을 파서에 전달합니다. `ocr`에는 선택한 입력 후보, 호출 횟수, 재시도,
+후보 충돌·미연결 부위 등 처리 메타데이터를 제공합니다. OCR 원문 전체나 인증
+정보는 포함하지 않습니다. `raw_ocr_text`로 우회한 경우 `ocr`는 빈 객체이고
+OCR 신뢰도는 `unknown`입니다. 업로드 형식·크기 검사는 우회 경로에도 적용합니다.
+
 ### Request
 
 Content-Type: `multipart/form-data`
@@ -155,6 +165,18 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
   ],
   "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
   "raw_ocr_preview": "COTTON 80% POLYESTER 20%",
+  "warnings": [],
+  "confidence": {
+    "ocr": "unknown",
+    "parser": "high"
+  },
+  "parse_evidence": {
+    "composition_status": "confirmed",
+    "source": "same_line",
+    "ratio_total_before_normalization": 100,
+    "explicit_percent": true
+  },
+  "ocr": {},
   "clothing": {
     "name": "스캔한 의류",
     "category": "상의"
@@ -178,10 +200,27 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
     "partial_materials": {},
     "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
     "raw_ocr_preview": "wash cold do not bleach dry flat",
-    "ai_success": false
+    "ai_success": false,
+    "parser_error_code": "composition_not_found",
+    "warnings": [],
+    "confidence": {
+      "ocr": "unknown",
+      "parser": "low"
+    },
+    "parse_evidence": {},
+    "ocr": {}
   }
 }
 ```
+
+파서가 성공 상태를 반환하고 소재 비율 합계가 정확히 100%로 확인된 경우에만
+200을 반환합니다. 합계가 100%가 아니거나 조성이 불완전·모호하면 비율을
+보정하지 않고 422 `MATERIAL_EXTRACTION_FAILED`로 반환합니다. 이때 `materials`와
+`partial_materials`는 모두 빈 객체이며 `parser_error_code`, `warnings`,
+`confidence`, `parse_evidence`, `ocr`를 진단 정보로 전달합니다. 원본·좌표·전처리
+후보 사이의 대표 조성이 충돌하거나 미연결 비율이 남아 있는 경우에도 이 경로로
+처리하며 외부 OCR 서비스 실패(502)로 분류하지 않습니다. 스캔 성공·실패는 모두
+탄소 결과나 이력을 저장하지 않습니다.
 
 ## POST /api/carbon/calculate
 
@@ -380,8 +419,10 @@ Authorization: Bearer <token>
   (이전에는 무게 없는 소재 계수가 실제 배출량과 같은 이력에 섞였음)
 - 스캔 업로드 상한 **10MB** — 초과 시 413 `PAYLOAD_TOO_LARGE`.
 - 이미지 파트에 **Content-Type 필수** (jpeg/png/webp 외·누락 시 415).
-- `/api/scan` 응답: 인식된 비율 합이 99.5~100.5를 벗어나면
-  `ai_success=false`, `analysis_failure_reason="RATIO_INCOMPLETE"` (200 유지).
+- `/api/scan`은 파서가 확인한 소재 비율 합계가 정확히 100%일 때만 200을
+  반환합니다. 100%가 아니면 자동 보정하지 않고 422
+  `MATERIAL_EXTRACTION_FAILED`로 반환하며, 200 응답의 `ai_success`는 항상
+  `true`, `analysis_failure_reason`은 `null`입니다.
 - 이력 `created_at`은 UTC 오프셋 포함 ISO 형식(`...+00:00`)으로 직렬화.
 - 무게 입력 범위: 1g ~ 100,000g. NaN/Infinity는 비율·무게 모두 400으로 거부.
 - 비밀번호 앞뒤 공백은 가입 시 400으로 거부(저장·검증 모두 입력 원문 사용).

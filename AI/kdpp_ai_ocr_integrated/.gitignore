@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.pytest-cache/
 key.json
 outputs/
 models/**/*.pt

@@ -1,0 +1,413 @@
+"""OCR 문자열 정규화와 소재·의류 파트 토큰 추출."""
+
+import re
+from dataclasses import dataclass
+import unicodedata
+
+from apps.text.rules import MATERIAL_ALIASES, OCR_CORRECTIONS
+
+
+PART_PATTERNS = {
+    "outer": [
+        "겉감",
+        "겉 감",
+        "외피",
+        "표면",
+        "본체",
+        "몸판",
+        "본피",
+        "shell",
+        "outshell",
+        "outer",
+        "face",
+        "main fabric",
+        "本体",
+        "面料",
+        "表布",
+        "表層",
+        "表地",
+        "表素材",
+        "表生地",
+        "主面料",
+        "外层",
+        "外層",
+    ],
+    "lining": [
+        "안감",
+        "안 감",
+        "내피",
+        "lining",
+        "lning",
+        "uning",
+        "裏地",
+        "里料",
+        "裡料",
+        "内里",
+        "內裡",
+        "裏素材",
+        "裏生地",
+        "里布",
+        "裏布",
+        "内衬",
+        "內襯",
+        "衬里",
+        "襯裡",
+    ],
+    "filling": [
+        "충전재",
+        "충전제",
+        "충전",
+        "솜",
+        "filling",
+        "fill",
+        "中わた",
+        "中綿",
+        "填充",
+        "填充物",
+        "填充料",
+    ],
+    "pocket": [
+        "주머니감", "주머니천", "주머니", "pocket", "口袋布", "袋布", "ポケット布"
+    ],
+    "rib": ["립", "리브", "rib", "罗纹", "羅紋"],
+    "sleeve": ["소매", "sleeve", "袖子", "袖部", "袖"],
+    "color_block": ["배색", "contrast", "配色", "拼接", "別布"],
+}
+
+EXCLUDED_SEGMENT_WORDS = {
+    "심지",
+    "보강재",
+    "상표",
+    "무늬",
+    "밴드",
+    "레이스",
+    "자수",
+    "장식",
+    "부자재",
+    "제외",
+    "except",
+    "excluding",
+    "exclusive of decoration",
+    "decoration",
+    "embroidery",
+    "accessory",
+    "trim",
+    "装饰",
+    "裝飾",
+    "刺绣",
+    "刺繍",
+    "辅料",
+    "輔料",
+    "配件",
+    "付属",
+    "附属",
+    "除く",
+}
+
+_TOKEN_PATTERN = re.compile(
+    r"[^\W\d_]+",
+    re.IGNORECASE,
+)
+
+
+def _normalized_alias(value: str) -> str:
+    return re.sub(r"\s+", " ", value.casefold().strip())
+
+
+ALIAS_TO_MATERIAL = {
+    _normalized_alias(alias): material
+    for material, aliases in MATERIAL_ALIASES.items()
+    for alias in aliases
+    if alias.strip()
+}
+
+MULTIWORD_ALIASES = sorted(
+    (
+        (alias, material)
+        for alias, material in ALIAS_TO_MATERIAL.items()
+        if " " in alias
+    ),
+    key=lambda item: len(item[0]),
+    reverse=True,
+)
+
+
+def _replace_token(text: str, wrong: str, correct: str) -> str:
+    if wrong.isascii():
+        pattern = rf"(?<![a-z]){re.escape(wrong)}(?![a-z])"
+    else:
+        pattern = re.escape(wrong)
+    return re.sub(pattern, correct, text, flags=re.IGNORECASE)
+
+
+def normalize_text(text: str) -> str:
+    if not text:
+        return ""
+
+    # Normalize full-width digits/punctuation and compatibility characters
+    # commonly returned from Japanese and Chinese care labels.
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    normalized = normalized.replace("：", ":").replace("％", "%")
+    normalized = normalized.replace("·", " ").replace("\u00a0", " ")
+    normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
+
+    for wrong, correct in OCR_CORRECTIONS.items():
+        normalized = _replace_token(normalized, wrong.casefold(), correct.casefold())
+
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in normalized.split("\n")]
+    return "\n".join(line for line in lines if line)
+
+
+def clean_ocr_preview(text: str, max_len: int = 220) -> str:
+    if not text:
+        return ""
+    preview = re.sub(r"\s+", " ", text).strip()
+    return preview if len(preview) <= max_len else preview[:max_len] + "..."
+
+
+def find_material_key(word: str) -> str | None:
+    token = _normalized_alias(word.strip(" .,:;/()[]{}<>|+-_=*\"'"))
+    if not token:
+        return None
+    corrected = OCR_CORRECTIONS.get(token, token)
+    corrected = _normalized_alias(corrected)
+    material = ALIAS_TO_MATERIAL.get(corrected)
+    if material:
+        return material
+
+    # OCR sometimes joins a Korean part marker and its first material
+    # (for example, ``배색면``). Only split a known non-ASCII marker and
+    # require the remainder to be a complete material alias.
+    for aliases in PART_PATTERNS.values():
+        for prefix in aliases:
+            normalized_prefix = _normalized_alias(prefix)
+            if (
+                not normalized_prefix.isascii()
+                and corrected.startswith(normalized_prefix)
+                and len(corrected) > len(normalized_prefix)
+            ):
+                material = ALIAS_TO_MATERIAL.get(corrected[len(normalized_prefix) :])
+                if material:
+                    return material
+    return None
+
+
+def _strip_excluded_segments(line: str) -> str:
+    def remove_if_excluded(match: re.Match[str]) -> str:
+        content = match.group(0).casefold()
+        return " " if any(word in content for word in EXCLUDED_SEGMENT_WORDS) else content
+
+    cleaned = re.sub(r"[\(\[][^\)\]]*[\)\]]", remove_if_excluded, line)
+    exclusion_pattern = "|".join(
+        re.escape(word)
+        for word in sorted(EXCLUDED_SEGMENT_WORDS, key=len, reverse=True)
+    )
+    cleaned = re.sub(
+        rf"(?:{exclusion_pattern}).*$",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _mask_multiword_aliases(text: str) -> tuple[str, list[tuple[int, str]]]:
+    """Blank multiword aliases, returning the masked text and their materials."""
+
+    found_by_position: list[tuple[int, str]] = []
+    for alias, material in MULTIWORD_ALIASES:
+        pattern = rf"(?<![a-z]){re.escape(alias)}(?![a-z])"
+        for match in list(re.finditer(pattern, text)):
+            found_by_position.append((match.start(), material))
+            # Keep offsets while masking a compound so a partial token such
+            # as ``폴리`` cannot also be read as polyester.
+            text = (
+                text[: match.start()]
+                + " " * (match.end() - match.start())
+                + text[match.end() :]
+            )
+    return text, found_by_position
+
+
+def extract_materials(line: str) -> list[str]:
+    return [evidence.material for evidence in _material_evidence(line)]
+
+
+_PART_MARKER_PATTERNS = {
+    part: [
+        re.compile(
+            rf"(?<![a-z]){re.escape(alias.casefold())}(?![a-z])"
+            if alias.isascii()
+            else re.escape(alias.casefold())
+        )
+        for alias in aliases
+    ]
+    for part, aliases in PART_PATTERNS.items()
+}
+
+# These short labels also appear inside fiber names, product descriptions,
+# or care instructions without naming a composition part.
+_SHORT_PART_MARKERS = {"솜", "립", "袖", "표면"}
+
+
+def is_part_marker_match(text: str, match: re.Match[str]) -> bool:
+    """Reject short markers embedded in words, but keep joined marker+fiber OCR."""
+    if match.group().casefold() not in _SHORT_PART_MARKERS:
+        return True
+    if match.start() > 0 and text[match.start() - 1].isalpha():
+        return False
+    if match.end() < len(text) and text[match.end()].isalpha():
+        suffix = _TOKEN_PATTERN.match(text, match.end())
+        return suffix is not None and find_material_key(suffix.group()) is not None
+    return True
+
+
+def declared_part(line: str) -> str | None:
+    """Part explicitly named on a line, or ``None`` when no marker appears.
+
+    ASCII markers and the short non-ASCII markers above must not retag a row
+    merely because they occur inside another word.
+    """
+    normalized = normalize_text(line)
+    for part, patterns in _PART_MARKER_PATTERNS.items():
+        if any(
+            is_part_marker_match(normalized, match)
+            for pattern in patterns
+            for match in pattern.finditer(normalized)
+        ):
+            return part
+    return None
+
+
+# A fiber the table cannot price must not be dropped silently: its ratio would
+# be handed to whichever neighbouring material is recognised.
+UNPRICED_MATERIALS = {
+    "metallic",
+    "modacrylic",
+    "메탈릭",
+    "모다크릴",
+    "モダクリル",
+}
+
+# ``faux leather`` is not leather, so a modifier that negates the material it
+# qualifies blocks the row instead of resolving to the bare material.
+NEGATING_MODIFIERS = {
+    "faux",
+    "imitation",
+    "artificial",
+    "synthetic",
+    "fake",
+    "인조",
+    "합성",
+    "모조",
+    "仿",
+    "人造",
+}
+
+# Chinese and Japanese fiber names are built from these suffixes, so a token
+# longer than the suffix alone names a fiber the alias table does not hold.
+_CJK_FIBER_SUFFIXES = ("纶", "綸", "纤维", "纖維", "繊維", "纤", "纖", "丝", "絲")
+
+_EMBEDDABLE_ALIASES = tuple(
+    alias for alias in ALIAS_TO_MATERIAL if alias.isascii() and len(alias) >= 4
+)
+
+
+def _is_unresolved_material_token(token: str) -> bool:
+    if find_material_key(token):
+        return False
+
+    normalized = _normalized_alias(token)
+    if not normalized:
+        return False
+    if normalized in UNPRICED_MATERIALS or normalized in NEGATING_MODIFIERS:
+        return True
+    if any(
+        normalized.endswith(suffix) and len(normalized) > len(suffix)
+        for suffix in _CJK_FIBER_SUFFIXES
+    ):
+        return True
+    # ``modacrylic`` is not acrylic, and neither is anything else that merely
+    # ends with a known fiber name.
+    return any(normalized.endswith(alias) for alias in _EMBEDDABLE_ALIASES)
+
+
+def unresolved_material_tokens(line: str) -> list[str]:
+    """Fiber-like tokens on a composition row that no material key covers."""
+
+    cleaned = _strip_excluded_segments(normalize_text(line))
+    tokenizable, multiword_materials = _mask_multiword_aliases(cleaned)
+    tokens = [match.group() for match in _TOKEN_PATTERN.finditer(tokenizable)]
+    has_known_material = bool(multiword_materials) or any(
+        find_material_key(token) for token in tokens
+    )
+    # An unknown fiber can occupy its own row in a material column. A bare
+    # modifier (such as "synthetic" in care text) is not itself a fiber name.
+    return [
+        token for token in tokens
+        if _is_unresolved_material_token(token)
+        and (has_known_material or token not in NEGATING_MODIFIERS)
+    ]
+
+
+_ALIAS_SEPARATOR_PATTERN = re.compile(r"[\s/|,;:\"'()\[\]{}\-]*")
+
+@dataclass(frozen=True)
+class MaterialEvidence:
+    material: str
+    start: int
+    end: int
+
+def _material_evidence(line: str) -> tuple[MaterialEvidence, ...]:
+    cleaned = _strip_excluded_segments(normalize_text(line))
+    if not cleaned:
+        return ()
+
+    occurrences: list[MaterialEvidence] = []
+    occupied_spans: list[tuple[int, int]] = []
+    for alias, material in MULTIWORD_ALIASES:
+        for match in re.finditer(
+            rf"(?<![a-z]){re.escape(alias)}(?![a-z])",
+            cleaned,
+        ):
+            if any(
+                match.start() < end and match.end() > start
+                for start, end in occupied_spans
+            ):
+                continue
+            occurrences.append(
+                MaterialEvidence(material, match.start(), match.end())
+            )
+            occupied_spans.append(match.span())
+
+    for match in _TOKEN_PATTERN.finditer(cleaned):
+        if any(
+            match.start() < end and match.end() > start
+            for start, end in occupied_spans
+        ):
+            continue
+        material = find_material_key(match.group())
+        if material:
+            occurrences.append(
+                MaterialEvidence(material, match.start(), match.end())
+            )
+
+    ordered: list[MaterialEvidence] = []
+    for evidence in sorted(occurrences, key=lambda item: (item.start, item.end)):
+        # 인접한 동일 소재의 병기는 전체 위치를 보존한 하나의 근거로 묶는다.
+        # 숫자나 다른 단어를 사이에 둔 반복 표기는 별도 근거로 남겨 검증한다.
+        if (
+            ordered
+            and ordered[-1].material == evidence.material
+            and _ALIAS_SEPARATOR_PATTERN.fullmatch(
+                cleaned[ordered[-1].end : evidence.start]
+            )
+        ):
+            ordered[-1] = MaterialEvidence(
+                evidence.material,
+                ordered[-1].start,
+                evidence.end,
+            )
+            continue
+        ordered.append(evidence)
+    return tuple(ordered)
