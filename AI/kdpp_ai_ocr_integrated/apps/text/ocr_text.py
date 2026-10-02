@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from apps.text.ocr_candidates import (
     OcrCandidate, build_candidate, find_conflicting_parts, find_unpaired_ratio_parts,
-    score_candidate,
+    find_rejected_composition_parts, score_candidate,
 )
 from apps.text.ocr_cache import OcrCacheMissError, OcrTextCache
 from apps.text.ocr_errors import (
@@ -137,6 +137,7 @@ class OcrMetadata:
     rpc_attempt_count: int = 0
     conflicting_parts: tuple[str, ...] = ()
     unpaired_ratio_parts: tuple[str, ...] = ()
+    rejected_composition_parts: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -710,9 +711,23 @@ def run_ocr_bytes(
     best = max(candidates, key=lambda candidate: candidate.score)
     conflicting_parts = find_conflicting_parts(candidates)
     unpaired_ratio_parts = find_unpaired_ratio_parts(candidates)
+    rejected_composition_parts = find_rejected_composition_parts(
+        candidates, selected_part=best.selected_part,
+    )
+    rejected_representative = False
+    if rejected_composition_parts:
+        from apps.text.parse_label import parse_label
+
+        rejected_representative = parse_label(
+            best.text,
+            conflicting_parts=conflicting_parts,
+            unpaired_ratio_parts=unpaired_ratio_parts,
+            rejected_composition_parts=rejected_composition_parts,
+        )["status"] != "success"
     ocr_confidence = (
         "low"
-        if best.selected_part in (*conflicting_parts, *unpaired_ratio_parts)
+        if rejected_representative
+        or best.selected_part in (*conflicting_parts, *unpaired_ratio_parts)
         or ((conflicting_parts or unpaired_ratio_parts) and best.parser_status != "success")
         else "high"
         if best.parser_status == "success" and best.parser_confidence == "high"
@@ -754,6 +769,7 @@ def run_ocr_bytes(
             rpc_attempt_count=sum(attempt.rpc_attempt_count for attempt in attempts),
             conflicting_parts=conflicting_parts,
             unpaired_ratio_parts=unpaired_ratio_parts,
+            rejected_composition_parts=rejected_composition_parts,
         ),
     )
 
@@ -775,13 +791,17 @@ def run_ocr(
     """문자열 전용 연동에서도 대표 부위가 충돌하면 성공 텍스트로 넘기지 않는다."""
 
     result = run_ocr_with_metadata(image_path, credential_path)
-    if result.metadata.conflicting_parts or result.metadata.unpaired_ratio_parts:
+    if (
+        result.metadata.conflicting_parts or result.metadata.unpaired_ratio_parts
+        or result.metadata.rejected_composition_parts
+    ):
         from apps.text.parse_label import parse_label
 
         parsed = parse_label(
             result.text,
             conflicting_parts=result.metadata.conflicting_parts,
             unpaired_ratio_parts=result.metadata.unpaired_ratio_parts,
+            rejected_composition_parts=result.metadata.rejected_composition_parts,
         )
         if parsed["status"] != "success":
             raise OcrCompositionError(parsed["message"])

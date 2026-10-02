@@ -41,6 +41,9 @@ def _merge_ocr_metadata(parsed: dict[str, Any], metadata: OcrMetadata) -> dict[s
         "candidate_count": metadata.candidate_count,
         "conflicting_parts": list(metadata.conflicting_parts),
         "unpaired_ratio_parts": list(metadata.unpaired_ratio_parts),
+        "rejected_composition_parts": {
+            part: list(reasons) for part, reasons in metadata.rejected_composition_parts.items()
+        },
         "image_format": metadata.image_format,
         "width": metadata.width,
         "height": metadata.height,
@@ -75,6 +78,7 @@ def analyze_ocr_result(ocr_result: OcrResult) -> dict[str, Any]:
             ocr_result.text,
             conflicting_parts=ocr_result.metadata.conflicting_parts,
             unpaired_ratio_parts=ocr_result.metadata.unpaired_ratio_parts,
+            rejected_composition_parts=ocr_result.metadata.rejected_composition_parts,
         ),
         ocr_result.metadata,
     )

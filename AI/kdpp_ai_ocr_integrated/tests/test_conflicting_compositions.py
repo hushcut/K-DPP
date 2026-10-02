@@ -91,13 +91,21 @@ def test_heading_does_not_hide_invalid_ratio(ratio):
     [
         "OUTER COTTON 100%\nLINING 混用率 57% 38% 5%",
         "COTTON 100%\n호칭 57% 38% 5%",
-        "COTTON 100%\nIMMATERIAL 57% 38% 5%",
         "COTTON 100%\nSILK TOUCH 100%",
         "COTTON 100%\nMACHINE WASH 30°C",
     ],
 )
 def test_heading_ratio_guard_preserves_other_parts_and_non_composition_text(text):
     assert parse_label(text)["materials"] == {"cotton": 100}
+
+
+def test_unclassified_percentage_text_is_not_silently_discarded():
+    # A word that is not a composition heading does not make its percentages
+    # safe to ignore. Only explicit metadata or care text can establish that.
+    result = parse_label("COTTON 100%\nIMMATERIAL 57% 38% 5%")
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
+    assert "generic:unresolved_material_token" in result["warnings"]
 
 
 def test_outer_heading_residual_cannot_be_replaced_by_complete_lining():

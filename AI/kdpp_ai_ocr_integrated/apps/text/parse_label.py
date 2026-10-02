@@ -405,6 +405,18 @@ def _is_ratio_only_composition_row(info: LineInfo) -> bool:
     return not _TOKEN_PATTERN.search(remaining)
 
 
+def _is_unresolved_percent_row(info: LineInfo) -> bool:
+    """미등록 소재처럼 해석되지 않은 단어가 붙은 독립 퍼센트 행을 확인한다."""
+
+    return (
+        not info.materials
+        and info.explicit_percent
+        and not _is_metadata_line(info)
+        and not _mentions_care(info.normalized)
+        and not _is_ratio_only_composition_row(info)
+    )
+
+
 def _composition_heading_indices(infos: list[LineInfo]) -> list[int]:
     return [
         info.index
@@ -500,6 +512,7 @@ def _best_candidates_by_part(
     *,
     conflicting_parts: tuple[str, ...] = (),
     unpaired_ratio_parts: tuple[str, ...] = (),
+    rejected_composition_parts: dict[str, tuple[str, ...]] | None = None,
 ) -> tuple[
     dict[str, dict[str, float | int]],
     dict[str, CompositionCandidate],
@@ -555,12 +568,17 @@ def _best_candidates_by_part(
 
     # A row naming a fiber the table cannot resolve has no trustworthy
     # material/ratio mapping: its ratio would silently move to a neighbour.
+    unresolved_percent_indices = {
+        info.index for info in infos if _is_unresolved_percent_row(info)
+    }
     composition_rows = [
         info for info in infos
-        if (info.materials or info.unresolved_materials) and not _is_metadata_line(info)
+        if (info.materials or info.unresolved_materials or info.index in unresolved_percent_indices)
+        and not _is_metadata_line(info)
     ]
     unresolved_parts = {
-        info.part for info in composition_rows if info.unresolved_materials
+        info.part for info in composition_rows
+        if info.unresolved_materials or info.index in unresolved_percent_indices
     }
     # Every recognized material row must belong to a complete candidate.
     # A valid 100% row cannot hide an unpaired row before or after it. Keep
@@ -589,6 +607,8 @@ def _best_candidates_by_part(
     for info in infos:
         if not _is_metadata_line(info) and (
             info.materials
+            or info.unresolved_materials
+            or info.index in unresolved_percent_indices
             or (
                 (info.explicit_percent or info.numbers)
                 and _is_ratio_only_composition_row(info)
@@ -653,6 +673,45 @@ def _best_candidates_by_part(
         | {info.part for info in composition_rows}
         | {info.marker_part for info in infos if info.marker_part is not None}
     )
+
+    # 후보가 실패해도 확인한 소재와 안전한 소재/비율 연결을 잃지 않는다.
+    observed_materials: dict[str, list[str]] = {}
+    paired_material_ratios: dict[str, list[tuple[str, float]]] = {}
+    for info in composition_rows:
+        observed_materials.setdefault(info.part, []).extend(info.materials)
+        if (
+            info.materials and len(info.materials) == len(info.numbers)
+            and not info.invalid_evidence and not info.unresolved_materials
+        ):
+            paired_material_ratios.setdefault(info.part, []).extend(
+                (material, float(ratio))
+                for material, ratio in zip(info.materials, info.numbers)
+            )
+    rejections: dict[str, set[str]] = {}
+    for part in expected_parts - parts.keys() - ambiguous_parts - orphan_ratio_parts:
+        reasons = {
+            warning.split(":", 1)[1] for warning in warnings
+            if warning.startswith(f"{part}:")
+        }
+        rejections[part] = reasons or {"unpaired_material_rows"}
+    for part, reasons in (rejected_composition_parts or {}).items():
+        parts.pop(part, None)
+        expected_parts.add(part)
+        rejections.setdefault(part, set()).update(reasons)
+        for reason in reasons:
+            warning = f"{part}:{reason}"
+            if warning not in warnings:
+                warnings.append(warning)
+    ratio_evidence.update({
+        "observed_materials": observed_materials,
+        "paired_material_ratios": {
+            part: [list(pair) for pair in pairs]
+            for part, pairs in paired_material_ratios.items()
+        },
+        "rejected_composition_parts": {
+            part: sorted(reasons) for part, reasons in sorted(rejections.items())
+        },
+    })
 
     if any(info.inferred_metadata for info in infos):
         warnings.append("unlabeled_garment_size_inferred")
@@ -784,6 +843,7 @@ def parse_label(
     *,
     conflicting_parts: tuple[str, ...] = (),
     unpaired_ratio_parts: tuple[str, ...] = (),
+    rejected_composition_parts: dict[str, tuple[str, ...]] | None = None,
 ) -> dict:
     """OCR 후보의 상충 부위도 포함해 최종 대표 조성을 안전하게 판단한다."""
 
@@ -796,6 +856,7 @@ def parse_label(
 
     parts, candidates, warnings, expected_parts, ratio_evidence = _best_candidates_by_part(
         text, conflicting_parts=conflicting_parts, unpaired_ratio_parts=unpaired_ratio_parts,
+        rejected_composition_parts=rejected_composition_parts,
     )
     selected_part, materials = choose_representative_materials(parts)
     if not materials:

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from apps.text.composition_candidates import equivalent_composition
+from apps.text.rules import EQUIVALENT_MATERIALS
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,9 @@ class OcrCandidate:
     conflicting_parts: tuple[str, ...] = ()
     observed_ratios: dict[str, list[float]] = field(default_factory=dict)
     unpaired_ratio_parts: tuple[str, ...] = ()
+    observed_materials: dict[str, list[str]] = field(default_factory=dict)
+    paired_material_ratios: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
+    rejected_composition_parts: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 def find_conflicting_parts(candidates: list[OcrCandidate]) -> tuple[str, ...]:
@@ -74,6 +78,68 @@ def find_unpaired_ratio_parts(candidates: list[OcrCandidate]) -> tuple[str, ...]
             if not resolved:
                 unresolved.add(part)
     return tuple(sorted(unresolved))
+
+
+def find_rejected_composition_parts(
+    candidates: list[OcrCandidate], *, selected_part: str,
+) -> dict[str, tuple[str, ...]]:
+    """소재·숫자 누락은 검증된 복원으로만 해소하고 미등록·오류 근거는 보존한다."""
+
+    rejected: dict[str, set[str]] = {}
+    for candidate in candidates:
+        for part, reasons in candidate.rejected_composition_parts.items():
+            resolved = False
+            if set(reasons) == {"unpaired_material_rows"}:
+                source_parts = (
+                    candidate.observed_materials.keys() | candidate.observed_ratios.keys()
+                    if part == "generic" else (part,)
+                )
+                required_materials = Counter(
+                    EQUIVALENT_MATERIALS.get(material, material)
+                    for key in source_parts
+                    for material in candidate.observed_materials.get(key, [])
+                )
+                required_ratios = Counter(
+                    ratio for key in source_parts
+                    for ratio in candidate.observed_ratios.get(key, [])
+                )
+                required_pairs = {
+                    (EQUIVALENT_MATERIALS.get(material, material), ratio)
+                    for key in source_parts
+                    for material, ratio in candidate.paired_material_ratios.get(key, [])
+                }
+                for alternative in candidates:
+                    if alternative.parser_status != "success":
+                        continue
+                    target_parts = alternative.parts.keys() if part == "generic" else (part,)
+                    valid_parts = [key for key in target_parts if key in alternative.parts]
+                    available_materials = Counter(
+                        EQUIVALENT_MATERIALS.get(material, material)
+                        for key in valid_parts
+                        for material in alternative.observed_materials.get(key, [])
+                    )
+                    available_ratios = Counter(
+                        ratio for key in valid_parts
+                        for ratio in alternative.observed_ratios.get(key, [])
+                    )
+                    available_pairs = {
+                        pair for key in valid_parts
+                        for pair in equivalent_composition(alternative.parts[key])
+                    }
+                    if (
+                        (required_materials or required_ratios)
+                        and available_materials >= required_materials
+                        and available_ratios >= required_ratios
+                        and required_pairs <= available_pairs
+                    ):
+                        resolved = True
+                        break
+            if not resolved:
+                rejected.setdefault(part, set()).update(reasons)
+    # 부위명이 없는 거절 근거를 다른 후보의 OUTER 표기로 숨기지 않는다.
+    if "generic" in rejected and selected_part:
+        rejected.setdefault(selected_part, set()).update(rejected["generic"])
+    return {part: tuple(sorted(reasons)) for part, reasons in sorted(rejected.items())}
 
 
 def score_candidate(
@@ -167,4 +233,13 @@ def build_candidate(
         })),
         observed_ratios=evidence.get("observed_ratios", {}),
         unpaired_ratio_parts=tuple(evidence.get("unpaired_ratio_parts", [])),
+        observed_materials=evidence.get("observed_materials", {}),
+        paired_material_ratios={
+            part: [(material, ratio) for material, ratio in pairs]
+            for part, pairs in evidence.get("paired_material_ratios", {}).items()
+        },
+        rejected_composition_parts={
+            part: tuple(reasons)
+            for part, reasons in evidence.get("rejected_composition_parts", {}).items()
+        },
     )

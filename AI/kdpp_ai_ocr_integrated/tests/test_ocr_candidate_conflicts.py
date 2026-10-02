@@ -279,3 +279,140 @@ def test_text_only_compatibility_wrapper_preserves_agreed_outer(monkeypatch):
     monkeypatch.setattr(ocr_text, "run_ocr_with_metadata", lambda *_args: result)
 
     assert ocr_text.run_ocr("unused-label.png") == result.text
+
+@pytest.mark.parametrize("source", ["layout", "preprocessed"])
+@pytest.mark.parametrize(
+    ("raw", "alternative"),
+    [
+        ("COTTON 100%\nOLEFIN 50%", "COTTON 100%"),
+        ("COTTON 100%\nMODACRYLIC 50%", "COTTON 100%"),
+        ("COTTON 100%\nPOLYESTER -5%", "COTTON 100%"),
+        ("COTTON 100%\nPOLYESTER 0%", "COTTON 100%"),
+        ("COTTON 100%\nPOLYESTER 101%", "COTTON 100%"),
+        ("COTTON 100%\nPOLYESTER 1..5%", "COTTON 100%"),
+        ("COTTON 100%\nPOLYESTER", "COTTON 100%"),
+        ("COTTON 80%\nPOLYESTER", "COTTON 100%"),
+        ("COTTON 100%\nPOLYESTER 50%", "COTTON 100%"),
+        ("COTTON 100%\nMODACRYLIC 100%", "COTTON 100%\n면 100%"),
+        ("IMITATION LEATHER 100%", "LEATHER 100%"),
+        ("OUTER COTTON 100%\nOUTER OLEFIN 50%", "OUTER COTTON 100%"),
+        ("OUTER POLYESTER\nLINING COTTON 100%", "LINING COTTON 100%"),
+        ("COTTON 100%\nOLEFIN 50%", "OUTER COTTON 100%"),
+        ("COTTON 80%\nPOLYESTER", "COTTON 80% SPANDEX 20%"),
+        ("COTTON 80%\nPOLYESTER", "COTTON 20% POLYESTER 80%"),
+        ("COTTON 100%\nPOLYESTER\nPOLYESTER",
+         "OUTER COTTON 100%\nLINING POLYESTER 100%"),
+    ],
+)
+def test_rejected_composition_cannot_disappear_in_another_candidate(
+    monkeypatch, source, raw, alternative,
+):
+    payloads = (
+        [ocr_text.OcrPayload(raw, alternative)]
+        if source == "layout"
+        else [ocr_text.OcrPayload(raw, ""), ocr_text.OcrPayload(alternative, "")]
+    )
+    result, calls = run_with_payloads(monkeypatch, payloads)
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["status"] == "failed"
+    assert analysis["materials"] == {}
+    assert analysis["confidence"]["ocr"] == "low"
+    assert analysis["ocr"]["rejected_composition_parts"]
+    assert analysis["parse_evidence"]["rejected_composition_parts"]
+    assert len(calls) == (1 if source == "layout" else 2)
+
+
+@pytest.mark.parametrize("source", ["layout", "preprocessed"])
+@pytest.mark.parametrize(
+    ("raw", "alternative", "expected"),
+    [
+        ("COTTON 80%\nPOLYESTER", "COTTON 80% POLYESTER 20%",
+         {"cotton": 80, "polyester": 20}),
+        ("COTTON POLYESTER", "COTTON 80% POLYESTER 20%",
+         {"cotton": 80, "polyester": 20}),
+        ("OUTER COTTON\nLINING POLYESTER 100%",
+         "OUTER COTTON 100%\nLINING POLYESTER 100%", {"cotton": 100}),
+        ("COTTON 80%\nELASTANE", "면 80% SPANDEX 20%",
+         {"cotton": 80, "spandex": 20}),
+        ("COTTON 100%\nPOLYESTER",
+         "OUTER COTTON 100%\nLINING POLYESTER 100%", {"cotton": 100}),
+    ],
+)
+def test_complete_material_and_ratio_recovery_is_allowed(
+    monkeypatch, source, raw, alternative, expected,
+):
+    payloads = (
+        [ocr_text.OcrPayload(raw, alternative)]
+        if source == "layout"
+        else [ocr_text.OcrPayload(raw, ""), ocr_text.OcrPayload(alternative, "")]
+    )
+    result, _calls = run_with_payloads(monkeypatch, payloads)
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["status"] == "success"
+    assert analysis["materials"] == expected
+    assert analysis["ocr"]["rejected_composition_parts"] == {}
+
+
+@pytest.mark.parametrize(
+    ("raw", "alternative", "reason"),
+    [
+        ("OUTER COTTON 100%\nLINING MODACRYLIC 50%",
+         "OUTER COTTON 100%\nLINING POLYESTER 100%", "unresolved_material_token"),
+        ("OUTER COTTON 100%\nLINING POLYESTER -5%",
+         "OUTER COTTON 100%\nLINING POLYESTER 100%", "invalid_ratio"),
+        ("OUTER COTTON 100%\nLINING POLYESTER",
+         "OUTER COTTON 100%", "unpaired_material_rows"),
+    ],
+)
+def test_lower_priority_rejections_preserve_the_confirmed_outer(
+    monkeypatch, raw, alternative, reason,
+):
+    result, _calls = run_with_payloads(
+        monkeypatch, [ocr_text.OcrPayload(raw, alternative)],
+    )
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["status"] == "success"
+    assert analysis["selected_part"] == "outer"
+    assert analysis["parts"] == {"outer": {"cotton": 100}}
+    assert reason in analysis["ocr"]["rejected_composition_parts"]["lining"]
+    assert f"lining:{reason}" in analysis["warnings"]
+
+
+@pytest.mark.parametrize(
+    "row", ["OLEFIN 50%", "POLYESTER -5%", "POLYESTER"],
+)
+def test_text_wrapper_rejects_disappearing_composition_evidence(monkeypatch, row):
+    result, _calls = run_with_payloads(
+        monkeypatch, [ocr_text.OcrPayload(f"COTTON 100%\n{row}", "COTTON 100%")],
+    )
+    monkeypatch.setattr(ocr_text, "run_ocr_with_metadata", lambda *_args: result)
+
+    with pytest.raises(ocr_text.OcrCompositionError):
+        ocr_text.run_ocr("unused.png")
+
+
+def test_text_wrapper_keeps_confirmed_outer_with_rejected_lining(monkeypatch):
+    result, _calls = run_with_payloads(
+        monkeypatch, [ocr_text.OcrPayload(
+            "OUTER COTTON 100%\nLINING POLYESTER -5%", "OUTER COTTON 100%",
+        )],
+    )
+    monkeypatch.setattr(ocr_text, "run_ocr_with_metadata", lambda *_args: result)
+
+    assert ocr_text.run_ocr("unused.png") == result.text
+
+@pytest.mark.parametrize("row", ["OLEFIN 50%", "POLYESTER -5%", "POLYESTER"])
+def test_rejections_are_preserved_when_the_original_is_the_successful_candidate(
+    monkeypatch, row,
+):
+    result, calls = run_with_payloads(
+        monkeypatch, [ocr_text.OcrPayload("COTTON 100%", f"COTTON 100%\n{row}")],
+    )
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["status"] == "failed"
+    assert analysis["ocr"]["source"] == "original"
+    assert len(calls) == 1

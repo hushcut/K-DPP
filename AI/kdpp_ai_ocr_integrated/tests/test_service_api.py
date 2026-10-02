@@ -274,6 +274,7 @@ def test_ocr_attempt_diagnostics_are_safe_and_serialized() -> None:
         "candidate_count": 2,
         "conflicting_parts": [],
         "unpaired_ratio_parts": [],
+        "rejected_composition_parts": {},
         "image_format": "JPEG",
         "width": 1200,
         "height": 800,
