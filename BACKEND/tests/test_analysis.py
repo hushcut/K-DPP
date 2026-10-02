@@ -1,6 +1,8 @@
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 import main
 from apps.text import ocr_text
@@ -858,3 +860,117 @@ def test_scan_does_not_use_size_as_missing_composition(client):
 
     assert response.status_code == 422
     assert response.json()["detail"]["partial_materials"] == {}
+
+
+@pytest.mark.parametrize(
+    "raw_text",
+    [
+        "COTTON 100%" + " " * (main.MAX_RAW_OCR_TEXT_LENGTH - len("COTTON 100%") + 1),
+        "COTTON 100%\n" + "9" * 5000,
+    ],
+    ids=["one_over_limit_before_strip", "oversized_integer_evidence"],
+)
+def test_scan_rejects_overlong_raw_ocr_text_before_ai(
+    client, monkeypatch, raw_text
+):
+    token = _login_token(client)
+
+    def unexpected_ai_call(*_args, **_kwargs):
+        pytest.fail("Invalid form text must be rejected before OCR or parsing")
+
+    monkeypatch.setattr(main, "run_ocr", unexpected_ai_call)
+    monkeypatch.setattr(main, "parse_label", unexpected_ai_call)
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": raw_text},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["status"] == "error"
+    assert body["error_code"] == "VALIDATION_ERROR"
+    assert body["detail"][0]["loc"] == ["body", "raw_ocr_text"]
+    assert all(set(error) <= {"loc", "msg", "type"} for error in body["detail"])
+    assert raw_text not in response.text
+
+
+def test_scan_accepts_raw_ocr_text_at_length_limit(client):
+    token = _login_token(client)
+    composition = "COTTON 100%"
+    raw_text = composition + " " * (main.MAX_RAW_OCR_TEXT_LENGTH - len(composition))
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": raw_text},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["materials"] == {"cotton": 100}
+
+
+@pytest.mark.parametrize(
+    "ocr_text_value",
+    [
+        "COTTON 100%\nUNKNOWN 50%",
+        "COTTON 100%\n품번 COTTON 50% MODACRYLIC 50%",
+        "COTTON 100%\n100.0000000000000000001",
+        "COTTON 100%\n" + "9" * 5000,
+        "PU\nLEATHER 100%",
+        "Faux\nLeather 100%",
+    ],
+    ids=[
+        "unknown_fiber_row", "incomplete_composition_in_metadata_row",
+        "extra_decimal_row", "oversized_integer_row",
+        "split_pu_modifier", "split_faux_modifier",
+    ],
+)
+def test_scan_rejects_unsafe_ocr_evidence_through_metadata_pipeline(
+    client, monkeypatch, tmp_path, ocr_text_value
+):
+    """Only substitute Vision RPC; keep image validation, candidate parsing and service wiring."""
+    token = _login_token(client)
+    image = BytesIO()
+    Image.new("RGB", (4, 4), "white").save(image, format="JPEG")
+    uploaded_paths = []
+    actual_ocr = main.run_ocr
+
+    def tracked_ocr(image_path, **kwargs):
+        path = Path(image_path)
+        uploaded_paths.append(path)
+        assert path.exists()
+        assert path.read_bytes() == image.getvalue()
+        return actual_ocr(image_path, **kwargs)
+
+    monkeypatch.setattr(main.tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(main, "run_ocr", tracked_ocr)
+    monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        ocr_text, "_run_google_ocr",
+        lambda *_args, **_kwargs: ocr_text.OcrPayload(ocr_text_value, ocr_text_value),
+    )
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", image.getvalue(), "image/jpeg")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error_code"] == "MATERIAL_EXTRACTION_FAILED"
+    detail = body["detail"]
+    assert detail["materials"] == {}
+    assert detail["partial_materials"] == {}
+    assert detail["ai_success"] is False
+    assert detail["ocr"]["image_format"] == "JPEG"
+    assert detail["ocr"]["width"] == 4
+    assert detail["ocr"]["height"] == 4
+    assert detail["ocr"]["attempt_count"] >= 1
+    assert "Exceeds the limit" not in response.text
+    assert len(uploaded_paths) == 1
+    assert uploaded_paths[0].parent == tmp_path
+    assert not uploaded_paths[0].exists()
+    with main.database.SessionLocal() as db:
+        assert db.query(main.database.AnalysisResult).count() == 0

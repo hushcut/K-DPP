@@ -176,6 +176,14 @@ def _is_metadata_line(info: LineInfo) -> bool:
         return True
     if any(phrase in info.normalized for phrase in DESCRIPTIVE_MATERIAL_PHRASES):
         return True
+    # Metadata headings cannot erase a fiber declaration. Unknown fibers and
+    # rows with material/percentage evidence still need composition validation.
+    if (
+        info.unresolved_materials
+        or (info.materials and "%" in info.normalized)
+        or (info.invalid_evidence and _has_invalid_numeric_row(info))
+    ):
+        return False
     # A product code, origin, date or size can share a row with the fiber
     # content. Every material still carries its own explicit percent there,
     # and ``extract_numbers`` has already kept only those percent values.
@@ -334,14 +342,54 @@ def build_line_infos(text: str) -> list[LineInfo]:
             invalid_evidence |= not _contains_only_known_phrases(composition_text, _MATERIAL_ONLY_LINE_CONTEXTS)
         if materials and numbers and len(materials) == len(numbers):
             invalid_evidence |= not _same_line_pairing_is_supported(composition_text, number_evidence)
+        unresolved = unresolved_material_tokens(composition_text)
+        if _has_explicit_unknown_material_marker(composition_text, numbers):
+            unresolved.append("unknown")
         infos.append(LineInfo(
             index=index, raw=raw.strip(), normalized=normalized, part=current_part,
             materials=materials, numbers=numbers, explicit_percent=explicit_percent,
-            unresolved_materials=tuple(unresolved_material_tokens(composition_text)),
+            unresolved_materials=tuple(unresolved),
             marker_part=marker_part, invalid_evidence=invalid_evidence,
             is_metadata=is_metadata, inferred_metadata=inferred_metadata,
         ))
-    return _apply_trailing_part_markers(infos)
+    return _mark_split_imitation_leather(_apply_trailing_part_markers(infos))
+
+
+def _mark_split_imitation_leather(infos: list[LineInfo]) -> list[LineInfo]:
+    """Preserve a negating modifier split by OCR, within its own part only."""
+
+    adjusted = list(infos)
+    for position in range(1, len(infos)):
+        previous, current = infos[position - 1], infos[position]
+        if (
+            previous.part != current.part
+            or _is_metadata_line(previous)
+            or _is_metadata_line(current)
+            or current.marker_part is not None
+        ):
+            continue
+        boundary = len(previous.normalized)
+        joined = f"{previous.normalized}\n{current.normalized}"
+        if any(
+            match.start() < boundary < match.end()
+            for match in _IMITATION_LEATHER_PATTERN.finditer(joined)
+        ):
+            adjusted[position] = replace(current, invalid_evidence=True)
+    return adjusted
+
+
+def _has_invalid_numeric_row(info: LineInfo) -> bool:
+    """Reject malformed ratio-shaped rows without converting unbounded ints."""
+
+    if not _is_ratio_only_composition_row(info):
+        return False
+    if re.fullmatch(r"[0-9]+", info.normalized):
+        # Small bare zero/out-of-range integers remain ignorable identifiers.
+        # Excessively long numeric tokens are unsafe OCR evidence, not a size.
+        if len(info.normalized) > 128:
+            return True
+        return Decimal(0) < Decimal(info.normalized) <= Decimal(125)
+    return bool(_NUMBER_CANDIDATE_PATTERN.search(info.normalized))
 
 
 def _is_ratio_only_composition_row(info: LineInfo) -> bool:
@@ -563,7 +611,7 @@ def _best_candidates_by_part(
     invalid_evidence_parts = {
         info.part for info in infos if info.invalid_evidence and not _is_metadata_line(info)
         and (info.materials or "%" in info.normalized
-             or (re.fullmatch(r"[0-9]+", info.normalized) and 0 < int(info.normalized) <= 125))
+             or _has_invalid_numeric_row(info))
     }
     parts: dict[str, dict[str, float | int]] = {}
     warnings: list[str] = [
@@ -935,7 +983,7 @@ def _has_explicit_unknown_material_marker(
     line: str,
     numbers: tuple[Decimal, ...],
 ) -> bool:
-    if not numbers or not extract_materials(line):
+    if not numbers and "%" not in line:
         return False
     if any(marker in line for marker in ("알 수 없는 소재", "未知繊維", "未知纤维")):
         return True

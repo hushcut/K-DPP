@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field, StringConstraints
 import json
 import math
 import re
-import shutil
 import sys
 import threading
 import tempfile
@@ -1292,7 +1291,9 @@ def analyze_clothes(
 @app.post("/api/scan", tags=["v1-scan"])
 def scan_label(
     image: UploadFile = File(...),
-    raw_ocr_text: str | None = Form(default=None),
+    raw_ocr_text: str | None = Form(
+        default=None, max_length=MAX_RAW_OCR_TEXT_LENGTH
+    ),
     db: Session = Depends(get_db),
     # 스캔 1회가 곧 외부 OCR 호출 비용이므로 로그인 사용자만 허용합니다.
     current_user: database.User = Depends(get_current_user),
