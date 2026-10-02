@@ -355,7 +355,9 @@ def test_outer_candidate_beats_more_complete_color_block_candidate(monkeypatch) 
     )
 
 
-def test_complete_multimaterial_candidate_beats_single_material_layout(monkeypatch) -> None:
+def test_conflicting_multimaterial_and_single_material_candidates_are_not_confirmed(
+    monkeypatch,
+) -> None:
     raw_text = "리오셀 70%\n나일론 30%"
     layout_text = "폴리에스터 100%"
     monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_: object())
@@ -371,6 +373,8 @@ def test_complete_multimaterial_candidate_beats_single_material_layout(monkeypat
     result = ocr_text.run_ocr_bytes(image_bytes())
 
     assert result.text == raw_text
+    assert result.metadata.conflicting_parts == ("generic",)
+    assert result.metadata.confidence == "low"
 
 
 def test_low_confidence_original_tries_preprocessed_candidate(monkeypatch) -> None:

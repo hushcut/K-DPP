@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from apps.service.label_analysis import analyze_ocr_result
-from apps.text.qa_comparison import compare_material_compositions
+from apps.text.qa_comparison import compare_material_compositions, validate_tolerance
 from apps.text.ocr_cache import (
     OcrCacheError,
     OcrTextCache,
@@ -292,8 +292,7 @@ def main() -> None:
         help="Use cached OCR only and never call Google Vision.",
     )
     args = parser.parse_args(sys.argv[1:])
-    if args.tolerance < 0:
-        raise ValueError("--tolerance은 0 이상이어야 합니다.")
+    validate_tolerance(args.tolerance)
     if args.offline and args.refresh_ocr_cache:
         raise ValueError("--offline과 --refresh-ocr-cache는 함께 사용할 수 없습니다.")
 

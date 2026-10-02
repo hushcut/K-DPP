@@ -82,6 +82,18 @@ def test_invalid_api_materials_are_not_recorded_as_ocr_failure() -> None:
     assert "숫자가 아닙니다" in reason
 
 
+@pytest.mark.parametrize("ratio", ["100", True, float("nan"), float("inf"), 0, 101])
+def test_invalid_numeric_api_materials_are_contract_failures(ratio) -> None:
+    parsed = parse_api_materials({"materials": {"cotton": ratio}})
+    judgment, _, category = classify_result(
+        answer={"cotton": 100}, actual=parsed.materials, status_code=200,
+        error_message="", tolerance=3.0, api_contract_error=parsed.contract_error,
+    )
+    assert parsed.contract_error
+    assert judgment == QaJudgment.API_FAILURE
+    assert category == FailureCategory.API_CONTRACT_INVALID
+
+
 def test_non_object_api_response_is_a_contract_error() -> None:
     payload, contract_error = parse_api_response_body("[]")
     judgment, reason, category = classify_result(
@@ -302,6 +314,9 @@ def test_result_row_passes_configured_upload_field_to_api(monkeypatch) -> None:
         ({"api_url": " "}, "API URL"),
         ({"timeout_seconds": 0}, "시간 제한"),
         ({"tolerance": -0.1}, "허용 오차"),
+        ({"tolerance": float("nan")}, "허용 오차"),
+        ({"tolerance": float("inf")}, "허용 오차"),
+        ({"tolerance": -float("inf")}, "허용 오차"),
         ({"max_image_bytes": 0}, "크기 제한"),
         ({"max_raw_response_chars": 0}, "크기 제한"),
     ],

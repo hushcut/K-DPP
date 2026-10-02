@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from apps.text.parse_label import parse_label
-from apps.text.qa_comparison import compare_material_compositions
+from apps.text.qa_comparison import compare_material_compositions, validate_tolerance
 from apps.text.qa_dataset import QaDatasetError, parse_answer_materials
 
 
@@ -167,8 +167,7 @@ def evaluate_manifest(
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], dict[str, Any]]:
     """Evaluate manifest text with the parser, without image OCR or API calls."""
 
-    if tolerance < 0:
-        raise ValueError("혼용률 허용 오차는 0 이상이어야 합니다.")
+    validate_tolerance(tolerance)
 
     results: list[dict[str, str]] = []
     for row_number, row in enumerate(_load_manifest(manifest_path), start=2):

@@ -6,6 +6,7 @@ from apps.text.composition_candidates import (
     CompositionCandidate,
     LineInfo,
     _collect_candidates,
+    equivalent_composition as _equivalent_composition,
 )
 
 from apps.text.material_extraction import (
@@ -23,7 +24,6 @@ from apps.text.material_extraction import (
 from apps.text.rules import (
     CARE_CONFLICTS,
     CARE_RULES,
-    EQUIVALENT_MATERIALS,
     MATERIAL_KOREAN,
 )
 
@@ -98,6 +98,16 @@ COMPOSITION_HINTS = {
     "混用率",
     "品質表示",
 }
+
+_RATIO_ROW_LABELS = COMPOSITION_HINTS | {
+    normalize_text(alias) for aliases in PART_PATTERNS.values() for alias in aliases
+}
+_RATIO_ROW_LABEL_PATTERN = re.compile(
+    "|".join(
+        rf"(?<![a-z]){re.escape(label)}(?![a-z])" if label.isascii() else re.escape(label)
+        for label in sorted(_RATIO_ROW_LABELS, key=len, reverse=True)
+    )
+)
 
 _RATIO_NUMBER = r"([-+−]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+))"
 _PERCENT_PATTERN = re.compile(
@@ -359,15 +369,17 @@ def build_line_infos(text: str) -> list[LineInfo]:
     return _apply_trailing_part_markers(infos)
 
 
-def _equivalent_composition(materials: dict[str, float]) -> tuple[tuple[str, float], ...]:
-    """Composition keyed so alternate names for one fiber compare as equal."""
+def _is_ratio_only_composition_row(info: LineInfo) -> bool:
+    """조성 제목·부위명 외에는 소재 없이 비율만 남은 행인지 확인한다."""
 
-    return tuple(
-        sorted(
-            (EQUIVALENT_MATERIALS.get(material, material), value)
-            for material, value in materials.items()
-        )
+    if info.materials:
+        return False
+    text = _strip_excluded_segments(info.normalized)
+    remaining = _RATIO_ROW_LABEL_PATTERN.sub(
+        lambda match: " " if is_part_marker_match(text, match) else match.group(),
+        text,
     )
+    return not _TOKEN_PATTERN.search(remaining)
 
 
 def _composition_heading_indices(infos: list[LineInfo]) -> list[int]:
@@ -459,11 +471,15 @@ def _translated_alias_rows(
 
 def _best_candidates_by_part(
     text: str,
+    *,
+    conflicting_parts: tuple[str, ...] = (),
+    unpaired_ratio_parts: tuple[str, ...] = (),
 ) -> tuple[
     dict[str, dict[str, float | int]],
     dict[str, CompositionCandidate],
     list[str],
     set[str],
+    dict,
 ]:
     infos = build_line_infos(text)
     candidates = _collect_candidates(
@@ -471,7 +487,7 @@ def _best_candidates_by_part(
     )
     heading_indices = _composition_heading_indices(infos)
     best_by_part: dict[str, CompositionCandidate] = {}
-    ambiguous_parts: set[str] = set()
+    ambiguous_parts: set[str] = set(conflicting_parts)
 
     for candidate in candidates:
         current = best_by_part.get(candidate.part)
@@ -519,28 +535,45 @@ def _best_candidates_by_part(
 
     # OCR can lose a material/part name but retain its standalone percentage.
     # Do not let another complete block hide that missing composition (QA031).
-    # Limit this to ratio-only rows: care/marketing text is not fiber evidence.
-    orphan_ratio_parts = {
+    # 조성 제목·부위명만 붙은 비율 행도 포함한다. 세탁·홍보·제품 정보는 제외한다.
+    orphan_ratio_parts = set(unpaired_ratio_parts) | {
         info.part for info in infos
         if info.explicit_percent
         and not info.materials
-        and not _TOKEN_PATTERN.search(info.normalized)
+        and _is_ratio_only_composition_row(info)
         and info.index not in covered_rows
         and not _is_metadata_line(info)
+    }
+
+    observed_ratios: dict[str, list[float]] = {}
+    for info in infos:
+        if not _is_metadata_line(info) and (
+            info.materials or (info.explicit_percent and _is_ratio_only_composition_row(info))
+        ):
+            observed_ratios.setdefault(info.part, []).extend(info.numbers)
+    ratio_evidence = {
+        "observed_ratios": observed_ratios,
+        "unpaired_ratio_parts": sorted(orphan_ratio_parts),
     }
 
     # A malformed composition row must also block a different, complete block
     # in the same part. Keep lower-priority parts independent of a valid shell.
     invalid_ratio_parts = {
         info.part for info in infos
-        if (info.materials or not _TOKEN_PATTERN.search(info.normalized))
+        if (info.materials or _is_ratio_only_composition_row(info))
         and (info.explicit_percent or info.materials)
         and not _is_metadata_line(info)
         and any(not 0 < number <= 100 for number in info.numbers)
     }
 
     parts: dict[str, dict[str, float | int]] = {}
-    warnings: list[str] = [f"{part}:invalid_ratio" for part in sorted(invalid_ratio_parts)]
+    warnings: list[str] = [
+        *(f"{part}:invalid_ratio" for part in sorted(invalid_ratio_parts)),
+        *(f"{part}:unpaired_ratio_rows"
+          for part in sorted(orphan_ratio_parts - best_by_part.keys())),
+        *(f"{part}:ambiguous_composition_candidates"
+          for part in sorted(ambiguous_parts - best_by_part.keys())),
+    ]
     for part, candidate in best_by_part.items():
         if part in invalid_ratio_parts:
             continue
@@ -560,15 +593,17 @@ def _best_candidates_by_part(
         parts[part] = normalized
         warnings.extend(f"{part}:{warning}" for warning in candidate_warnings)
 
-    expected_parts = invalid_ratio_parts | orphan_ratio_parts | {info.part for info in composition_rows} | {
-        info.marker_part for info in infos if info.marker_part is not None
-    }
+    expected_parts = (
+        invalid_ratio_parts | orphan_ratio_parts | ambiguous_parts
+        | {info.part for info in composition_rows}
+        | {info.marker_part for info in infos if info.marker_part is not None}
+    )
 
-    return parts, best_by_part, warnings, expected_parts
+    return parts, best_by_part, warnings, expected_parts, ratio_evidence
 
 
 def parse_parts(text: str) -> dict[str, dict[str, float | int]]:
-    parts, _, _, _ = _best_candidates_by_part(text)
+    parts, _, _, _, _ = _best_candidates_by_part(text)
     return parts
 
 
@@ -663,9 +698,10 @@ def failed_response(
     error_code: str = "composition_not_found",
     message: str = "소재 혼용률을 신뢰할 수 있게 인식하지 못했습니다.",
     warnings: list[str] | None = None,
+    parse_evidence: dict | None = None,
 ) -> dict:
     care_instruction = parse_care(raw_text)
-    return {
+    result = {
         "status": "failed",
         "error_code": error_code,
         "message": message,
@@ -685,9 +721,19 @@ def failed_response(
         ],
         "parts": {},
     }
+    if parse_evidence is not None:
+        result["parse_evidence"] = parse_evidence
+    return result
 
 
-def parse_label(text: str) -> dict:
+def parse_label(
+    text: str,
+    *,
+    conflicting_parts: tuple[str, ...] = (),
+    unpaired_ratio_parts: tuple[str, ...] = (),
+) -> dict:
+    """OCR 후보의 상충 부위도 포함해 최종 대표 조성을 안전하게 판단한다."""
+
     if not text or not text.strip():
         return failed_response(
             "",
@@ -695,7 +741,9 @@ def parse_label(text: str) -> dict:
             message="OCR에서 라벨 텍스트를 추출하지 못했습니다.",
         )
 
-    parts, candidates, warnings, expected_parts = _best_candidates_by_part(text)
+    parts, candidates, warnings, expected_parts, ratio_evidence = _best_candidates_by_part(
+        text, conflicting_parts=conflicting_parts, unpaired_ratio_parts=unpaired_ratio_parts,
+    )
     selected_part, materials = choose_representative_materials(parts)
     if not materials:
         error_code = (
@@ -713,6 +761,7 @@ def parse_label(text: str) -> dict:
             error_code=error_code,
             message=message,
             warnings=warnings,
+            parse_evidence=ratio_evidence,
         )
 
     # The label names a more representative part (an outer shell above a
@@ -735,6 +784,7 @@ def parse_label(text: str) -> dict:
                 *warnings,
                 *(f"{part}:composition_not_confirmed" for part in unconfirmed_parts),
             ],
+            parse_evidence=ratio_evidence,
         )
 
     selected_candidate = candidates[selected_part]
@@ -766,6 +816,7 @@ def parse_label(text: str) -> dict:
         "selected_part": selected_part,
         "parts": parts,
         "parse_evidence": {
+            **ratio_evidence,
             "composition_status": "confirmed",
             "source": selected_candidate.source,
             "ratio_total_before_normalization": round(

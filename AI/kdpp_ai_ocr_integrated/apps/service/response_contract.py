@@ -6,9 +6,27 @@
 
 from __future__ import annotations
 
-from typing import Any
+from copy import deepcopy
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+
+from apps.text.composition_candidates import EXACT_RATIO_TOLERANCE
+
+
+def _require_json_number(value: Any) -> int | float:
+    """문자열·불리언·자동 변환이 필요한 객체를 혼용률 숫자로 받아들이지 않는다."""
+
+    if type(value) not in (int, float):
+        raise ValueError("혼용률은 정수 또는 실수여야 합니다.")
+    return value
+
+
+MaterialRatio = Annotated[
+    int | float,
+    BeforeValidator(_require_json_number),
+    Field(gt=0, le=100, allow_inf_nan=False),
+]
 
 # API 응답에서 항상 제공하는 기본 키. 값이 없을 때도 타입은 유지한다.
 LABEL_RESPONSE_DEFAULTS: dict[str, Any] = {
@@ -29,19 +47,15 @@ LABEL_RESPONSE_DEFAULTS: dict[str, Any] = {
 
 
 class LabelResponseContract(BaseModel):
-    """Stable fields that consumers may rely on in every label response.
+    """항상 제공하는 응답 필드를 검증하며 추가 OCR·파서 근거 필드는 허용한다."""
 
-    Extra fields remain allowed because OCR and parser evidence deliberately
-    evolve independently of this boundary contract.
-    """
-
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", strict=True)
 
     api_version: str
-    status: str = ""
+    status: Literal["success", "failed"]
     error_code: str = ""
     message: str = ""
-    materials: dict[str, float] = Field(default_factory=dict)
+    materials: dict[str, MaterialRatio] = Field(default_factory=dict)
     materials_korean: str = ""
     raw_ocr_preview: str = ""
     confidence: dict[str, str] = Field(default_factory=dict)
@@ -49,9 +63,27 @@ class LabelResponseContract(BaseModel):
     care_instruction: str = ""
     care_instructions: list[str] = Field(default_factory=list)
     selected_part: str = ""
-    parts: dict[str, Any] = Field(default_factory=dict)
+    parts: dict[str, dict[str, MaterialRatio]] = Field(default_factory=dict)
     parse_evidence: dict[str, Any] = Field(default_factory=dict)
     ocr: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_compositions(self) -> LabelResponseContract:
+        """성공 조성의 합계와 대표 부위가 파서의 확정 기준에 맞는지 검사한다."""
+
+        for part, materials in self.parts.items():
+            if not materials or abs(sum(materials.values()) - 100) > EXACT_RATIO_TOLERANCE:
+                raise ValueError(f"parts.{part}의 혼용률 합계는 100이어야 합니다.")
+        if self.status == "failed":
+            if self.materials or self.parts or self.selected_part:
+                raise ValueError("실패 응답에는 확정 소재나 선택 부위를 포함할 수 없습니다.")
+        else:
+            if not self.materials or abs(sum(self.materials.values()) - 100) > EXACT_RATIO_TOLERANCE:
+                raise ValueError("성공 응답 materials의 혼용률 합계는 100이어야 합니다.")
+            if self.parts or self.selected_part:
+                if self.parts.get(self.selected_part) != self.materials:
+                    raise ValueError("materials는 selected_part의 조성과 일치해야 합니다.")
+        return self
 
 
 def normalize_label_response(
@@ -59,16 +91,10 @@ def normalize_label_response(
     *,
     api_version: str,
 ) -> dict[str, Any]:
-    """Return the stable label-analysis schema for both success and failure."""
+    """성공·실패 응답을 검증하고 중첩 컬렉션까지 독립된 복사본으로 반환한다."""
 
-    # 얕은 병합 뒤 중첩 컬렉션은 별도로 복사해 호출자가 기본값을 변경하지 못하게 한다.
-    result = {"api_version": api_version, **LABEL_RESPONSE_DEFAULTS, **payload}
-    raw_confidence = payload.get("confidence", {})
-    raw_warnings = payload.get("warnings", [])
-    raw_care_instructions = payload.get("care_instructions", [])
-    raw_parts = payload.get("parts", {})
-    raw_parse_evidence = payload.get("parse_evidence", {})
-    raw_ocr = payload.get("ocr", {})
+    result = deepcopy({**LABEL_RESPONSE_DEFAULTS, **payload, "api_version": api_version})
+    raw_confidence = result["confidence"]
 
     result["confidence"] = (
         {
@@ -78,23 +104,8 @@ def normalize_label_response(
         if isinstance(raw_confidence, dict)
         else raw_confidence
     )
-    result["warnings"] = raw_warnings
-    result["care_instructions"] = raw_care_instructions
-    result["parts"] = raw_parts
-    result["parse_evidence"] = raw_parse_evidence
-    result["ocr"] = raw_ocr
-
-    # Validate the boundary without serializing through Pydantic. Returning the
-    # original values keeps existing API JSON representation unchanged.
+    # 엄격히 검증하되 모델로 재직렬화하지 않아 기존 정수·소수 표기를 보존한다.
     LabelResponseContract.model_validate(result)
-
-    # Copy validated mutable values so callers cannot mutate the shared defaults.
-    result["confidence"] = dict(result["confidence"])
-    result["warnings"] = list(result["warnings"])
-    result["care_instructions"] = list(result["care_instructions"])
-    result["parts"] = dict(result["parts"])
-    result["parse_evidence"] = dict(result["parse_evidence"])
-    result["ocr"] = dict(result["ocr"])
     return result
 
 
@@ -108,6 +119,6 @@ def failed_label_response(
     """실패 원인을 유지하면서도 성공과 같은 응답 형태를 반환한다."""
 
     return normalize_label_response(
-        {"status": "failed", "error_code": error_code, "message": message, **(extra or {})},
+        {**(extra or {}), "status": "failed", "error_code": error_code, "message": message},
         api_version=api_version,
     )

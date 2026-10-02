@@ -25,8 +25,7 @@ API_VERSION = "1.0"
 def _merge_ocr_metadata(parsed: dict[str, Any], metadata: OcrMetadata) -> dict[str, Any]:
     """파서 결과에 OCR 출처와 신뢰도 정보를 덧붙인다."""
 
-    # 먼저 누락 필드를 채워 성공·실패 응답의 형태를 동일하게 만든다.
-    result = normalize_label_response(parsed, api_version=API_VERSION)
+    result = dict(parsed)
     confidence = dict(result.get("confidence", {}))
     confidence["ocr"] = metadata.confidence
     result["confidence"] = confidence
@@ -40,6 +39,8 @@ def _merge_ocr_metadata(parsed: dict[str, Any], metadata: OcrMetadata) -> dict[s
     result["ocr"] = {
         "source": metadata.source,
         "candidate_count": metadata.candidate_count,
+        "conflicting_parts": list(metadata.conflicting_parts),
+        "unpaired_ratio_parts": list(metadata.unpaired_ratio_parts),
         "image_format": metadata.image_format,
         "width": metadata.width,
         "height": metadata.height,
@@ -62,14 +63,19 @@ def _merge_ocr_metadata(parsed: dict[str, Any], metadata: OcrMetadata) -> dict[s
             for attempt in metadata.attempts
         ],
     }
-    return result
+    # OCR 메타데이터 조립까지 마친 최종 응답을 같은 계약으로 검증한다.
+    return normalize_label_response(result, api_version=API_VERSION)
 
 
 def analyze_ocr_result(ocr_result: OcrResult) -> dict[str, Any]:
     """이미 OCR이 끝난 결과를 파싱한다. QA에서는 외부 OCR 호출 없이 이 함수를 쓴다."""
 
     return _merge_ocr_metadata(
-        parse_label(ocr_result.text),
+        parse_label(
+            ocr_result.text,
+            conflicting_parts=ocr_result.metadata.conflicting_parts,
+            unpaired_ratio_parts=ocr_result.metadata.unpaired_ratio_parts,
+        ),
         ocr_result.metadata,
     )
 

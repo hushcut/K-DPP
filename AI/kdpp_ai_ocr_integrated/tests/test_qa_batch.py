@@ -245,3 +245,20 @@ def test_main_rejects_duplicate_answer_key_file_names(monkeypatch, tmp_path) -> 
 
     with pytest.raises(AnswerKeyError, match="여러 경로"):
         run_qa_batch.main()
+
+
+@pytest.mark.parametrize("tolerance", ["nan", "inf", "-inf"])
+def test_invalid_tolerance_stops_before_cache_or_ocr(monkeypatch, tolerance) -> None:
+    def unexpected_io(*_args, **_kwargs):
+        raise AssertionError("잘못된 허용 오차로 캐시나 OCR을 실행하면 안 됩니다.")
+
+    monkeypatch.setattr(run_qa_batch, "OcrTextCache", unexpected_io)
+    monkeypatch.setattr(run_qa_batch, "analyze_label_image_cached", unexpected_io)
+    monkeypatch.setattr(
+        run_qa_batch.sys, "argv",
+        ["run_qa_batch.py", "--image-dir", "unused", "--answer-key", "unused.csv",
+         f"--tolerance={tolerance}"],
+    )
+
+    with pytest.raises(ValueError, match="허용 오차"):
+        run_qa_batch.main()

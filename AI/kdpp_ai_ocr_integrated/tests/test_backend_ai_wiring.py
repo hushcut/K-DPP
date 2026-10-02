@@ -145,6 +145,27 @@ def test_scan_label_runs_ocr_then_ai_parser(backend_main, scan_db, monkeypatch) 
     assert scan_db.committed is False
 
 
+def test_scan_rejects_conflicting_ocr_candidates_without_saving(
+    backend_main, scan_db, monkeypatch,
+) -> None:
+    monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_args: object())
+    monkeypatch.setattr(
+        ocr_text, "_run_google_ocr",
+        lambda *_args, **_kwargs: ocr_text.OcrPayload("COTTON 100%", "POLYESTER 100%"),
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        backend_main.scan_label(
+            image=make_upload(), raw_ocr_text=None, db=scan_db,
+            current_user=SimpleNamespace(id=1),
+        )
+
+    # 기존 백엔드의 OCR 예외 매핑은 502다. AI 영역에서 성공·저장은 먼저 차단한다.
+    assert raised.value.status_code == 502
+    assert scan_db.saved == []
+    assert scan_db.committed is False
+
+
 @pytest.mark.parametrize("content_type", [None, "text/plain"])
 def test_scan_rejects_invalid_upload_even_with_raw_text(
     backend_main, scan_db, monkeypatch, content_type,

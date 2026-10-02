@@ -1,0 +1,227 @@
+"""OCR 후보의 조성 충돌을 점수로 숨기지 않는 회귀 검사."""
+
+from io import BytesIO
+
+from PIL import Image
+import pytest
+
+from apps.service.label_analysis import analyze_ocr_result
+from apps.text import ocr_text
+
+
+def run_with_payloads(monkeypatch, payloads):
+    responses = iter(payloads)
+    calls = []
+    monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_args: object())
+    monkeypatch.setattr(ocr_text, "preprocess_image_bytes", lambda _content: b"preprocessed")
+
+    def fake_ocr(_client, content, **_kwargs):
+        calls.append(content)
+        return next(responses)
+
+    monkeypatch.setattr(ocr_text, "_run_google_ocr", fake_ocr)
+    buffer = BytesIO()
+    Image.new("RGB", (80, 80), "white").save(buffer, format="PNG")
+    result = ocr_text.run_ocr_bytes(
+        buffer.getvalue(),
+        enable_reflection=False,
+        enable_denoised=False,
+        enable_rotated=False,
+    )
+    return result, calls
+
+
+@pytest.mark.parametrize(
+    ("raw", "layout"),
+    [
+        ("COTTON POLYESTER 80% 20%", "POLYESTER COTTON 80% 20%"),
+        ("POLYESTER COTTON 80% 20%", "COTTON POLYESTER 80% 20%"),
+        ("COTTON 100%", "POLYESTER 80% WOOL 20%"),
+        ("OUTER COTTON 100%", "OUTER POLYESTER 80% WOOL 20%"),
+    ],
+)
+def test_layout_conflict_fails_without_another_ocr_call(monkeypatch, raw, layout):
+    result, calls = run_with_payloads(monkeypatch, [ocr_text.OcrPayload(raw, layout)])
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["status"] == "failed"
+    assert analysis["error_code"] == "ambiguous_composition"
+    assert analysis["materials"] == {}
+    assert analysis["confidence"] == {"ocr": "low", "parser": "low"}
+    assert analysis["ocr"]["conflicting_parts"]
+    assert any("ambiguous_composition_candidates" in item for item in analysis["warnings"])
+    assert len(calls) == result.metadata.candidate_count == 1
+
+
+def test_preprocessed_conflict_cannot_replace_a_complete_original(monkeypatch):
+    result, calls = run_with_payloads(
+        monkeypatch,
+        ["COTTON\n80%\nPOLYESTER\n20%", "COTTON 20% POLYESTER 80%"],
+    )
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["status"] == "failed"
+    assert analysis["materials"] == {}
+    assert analysis["ocr"]["conflicting_parts"] == ["generic"]
+    assert len(calls) == result.metadata.candidate_count == 2
+
+
+@pytest.mark.parametrize(
+    ("raw", "layout"),
+    [
+        ("COTTON 100%\nPOLYESTER 100%", "COTTON 100%"),
+        ("COTTON 100%", "COTTON 100%\nPOLYESTER 100%"),
+    ],
+)
+def test_existing_parser_conflict_is_not_erased_by_a_simpler_candidate(
+    monkeypatch, raw, layout,
+):
+    result, _calls = run_with_payloads(monkeypatch, [ocr_text.OcrPayload(raw, layout)])
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["status"] == "failed"
+    assert analysis["error_code"] == "ambiguous_composition"
+    assert analysis["materials"] == {}
+
+
+def test_preprocessing_cannot_erase_a_confirmed_original_conflict(monkeypatch):
+    result, calls = run_with_payloads(
+        monkeypatch, ["COTTON 100%\nPOLYESTER 100%", "COTTON 100%"],
+    )
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["status"] == "failed"
+    assert analysis["materials"] == {}
+    assert len(calls) == 2
+
+
+def test_failed_candidates_preserve_the_detected_conflict(monkeypatch):
+    result, _calls = run_with_payloads(
+        monkeypatch, ["COTTON 100%\nPOLYESTER 100%", "BRAND AND SIZE ONLY"],
+    )
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["error_code"] == "ambiguous_composition"
+    assert analysis["materials"] == {}
+    assert analysis["confidence"] == {"ocr": "low", "parser": "low"}
+
+
+def test_extra_ratio_in_preprocessing_cannot_be_hidden_by_successful_original(monkeypatch):
+    result, _calls = run_with_payloads(monkeypatch, [
+        "LYOCELL\n50%\nNYLON\n45%\nPOLYURETHANE\n5%",
+        "LYOCELL 50% NYLON 45% POLYURETHANE 5%\n57%",
+    ])
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["status"] == "failed"
+    assert analysis["materials"] == {}
+    assert analysis["ocr"]["unpaired_ratio_parts"] == ["generic"]
+
+
+def test_duplicate_unpaired_ratio_requires_another_consumed_occurrence(monkeypatch):
+    result, _calls = run_with_payloads(monkeypatch, [ocr_text.OcrPayload(
+        "COTTON 100%\n100%", "COTTON 100%",
+    )])
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["status"] == "failed"
+    assert analysis["materials"] == {}
+
+
+@pytest.mark.parametrize(
+    ("raw", "layout", "expected"),
+    [
+        ("COTTON 100%\n100%", "COTTON 100%\n면 100%", {"cotton": 100}),
+        ("COTTON 95% SPANDEX 5%\n100%",
+         "겉감 면 100%\n배색 면 95% 폴리우레탄 5%", {"cotton": 100}),
+    ],
+)
+def test_layout_can_resolve_all_observed_ratios_without_discarding_them(
+    monkeypatch, raw, layout, expected,
+):
+    result, _calls = run_with_payloads(monkeypatch, [ocr_text.OcrPayload(raw, layout)])
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["status"] == "success"
+    assert analysis["materials"] == expected
+    assert analysis["ocr"]["unpaired_ratio_parts"] == []
+
+
+def test_text_only_compatibility_wrapper_also_rejects_extra_ratios(monkeypatch):
+    result, _calls = run_with_payloads(monkeypatch, [
+        "LYOCELL\n50%\nNYLON\n45%\nPOLYURETHANE\n5%",
+        "LYOCELL 50% NYLON 45% POLYURETHANE 5%\n57%",
+    ])
+    monkeypatch.setattr(ocr_text, "run_ocr_with_metadata", lambda *_args: result)
+
+    with pytest.raises(ocr_text.OcrError):
+        ocr_text.run_ocr("unused-label.png")
+
+
+@pytest.mark.parametrize(
+    ("raw", "layout", "expected"),
+    [
+        ("COTTON 80% POLYESTER 20%", "POLYESTER 20% COTTON 80%",
+         {"cotton": 80, "polyester": 20}),
+        ("COTTON 98% POLYURETHANE 2%", "棉 98% 氨纶 2%",
+         {"cotton": 98, "polyurethane": 2}),
+        ("OUTER COTTON 100%", "LINING POLYESTER 100%", {"cotton": 100}),
+        ("BRAND AND SIZE ONLY", "COTTON 100%", {"cotton": 100}),
+    ],
+)
+def test_equivalent_separate_or_failed_candidates_do_not_block_success(
+    monkeypatch, raw, layout, expected,
+):
+    result, calls = run_with_payloads(monkeypatch, [ocr_text.OcrPayload(raw, layout)])
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["status"] == "success"
+    assert analysis["materials"] == expected
+    assert analysis["ocr"]["conflicting_parts"] == []
+    assert len(calls) == 1
+
+
+def test_lining_conflict_does_not_invalidate_an_agreed_outer(monkeypatch):
+    result, _calls = run_with_payloads(monkeypatch, [ocr_text.OcrPayload(
+        "OUTER COTTON 100%\nLINING POLYESTER 100%",
+        "OUTER COTTON 100%\nLINING WOOL 100%",
+    )])
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["status"] == "success"
+    assert analysis["materials"] == {"cotton": 100}
+    assert analysis["parts"] == {"outer": {"cotton": 100}}
+    assert analysis["ocr"]["conflicting_parts"] == ["lining"]
+    assert "lining:ambiguous_composition_candidates" in analysis["warnings"]
+
+
+def test_outer_conflict_cannot_fall_back_to_an_agreed_lining(monkeypatch):
+    result, _calls = run_with_payloads(monkeypatch, [ocr_text.OcrPayload(
+        "OUTER COTTON 100%\nLINING POLYESTER 100%",
+        "OUTER WOOL 100%\nLINING POLYESTER 100%",
+    )])
+    analysis = analyze_ocr_result(result)
+
+    assert analysis["status"] == "failed"
+    assert analysis["materials"] == {}
+    assert "outer:ambiguous_composition_candidates" in analysis["warnings"]
+
+
+def test_text_only_compatibility_wrapper_rejects_representative_conflict(monkeypatch):
+    result, _calls = run_with_payloads(monkeypatch, [ocr_text.OcrPayload(
+        "COTTON 100%", "POLYESTER 100%",
+    )])
+    monkeypatch.setattr(ocr_text, "run_ocr_with_metadata", lambda *_args: result)
+
+    with pytest.raises(ocr_text.OcrError, match="조성"):
+        ocr_text.run_ocr("unused-label.png")
+
+
+def test_text_only_compatibility_wrapper_preserves_agreed_outer(monkeypatch):
+    result, _calls = run_with_payloads(monkeypatch, [ocr_text.OcrPayload(
+        "OUTER COTTON 100%\nLINING POLYESTER 100%",
+        "OUTER COTTON 100%\nLINING WOOL 100%",
+    )])
+    monkeypatch.setattr(ocr_text, "run_ocr_with_metadata", lambda *_args: result)
+
+    assert ocr_text.run_ocr("unused-label.png") == result.text

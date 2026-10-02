@@ -1,7 +1,10 @@
 import csv
 
+import pytest
+
 from apps.synthetic.evaluation import evaluate_manifest, write_evaluation
 from apps.synthetic.label_generator import generate_dataset
+from scripts import evaluate_synthetic_labels
 
 
 def evaluation_config() -> dict:
@@ -129,3 +132,22 @@ def test_source_group_score_fails_when_one_variant_parser_fails(tmp_path) -> Non
     assert summary["image_exact_composition_accuracy"] == 0.75
     assert summary["source_group_all_variants_accuracy"] == 0.5
     assert [row["group_judgment"] for row in group_results].count("failed") == 1
+
+
+@pytest.mark.parametrize("tolerance", [float("nan"), float("inf"), -float("inf")])
+def test_invalid_tolerance_is_rejected_before_loading_manifest(tmp_path, tolerance) -> None:
+    with pytest.raises(ValueError, match="허용 오차"):
+        evaluate_manifest(tmp_path / "missing.csv", tolerance=tolerance)
+
+
+@pytest.mark.parametrize("tolerance", ["nan", "inf", "-inf"])
+def test_cli_invalid_tolerance_does_not_write_evaluation(monkeypatch, tmp_path, tolerance):
+    output = tmp_path / "evaluation"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["evaluate_synthetic_labels.py", "--manifest", str(tmp_path / "missing.csv"),
+         "--output-dir", str(output), f"--tolerance={tolerance}"],
+    )
+    with pytest.raises(ValueError, match="허용 오차"):
+        evaluate_synthetic_labels.main()
+    assert not output.exists()

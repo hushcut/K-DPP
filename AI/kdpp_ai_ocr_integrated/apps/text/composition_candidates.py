@@ -5,7 +5,22 @@ The collectors run in the original order so candidate tie-breaking remains stabl
 
 from dataclasses import dataclass
 
+from apps.text.rules import EQUIVALENT_MATERIALS
+
 EXACT_RATIO_TOLERANCE = 0.01
+
+
+def equivalent_composition(
+    materials: dict[str, float | int],
+) -> tuple[tuple[str, float | int], ...]:
+    """파서와 OCR 후보가 같은 섬유의 다국어 표기를 동일하게 비교한다."""
+
+    return tuple(
+        sorted(
+            (EQUIVALENT_MATERIALS.get(material, material), value)
+            for material, value in materials.items()
+        )
+    )
 
 
 @dataclass(frozen=True)

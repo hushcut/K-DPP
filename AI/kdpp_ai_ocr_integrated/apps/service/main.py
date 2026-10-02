@@ -21,7 +21,7 @@ from apps.service.label_analysis import (
     analyze_label_image_bytes,
     analyze_label_text,
 )
-from apps.service.response_contract import failed_label_response
+from apps.service.response_contract import LabelResponseContract, failed_label_response
 from apps.text.ocr_text import (
     ImageTooLargeError,
     InvalidImageError,
@@ -138,7 +138,14 @@ def health() -> dict[str, str]:
     }
 
 
-@app.post("/v1/parse-text")
+@app.post(
+    "/v1/parse-text",
+    response_model=LabelResponseContract,
+    responses={
+        422: {"model": LabelResponseContract, "description": "요청 또는 소재 조성 해석 실패"},
+        500: {"model": LabelResponseContract, "description": "내부 처리 오류"},
+    },
+)
 def parse_text(request: ParseTextRequest):
     """QA/debug endpoint for text already extracted by an OCR provider."""
 
@@ -147,7 +154,20 @@ def parse_text(request: ParseTextRequest):
     return JSONResponse(status_code=status_code, content=result)
 
 
-@app.post("/v1/analyze-label")
+@app.post(
+    "/v1/analyze-label",
+    response_model=LabelResponseContract,
+    responses={
+        400: {"model": LabelResponseContract, "description": "유효하지 않은 이미지"},
+        413: {"model": LabelResponseContract, "description": "업로드 크기 초과"},
+        415: {"model": LabelResponseContract, "description": "지원하지 않는 이미지 형식"},
+        422: {"model": LabelResponseContract, "description": "요청 또는 소재 조성 해석 실패"},
+        500: {"model": LabelResponseContract, "description": "내부 처리 오류"},
+        502: {"model": LabelResponseContract, "description": "OCR 제공자 처리 실패"},
+        503: {"model": LabelResponseContract, "description": "OCR 설정·사용량·가용성 오류"},
+        504: {"model": LabelResponseContract, "description": "OCR 응답 시간 초과"},
+    },
+)
 async def analyze_label(file: UploadFile = File(...)):
     try:
         declared_content_type = file.content_type

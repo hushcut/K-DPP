@@ -18,6 +18,17 @@ class QaComparisonError(ValueError):
     """A QA material value cannot be converted into the canonical contract."""
 
 
+def validate_tolerance(tolerance: float) -> None:
+    """잘못된 허용 오차가 비교를 무조건 성공시키지 않도록 실행 전에 검사한다."""
+
+    if (
+        type(tolerance) not in (int, float)
+        or tolerance < 0
+        or (type(tolerance) is float and not math.isfinite(tolerance))
+    ):
+        raise QaComparisonError("혼용률 허용 오차는 0 이상의 유한한 숫자여야 합니다.")
+
+
 def _build_alias_index() -> dict[str, str]:
     """Build the one-way alias lookup from the parser's source-of-truth table."""
 
@@ -58,18 +69,19 @@ def normalize_material_mapping(
     normalized: dict[str, float] = {}
     for raw_material, raw_ratio in values.items():
         material = canonical_material_name(str(raw_material), allow_unknown=allow_unknown)
-        try:
-            ratio = float(raw_ratio)
-        except (TypeError, ValueError) as exc:
+        if type(raw_ratio) not in (int, float):
             raise QaComparisonError(
                 f"{raw_material!r}의 혼용률이 숫자가 아닙니다: {raw_ratio!r}"
-            ) from exc
-        if not math.isfinite(ratio) or ratio < 0:
+            )
+        if not 0 < raw_ratio <= 100 or not math.isfinite(raw_ratio):
             raise QaComparisonError(
                 f"{raw_material!r}의 혼용률이 유효하지 않습니다: {raw_ratio!r}"
             )
-        normalized[material] = normalized.get(material, 0.0) + ratio
-    return {material: round(ratio, 4) for material, ratio in normalized.items()}
+        ratio = normalized.get(material, 0.0) + float(raw_ratio)
+        if ratio > 100:
+            raise QaComparisonError(f"{material!r}의 별칭 합산 혼용률은 100 이하여야 합니다.")
+        normalized[material] = ratio
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -97,7 +109,8 @@ class MaterialComparison:
             parts.append(
                 "ratio_diff="
                 + ";".join(
-                    f"{material}:{difference:+.1f}"
+                    (f"{material}:{difference:+.1f}" if abs(difference) >= 0.05
+                     else f"{material}:{difference:+g}")
                     for material, difference in self.ratio_differences.items()
                 )
             )
@@ -124,14 +137,13 @@ def compare_material_compositions(
 ) -> MaterialComparison:
     """Compare material membership and ratio errors using percentage points."""
 
-    if tolerance < 0:
-        raise QaComparisonError("혼용률 허용 오차는 0 이상이어야 합니다.")
+    validate_tolerance(tolerance)
     expected = normalize_material_mapping(answer, allow_unknown=False)
     actual = normalize_material_mapping(predicted, allow_unknown=True)
     missing = tuple(sorted(set(expected) - set(actual)))
     extra = tuple(sorted(set(actual) - set(expected)))
     ratio_differences = {
-        material: round(actual[material] - expected[material], 4)
+        material: actual[material] - expected[material]
         for material in sorted(set(expected) & set(actual))
         if abs(actual[material] - expected[material]) > tolerance
     }

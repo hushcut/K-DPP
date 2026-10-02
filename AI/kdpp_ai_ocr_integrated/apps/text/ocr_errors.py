@@ -5,6 +5,10 @@ class OcrError(RuntimeError):
     """Base exception for errors raised by the OCR boundary."""
 
 
+class OcrCompositionError(OcrError):
+    """문자열 전용 OCR 호출에서 대표 부위의 상충·잔여 비율을 안전하게 전달한다."""
+
+
 class InvalidImageError(OcrError):
     """The uploaded bytes do not contain a supported, safe image."""
 

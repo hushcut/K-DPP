@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from apps.service import main as service_main
+from apps.service import label_analysis
 from apps.service.label_analysis import analyze_ocr_result
 from apps.service.response_contract import LABEL_RESPONSE_DEFAULTS
 from apps.text.ocr_text import (
@@ -121,6 +122,44 @@ def test_parse_text_success_and_failure_contract() -> None:
     assert failure.status_code == 422
     assert failure.json()["status"] == "failed"
     assert failure.json()["error_code"] == "composition_not_found"
+
+
+@pytest.mark.parametrize("path", ["/v1/parse-text", "/v1/analyze-label"])
+def test_openapi_declares_the_actual_label_response_for_success_and_failure(path) -> None:
+    responses = service_main.app.openapi()["paths"][path]["post"]["responses"]
+    for code in ("200", "422", "500"):
+        assert responses[code]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/LabelResponseContract",
+        }
+    schema = service_main.app.openapi()["components"]["schemas"]["LabelResponseContract"]
+    assert schema["properties"]["status"]["enum"] == ["success", "failed"]
+
+
+@pytest.mark.parametrize("path", ["/v1/parse-text", "/v1/analyze-label"])
+@pytest.mark.parametrize("ratio", ["100", True, float("nan"), float("inf"), 0, 101])
+def test_invalid_parser_numbers_return_a_safe_internal_failure(monkeypatch, path, ratio) -> None:
+    monkeypatch.setattr(
+        label_analysis, "parse_label",
+        lambda *_args, **_kwargs: {"status": "success", "materials": {"cotton": ratio}},
+    )
+    monkeypatch.setattr(
+        label_analysis, "run_ocr_bytes",
+        lambda *_args, **_kwargs: OcrResult(
+            text="COTTON 100%",
+            metadata=OcrMetadata(
+                source="original", confidence="high", candidate_count=1,
+                image_format="PNG", width=80, height=60,
+            ),
+        ),
+    )
+    isolated_client = TestClient(service_main.app, raise_server_exceptions=False)
+    request = (
+        {"json": {"text": "COTTON 100%"}} if path == "/v1/parse-text"
+        else {"files": {"file": ("label.png", image_bytes(), "image/png")}}
+    )
+    response = isolated_client.post(path, **request)
+    assert_failure_contract(response, status_code=500, error_code="internal_error")
+    assert response.json()["materials"] == {}
 
 
 @pytest.mark.parametrize(
@@ -260,6 +299,8 @@ def test_ocr_attempt_diagnostics_are_safe_and_serialized() -> None:
     assert result["ocr"] == {
         "source": "original",
         "candidate_count": 2,
+        "conflicting_parts": [],
+        "unpaired_ratio_parts": [],
         "image_format": "JPEG",
         "width": 1200,
         "height": 800,

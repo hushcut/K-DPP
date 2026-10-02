@@ -32,6 +32,7 @@ from apps.text.qa_comparison import (
     QaComparisonError,
     compare_material_compositions,
     normalize_material_mapping,
+    validate_tolerance,
 )
 from apps.text.qa_dataset import load_qa_answer_key
 
@@ -122,8 +123,7 @@ class QaRunConfig:
             raise ValueError("API URL은 비어 있을 수 없습니다.")
         if self.timeout_seconds <= 0:
             raise ValueError("시간 제한은 0보다 커야 합니다.")
-        if self.tolerance < 0:
-            raise ValueError("허용 오차는 음수일 수 없습니다.")
+        validate_tolerance(self.tolerance)
         if (
             self.max_image_bytes <= 0
             or self.max_response_bytes <= 0

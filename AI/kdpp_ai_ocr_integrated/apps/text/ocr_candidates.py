@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from typing import Any, Callable
+
+from apps.text.composition_candidates import equivalent_composition
 
 
 @dataclass(frozen=True)
@@ -19,6 +22,58 @@ class OcrCandidate:
     parser_confidence: str
     score: tuple[int, int, int, int, float, int, int, int]
     layout_used: bool = False
+    parts: dict[str, dict[str, float | int]] = field(default_factory=dict)
+    conflicting_parts: tuple[str, ...] = ()
+    observed_ratios: dict[str, list[float]] = field(default_factory=dict)
+    unpaired_ratio_parts: tuple[str, ...] = ()
+
+
+def find_conflicting_parts(candidates: list[OcrCandidate]) -> tuple[str, ...]:
+    """후보 간 상충과 개별 파서가 이미 확인한 조성 충돌을 함께 보존한다."""
+
+    compositions: dict[str, tuple[tuple[str, float | int], ...]] = {}
+    conflicts: set[str] = set()
+    for candidate in candidates:
+        conflicts.update(candidate.conflicting_parts)
+        if candidate.parser_status != "success":
+            continue
+        for part, materials in candidate.parts.items():
+            composition = equivalent_composition(materials)
+            previous = compositions.setdefault(part, composition)
+            if previous != composition:
+                conflicts.add(part)
+    return tuple(sorted(conflicts))
+
+
+def find_unpaired_ratio_parts(candidates: list[OcrCandidate]) -> tuple[str, ...]:
+    """잔여 비율은 다른 후보가 같은 값과 개수를 모두 연결한 경우에만 해소한다."""
+
+    unresolved: set[str] = set()
+    for candidate in candidates:
+        for part in candidate.unpaired_ratio_parts:
+            required = Counter(
+                ratio
+                for key, ratios in candidate.observed_ratios.items()
+                if part == "generic" or key == part
+                for ratio in ratios
+            )
+            resolved = False
+            for alternative in candidates:
+                if alternative.parser_status != "success":
+                    continue
+                # 부위명이 없는 원문의 숫자는 좌표 복원으로 여러 부위에 연결될 수 있다.
+                parts = alternative.parts.keys() if part == "generic" else (part,)
+                available = Counter(
+                    ratio
+                    for key in parts if key in alternative.parts
+                    for ratio in alternative.observed_ratios.get(key, [])
+                )
+                if required and available >= required:
+                    resolved = True
+                    break
+            if not resolved:
+                unresolved.add(part)
+    return tuple(sorted(unresolved))
 
 
 def score_candidate(
@@ -85,6 +140,7 @@ def build_candidate(
         "ratio_total_before_normalization"
     )
     parser_warnings = parsed.get("warnings", [])
+    evidence = parsed.get("parse_evidence", {})
     return OcrCandidate(
         source=source,
         text=text,
@@ -103,4 +159,12 @@ def build_candidate(
             warning_count=len(parser_warnings),
         ),
         layout_used=layout_used,
+        parts=parsed.get("parts", {}),
+        conflicting_parts=tuple(sorted({
+            warning.split(":", 1)[0]
+            for warning in parser_warnings
+            if warning.endswith(":ambiguous_composition_candidates")
+        })),
+        observed_ratios=evidence.get("observed_ratios", {}),
+        unpaired_ratio_parts=tuple(evidence.get("unpaired_ratio_parts", [])),
     )

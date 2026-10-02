@@ -15,11 +15,15 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from apps.text.ocr_candidates import OcrCandidate, build_candidate, score_candidate
+from apps.text.ocr_candidates import (
+    OcrCandidate, build_candidate, find_conflicting_parts, find_unpaired_ratio_parts,
+    score_candidate,
+)
 from apps.text.ocr_cache import OcrCacheMissError, OcrTextCache
 from apps.text.ocr_errors import (
     ImageTooLargeError,
     InvalidImageError,
+    OcrCompositionError,
     OcrConfigurationError,
     OcrError,
     OcrQuotaExceededError,
@@ -59,6 +63,7 @@ __all__ = [
     "MAX_PREPROCESSED_PIXELS",
     "MIN_OCR_WIDTH",
     "OcrConfigurationError",
+    "OcrCompositionError",
     "OcrError",
     "OcrMetadata",
     "OcrQuotaExceededError",
@@ -130,6 +135,8 @@ class OcrMetadata:
     elapsed_ms: int = 0
     attempts: tuple["OcrAttempt", ...] = ()
     rpc_attempt_count: int = 0
+    conflicting_parts: tuple[str, ...] = ()
+    unpaired_ratio_parts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -701,8 +708,13 @@ def run_ocr_bytes(
                 processing_warnings.append(failure_warning)
 
     best = max(candidates, key=lambda candidate: candidate.score)
+    conflicting_parts = find_conflicting_parts(candidates)
+    unpaired_ratio_parts = find_unpaired_ratio_parts(candidates)
     ocr_confidence = (
-        "high"
+        "low"
+        if best.selected_part in (*conflicting_parts, *unpaired_ratio_parts)
+        or ((conflicting_parts or unpaired_ratio_parts) and best.parser_status != "success")
+        else "high"
         if best.parser_status == "success" and best.parser_confidence == "high"
         else "medium"
         if best.text
@@ -740,6 +752,8 @@ def run_ocr_bytes(
             elapsed_ms=round((time.monotonic() - started_at) * 1000),
             attempts=tuple(attempts),
             rpc_attempt_count=sum(attempt.rpc_attempt_count for attempt in attempts),
+            conflicting_parts=conflicting_parts,
+            unpaired_ratio_parts=unpaired_ratio_parts,
         ),
     )
 
@@ -758,6 +772,17 @@ def run_ocr(
     image_path: str | os.PathLike[str],
     credential_path: str | None = None,
 ) -> str:
-    """Compatibility wrapper for existing batch scripts."""
+    """문자열 전용 연동에서도 대표 부위가 충돌하면 성공 텍스트로 넘기지 않는다."""
 
-    return run_ocr_with_metadata(image_path, credential_path).text
+    result = run_ocr_with_metadata(image_path, credential_path)
+    if result.metadata.conflicting_parts or result.metadata.unpaired_ratio_parts:
+        from apps.text.parse_label import parse_label
+
+        parsed = parse_label(
+            result.text,
+            conflicting_parts=result.metadata.conflicting_parts,
+            unpaired_ratio_parts=result.metadata.unpaired_ratio_parts,
+        )
+        if parsed["status"] != "success":
+            raise OcrCompositionError(parsed["message"])
+    return result.text
