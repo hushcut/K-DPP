@@ -8,9 +8,13 @@ from pathlib import Path
 import time
 from typing import Any
 
+from apps.text.ocr_layout import OcrWord
+
 CACHE_SCHEMA_VERSION = 2
 LEGACY_CACHE_SCHEMA_VERSION = 1
 OCR_CACHE_CONTENT_VERSION = 1
+LAYOUT_WORDS_VERSION = 1
+MAX_LAYOUT_COORDINATE = 2**31 - 1
 CACHE_LOCK_TIMEOUT_SECONDS = 5.0
 CACHE_LOCK_RETRY_SECONDS = 0.05
 CACHE_LOCK_STALE_SECONDS = 120.0
@@ -22,6 +26,50 @@ class OcrCacheError(RuntimeError):
 
 class OcrCacheMissError(OcrCacheError):
     """Offline QA was requested but no OCR result exists for the image."""
+
+
+def decode_layout_words(entry: dict[str, Any]) -> tuple[OcrWord, ...]:
+    """Read optional geometry; legacy text-only entries remain usable."""
+    if "layout_words" not in entry:
+        return ()
+    try:
+        version = entry.get("layout_words_version")
+        if type(version) is not int or version != LAYOUT_WORDS_VERSION:
+            raise ValueError("unsupported word geometry version")
+        rows = entry["layout_words"]
+        if not isinstance(rows, (list, tuple)):
+            raise TypeError("word geometry must be a list")
+        words = []
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row["text"], str) or not row["text"].strip():
+                raise ValueError("invalid word text")
+            values = [row[key] for key in ("left", "top", "right", "bottom", "page")]
+            if any(type(value) is not int or abs(value) > MAX_LAYOUT_COORDINATE for value in values):
+                raise TypeError("word coordinates must be integers")
+            left, top, right, bottom, page = values
+            if right < left or bottom < top or page < 0:
+                raise ValueError("invalid word bounds")
+            vertices = row["vertices"]
+            if not isinstance(vertices, (tuple, list)) or len(vertices) not in (0, 4):
+                raise ValueError("invalid word polygon")
+            if any(
+                not isinstance(point, (tuple, list)) or len(point) != 2
+                or any(type(value) is not int or abs(value) > MAX_LAYOUT_COORDINATE for value in point)
+                for point in vertices
+            ):
+                raise ValueError("invalid word vertex")
+            if vertices and (
+                min(point[0] for point in vertices) != left
+                or max(point[0] for point in vertices) != right
+                or min(point[1] for point in vertices) != top
+                or max(point[1] for point in vertices) != bottom
+            ):
+                raise ValueError("word polygon does not match bounds")
+            words.append(OcrWord(row["text"], left, top, right, bottom,
+                                 tuple(tuple(point) for point in vertices), page))
+        return tuple(words)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise OcrCacheError("OCR 캐시의 단어 좌표가 손상되었습니다.") from exc
 
 
 def image_sha256(content: bytes) -> str:
@@ -108,6 +156,9 @@ class OcrTextCache:
                 f"OCR 캐시 항목이 손상되었습니다: {digest[:12]}"
             ) from exc
 
+        if "layout_words" in entry:
+            decode_layout_words(entry)
+
         self.hit_count += 1
         return dict(entry)
 
@@ -119,6 +170,7 @@ class OcrTextCache:
         file_name: str = "",
         source: str = "",
         layout_text: str = "",
+        layout_words: tuple[OcrWord, ...] = (),
     ) -> None:
         if not isinstance(text, str):
             raise TypeError("OCR cache text must be a string")
@@ -132,6 +184,15 @@ class OcrTextCache:
         }
         if layout_text:
             entry["layout_text"] = layout_text
+        if layout_words:
+            entry["layout_words_version"] = LAYOUT_WORDS_VERSION
+            entry["layout_words"] = [
+                {"text": word.text, "left": word.left, "top": word.top,
+                 "right": word.right, "bottom": word.bottom,
+                 "vertices": word.vertices, "page": word.page}
+                for word in layout_words
+            ]
+            decode_layout_words(entry)
         with self._exclusive_write_lock():
             latest_entries = (
                 self._read_entries() if self.path.is_file() else dict(self._entries)

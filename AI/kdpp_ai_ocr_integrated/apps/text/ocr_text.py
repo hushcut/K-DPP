@@ -19,7 +19,7 @@ from apps.text.ocr_candidates import (
     OcrCandidate, build_candidate, find_conflicting_parts, find_unpaired_ratio_parts,
     find_rejected_composition_parts, score_candidate,
 )
-from apps.text.ocr_cache import OcrCacheMissError, OcrTextCache
+from apps.text.ocr_cache import OcrCacheMissError, OcrTextCache, decode_layout_words
 from apps.text.ocr_errors import (
     ImageTooLargeError,
     InvalidImageError,
@@ -50,7 +50,9 @@ from apps.text.ocr_image import (
     read_image_bytes,
     validate_image_bytes,
 )
-from apps.text.ocr_layout import OcrWord, extract_response_layout_text, spatial_text_from_words
+from apps.text.ocr_layout import (
+    OcrWord, extract_response_layout_text, extract_response_words, spatial_text_from_words,
+)
 
 __all__ = [
     "ImageTooLargeError",
@@ -167,6 +169,7 @@ class OcrPayload:
     layout_text: str = ""
     retry_count: int = 0
     rpc_attempt_count: int | None = None
+    layout_words: tuple[OcrWord, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -391,11 +394,14 @@ def _run_google_ocr(
             if time.monotonic() > deadline:
                 raise OcrTimeoutError("Google Vision OCR 요청 시간이 초과되었습니다.")
             break
+        words = extract_response_words(response)
         return OcrPayload(
             text=_extract_response_text(response).strip(),
-            layout_text=_extract_response_layout_text(response).strip(),
+            layout_text=(spatial_text_from_words(list(words)) if words
+                         else _extract_response_layout_text(response)).strip(),
             retry_count=max(0, rpc_attempt_count - 1),
             rpc_attempt_count=rpc_attempt_count,
+            layout_words=words,
         )
     except OcrServiceError as exc:
         exc.retry_count = max(0, rpc_attempt_count - 1)
@@ -556,9 +562,12 @@ def run_ocr_bytes(
         if ocr_cache is not None and not refresh_ocr_cache:
             cached_entry = ocr_cache.get_entry(candidate_content)
             if cached_entry is not None:
+                words = decode_layout_words(cached_entry)
                 return OcrPayload(
                     text=cached_entry["text"],
-                    layout_text=str(cached_entry.get("layout_text", "")),
+                    layout_text=(spatial_text_from_words(list(words)) if words
+                                 else str(cached_entry.get("layout_text", ""))),
+                    layout_words=words,
                 )
 
         if offline:
@@ -598,6 +607,7 @@ def run_ocr_bytes(
                 file_name=cache_label,
                 source=source,
                 layout_text=payload.layout_text,
+                layout_words=payload.layout_words,
             )
         return payload
 
