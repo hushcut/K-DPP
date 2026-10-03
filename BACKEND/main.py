@@ -20,7 +20,6 @@ from pathlib import Path
 import hashlib
 import secrets
 import database
-import init_data
 
 AI_MODULE_PATH = Path(__file__).resolve().parents[1] / "AI" / "kdpp_ai_ocr_integrated"
 if AI_MODULE_PATH.exists() and str(AI_MODULE_PATH) not in sys.path:
@@ -145,7 +144,8 @@ def infer_error_code(status_code: int) -> str:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    init_data.seed_materials()
+    # 표·소재는 `alembic upgrade head` 로 만든다. 서버는 스키마를 바꾸지 않고 확인만 한다.
+    database.assert_schema_current()
     yield
 
 
