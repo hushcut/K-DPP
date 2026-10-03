@@ -94,7 +94,7 @@ def test_v2_requires_auth_and_selected_profile(client):
     seed_profile()
     with database.SessionLocal() as db:
         # Simulate a legacy/corrupt selection created before immutability guards.
-        db.connection().exec_driver_sql("DROP TRIGGER trg_selected_factor_no_update")
+        db.connection().exec_driver_sql("DROP TRIGGER trg_selected_factor_no_update ON material_factors")
         db.query(database.MaterialFactor).one().review_status = "candidate"
         db.commit()
     response = client.post(URL, json=PAYLOAD, headers=headers)
@@ -160,7 +160,7 @@ def test_multiple_active_profiles_fail_closed(client):
                 status="active", formula_version="fiber_mass_v2", method="test-method",
                 scope="fiber_production_estimate", usage_scope="public_estimate"))
         db.rollback()
-        db.connection().exec_driver_sql("DROP TRIGGER trg_profile_insert_as_draft")
+        db.connection().exec_driver_sql("DROP TRIGGER trg_profile_insert_as_draft ON calculation_profiles")
         db.execute(database.CalculationProfile.__table__.insert().values(key="other", version="1",
             status="active", formula_version="fiber_mass_v2", method="test-method",
             scope="fiber_production_estimate", usage_scope="public_estimate"))

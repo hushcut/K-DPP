@@ -3,32 +3,24 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, CheckConstraint, Index, create_engine, event
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, CheckConstraint, Index, create_engine, inspect
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-# 1. DB 파일 경로 설정
-# 서버를 어느 폴더에서 실행하더라도 BACKEND/k_dpp.db를 사용합니다.
-DB_PATH = Path(__file__).resolve().parent / "k_dpp.db"
-load_dotenv(DB_PATH.parent / ".env")
+# 1. DB 주소 설정
+# 환경변수 K_DPP_DATABASE_URL → BACKEND/.env 순서로 읽고, 없으면 로컬 개발용
+# PostgreSQL(develop 의 BACKEND/compose.yaml)의 k_dpp_v2 DB 에 붙습니다.
+# k_dpp 는 develop(Alembic) 이 쓰는 DB 라 섞지 않습니다. SQLite 는 지원하지 않습니다.
+BACKEND_DIR = Path(__file__).resolve().parent
+load_dotenv(BACKEND_DIR / ".env")
 SQLALCHEMY_DATABASE_URL = os.getenv(
     "K_DPP_DATABASE_URL",
-    f"sqlite:///{DB_PATH.as_posix()}",
+    "postgresql+psycopg://kdpp:kdpp@127.0.0.1:5432/k_dpp_v2",
 )
 
 # 2. 엔진 및 세션 설정
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-)
-
-
-if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
-    @event.listens_for(engine, "connect")
-    def enable_sqlite_foreign_keys(dbapi_connection, _connection_record):
-        """Make declared relationships enforceable on every SQLite connection."""
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
+# PostgreSQL 은 외래 키를 늘 검사하므로 SQLite 의 PRAGMA foreign_keys 가 필요 없습니다.
+# pool_pre_ping: DB 가 재시작되면 풀에 남은 끊긴 연결을 쓰기 전에 버립니다.
+engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True)
 
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -155,8 +147,133 @@ class AnalysisResult(Base):
     created_at = Column(DateTime, nullable=False, default=utc_now)
 
 
+# DB 가 직접 지키는 불변 규칙(스키마 버전 2). 트리거마다 같은 이름의 PL/pgSQL 함수를
+# 두고 조건은 함수 본문에 둡니다 — PostgreSQL 트리거의 WHEN 에는 서브쿼리를 넣을 수 없습니다.
+# 오류 코드를 integrity_constraint_violation(23000)으로 줘야 SQLAlchemy 가 IntegrityError 로
+# 올립니다(기본 RAISE 는 ProgrammingError). BEFORE 트리거 함수가 NULL 을 돌려주면 오류 없이
+# 그 행의 변경이 빠지므로 INSERT·UPDATE 는 NEW, DELETE 는 OLD 를 돌려줍니다.
+# 같은 시점의 트리거는 이름 순서로 실행됩니다.
+IMMUTABILITY_TRIGGERS = (
+    ("trg_selected_factor_no_update", "BEFORE UPDATE ON material_factors", """
+        IF OLD.review_status = 'selected' THEN
+            RAISE EXCEPTION 'selected material factor is immutable'
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        RETURN NEW;
+    """),
+    ("trg_selected_factor_no_delete", "BEFORE DELETE ON material_factors", """
+        IF OLD.review_status = 'selected' THEN
+            RAISE EXCEPTION 'selected material factor is immutable'
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        RETURN OLD;
+    """),
+    ("trg_profile_insert_as_draft", "BEFORE INSERT ON calculation_profiles", """
+        IF NEW.status != 'draft' THEN
+            RAISE EXCEPTION 'calculation profile must be created as draft'
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        RETURN NEW;
+    """),
+    ("trg_profile_activation_requires_factors", "BEFORE UPDATE OF status ON calculation_profiles", """
+        IF OLD.status = 'draft' AND NEW.status = 'active' AND (
+            NOT EXISTS (
+                SELECT 1 FROM profile_factors pf WHERE pf.profile_id = OLD.id
+            ) OR EXISTS (
+                SELECT 1
+                FROM profile_factors pf
+                LEFT JOIN material_factors mf ON mf.id = pf.factor_id
+                WHERE pf.profile_id = OLD.id AND (
+                    mf.id IS NULL OR mf.material_id != pf.material_id
+                    OR mf.review_status != 'selected'
+                    OR mf.evidence_type NOT IN ('literature', 'derived')
+                    OR mf.unit != 'kg CO2eq/kg fiber'
+                    OR mf.method != NEW.method OR mf.scope != NEW.scope
+                    OR mf.usage_scope != NEW.usage_scope
+                    OR trim(pf.selection_assumption) = ''
+                )
+            )
+        ) THEN
+            RAISE EXCEPTION 'calculation profile factors are incomplete or incompatible'
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        RETURN NEW;
+    """),
+    ("trg_profile_activation_unique", "BEFORE UPDATE OF status ON calculation_profiles", """
+        IF OLD.status = 'draft' AND NEW.status = 'active' AND EXISTS (
+            SELECT 1 FROM calculation_profiles other
+            WHERE other.id != OLD.id AND other.status = 'active'
+              AND other.usage_scope = NEW.usage_scope
+        ) THEN
+            RAISE EXCEPTION 'an active calculation profile already exists'
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        RETURN NEW;
+    """),
+    ("trg_published_profile_no_rewrite", "BEFORE UPDATE ON calculation_profiles", """
+        IF OLD.status IN ('active', 'retired') AND NOT (
+            OLD.status = 'active' AND NEW.status = 'retired'
+            AND NEW.key IS NOT DISTINCT FROM OLD.key
+            AND NEW.version IS NOT DISTINCT FROM OLD.version
+            AND NEW.formula_version IS NOT DISTINCT FROM OLD.formula_version
+            AND NEW.method IS NOT DISTINCT FROM OLD.method
+            AND NEW.scope IS NOT DISTINCT FROM OLD.scope
+            AND NEW.usage_scope IS NOT DISTINCT FROM OLD.usage_scope
+            AND NEW.created_at IS NOT DISTINCT FROM OLD.created_at
+        ) THEN
+            RAISE EXCEPTION 'published calculation profile is immutable'
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        RETURN NEW;
+    """),
+    ("trg_published_profile_no_delete", "BEFORE DELETE ON calculation_profiles", """
+        IF OLD.status IN ('active', 'retired') THEN
+            RAISE EXCEPTION 'published calculation profile is immutable'
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        RETURN OLD;
+    """),
+    ("trg_published_profile_factor_no_insert", "BEFORE INSERT ON profile_factors", """
+        IF (SELECT status FROM calculation_profiles WHERE id = NEW.profile_id) != 'draft' THEN
+            RAISE EXCEPTION 'published profile factors are immutable'
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        RETURN NEW;
+    """),
+    ("trg_published_profile_factor_no_update", "BEFORE UPDATE ON profile_factors", """
+        IF (SELECT status FROM calculation_profiles WHERE id = OLD.profile_id) != 'draft' THEN
+            RAISE EXCEPTION 'published profile factors are immutable'
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        RETURN NEW;
+    """),
+    ("trg_published_profile_factor_no_delete", "BEFORE DELETE ON profile_factors", """
+        IF (SELECT status FROM calculation_profiles WHERE id = OLD.profile_id) != 'draft' THEN
+            RAISE EXCEPTION 'published profile factors are immutable'
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+        RETURN OLD;
+    """),
+)
+
+
+def immutability_trigger_ddl() -> list[str]:
+    """CREATE OR REPLACE statements for every immutability trigger (repeatable)."""
+    statements = []
+    for name, timing, body in IMMUTABILITY_TRIGGERS:
+        statements.append(
+            f"CREATE OR REPLACE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS $$\n"
+            f"    BEGIN{body}END;\n$$"
+        )
+        statements.append(
+            f"CREATE OR REPLACE TRIGGER {name} {timing} "
+            f"FOR EACH ROW EXECUTE FUNCTION {name}()"
+        )
+    return statements
+
+
 def ensure_schema(target_engine=None):
-    """Explicit, additive SQLite migration; never discard existing columns."""
+    """Explicit, additive schema migration; never discard existing columns."""
     selected_engine = target_engine if target_engine is not None else engine
     with selected_engine.begin() as connection:
         Base.metadata.create_all(bind=connection)
@@ -166,17 +283,15 @@ def ensure_schema(target_engine=None):
                 "carbon_footprint_max": "FLOAT", "min_weight_grams": "FLOAT",
                 "max_weight_grams": "FLOAT", "unit": "VARCHAR DEFAULT 'kg CO2eq' NOT NULL",
                 "raw_ocr_text": "TEXT", "unknown_materials": "TEXT DEFAULT '[]' NOT NULL",
-                "created_at": "DATETIME", "result_kind": "VARCHAR",
+                "created_at": "TIMESTAMP", "result_kind": "VARCHAR",
                 "formula_version": "VARCHAR", "profile_id": "INTEGER REFERENCES calculation_profiles(id)",
                 "snapshot_schema_version": "INTEGER", "calculation_snapshot_json": "TEXT",
                 "client_request_id": "VARCHAR", "request_hash": "VARCHAR",
             },
-            "access_tokens": {"expires_at": "DATETIME"},
+            "access_tokens": {"expires_at": "TIMESTAMP"},
         }
         for table, columns in additions.items():
-            existing = {row[1] for row in connection.exec_driver_sql(
-                f"PRAGMA table_info({table})"
-            ).fetchall()}
+            existing = {column["name"] for column in inspect(connection).get_columns(table)}
             for name, sql_type in columns.items():
                 if name not in existing:
                     connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
@@ -189,124 +304,14 @@ def ensure_schema(target_engine=None):
             "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
         )
         connection.exec_driver_sql(
-            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) "
-            "VALUES (1, CURRENT_TIMESTAMP)"
+            "INSERT INTO schema_migrations(version, applied_at) "
+            "VALUES (1, CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING"
         )
-        immutable_triggers = {
-            "trg_selected_factor_no_update": """
-                CREATE TRIGGER IF NOT EXISTS trg_selected_factor_no_update
-                BEFORE UPDATE ON material_factors
-                WHEN OLD.review_status = 'selected'
-                BEGIN
-                    SELECT RAISE(ABORT, 'selected material factor is immutable');
-                END
-            """,
-            "trg_selected_factor_no_delete": """
-                CREATE TRIGGER IF NOT EXISTS trg_selected_factor_no_delete
-                BEFORE DELETE ON material_factors
-                WHEN OLD.review_status = 'selected'
-                BEGIN
-                    SELECT RAISE(ABORT, 'selected material factor is immutable');
-                END
-            """,
-            "trg_profile_insert_as_draft": """
-                CREATE TRIGGER IF NOT EXISTS trg_profile_insert_as_draft
-                BEFORE INSERT ON calculation_profiles
-                WHEN NEW.status != 'draft'
-                BEGIN
-                    SELECT RAISE(ABORT, 'calculation profile must be created as draft');
-                END
-            """,
-            "trg_profile_activation_requires_factors": """
-                CREATE TRIGGER IF NOT EXISTS trg_profile_activation_requires_factors
-                BEFORE UPDATE OF status ON calculation_profiles
-                WHEN OLD.status = 'draft' AND NEW.status = 'active' AND (
-                    NOT EXISTS (
-                        SELECT 1 FROM profile_factors pf WHERE pf.profile_id = OLD.id
-                    ) OR EXISTS (
-                        SELECT 1
-                        FROM profile_factors pf
-                        LEFT JOIN material_factors mf ON mf.id = pf.factor_id
-                        WHERE pf.profile_id = OLD.id AND (
-                            mf.id IS NULL OR mf.material_id != pf.material_id
-                            OR mf.review_status != 'selected'
-                            OR mf.evidence_type NOT IN ('literature', 'derived')
-                            OR mf.unit != 'kg CO2eq/kg fiber'
-                            OR mf.method != NEW.method OR mf.scope != NEW.scope
-                            OR mf.usage_scope != NEW.usage_scope
-                            OR trim(pf.selection_assumption) = ''
-                        )
-                    )
-                )
-                BEGIN
-                    SELECT RAISE(ABORT, 'calculation profile factors are incomplete or incompatible');
-                END
-            """,
-            "trg_profile_activation_unique": """
-                CREATE TRIGGER IF NOT EXISTS trg_profile_activation_unique
-                BEFORE UPDATE OF status ON calculation_profiles
-                WHEN OLD.status = 'draft' AND NEW.status = 'active' AND EXISTS (
-                    SELECT 1 FROM calculation_profiles other
-                    WHERE other.id != OLD.id AND other.status = 'active'
-                      AND other.usage_scope = NEW.usage_scope
-                )
-                BEGIN
-                    SELECT RAISE(ABORT, 'an active calculation profile already exists');
-                END
-            """,
-            "trg_published_profile_no_rewrite": """
-                CREATE TRIGGER IF NOT EXISTS trg_published_profile_no_rewrite
-                BEFORE UPDATE ON calculation_profiles
-                WHEN OLD.status IN ('active', 'retired') AND NOT (
-                    OLD.status = 'active' AND NEW.status = 'retired'
-                    AND NEW.key IS OLD.key AND NEW.version IS OLD.version
-                    AND NEW.formula_version IS OLD.formula_version
-                    AND NEW.method IS OLD.method AND NEW.scope IS OLD.scope
-                    AND NEW.usage_scope IS OLD.usage_scope
-                    AND NEW.created_at IS OLD.created_at
-                )
-                BEGIN
-                    SELECT RAISE(ABORT, 'published calculation profile is immutable');
-                END
-            """,
-            "trg_published_profile_no_delete": """
-                CREATE TRIGGER IF NOT EXISTS trg_published_profile_no_delete
-                BEFORE DELETE ON calculation_profiles
-                WHEN OLD.status IN ('active', 'retired')
-                BEGIN
-                    SELECT RAISE(ABORT, 'published calculation profile is immutable');
-                END
-            """,
-            "trg_published_profile_factor_no_insert": """
-                CREATE TRIGGER IF NOT EXISTS trg_published_profile_factor_no_insert
-                BEFORE INSERT ON profile_factors
-                WHEN (SELECT status FROM calculation_profiles WHERE id = NEW.profile_id) != 'draft'
-                BEGIN
-                    SELECT RAISE(ABORT, 'published profile factors are immutable');
-                END
-            """,
-            "trg_published_profile_factor_no_update": """
-                CREATE TRIGGER IF NOT EXISTS trg_published_profile_factor_no_update
-                BEFORE UPDATE ON profile_factors
-                WHEN (SELECT status FROM calculation_profiles WHERE id = OLD.profile_id) != 'draft'
-                BEGIN
-                    SELECT RAISE(ABORT, 'published profile factors are immutable');
-                END
-            """,
-            "trg_published_profile_factor_no_delete": """
-                CREATE TRIGGER IF NOT EXISTS trg_published_profile_factor_no_delete
-                BEFORE DELETE ON profile_factors
-                WHEN (SELECT status FROM calculation_profiles WHERE id = OLD.profile_id) != 'draft'
-                BEGIN
-                    SELECT RAISE(ABORT, 'published profile factors are immutable');
-                END
-            """,
-        }
-        for trigger_sql in immutable_triggers.values():
-            connection.exec_driver_sql(trigger_sql)
+        for statement in immutability_trigger_ddl():
+            connection.exec_driver_sql(statement)
         connection.exec_driver_sql(
-            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) "
-            "VALUES (2, CURRENT_TIMESTAMP)"
+            "INSERT INTO schema_migrations(version, applied_at) "
+            "VALUES (2, CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING"
         )
 
 
