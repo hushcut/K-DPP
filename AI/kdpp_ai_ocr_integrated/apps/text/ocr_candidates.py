@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from apps.text.composition_candidates import equivalent_composition
+from apps.text.material_extraction import PART_PATTERNS, normalize_text
 from apps.text.rules import EQUIVALENT_MATERIALS
 
 
@@ -80,6 +81,98 @@ def find_unpaired_ratio_parts(candidates: list[OcrCandidate]) -> tuple[str, ...]
     return tuple(sorted(unresolved))
 
 
+def _is_plain_part_heading(text: str, part: str) -> bool:
+    heading = normalize_text(text).strip(" :;()[]{}")
+    return heading in {normalize_text(alias) for alias in PART_PATTERNS.get(part, [])}
+
+
+def _can_resolve_duplicate_material_rows(
+    candidate: OcrCandidate,
+    part: str,
+    required_materials: Counter[str],
+    required_ratios: Counter[float],
+    available_pairs: set[tuple[str, float | int]],
+) -> bool:
+    """명시 부위의 연속 소재 중복을 같은 부위의 확정 100% 후보로만 해소한다."""
+
+    if (
+        part == "generic"
+        or len(required_materials) != 1
+        or required_ratios != Counter({100.0: 1})
+        or candidate.paired_material_ratios.get(part)
+    ):
+        return False
+    material, count = next(iter(required_materials.items()))
+    if count < 2 or available_pairs != {(material, 100)}:
+        return False
+
+    from apps.text.parse_label import build_line_infos
+
+    infos = build_line_infos(candidate.text)
+    markers = [i for i, info in enumerate(infos) if info.marker_part == part]
+    positions = [i for i, info in enumerate(infos) if info.part == part and info.materials]
+    if len(markers) != 1 or len(positions) != count:
+        return False
+    first, last = positions[0], positions[-1]
+    marker = markers[0]
+    if first != marker and not (
+        first == marker + 1 and infos[marker].is_standalone_marker
+        and _is_plain_part_heading(infos[marker].normalized, part)
+    ):
+        return False
+    # 원단 제목·메타데이터·다른 소재가 끼면 별도 조성을 버린 것으로 볼 수 있다.
+    if positions != list(range(first, last + 1)) or last + 1 >= len(infos):
+        return False
+    # 100% 뒤에 남은 소재·다른 원단 제목을 중복 복원으로 숨기지 않는다.
+    # 별도 부위로 넘어가기 전의 블록은 중복 소재와 그 비율만으로 끝나야 한다.
+    if [i for i, info in enumerate(infos) if info.part == part] != list(
+        range(marker, last + 2)
+    ):
+        return False
+    for position in positions:
+        info = infos[position]
+        if (
+            tuple(EQUIVALENT_MATERIALS.get(value, value) for value in info.materials)
+            != (material,)
+            or info.numbers
+            or info.explicit_percent
+            or info.unresolved_materials
+            or info.invalid_evidence
+            or info.is_metadata
+        ):
+            return False
+    ratio = infos[last + 1]
+    return (
+        ratio.part == part
+        and ratio.marker_part is None
+        and not ratio.materials
+        and ratio.numbers == (100,)
+        and ratio.explicit_percent
+        and not ratio.unresolved_materials
+        and not ratio.invalid_evidence
+        and not ratio.is_metadata
+    )
+
+
+def _is_empty_layout_part_marker(candidate: OcrCandidate, part: str) -> bool:
+    """레이아웃이 남긴 부위 제목만 다른 후보의 같은 부위 조성으로 복원한다."""
+
+    if not candidate.layout_used or part == "generic":
+        return False
+    from apps.text.parse_label import build_line_infos
+
+    infos = [info for info in build_line_infos(candidate.text) if info.part == part]
+    return (
+        len(infos) == 1
+        and infos[0].marker_part == part
+        and infos[0].is_standalone_marker
+        and _is_plain_part_heading(infos[0].normalized, part)
+        and not infos[0].unresolved_materials
+        and not infos[0].invalid_evidence
+        and not infos[0].is_metadata
+    )
+
+
 def find_rejected_composition_parts(
     candidates: list[OcrCandidate], *, selected_part: str,
 ) -> dict[str, tuple[str, ...]]:
@@ -108,6 +201,12 @@ def find_rejected_composition_parts(
                     for key in source_parts
                     for material, ratio in candidate.paired_material_ratios.get(key, [])
                 }
+                empty_layout_marker = (
+                    not required_materials
+                    and not required_ratios
+                    and not required_pairs
+                    and _is_empty_layout_part_marker(candidate, part)
+                )
                 for alternative in candidates:
                     if alternative.parser_status != "success":
                         continue
@@ -126,9 +225,17 @@ def find_rejected_composition_parts(
                         pair for key in valid_parts
                         for pair in equivalent_composition(alternative.parts[key])
                     }
+                    materials_resolved = available_materials >= required_materials
+                    if not materials_resolved:
+                        materials_resolved = _can_resolve_duplicate_material_rows(
+                            candidate, part, required_materials, required_ratios, available_pairs,
+                        )
                     if (
-                        (required_materials or required_ratios)
-                        and available_materials >= required_materials
+                        (
+                            required_materials or required_ratios
+                            or (empty_layout_marker and available_pairs)
+                        )
+                        and materials_resolved
                         and available_ratios >= required_ratios
                         and required_pairs <= available_pairs
                     ):
