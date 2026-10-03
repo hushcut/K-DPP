@@ -10,8 +10,11 @@
 
 ## 1. 설치 목록과 버전
 
-CI(`.github/workflows/ci.yml`)가 고정한 버전에 맞춥니다. 버전이 어긋나면 로컬은 통과하는데
-CI만 깨지는 상황이 생깁니다.
+Flutter·Python은 CI(`.github/workflows/ci.yml`)가 고정한 버전에 맞춥니다. 버전이 어긋나면
+로컬은 통과하는데 CI만 깨지는 상황이 생깁니다. CI가 고정하는 것은 이 둘뿐입니다(CI는
+분석·테스트만 하고 Android·iOS 앱 빌드는 하지 않습니다).
+JDK·Android SDK 버전은 프로젝트 설정에서 나옵니다. JDK 17은 Gradle 8.14 + AGP 8.11.1과
+`android/app/build.gradle.kts`(아래), API 36은 Flutter 3.41.5의 기본 `compileSdk`·`targetSdk`입니다.
 
 | 도구 | 버전 | 설치 방법 |
 | --- | --- | --- |
@@ -258,8 +261,17 @@ scutil --get LocalHostName        # 맥 이름 확인
 flutter run --dart-define=API_BASE_URL=http://<맥 이름>.local:8000
 ```
 
-케이블이 연결돼 있으면 USB 경로로 통신하기도 해서 백엔드 로그에 `169.254.x.x`가 찍힙니다.
-정상입니다.
+케이블 없이 Wi-Fi로 닿으려면 다음이 필요합니다(2026-10 iPhone 실기기가 Wi-Fi로 접속된 환경 기준).
+
+- 백엔드를 `--host 0.0.0.0`으로 띄웁니다(5절 명령 그대로). `127.0.0.1`로 띄우면 맥 밖에서 닿지 않습니다.
+- iPhone과 맥이 같은 공유기에 있어야 합니다. 셀룰러나 다른 Wi-Fi에서는 안 되고, 맥이 잠자기에 들어가도 끊깁니다.
+- 앱이 처음 맥에 접속할 때 iPhone이 로컬 네트워크 접근을 물으면 허용합니다(`Info.plist`의
+  `NSLocalNetworkUsageDescription`). 거절했다면 iPhone 설정 → 개인정보 보호 및 보안 → 로컬 네트워크에서 켭니다.
+  `http://` 접속은 `NSAllowsLocalNetworking`(8.4)으로 허용돼 있습니다.
+- 맥 방화벽이 켜져 있으면 Python의 들어오는 연결을 허용해야 할 수 있습니다(확인한 맥은 방화벽이 꺼져 있었습니다).
+
+백엔드 로그에 iPhone 주소가 `192.168.x.x`로 찍히면 Wi-Fi 경로입니다. 케이블이 연결돼 있으면 USB 경로로
+통신하기도 해서 `169.254.x.x`가 찍힙니다. 정상입니다.
 
 ### 8.6 Flutter 3.41.5 × Xcode 27 충돌 2건
 
@@ -277,9 +289,11 @@ deployment target versions is 15.0 to 27.0.x.
 ```
 
 `Podfile`의 `platform`과 `project.pbxproj` 3곳을 15.0으로 올리는 것만으로는 부족합니다.
-Flutter의 `podhelper.rb`(`s.ios.deployment_target = '13.0'`)가 `pod install` 때마다 pod
-타깃을 13.0으로 되돌리기 때문에, `Podfile`의 `post_install`에서 다시 덮어써야 합니다.
-이 블록이 이미 들어가 있으니 지우지 마세요.
+`pod install`을 할 때마다 pod 타깃이 각 podspec에 적힌 13.0으로 돌아가기 때문에,
+`Podfile`의 `post_install`에서 모든 pod 타깃을 15.0으로 다시 덮어써야 합니다.
+13.0은 Flutter pod(Flutter 3.41.5 `podhelper.rb` 236행 `s.ios.deployment_target = '13.0'`)에만
+있는 게 아니라 플러그인 podspec(`camera_avfoundation`·`image_picker_ios`·`shared_preferences_foundation`,
+2026-10 기준 모두 13.0)에도 있습니다. 이 블록이 이미 들어가 있으니 지우지 마세요.
 
 **(2) `flutter build ios --simulator` 사용 금지** *(우회 필요)*
 
