@@ -21,6 +21,7 @@ import 'services/scan_camera_session.dart';
 import 'services/scan_capture_service.dart';
 import 'services/scan_draft_service.dart';
 import 'services/scan_save_service.dart';
+import 'theme/app_palette.dart';
 import 'utils/clothing_type_catalog.dart';
 import 'utils/scan_form_validator.dart';
 import 'utils/session_expiry_handler.dart';
@@ -34,7 +35,9 @@ part 'scan/scan_result_actions.dart';
 part 'scan/scan_save_actions.dart';
 part 'scan/scan_view_builders.dart';
 
-/// 활성 탭에서만 카메라를 사용하고 촬영 화면과 분석 결과 화면을 전환합니다.
+/// 화면이 가려지지 않았을 때만 카메라를 사용하고 촬영 화면과 분석 결과 화면을 전환합니다.
+///
+/// 결과를 입력하는 동안에는 이 화면을 담은 라우트가 곧바로 닫히지 않게 막고 버릴지 묻습니다.
 class ScanScreen extends StatefulWidget {
   const ScanScreen({super.key, this.isActive = true});
 
@@ -159,5 +162,17 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   }
 
   @override
-  Widget build(BuildContext context) => _buildScanScreen();
+  Widget build(BuildContext context) {
+    // canPop 이 false 면 iOS 왼쪽 끝 밀기도 꺼집니다(Flutter PageRoute.popGestureEnabled).
+    // "<"·시스템 뒤로가기는 maybePop 으로 들어와 확인을 거칩니다.
+    return PopScope(
+      canPop: !_isScanComplete,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+
+        _confirmDiscardAndClose();
+      },
+      child: _buildScanScreen(),
+    );
+  }
 }

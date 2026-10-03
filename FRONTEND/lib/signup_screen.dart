@@ -1,4 +1,6 @@
 // 신규 계정 정보를 검증해 서버에 등록하고 로그인 화면으로 연결하는 파일입니다.
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'services/auth_api_service.dart';
@@ -260,8 +262,10 @@ class _SignupScreenState extends State<SignupScreen> {
               return SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: ConstrainedBox(
+                  // 아래 인셋(자판 등)이 앱바 아래를 다 덮으면 maxHeight 가 0 이 되므로
+                  // 빼고 남은 값이 음수가 되지 않게 0 에서 멈춥니다.
                   constraints: BoxConstraints(
-                    minHeight: constraints.maxHeight - 12,
+                    minHeight: math.max(0.0, constraints.maxHeight - 12),
                   ),
                   child: IntrinsicHeight(
                     child: Column(

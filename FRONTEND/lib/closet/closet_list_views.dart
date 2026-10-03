@@ -117,6 +117,15 @@ extension _ClosetListViews on _ClosetScreenState {
     return ReorderableListView.builder(
       padding: _listPadding(context),
       itemCount: clothes.length,
+      // 집어 드는 순간 짧게 진동해 들렸다는 걸 손으로도 알게 하고(2026-09-24 사용자 요청),
+      // 끄는 동안 다른 카드를 밀어낼 때마다 더 가벼운 틱을 줍니다(2026-09-25 사용자 요청).
+      onReorderStart: (_) {
+        HapticFeedback.mediumImpact();
+        _reorderBumps.start();
+      },
+      onReorderEnd: (_) => _reorderBumps.stop(),
+      proxyDecorator: (child, index, animation) =>
+          _buildLiftedCard(child, animation, palette),
       onReorder: (oldIndex, newIndex) async {
         await _handleReorder(
           displayedItems: clothes,
@@ -131,25 +140,79 @@ extension _ClosetListViews on _ClosetScreenState {
         return Padding(
           key: ValueKey(item),
           padding: const EdgeInsets.only(bottom: 12.0),
-          child: _buildClosetItem(
-            context,
-            item: item,
-            title: item.title,
-            category: item.category,
-            status: item.health > 20
-                ? '건강 상태: ${item.health}%'
-                : '수명 만료 (배출 권장)',
-            statusColor: item.health > 20 ? Colors.green : Colors.redAccent,
-            statusIcon: item.health > 20
-                ? Icons.sentiment_satisfied_alt
-                : Icons.warning_amber_rounded,
-            isWarning: item.health <= 20,
-            showDragHandle: true,
-            disableTap: true,
-            palette: palette,
+          child: ReorderBumpProbe(
+            tracker: _reorderBumps,
+            child: _buildClosetItem(
+              context,
+              item: item,
+              title: item.title,
+              category: item.category,
+              status: item.health > 20
+                  ? '건강 상태: ${item.health}%'
+                  : '수명 만료 (배출 권장)',
+              statusColor: item.health > 20 ? Colors.green : Colors.redAccent,
+              statusIcon: item.health > 20
+                  ? Icons.sentiment_satisfied_alt
+                  : Icons.warning_amber_rounded,
+              isWarning: item.health <= 20,
+              showDragHandle: true,
+              disableTap: true,
+              palette: palette,
+            ),
           ),
         );
       },
+    );
+  }
+
+  /// 순서를 바꾸려고 집어 든 카드를 카드 모양 그대로 살짝 띄워 그립니다.
+  ///
+  /// 기본 모양은 카드와 아래 여백 12 를 배경색 네모 판(`Material(elevation: 6)`)째 들어 올려
+  /// 블럭처럼 보였습니다. 판 없이 카드만 3% 키우고 모서리 16 을 따라 그림자를 길게 드리웁니다
+  /// (2026-09-24 비교판 B, 사용자 선택). 내려놓을 때는 같은 애니메이션이 거꾸로 재생됩니다.
+  Widget _buildLiftedCard(
+    Widget child,
+    Animation<double> animation,
+    _ClosetPalette palette,
+  ) {
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, child) {
+        final t = Curves.easeOut.transform(animation.value);
+        final liftShadow = Colors.black.withValues(
+          alpha: (palette.isDark ? 0.45 : 0.14) * t,
+        );
+
+        // 오버레이에는 Material 조상이 없으므로 글자 스타일만 이어 주는 투명 Material 을 둡니다.
+        return Material(
+          type: MaterialType.transparency,
+          child: Transform.scale(
+            scale: 1 + 0.03 * t,
+            child: Stack(
+              children: [
+                // 아래 여백(12)을 뺀 카드 자리에만 그림자를 둡니다.
+                Positioned.fill(
+                  bottom: 12,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: liftShadow,
+                          blurRadius: 22 * t,
+                          offset: Offset(0, 10 * t),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                child!,
+              ],
+            ),
+          ),
+        );
+      },
+      child: child,
     );
   }
 
@@ -211,22 +274,13 @@ extension _ClosetListViews on _ClosetScreenState {
   }) {
     final isSelected = _selectedItems.contains(item);
 
+    // 카드 색을 Container 로 칠하면 ListTile 의 누름 효과가 그 아래에 그려져 보이지 않습니다.
+    // 그림자만 바깥 상자에 두고, 색·테두리는 카드 전용 Material 위에 Ink 로 칠해 효과가 위에 보이게 합니다.
     return Semantics(
       selected: isSelected,
-      child: Container(
+      child: DecoratedBox(
         decoration: BoxDecoration(
-          color: isSelected
-              ? palette.selectedBgColor
-              : (isWarning ? palette.warningBgColor : palette.cardColor),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isSelected
-                ? AppPalette.accent
-                : (isWarning
-                      ? Colors.redAccent.shade200
-                      : palette.borderColor),
-            width: isSelected ? 2 : (isWarning ? 2 : 1),
-          ),
           boxShadow: [
             BoxShadow(
               color: palette.shadowColor,
@@ -235,116 +289,137 @@ extension _ClosetListViews on _ClosetScreenState {
             ),
           ],
         ),
-        child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 8,
-          ),
-          leading: Container(
-            width: 60,
-            height: 60,
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+          clipBehavior: Clip.antiAlias,
+          child: Ink(
             decoration: BoxDecoration(
               color: isSelected
-                  ? (palette.isDark
-                        ? const Color(0xFF1C1C1E)
-                        : Colors.white)
-                  : (isWarning
-                        ? (palette.isDark
-                              ? const Color(0xFF1C1C1E)
-                              : Colors.white)
-                        : palette.leadingBgColor),
-              borderRadius: BorderRadius.circular(12),
+                  ? palette.selectedBgColor
+                  : (isWarning ? palette.warningBgColor : palette.cardColor),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: isSelected
+                    ? AppPalette.accent
+                    : (isWarning
+                          ? Colors.redAccent.shade200
+                          : palette.borderColor),
+                width: isSelected ? 2 : (isWarning ? 2 : 1),
+              ),
             ),
-            child: Icon(
-              Icons.checkroom,
-              color: isSelected
-                  ? AppPalette.accent
-                  : (isWarning
-                        ? Colors.redAccent
-                        : palette.secondaryText),
-              size: 30,
-            ),
-          ),
-          title: Text(
-            title,
-            maxLines: 2,
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-              color: palette.primaryText,
-            ),
-          ),
-          subtitle: Padding(
-            padding: const EdgeInsets.only(top: 8.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  category,
-                  style: TextStyle(
-                    color: palette.secondaryText,
-                    fontSize: 12,
-                  ),
+            child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 8,
+              ),
+              leading: Container(
+                width: 60,
+                height: 60,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? (palette.isDark
+                            ? const Color(0xFF1C1C1E)
+                            : Colors.white)
+                      : (isWarning
+                            ? (palette.isDark
+                                  ? const Color(0xFF1C1C1E)
+                                  : Colors.white)
+                            : palette.leadingBgColor),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                const SizedBox(height: 4),
-                Row(
+                child: Icon(
+                  Icons.checkroom,
+                  color: isSelected
+                      ? AppPalette.accent
+                      : (isWarning
+                            ? Colors.redAccent
+                            : palette.secondaryText),
+                  size: 30,
+                ),
+              ),
+              title: Text(
+                title,
+                maxLines: 2,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  color: palette.primaryText,
+                ),
+              ),
+              subtitle: Padding(
+                padding: const EdgeInsets.only(top: 8.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(statusIcon, color: statusColor, size: 16),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        status,
-                        maxLines: 2,
-                        style: TextStyle(
-                          color: statusColor,
-                          fontWeight: isWarning
-                              ? FontWeight.bold
-                              : FontWeight.normal,
-                          fontSize: 13,
-                        ),
+                    Text(
+                      category,
+                      style: TextStyle(
+                        color: palette.secondaryText,
+                        fontSize: 12,
                       ),
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(statusIcon, color: statusColor, size: 16),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            status,
+                            maxLines: 2,
+                            style: TextStyle(
+                              color: statusColor,
+                              fontWeight: isWarning
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
+              ),
+              trailing: showDragHandle
+                  ? Icon(Icons.drag_handle, color: palette.secondaryText)
+                  : (_selectionMode
+                        ? Icon(
+                            isSelected
+                                ? Icons.check_circle
+                                : Icons.radio_button_unchecked,
+                            color: isSelected
+                                ? AppPalette.accent
+                                : palette.secondaryText,
+                          )
+                        : Icon(
+                            Icons.chevron_right,
+                            color: palette.secondaryText,
+                          )),
+              onTap: disableTap
+                  ? null
+                  : () {
+                      if (_selectionMode) {
+                        _toggleSelection(item);
+                        return;
+                      }
+
+                      context.read<ClosetProvider>().selectClothes(item);
+                      widget.onOpenReport(item);
+                    },
+              onLongPress: disableTap
+                  ? null
+                  : () {
+                      if (_selectionMode) {
+                        _toggleSelection(item);
+                        return;
+                      }
+
+                      _enterSelectionMode(item);
+                    },
             ),
           ),
-          trailing: showDragHandle
-              ? Icon(Icons.drag_handle, color: palette.secondaryText)
-              : (_selectionMode
-                    ? Icon(
-                        isSelected
-                            ? Icons.check_circle
-                            : Icons.radio_button_unchecked,
-                        color: isSelected
-                            ? AppPalette.accent
-                            : palette.secondaryText,
-                      )
-                    : Icon(
-                        Icons.chevron_right,
-                        color: palette.secondaryText,
-                      )),
-          onTap: disableTap
-              ? null
-              : () {
-                  if (_selectionMode) {
-                    _toggleSelection(item);
-                    return;
-                  }
-
-                  context.read<ClosetProvider>().selectClothes(item);
-                  widget.onOpenReport(item);
-                },
-          onLongPress: disableTap
-              ? null
-              : () {
-                  if (_selectionMode) {
-                    _toggleSelection(item);
-                    return;
-                  }
-
-                  _enterSelectionMode(item);
-                },
         ),
       ),
     );

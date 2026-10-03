@@ -1,4 +1,6 @@
 // 이메일·비밀번호 입력을 검증하고 서버 로그인 및 로그인 후 동기화를 수행하는 화면입니다.
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -247,8 +249,10 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
               return SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: ConstrainedBox(
+                  // 아래 인셋(자판 등)이 앱바 아래를 다 덮으면 maxHeight 가 0 이 되므로
+                  // 빼고 남은 값이 음수가 되지 않게 0 에서 멈춥니다.
                   constraints: BoxConstraints(
-                    minHeight: constraints.maxHeight - 12,
+                    minHeight: math.max(0.0, constraints.maxHeight - 12),
                   ),
                   child: IntrinsicHeight(
                     child: Column(

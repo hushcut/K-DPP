@@ -104,6 +104,55 @@ extension _ScanResultActions on _ScanScreenState {
   }
 
 
+  /// 결과 입력 중 닫으려 하면 버릴지 묻고, 버리기로 한 경우에만 스캔 화면을 닫습니다.
+  /// 저장 중에는 끝나면 리포트로 넘어가므로 묻지 않고 그대로 둡니다.
+  Future<void> _confirmDiscardAndClose() async {
+    if (_isSaving) return;
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.of(context);
+
+    final shouldDiscard = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: palette.card,
+          title: Text(
+            '작성 중인 내용을 버릴까요?',
+            style: TextStyle(color: palette.textPrimary),
+          ),
+          content: Text(
+            '스캔 화면을 닫으면 지금까지 입력한 내용이 사라져요.',
+            style: TextStyle(
+              height: 1.5,
+              color: isDark ? const Color(0xFFD1D1D6) : const Color(0xFF444444),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('계속 작성하기'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+              ),
+              child: const Text(
+                '버리고 닫기',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldDiscard != true || !mounted) return;
+
+    Navigator.pop(context);
+  }
+
   /// 새 스캔을 위해 이미지·폼·서버 결과와 카메라 상태를 초기화합니다.
   void _resetScan() {
     _materialInputs.clear();

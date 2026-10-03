@@ -382,96 +382,100 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
                 : '${option.label}, ${option.category}, 예상 무게 ${option.weightRangeLabel}',
             child: Padding(
               padding: const EdgeInsets.only(bottom: 10),
-              child: InkWell(
-                onTap: () {
-                  if (option.isDirectWeightPlaceholder) {
-                    setState(() {
-                      _isDirectInputMode = true;
-                      _directErrorText = null;
-                    });
-                    return;
-                  }
+              // 칸 색을 Container 로 칠하면 누름 효과가 그 아래에 가려지므로 Ink 로 칠합니다.
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () {
+                    if (option.isDirectWeightPlaceholder) {
+                      setState(() {
+                        _isDirectInputMode = true;
+                        _directErrorText = null;
+                      });
+                      return;
+                    }
 
-                  widget.onSelected(option);
-                },
-                borderRadius: BorderRadius.circular(14),
-                child: ExcludeSemantics(
-                  child: Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? AppPalette.accent.withValues(
-                              alpha: isDark ? 0.20 : 0.10,
-                            )
-                          : cardColor,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
+                    widget.onSelected(option);
+                  },
+                  borderRadius: BorderRadius.circular(14),
+                  child: ExcludeSemantics(
+                    child: Ink(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
                         color: isSelected
-                            ? AppPalette.accent
-                            : borderColor,
-                        width: isSelected ? 1.5 : 1,
+                            ? AppPalette.accent.withValues(
+                                alpha: isDark ? 0.20 : 0.10,
+                              )
+                            : cardColor,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: isSelected
+                              ? AppPalette.accent
+                              : borderColor,
+                          width: isSelected ? 1.5 : 1,
+                        ),
                       ),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 42,
-                          height: 42,
-                          decoration: BoxDecoration(
-                            color: isSelected
-                                ? AppPalette.accent
-                                : (isDark
-                                      ? const Color(0xFF2A2A2E)
-                                      : const Color(0xFFF2F3F8)),
-                            borderRadius: BorderRadius.circular(12),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 42,
+                            height: 42,
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? AppPalette.accent
+                                  : (isDark
+                                        ? const Color(0xFF2A2A2E)
+                                        : const Color(0xFFF2F3F8)),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(
+                              option.icon,
+                              color: isSelected
+                                  ? Colors.white
+                                  : AppPalette.accent,
+                            ),
                           ),
-                          child: Icon(
-                            option.icon,
-                            color: isSelected
-                                ? Colors.white
-                                : AppPalette.accent,
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                option.label,
-                                style: TextStyle(
-                                  color: primaryText,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w700,
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  option.label,
+                                  style: TextStyle(
+                                    color: primaryText,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                option.isDirectWeightPlaceholder
-                                    ? '실제 무게를 알고 있어요'
-                                    : '${option.category} · 예상 무게 ${option.weightRangeLabel}',
-                                style: TextStyle(
-                                  color: secondaryText,
-                                  fontSize: 12,
-                                  height: 1.4,
+                                const SizedBox(height: 4),
+                                Text(
+                                  option.isDirectWeightPlaceholder
+                                      ? '실제 무게를 알고 있어요'
+                                      : '${option.category} · 예상 무게 ${option.weightRangeLabel}',
+                                  style: TextStyle(
+                                    color: secondaryText,
+                                    fontSize: 12,
+                                    height: 1.4,
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                        if (isSelected)
-                          const Icon(
-                            Icons.check_circle,
-                            color: AppPalette.accent,
-                          )
-                        else
-                          Icon(
-                            option.isDirectWeightPlaceholder
-                                ? Icons.scale_outlined
-                                : Icons.chevron_right,
-                            color: secondaryText,
-                          ),
-                      ],
+                          if (isSelected)
+                            const Icon(
+                              Icons.check_circle,
+                              color: AppPalette.accent,
+                            )
+                          else
+                            Icon(
+                              option.isDirectWeightPlaceholder
+                                  ? Icons.scale_outlined
+                                  : Icons.chevron_right,
+                              color: secondaryText,
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -698,23 +702,28 @@ class _CategoryChoiceChip extends StatelessWidget {
         ? AppPalette.accent
         : (isDark ? Colors.white : Colors.black87);
 
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        height: 48,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: borderColor),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: textColor,
-            fontSize: 14,
-            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+    // 선택 색을 Container 로 칠하면 누름 효과가 그 아래에 가려지므로 Ink 로 칠합니다.
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Ink(
+          height: 48,
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: borderColor),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: textColor,
+                fontSize: 14,
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+              ),
+            ),
           ),
         ),
       ),
