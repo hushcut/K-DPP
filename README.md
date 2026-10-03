@@ -21,6 +21,7 @@ AI 기반 의류 수명 예측 및 탄소 발자국 추적 앱.
 | `BACKEND/` | FastAPI 서버 + PostgreSQL | [README](BACKEND/README.md) · [API 계약](BACKEND/API_CONTRACT.md) |
 | `AI/` | OCR·심볼 인식 모듈 | [README](AI/kdpp_ai_ocr_integrated/README.md) |
 | `QA/` | 라벨 데이터셋 배치 검증 도구 | [README](QA/README.md) |
+| `deploy/` | 배포 묶음 — 앱 + PostgreSQL + Caddy(HTTPS) Docker Compose | [README](deploy/README.md) |
 | `docs/` | 파트 간 협업 문서 | [스캔 API 계약](docs/SCAN_API_CONTRACT.md) |
 
 ## 기술 스택

@@ -1,0 +1,118 @@
+# 배포용 Compose: 앱 + PostgreSQL + Caddy(자동 HTTPS). 이 폴더(deploy/)에서
+#   docker compose up -d --build --wait
+# 순서: postgres(healthy) → migrate(`alembic upgrade head` 후 종료) → app(healthy) → caddy.
+# 값은 이 폴더의 .env(Git 에 안 올림 — .env.example 을 복사)에서 읽습니다. 절차·주의는 README.md.
+#
+# 로컬 개발용 DB 는 BACKEND/compose.yaml(프로젝트 이름 k-dpp)이고, 이 파일과 이름·볼륨이
+# 겹치지 않습니다. 이 파일의 볼륨에는 실제 사용자 데이터와 HTTPS 인증서가 들어갑니다 —
+# `docker compose down -v` 는 둘 다 지웁니다.
+name: k-dpp-deploy
+
+x-logging: &logging
+  # 컨테이너 로그가 디스크를 채우지 않게 서비스마다 10MB × 3개까지만 둡니다.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app: &app
+  # migrate 와 app 은 같은 이미지를 씁니다(빌드 문맥 = 저장소 루트, BACKEND/Dockerfile).
+  image: k-dpp-app:local
+  build:
+    context: ..
+    dockerfile: BACKEND/Dockerfile
+  logging: *logging
+
+x-app-env: &app-env
+  # 비밀번호는 URL 에 들어가므로 영문·숫자만 씁니다(.env.example).
+  K_DPP_DATABASE_URL: postgresql+psycopg://kdpp:${POSTGRES_PASSWORD:?deploy/.env 에 POSTGRES_PASSWORD 를 넣으세요}@postgres:5432/k_dpp
+
+services:
+  postgres:
+    # BACKEND/compose.yaml 과 같은 이미지(메이저 고정, 18.x 패치는 `docker compose pull`).
+    image: postgres:18-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kdpp
+      # 볼륨을 처음 만들 때만 쓰입니다. 나중에 바꾸려면 README '비밀번호 바꾸기'.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?deploy/.env 에 POSTGRES_PASSWORD 를 넣으세요}
+      POSTGRES_DB: k_dpp
+    # 포트를 밖에 열지 않습니다. 앱과 migrate 만 Compose 안쪽 네트워크로 붙습니다.
+    volumes:
+      # PostgreSQL 18 이미지부터 볼륨 위치가 /var/lib/postgresql 입니다.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U kdpp -d k_dpp"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    logging: *logging
+
+  migrate:
+    # 표·소재를 최신 리비전으로 맞추고 끝납니다. 이미 최신이면 아무것도 하지 않습니다.
+    # 서버는 스키마를 바꾸지 않고 확인만 하므로(database.assert_schema_current), 이 단계가
+    # 실패하면 app 은 시작하지 않습니다.
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    <<: *app
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      # Google Vision 키. 앱은 저장소 경로의 key.json 이 없으면 이 환경변수를 씁니다.
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/vision_key
+    secrets:
+      - vision_key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # 포트를 밖에 열지 않습니다. Caddy 만 app:8000 으로 넘깁니다.
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+
+  caddy:
+    # 메이저 고정(2.x 패치는 `docker compose pull`).
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      K_DPP_DOMAIN: ${K_DPP_DOMAIN:?deploy/.env 에 K_DPP_DOMAIN 을 넣으세요}
+    ports:
+      # 서버에서는 기본값(모든 주소의 80·443) 그대로 둡니다. 맥 리허설만 .env 에서 바꿉니다.
+      - "${K_DPP_LISTEN_ADDR:-0.0.0.0}:${K_DPP_HTTP_PORT:-80}:80"
+      - "${K_DPP_LISTEN_ADDR:-0.0.0.0}:${K_DPP_HTTPS_PORT:-443}:443"
+      - "${K_DPP_LISTEN_ADDR:-0.0.0.0}:${K_DPP_HTTPS_PORT:-443}:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # 발급받은 인증서·계정 키. 지우면 다시 발급받아야 하고, 짧은 시간에 여러 번
+      # 지우면 Let's Encrypt 발급 한도에 걸립니다.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    logging: *logging
+
+secrets:
+  vision_key:
+    # 파일이 있어야 시작합니다. 키 없이 띄우는 법은 README 'Vision 키'.
+    file: ${K_DPP_VISION_KEY_FILE:-./secrets/vision_key.json}
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
