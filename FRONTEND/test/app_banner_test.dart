@@ -55,14 +55,22 @@ void main() {
       );
     });
 
-    test('읽기 프로그램이 켜지면 종류와 상관없이 10초, 하한이 더 길면 그 값', () {
+    test('읽기 프로그램이 켜지면 평소 시간(종류 기본값과 하한 중 큰 쪽)의 두 배', () {
       expect(
         AppBanner.durationFor(
           '의류 정보가 수정되었습니다.',
           AppBannerKind.success,
           accessibleNavigation: true,
         ),
-        const Duration(seconds: 10),
+        const Duration(seconds: 5),
+      );
+      expect(
+        AppBanner.durationFor(
+          '저장하지 못했어요.',
+          AppBannerKind.failure,
+          accessibleNavigation: true,
+        ),
+        const Duration(seconds: 8),
       );
       expect(
         AppBanner.durationFor(
@@ -70,7 +78,7 @@ void main() {
           AppBannerKind.info,
           accessibleNavigation: true,
         ),
-        const Duration(seconds: 11),
+        const Duration(seconds: 22),
       );
     });
   });
@@ -338,7 +346,9 @@ void main() {
       expect(tester.getRect(find.byType(AppBannerView)).top, 126);
     });
 
-    testWidgets('읽기 프로그램이 켜지면 슬라이드 없이 바로 뜨고 10초 동안 남는다', (tester) async {
+    testWidgets('읽기 프로그램이 켜지면 슬라이드 없이 바로 뜨고 평소의 두 배(성공 5초) 동안 남는다', (
+      tester,
+    ) async {
       _useIPhoneView(tester);
       tester.platformDispatcher.accessibilityFeaturesTestValue =
           const FakeAccessibilityFeatures(accessibleNavigation: true);
@@ -349,7 +359,7 @@ void main() {
       await tester.pump();
       expect(tester.getRect(find.byType(AppBannerView)).top, 126);
 
-      await tester.pump(const Duration(milliseconds: 9900));
+      await tester.pump(const Duration(milliseconds: 4900));
       expect(find.byType(AppBannerView), findsOneWidget);
 
       await tester.pump(const Duration(milliseconds: 200));

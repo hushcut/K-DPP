@@ -27,9 +27,11 @@ class AppBanner {
   /// 화면 좌우 여백입니다.
   static const double horizontalMargin = 16;
 
-  /// 읽기 프로그램이 켜졌을 때의 최소 표시 시간입니다. 배너를 다시 찾아
-  /// 듣거나 닫을 여유이며(소리는 배너가 사라져도 끊기지 않는다), 스위치 제어도 포함합니다.
-  static const Duration accessibleNavigationDuration = Duration(seconds: 10);
+  /// 읽기 프로그램이 켜졌을 때 평소 시간에 곱하는 배수입니다. 배너를 다시 찾아
+  /// 듣거나 닫을 여유이며 스위치 제어도 포함합니다. 10초 고정은 그동안 앱바 아래를
+  /// 훑으면 그 밑 내용 대신 배너가 읽혀 길었다(DECISIONS 97). 소리는 배너가 사라져도
+  /// 끊기지 않는다.
+  static const int accessibleNavigationMultiplier = 2;
 
   /// 가장 가까운 [AppBannerHost] 를 돌려줍니다. 없으면 배선 방법을 담은 오류를 냅니다.
   static AppBannerHostState of(BuildContext context) {
@@ -51,7 +53,8 @@ class AppBanner {
   /// 표시 시간 = 종류 기본값(성공 2.5초, 실패·안내 4초)과 문장 길이 하한 중 큰 쪽입니다.
   ///
   /// 하한은 1초 + 공백을 뺀 글자당 0.1초라 긴 성공 문구나 서버가 보낸 길이를 모르는
-  /// 문장도 따라갑니다. 읽기 프로그램이 켜지면 기본값이 종류와 상관없이 10초입니다.
+  /// 문장도 따라갑니다. 읽기 프로그램이 켜지면 그 시간의
+  /// [accessibleNavigationMultiplier] 배입니다(성공 5초, 실패·안내 8초).
   static Duration durationFor(
     String message,
     AppBannerKind kind, {
@@ -59,15 +62,17 @@ class AppBanner {
   }) {
     final characterCount = message.replaceAll(RegExp(r'\s'), '').runes.length;
     final lengthFloor = 1000 + 100 * characterCount;
+    final kindDefault = switch (kind) {
+      AppBannerKind.success => 2500,
+      AppBannerKind.failure || AppBannerKind.info => 4000,
+    };
+    final usual = math.max(kindDefault, lengthFloor);
 
-    final kindDefault = accessibleNavigation
-        ? accessibleNavigationDuration.inMilliseconds
-        : switch (kind) {
-            AppBannerKind.success => 2500,
-            AppBannerKind.failure || AppBannerKind.info => 4000,
-          };
-
-    return Duration(milliseconds: math.max(kindDefault, lengthFloor));
+    return Duration(
+      milliseconds: accessibleNavigation
+          ? usual * accessibleNavigationMultiplier
+          : usual,
+    );
   }
 }
 
