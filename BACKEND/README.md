@@ -15,6 +15,8 @@ BACKEND/
   migrations/          Alembic 리비전(스키마·소재 시드)
   compose.yaml         로컬 개발용 PostgreSQL(Docker Compose)
   docker/              PostgreSQL 첫 실행 때 테스트 DB를 만드는 스크립트
+  Dockerfile           배포용 이미지(빌드 문맥 = 저장소 루트, 쓰는 곳은 ../deploy/)
+  Dockerfile.dockerignore  이미지에 넣을 파일 허용 목록(.env·key.json·DB·tests 제외)
   tests/               pytest 백엔드 테스트
 ```
 
