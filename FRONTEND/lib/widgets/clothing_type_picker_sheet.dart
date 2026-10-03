@@ -38,12 +38,17 @@ class ClothingTypePickerDiscardPrompt {
 ///
 /// [optionsListenable]을 주면 시트가 열려 있는 동안 목록이 바뀌어도(서버 무게표 도착)
 /// 새 목록을 보여 줍니다. 그때는 [options]보다 그 값을 씁니다.
+///
+/// [failureMessage]를 주면 시트 맨 위(제목 위)에 빨간 느낌표와 함께 보입니다.
+/// 분석이 실패해 직접 입력으로 넘어갈 때 쓰며, 시트가 열리면 읽기 프로그램도 이 줄부터
+/// 읽습니다(DECISIONS 96).
 Future<ClothingTypeOption?> showClothingTypePickerSheet({
   required BuildContext context,
   required List<ClothingTypeOption> options,
   required ClothingTypeOption initialSelection,
   ValueListenable<List<ClothingTypeOption>>? optionsListenable,
   ClothingTypePickerDiscardPrompt? discardPrompt,
+  String? failureMessage,
 }) {
   final canDismiss = discardPrompt == null;
 
@@ -69,6 +74,7 @@ Future<ClothingTypeOption?> showClothingTypePickerSheet({
         optionsListenable: optionsListenable,
         initialSelection: initialSelection,
         discardPrompt: discardPrompt,
+        failureMessage: failureMessage,
         onSelected: (option) {
           Navigator.pop(sheetContext, option);
         },
@@ -89,6 +95,7 @@ class ClothingTypePickerSheet extends StatefulWidget {
     required this.onSelected,
     this.optionsListenable,
     this.discardPrompt,
+    this.failureMessage,
   });
 
   // 표시할 선택지와 현재 선택된 초기값입니다.
@@ -100,6 +107,8 @@ class ClothingTypePickerSheet extends StatefulWidget {
   final ValueChanged<ClothingTypeOption> onSelected;
   /// 선택을 건너뛸 수 없는 시트일 때 '다시 촬영' 확인에 쓸 문구입니다.
   final ClothingTypePickerDiscardPrompt? discardPrompt;
+  /// 분석에 실패했을 때 목록 맨 위에 보일 이유입니다. 없으면 그 줄을 그리지 않습니다.
+  final String? failureMessage;
 
   @override
   State<ClothingTypePickerSheet> createState() =>
@@ -333,12 +342,43 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
     final secondaryText = isDark
         ? const Color(0xFFD1D1D6)
         : const Color(0xFF777777);
+    final failureMessage = widget.failureMessage;
 
     return ListView(
       key: const ValueKey('option-list'),
       shrinkWrap: true,
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
       children: [
+        // 제목은 성공 시트와 같아 이 줄이 없으면 실패한 줄 모른다. 제목보다 위에 두어
+        // 시트가 열릴 때 읽기 프로그램이 먼저 읽게 하고, 모양은 실패 배너와 맞춘다.
+        if (failureMessage != null) ...[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(
+                Icons.error_outline,
+                color: Colors.redAccent,
+                size: 22,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 1),
+                  child: Text(
+                    failureMessage,
+                    style: TextStyle(
+                      color: primaryText,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+        ],
         Row(
           children: [
             Expanded(

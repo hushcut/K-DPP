@@ -8,7 +8,9 @@ import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/models/main_screen_arguments.dart';
 import 'package:k_dpp/navigation_bar_opacity_provider.dart';
 import 'package:k_dpp/scan_screen.dart';
+import 'package:k_dpp/services/scan_api_service.dart';
 import 'package:k_dpp/widgets/app_back_button.dart';
+import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:k_dpp/widgets/frosted_surface.dart';
 import 'package:k_dpp/widgets/scan_result_view.dart';
 import 'package:provider/provider.dart';
@@ -40,7 +42,10 @@ void main() {
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
           ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
         ],
-        child: const MaterialApp(home: MainScreen()),
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: MainScreen(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -75,7 +80,10 @@ void main() {
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
           ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
         ],
-        child: const MaterialApp(home: MainScreen()),
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: MainScreen(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -116,6 +124,7 @@ void main() {
           ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
         ],
         child: MaterialApp(
+          builder: AppBannerHost.builder,
           home: const MainScreen(
             initialArguments: MainScreenArguments(
               initialIndex: 1,
@@ -174,6 +183,7 @@ void main() {
           ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
         ],
         child: const MaterialApp(
+          builder: AppBannerHost.builder,
           home: MainScreen(
             initialArguments: MainScreenArguments(
               initialIndex: 1,
@@ -221,6 +231,7 @@ void main() {
           ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
         ],
         child: const MaterialApp(
+          builder: AppBannerHost.builder,
           home: MainScreen(
             initialArguments: MainScreenArguments(showReport: true),
           ),
@@ -266,6 +277,7 @@ void main() {
           ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
         ],
         child: const MaterialApp(
+          builder: AppBannerHost.builder,
           home: MainScreen(
             initialArguments: MainScreenArguments(showReport: true),
           ),
@@ -306,7 +318,10 @@ void main() {
               create: (_) => NavigationBarOpacityProvider(),
             ),
           ],
-          child: const MaterialApp(home: MainScreen()),
+          child: const MaterialApp(
+            builder: AppBannerHost.builder,
+            home: MainScreen(),
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -385,7 +400,11 @@ void main() {
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
           ChangeNotifierProvider.value(value: opacityProvider),
         ],
-        child: MaterialApp(home: const MainScreen(), routes: routes),
+        child: MaterialApp(
+          builder: AppBannerHost.builder,
+          home: const MainScreen(),
+          routes: routes,
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -489,9 +508,9 @@ void main() {
     expect(scanScreen().isActive, isTrue);
   });
 
-  // 앨범에서 사진을 고른 것처럼 흉내 내 결과 입력 화면까지 들어간다. 없는 파일이라 분석이 실패해
-  // 직접 입력으로 넘어간다(서버 분석 실패와 같은 경로). 파일 읽기는 실제 입출력이라 runAsync 로 기다린다.
-  Future<void> openScanResultForm(WidgetTester tester) async {
+  // 앨범에서 사진을 고른 것처럼 흉내 내 종류 선택 시트까지 연다. 없는 파일이라 분석이 실패해
+  // 직접 입력 시트가 뜬다(서버 분석 실패와 같은 경로). 파일 읽기는 실제 입출력이라 runAsync 로 기다린다.
+  Future<void> openTypeSheetAfterFailedScan(WidgetTester tester) async {
     const picker = MethodChannel('plugins.flutter.io/image_picker');
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
       picker,
@@ -518,7 +537,13 @@ void main() {
     }
     // 종류 선택 시트가 다 올라온 뒤에 고른다(올라오는 도중엔 탭이 빗나간다).
     await tester.pump(routeTransition);
-    await tester.tap(typeOption);
+  }
+
+  // 위 시트에서 종류를 골라 결과 입력 화면까지 들어간다.
+  Future<void> openScanResultForm(WidgetTester tester) async {
+    await openTypeSheetAfterFailedScan(tester);
+
+    await tester.tap(find.text('반팔 티셔츠'));
     await tester.pump();
     await tester.pump(routeTransition);
 
@@ -526,6 +551,45 @@ void main() {
     expect(find.byType(ScanResultView), findsOneWidget);
     expect(find.byType(BottomSheet), findsNothing);
   }
+
+  // DECISIONS 96: 분석 실패는 시트를 고른 뒤 띄우던 배너 대신 종류 선택 시트 맨 위에서 알린다.
+  // 시트 제목은 성공과 같아, 전에는 '다시 촬영'으로 나가면 실패했다는 말을 듣지 못했다.
+  testWidgets(
+    '사진 분석이 실패하면 이유가 종류 선택 시트에서 가장 먼저 읽히고, 고른 뒤 배너는 뜨지 않는다',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      await pumpMainScreen(tester);
+      await openTypeSheetAfterFailedScan(tester);
+
+      final failureMessages = {
+        for (final type in ScanApiErrorType.values)
+          ScanApiException(type: type, message: '').userMessage,
+      };
+      final reason = find.descendant(
+        of: find.byType(BottomSheet),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is Text && failureMessages.contains(widget.data),
+        ),
+      );
+      expect(reason, findsOneWidget);
+
+      final labels = tester.semantics
+          .simulatedAccessibilityTraversal()
+          .map((node) => node.label.isEmpty ? node.tooltip : node.label)
+          .where((label) => label.isNotEmpty)
+          .toList();
+      expect(labels.first, tester.widget<Text>(reason).data);
+
+      await tester.tap(find.text('반팔 티셔츠'));
+      await tester.pump();
+      await tester.pump(routeTransition);
+
+      expect(find.byType(ScanResultView), findsOneWidget);
+      expect(find.byType(AppBannerView), findsNothing);
+      semantics.dispose();
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
 
   testWidgets(
     '결과를 입력하는 동안에는 iOS 왼쪽 끝을 밀어도 스캔 화면이 닫히지 않는다',

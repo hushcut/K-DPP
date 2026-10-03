@@ -85,6 +85,9 @@ extension _ScanCaptureActions on _ScanScreenState {
   /// 자동 분석에 실패해도 유형과 소재를 직접 입력할 수 있는 초안을 만듭니다.
   /// 서버가 오류 본문에 부분 인식 결과를 실어 보냈다면 초기값으로 채웁니다.
   /// _isScanning은 유형 선택이 끝날 때까지 유지해 카메라 재초기화를 막습니다.
+  ///
+  /// 실패 이유는 유형 선택 시트 맨 위에 보입니다. 고른 뒤 배너로 띄우면 시트가 먼저 떠
+  /// 실패했다는 말이 없고 '다시 촬영'으로 나가면 끝내 알리지 못했다(DECISIONS 96).
   Future<void> _showManualFallback(ScanApiException exception) async {
     if (!mounted) return;
 
@@ -93,6 +96,7 @@ extension _ScanCaptureActions on _ScanScreenState {
     final selectedType = await _showClothingTypePicker(
       initialSelection: _selectedClothingType,
       discardPrompt: ClothingTypePickerDiscardPrompt.manualAfterFailure,
+      failureMessage: message,
     );
 
     if (!mounted) return;
@@ -112,10 +116,6 @@ extension _ScanCaptureActions on _ScanScreenState {
       isScanFailed: true,
       failureMessage: message,
     );
-
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   /// 유형 선택 취소 시 분석 상태를 지우고 카메라 화면으로 돌아갑니다.
@@ -164,9 +164,8 @@ extension _ScanCaptureActions on _ScanScreenState {
 
     switch (captureResult) {
       case ScanCaptureBlocked(:final message):
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(message)));
+        // '카메라를 준비하고 있어요' — 실패가 아니라 잠시 기다리라는 안내다.
+        AppBanner.of(context).show(message, kind: AppBannerKind.info);
 
         await _cameraLifecycle.initialize();
         return;
@@ -178,9 +177,7 @@ extension _ScanCaptureActions on _ScanScreenState {
         return;
 
       case ScanCaptureFailure(:final message):
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(message)));
+        AppBanner.of(context).show(message, kind: AppBannerKind.failure);
         return;
 
       case ScanCaptureSelected(
@@ -238,9 +235,7 @@ extension _ScanCaptureActions on _ScanScreenState {
         return;
 
       case ScanCaptureFailure(:final message):
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(message)));
+        AppBanner.of(context).show(message, kind: AppBannerKind.failure);
         _cameraLifecycle.startIfNeeded();
         return;
 

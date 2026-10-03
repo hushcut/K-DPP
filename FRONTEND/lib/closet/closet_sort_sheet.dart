@@ -71,8 +71,9 @@ extension _ClosetSortSheet on _ClosetScreenState {
     } catch (_) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('정렬 방식을 저장하지 못해 이전 기준으로 되돌렸어요.')),
+      AppBanner.of(context).show(
+        '정렬 방식을 저장하지 못해 이전 기준으로 되돌렸어요.',
+        kind: AppBannerKind.failure,
       );
     }
   }

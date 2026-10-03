@@ -26,15 +26,16 @@ extension _ScanSaveActions on _ScanScreenState {
     if (!mounted) return;
 
     if (!isSaved) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('의류를 기기에 저장하지 못했어요. 다시 시도해 주세요.')),
+      AppBanner.of(context).show(
+        '의류를 기기에 저장하지 못했어요. 다시 시도해 주세요.',
+        kind: AppBannerKind.failure,
       );
       return;
     }
 
     await SessionExpiryHandler.handle(
       context,
-      message: '로그인 세션이 만료되어 의류는 기기에 저장했어요. 다시 로그인해 주세요.',
+      message: '로그인이 만료됐어요. 의류는 기기에 저장했어요.',
     );
   }
 
@@ -67,9 +68,7 @@ extension _ScanSaveActions on _ScanScreenState {
 
     switch (saveResult) {
       case ScanSaveFailure(:final message):
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(message)));
+        AppBanner.of(context).show(message, kind: AppBannerKind.failure);
         return;
       case ScanSaveSuccess(:final clothes):
         _updateState(() {
@@ -134,10 +133,9 @@ extension _ScanSaveActions on _ScanScreenState {
           debugPrint('옷장 저장에 실패했습니다: $error');
 
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('의류를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'),
-              ),
+            AppBanner.of(context).show(
+              '의류를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.',
+              kind: AppBannerKind.failure,
             );
           }
           return;
@@ -152,9 +150,8 @@ extension _ScanSaveActions on _ScanScreenState {
         if (!mounted) return;
 
         if (fallbackMessage != null) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(fallbackMessage)));
+          // 저장은 됐고 탄소량만 임시 추정값으로 대신했으므로 안내다.
+          AppBanner.of(context).show(fallbackMessage, kind: AppBannerKind.info);
         }
 
         // pushReplacement는 이 화면이 아니라 **맨 위 라우트**를 교체합니다.

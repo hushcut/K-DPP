@@ -10,8 +10,10 @@ import 'package:k_dpp/material_name_display_provider.dart';
 import 'package:k_dpp/services/auth_api_service.dart';
 import 'package:k_dpp/settings_screen.dart';
 import 'package:k_dpp/theme_provider.dart';
+import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:provider/provider.dart';
 
+import 'helpers/app_banner_expect.dart';
 import 'helpers/fake_auth_session_storage.dart';
 import 'helpers/fake_closet_storage.dart';
 
@@ -35,7 +37,10 @@ void main() {
           ChangeNotifierProvider(create: (_) => ThemeProvider()),
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
         ],
-        child: const MaterialApp(home: SettingsScreen()),
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: SettingsScreen(),
+        ),
       ),
     );
 
@@ -53,7 +58,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
 
     expect(provider.userName, '홍길동 사용자');
-    expect(find.text('이 기기에 표시되는 닉네임이 변경되었습니다.'), findsOneWidget);
+    expectAppBanner(tester, '이 기기에 표시되는 닉네임이 바뀌었어요.', AppBannerKind.success);
   });
 
   testWidgets('비밀번호 변경은 서버 규칙과 같은 기준으로 먼저 걸러 낸다', (tester) async {
@@ -127,9 +132,10 @@ void main() {
     });
     // 서버가 기존 토큰을 폐기하므로 새 토큰을 반드시 물고 있어야 한다.
     expect(harness.accessToken, 'rotated-token');
-    expect(
-      find.text('비밀번호가 변경되었습니다. 다른 기기에서는 다시 로그인해야 합니다.'),
-      findsOneWidget,
+    expectAppBanner(
+      tester,
+      '비밀번호가 바뀌었어요. 다른 기기에서는 다시 로그인해야 해요.',
+      AppBannerKind.success,
     );
   });
 
@@ -157,6 +163,28 @@ void main() {
     expect(harness.isAuthenticated, isTrue);
     expect(harness.accessToken, 'access-token');
     expect(find.text('로그인 화면'), findsNothing);
+  });
+
+  // DECISIONS 98: 서버 오류 안내를 이어 붙이던 세 문장을 두 문장으로 줄였다.
+  testWidgets('서버 로그아웃이 실패해도 기기에서 로그아웃하고, 서버 오류 문장은 덧붙이지 않는다', (tester) async {
+    final harness = await _pumpSettings(
+      tester,
+      client: MockClient((request) async {
+        return http.Response(
+          jsonEncode({'status': 'error', 'message': '서버 내부 오류입니다.'}),
+          500,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }),
+    );
+
+    await _openAccountMenu(tester, '로그아웃');
+    await tester.tap(find.widgetWithText(ElevatedButton, '로그아웃'));
+    await tester.pumpAndSettle();
+
+    expect(harness.isAuthenticated, isFalse);
+    expect(find.text('로그인 화면'), findsOneWidget);
+    expectAppBanner(tester, '로그아웃했어요. 서버에는 연결하지 못했어요.', AppBannerKind.failure);
   });
 
   testWidgets('회원 탈퇴에 성공하면 기기의 계정 옷장까지 지우고 로그인 화면으로 보낸다', (tester) async {
@@ -195,6 +223,8 @@ void main() {
       isFalse,
     );
     expect(find.text('로그인 화면'), findsOneWidget);
+    // 스택을 비우고 로그인 화면으로 넘어가도 알림은 남는다.
+    expectAppBanner(tester, '회원 탈퇴가 완료되었습니다.', AppBannerKind.success);
   });
 
   testWidgets('회원 탈퇴가 서버에서 거절되면 기기 데이터를 건드리지 않는다', (tester) async {
@@ -320,7 +350,10 @@ void main() {
           ChangeNotifierProvider(create: (_) => ThemeProvider()),
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
         ],
-        child: const MaterialApp(home: SettingsScreen()),
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: SettingsScreen(),
+        ),
       ),
     );
 
@@ -366,6 +399,7 @@ Future<ClosetProvider> _pumpSettings(
         ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
       ],
       child: MaterialApp(
+        builder: AppBannerHost.builder,
         home: SettingsScreen(
           authApiService: AuthApiService(
             baseUrl: 'https://example.test',
