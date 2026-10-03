@@ -21,8 +21,11 @@ if not (make_url(TEST_DATABASE_URL).database or "").endswith("_test"):
     )
 os.environ["K_DPP_DATABASE_URL"] = TEST_DATABASE_URL
 
+import database  # noqa: E402
+
 try:
-    import database  # noqa: E402
+    with database.engine.connect():
+        pass
 except OperationalError as error:
     pytest.exit(
         "테스트용 PostgreSQL 에 연결하지 못했습니다. BACKEND 에서 "

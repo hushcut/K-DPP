@@ -3,7 +3,17 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import (
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    MetaData,
+    String,
+    Text,
+    create_engine,
+)
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 # 1. DB 파일 경로 설정
@@ -40,7 +50,16 @@ if _is_sqlite:
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-Base = declarative_base()
+# 제약 이름을 규칙대로 붙입니다. Alembic 마이그레이션이 나중에 제약을 지우거나
+# 바꿀 때 DB 마다 다른 자동 이름 대신 이 이름으로 가리킵니다.
+NAMING_CONVENTION = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+Base = declarative_base(metadata=MetaData(naming_convention=NAMING_CONVENTION))
 
 
 def utc_now() -> datetime:
@@ -95,6 +114,9 @@ class AnalysisResult(Base):
     created_at = Column(DateTime, nullable=False, default=utc_now)
 
 
+# 서버 시작(lifespan → init_data.seed_materials)과 reset_db.py 가 부릅니다. 이 모듈은
+# import 만으로는 DB 에 손대지 않습니다 — Alembic 이 모델을 읽으려고 import 하는데,
+# 그때 표가 먼저 생기면 마이그레이션이 "이미 있음"으로 실패합니다.
 def ensure_schema():
     Base.metadata.create_all(bind=engine)
 
@@ -174,7 +196,3 @@ def ensure_schema():
             connection.exec_driver_sql(
                 "ALTER TABLE access_tokens ADD COLUMN expires_at DATETIME"
             )
-
-
-# 5. 서버 실행 시 필요한 테이블과 컬럼을 준비합니다.
-ensure_schema()

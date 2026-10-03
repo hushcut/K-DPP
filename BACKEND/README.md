@@ -12,6 +12,8 @@ BACKEND/
   reset_db.py          로컬 SQLite DB 초기화 후 seed 재삽입
   API_CONTRACT.md      프론트/백엔드/API 협업 계약 문서
   requirements.txt     Python 의존성
+  alembic.ini          Alembic 설정(DB 주소는 넣지 않음)
+  migrations/          Alembic 리비전(스키마·소재 시드)
   compose.yaml         로컬 개발용 PostgreSQL(Docker Compose)
   docker/              PostgreSQL 첫 실행 때 테스트 DB를 만드는 스크립트
   tests/               pytest 백엔드 테스트
@@ -83,6 +85,26 @@ python -m pytest
 - 다른 주소의 PostgreSQL을 쓰려면 환경변수 `K_DPP_TEST_DATABASE_URL`을 지정합니다(기본값 `postgresql+psycopg://kdpp:kdpp@127.0.0.1:5432/k_dpp_test`).
   Docker가 무거우면 PostgreSQL 설치판에 `k_dpp_test` DB를 만들고 이 값으로 가리켜도 됩니다.
 - 다 쓰면 `docker compose down`(데이터 유지) 또는 `docker compose down -v`(데이터까지 삭제).
+
+## DB 마이그레이션 (Alembic)
+
+PostgreSQL 스키마와 소재 시드는 `migrations/`의 Alembic 리비전으로 관리합니다. DB 주소는 앱과 같은
+`K_DPP_DATABASE_URL`(환경변수 또는 `BACKEND/.env`)을 쓰며, PostgreSQL이 아니면 실행하지 않습니다.
+로컬에서는 `.env`에 `.env.example`의 PostgreSQL 줄을 넣어 두면 편합니다.
+
+```bat
+cd C:\DEV\K-DPP\BACKEND
+.venv\Scripts\activate.bat
+alembic upgrade head
+```
+
+- 리비전: `98b9938f3cd5` 기준선(develop 표 4개) → `09f14728ed0b` 소재 시드 22종.
+- 모델(`database.py`)을 바꾸면 `alembic revision --autogenerate -m "설명"`으로 리비전을 만들고 **내용을 꼭 손으로 검토**합니다.
+  `alembic check`가 `No new upgrade operations detected.`면 모델과 리비전이 맞습니다.
+- 소재·계수를 바꿀 때는 `init_data.py`의 `MATERIAL_SEEDS`(프런트 사본 두 파일도 함께)를 고치고, 같은 변경을 하는 새 리비전(UPDATE·INSERT)을 더합니다.
+  리비전은 목록을 import 하지 않고 값을 직접 적습니다. 둘이 어긋나면 `tests/test_migrations.py`가 실패합니다.
+- 전환 중: 지금은 서버를 켜면 아직 `create_all`과 소재 덮어쓰기가 돕니다. PostgreSQL DB에서는 서버를 켜기 **전에** `alembic upgrade head`를 먼저 하세요
+  (서버가 먼저 표를 만들면 마이그레이션이 "already exists"로 실패합니다).
 
 현재 테스트 범위:
 
