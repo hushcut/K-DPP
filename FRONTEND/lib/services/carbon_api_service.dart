@@ -31,30 +31,35 @@ class CarbonApiException implements Exception {
   final int? statusCode;
   final List<String> unknownMaterials;
 
+  /// 배너에 띄우는 문장입니다. 원인마다 길게 다르던 문장은 한 문장으로 줄이고,
+  /// 기준 없는 소재·인터넷 끊김·로그인 만료만 따로 알립니다(DECISIONS 98).
   String get userMessage {
     switch (type) {
       case CarbonApiErrorType.badRequest:
         if (unknownMaterials.isNotEmpty) {
-          return '탄소 기준 정보가 없는 소재가 있어요: ${unknownMaterials.join(', ')}. '
-              '임시 추정값으로 저장했어요.';
+          // 목록을 다 늘어놓으면 길이에 끝이 없어 첫 소재와 남은 개수만 보입니다.
+          // '소재는' 을 붙여 소재 이름의 받침과 상관없이 조사가 맞게 합니다.
+          final others = unknownMaterials.length - 1;
+          final names = others == 0
+              ? unknownMaterials.first
+              : '${unknownMaterials.first} 외 $others개';
+          return '$names 소재는 기준이 없어 임시 추정값으로 저장했어요.';
         }
-        return '입력한 소재 정보로 정확한 탄소량을 계산하지 못해 임시 추정값으로 저장했어요.';
+        return _estimatedMessage;
       case CarbonApiErrorType.unauthorized:
-        return '로그인 정보가 만료되어 임시 추정값으로 저장했어요. 다시 로그인해 주세요.';
-      case CarbonApiErrorType.forbidden:
-        return '탄소 계산 사용 권한이 없어 임시 추정값으로 저장했어요.';
-      case CarbonApiErrorType.server:
-        return '탄소 계산 서비스에 일시적인 문제가 생겨 임시 추정값으로 저장했어요.';
+        return '로그인이 만료됐어요. 탄소량은 임시 추정값으로 저장했어요.';
       case CarbonApiErrorType.network:
         return '인터넷에 연결할 수 없어 임시 추정값으로 저장했어요.';
+      case CarbonApiErrorType.forbidden:
+      case CarbonApiErrorType.server:
       case CarbonApiErrorType.timeout:
-        return '탄소 계산이 오래 걸려 임시 추정값으로 저장했어요.';
       case CarbonApiErrorType.invalidResponse:
-        return '탄소 계산 결과를 확인하지 못해 임시 추정값으로 저장했어요.';
       case CarbonApiErrorType.unknown:
-        return '정확한 탄소량을 계산하지 못해 임시 추정값으로 저장했어요.';
+        return _estimatedMessage;
     }
   }
+
+  static const String _estimatedMessage = '탄소량은 임시 추정값으로 저장했어요.';
 
   /// HTTP 상태와 서버 오류 본문을 정규화된 탄소 API 예외로 변환한다.
   factory CarbonApiException.fromStatusCode({

@@ -10,8 +10,23 @@ void main() {
 
     expect(exception.type, ScanApiErrorType.ocrFailed);
     expect(exception.statusCode, 502);
-    expect(exception.userMessage, contains('직접 입력해 주세요'));
-    expect(exception.userMessage, contains('자동으로 인식하지 못했어요'));
+    expect(exception.userMessage, '라벨을 읽지 못했어요. 직접 입력해 주세요.');
+  });
+
+  test('라벨을 못 읽은 것과 원인을 모르는 분석 실패를 짧은 문장으로 나눈다(DECISIONS 98)', () {
+    String messageFor(ScanApiErrorType type) =>
+        ScanApiException(type: type, message: '').userMessage;
+
+    expect(
+      messageFor(ScanApiErrorType.aiRecognitionFailed),
+      '라벨을 읽지 못했어요. 직접 입력해 주세요.',
+    );
+    for (final type in [
+      ScanApiErrorType.invalidResponse,
+      ScanApiErrorType.unknown,
+    ]) {
+      expect(messageFor(type), '사진을 분석하지 못했어요. 직접 입력해 주세요.');
+    }
   });
 
   test('HTTP 503은 일반 서버 오류로 유지한다', () {

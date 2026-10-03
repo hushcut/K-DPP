@@ -136,7 +136,7 @@ void main() {
     expect(provider.items.single.title, '수정 후 셔츠');
     expect(provider.items.single.careInstruction, '찬물 손세탁');
     expect(find.text('수정 후 셔츠'), findsOneWidget);
-    expectAppBanner(tester, '의류 정보가 수정되었습니다.', AppBannerKind.success);
+    expectAppBanner(tester, '의류 정보가 수정됐어요.', AppBannerKind.success);
   });
 
   testWidgets('내장 리포트에서 의류를 삭제하면 콜백으로 옷장 화면 복귀를 요청한다', (tester) async {
@@ -190,7 +190,7 @@ void main() {
     expect(deleteCallbackCount, 1);
     expectAppBanner(
       tester,
-      '"삭제 테스트 셔츠"이(가) 삭제되었습니다.',
+      '"삭제 테스트 셔츠"이(가) 삭제됐어요.',
       AppBannerKind.success,
     );
   });

@@ -68,7 +68,7 @@ Future<void> _confirmDelete(
 
   // 이미 지워져 있었다면 요청과 상관없이 알게 된 상태라 안내다.
   AppBanner.of(context).show(
-    wasRemoved ? '"${item.title}"이(가) 삭제되었습니다.' : '이미 옷장에서 삭제된 의류예요.',
+    wasRemoved ? '"${item.title}"이(가) 삭제됐어요.' : '이미 옷장에서 삭제된 의류예요.',
     kind: wasRemoved ? AppBannerKind.success : AppBannerKind.info,
   );
 

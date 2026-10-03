@@ -200,7 +200,7 @@ extension _ClosetActions on _ClosetScreenState {
 
     AppBanner.of(
       context,
-    ).show('$deleteCount개의 의류가 삭제되었습니다.', kind: AppBannerKind.success);
+    ).show('$deleteCount개의 의류가 삭제됐어요.', kind: AppBannerKind.success);
   }
 
   /// 보이는 항목만 재정렬해도 숨겨진 항목의 상대 위치는 그대로 보존합니다.

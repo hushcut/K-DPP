@@ -353,7 +353,7 @@ void main() {
     await tester.tap(find.widgetWithText(ElevatedButton, '삭제'));
     await tester.pumpAndSettle();
 
-    expectAppBanner(tester, '1개의 의류가 삭제되었습니다.', AppBannerKind.success);
+    expectAppBanner(tester, '1개의 의류가 삭제됐어요.', AppBannerKind.success);
     expect(provider.items.map((c) => c.title), ['홍길동 남길 셔츠']);
     expect(find.textContaining('개 선택됨'), findsNothing);
     expect(find.text('내 옷장'), findsOneWidget);
@@ -1178,7 +1178,7 @@ void main() {
       await confirmDelete();
       await tester.pumpAndSettle();
 
-      expectAppBanner(tester, '1개의 의류가 삭제되었습니다.', AppBannerKind.success);
+      expectAppBanner(tester, '1개의 의류가 삭제됐어요.', AppBannerKind.success);
       expect(provider.items, isEmpty);
       expect(find.textContaining('개 선택됨'), findsNothing);
       await tester.pumpAndSettle(const Duration(seconds: 5));

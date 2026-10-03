@@ -35,7 +35,7 @@ extension _ScanSaveActions on _ScanScreenState {
 
     await SessionExpiryHandler.handle(
       context,
-      message: '로그인 세션이 만료되어 의류는 기기에 저장했어요. 다시 로그인해 주세요.',
+      message: '로그인이 만료됐어요. 의류는 기기에 저장했어요.',
     );
   }
 

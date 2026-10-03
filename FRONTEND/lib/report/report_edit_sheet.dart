@@ -41,7 +41,7 @@ Future<void> _showEditBottomSheet(
   if (!context.mounted) return;
 
   AppBanner.of(context).show(
-    success ? '의류 정보가 수정되었습니다.' : '수정할 의류를 찾지 못했습니다.',
+    success ? '의류 정보가 수정됐어요.' : '수정할 의류를 찾지 못했어요.',
     kind: success ? AppBannerKind.success : AppBannerKind.failure,
   );
 }

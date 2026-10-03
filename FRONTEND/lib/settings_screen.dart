@@ -61,7 +61,7 @@ class SettingsScreen extends StatelessWidget {
     if (!context.mounted) return;
 
     AppBanner.of(context).show(
-      '이 기기에 표시되는 닉네임이 변경되었습니다.',
+      '이 기기에 표시되는 닉네임이 바뀌었어요.',
       kind: AppBannerKind.success,
     );
   }
@@ -97,7 +97,7 @@ class SettingsScreen extends StatelessWidget {
 
     final provider = context.read<ClosetProvider>();
     final accessToken = provider.accessToken;
-    String? serverLogoutError;
+    bool serverLogoutFailed = false;
     bool localLogoutStorageFailed = false;
 
     // 서버 로그아웃은 최대 15초까지 걸립니다. 그동안 설정 화면이 그대로 눌리면
@@ -129,8 +129,8 @@ class SettingsScreen extends StatelessWidget {
         await (authApiService ?? AuthApiService()).logout(
           accessToken: accessToken,
         );
-      } on AuthApiException catch (error) {
-        serverLogoutError = error.userMessage;
+      } on AuthApiException {
+        serverLogoutFailed = true;
       }
     }
 
@@ -148,10 +148,11 @@ class SettingsScreen extends StatelessWidget {
 
     Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
 
-    if (serverLogoutError != null || localLogoutStorageFailed) {
+    if (serverLogoutFailed || localLogoutStorageFailed) {
+      // 서버 오류 안내를 이어 붙이면 세 문장까지 길어져 붙이지 않는다(DECISIONS 98).
       final message = localLogoutStorageFailed
-          ? '기기에서는 로그아웃되었지만 저장된 로그인 정보 정리를 완료하지 못했습니다.'
-          : '기기에서는 로그아웃되었지만 서버 연결에 실패했습니다. $serverLogoutError';
+          ? '로그아웃했어요. 일부 정보는 정리하지 못했어요.'
+          : '로그아웃했어요. 서버에는 연결하지 못했어요.';
 
       // 로그아웃은 됐지만 일부가 안 됐으므로 실패로 알린다.
       AppBanner.of(context).show(message, kind: AppBannerKind.failure);
@@ -198,7 +199,7 @@ class SettingsScreen extends StatelessWidget {
       // 서버가 기존 토큰을 이미 폐기했으므로 이 기기 세션도 더는 쓸 수 없습니다.
       await SessionExpiryHandler.handle(
         context,
-        message: '비밀번호는 변경됐지만 새 로그인 정보를 받지 못했습니다. 다시 로그인해 주세요.',
+        message: '비밀번호는 바뀌었어요. 다시 로그인해 주세요.',
       );
       return;
     }
@@ -217,7 +218,7 @@ class SettingsScreen extends StatelessWidget {
       if (!context.mounted) return;
       await SessionExpiryHandler.handle(
         context,
-        message: '비밀번호는 변경됐지만 로그인 정보를 저장하지 못했습니다. 다시 로그인해 주세요.',
+        message: '비밀번호는 바뀌었어요. 다시 로그인해 주세요.',
       );
       return;
     }
@@ -225,7 +226,7 @@ class SettingsScreen extends StatelessWidget {
     if (!context.mounted) return;
 
     banner.show(
-      '비밀번호가 변경되었습니다. 다른 기기에서는 다시 로그인해야 합니다.',
+      '비밀번호가 바뀌었어요. 다른 기기에서는 다시 로그인해야 해요.',
       kind: AppBannerKind.success,
     );
   }

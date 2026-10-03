@@ -149,7 +149,7 @@ class _SignupScreenState extends State<SignupScreen> {
       if (!mounted) return;
 
       AppBanner.of(context).show(
-        '회원가입이 완료되었습니다. 로그인해 주세요.',
+        '회원가입이 완료됐어요. 로그인해 주세요.',
         kind: AppBannerKind.success,
       );
 

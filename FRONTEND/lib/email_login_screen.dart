@@ -142,7 +142,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
       if (!mounted) return;
 
       AppBanner.of(context).show(
-        '로그인 정보를 안전하게 저장하지 못했습니다. 다시 시도해 주세요.',
+        '로그인 정보를 안전하게 저장하지 못했어요. 다시 시도해 주세요.',
         kind: AppBannerKind.failure,
       );
     } finally {

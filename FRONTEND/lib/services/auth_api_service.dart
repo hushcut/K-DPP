@@ -295,7 +295,7 @@ class AuthApiService {
     if (decoded['success'] == false || decoded['status'] == 'error') {
       throw AuthApiException(
         type: AuthApiErrorType.badRequest,
-        message: decoded['message']?.toString() ?? '인증 요청에 실패했습니다.',
+        message: decoded['message']?.toString() ?? '인증 요청에 실패했어요.',
       );
     }
 

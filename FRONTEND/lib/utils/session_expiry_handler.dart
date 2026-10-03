@@ -8,7 +8,11 @@ import '../widgets/app_banner.dart';
 class SessionExpiryHandler {
   const SessionExpiryHandler._();
 
-  static const String defaultMessage = '로그인 세션이 만료되었습니다. 다시 로그인해 주세요.';
+  static const String defaultMessage = '로그인이 만료됐어요. 다시 로그인해 주세요.';
+
+  // 저장된 로그인 정보를 다 지우지 못했을 때 알리는 문장입니다.
+  static const String _cleanupFailedNotice = '일부 로그인 정보는 지우지 못했어요.';
+  static const String _signInAgain = '다시 로그인해 주세요.';
 
   /// 로컬 사용자 상태를 로그아웃한 뒤 탐색 스택을 초기화하고 안내 메시지를 표시한다.
   static Future<void> handle(
@@ -38,10 +42,22 @@ class SessionExpiryHandler {
     // 배너는 Navigator 위에 있어 로그인 화면으로 넘어가도 남고, 앞 알림은 바로 바뀐다.
     // 만료는 사용자가 요청하지 않은 상태 변화라 안내, 정리까지 못 했으면 실패다.
     banner.show(
-      storageCleanupFailed
-          ? '$message (저장된 로그인 정보 정리는 완료하지 못했습니다)'
-          : message,
+      storageCleanupFailed ? _withCleanupFailure(message) : message,
       kind: storageCleanupFailed ? AppBannerKind.failure : AppBannerKind.info,
     );
+  }
+
+  /// [message] 에 정리 실패를 더합니다. 다시 로그인하라는 끝 문장은 로그인 화면이 대신하므로
+  /// 그 자리를 바꿔 문장이 셋으로 늘지 않게 하고, 그 밖의 안내(의류는 기기에 저장 등)는
+  /// 남긴 채 뒤에 붙입니다(DECISIONS 98).
+  static String _withCleanupFailure(String message) {
+    final trimmed = message.trimRight();
+
+    if (trimmed.endsWith(_signInAgain)) {
+      final head = trimmed.substring(0, trimmed.length - _signInAgain.length);
+      return '$head$_cleanupFailedNotice';
+    }
+
+    return '$trimmed $_cleanupFailedNotice';
   }
 }

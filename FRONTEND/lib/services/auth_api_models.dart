@@ -65,7 +65,7 @@ class AuthApiException implements Exception {
         return AuthApiException(
           type: AuthApiErrorType.unauthorized,
           statusCode: statusCode,
-          message: serverMessage ?? '이메일 또는 비밀번호가 올바르지 않습니다.',
+          message: serverMessage ?? '이메일 또는 비밀번호가 올바르지 않아요.',
         );
       // 403은 재로그인으로 해결되지 않는 '권한 없음'으로 예약합니다.
       case 403:
@@ -78,14 +78,14 @@ class AuthApiException implements Exception {
         return AuthApiException(
           type: AuthApiErrorType.conflict,
           statusCode: statusCode,
-          message: serverMessage ?? '이미 가입된 이메일입니다.',
+          message: serverMessage ?? '이미 가입된 이메일이에요.',
         );
       // 로그인 시도 제한(잠금). 서버가 보내는 대기 안내를 그대로 보여줍니다.
       case 429:
         return AuthApiException(
           type: AuthApiErrorType.badRequest,
           statusCode: statusCode,
-          message: serverMessage ?? '로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.',
+          message: serverMessage ?? '로그인 시도가 너무 많아요. 잠시 후 다시 시도해 주세요.',
         );
       default:
         if (statusCode >= 500) {

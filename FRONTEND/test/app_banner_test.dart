@@ -18,7 +18,7 @@ void main() {
   group('표시 시간', () {
     test('짧은 문장은 종류 기본값 — 성공 2.5초, 실패·안내 4초', () {
       expect(
-        AppBanner.durationFor('의류 정보가 수정되었습니다.', AppBannerKind.success),
+        AppBanner.durationFor('의류 정보가 수정됐어요.', AppBannerKind.success),
         const Duration(milliseconds: 2500),
       );
       expect(
@@ -32,21 +32,21 @@ void main() {
     });
 
     test('긴 문장은 1초 + 공백 뺀 글자당 0.1초가 하한이다', () {
-      // 31자: 둘째 문장이 새 정보라 성공 기본값 2.5초로는 짧다.
+      // 28자: 둘째 문장이 새 정보라 성공 기본값 2.5초로는 짧다.
       expect(
         AppBanner.durationFor(
-          '비밀번호가 변경되었습니다. 다른 기기에서는 다시 로그인해야 합니다.',
+          '비밀번호가 바뀌었어요. 다른 기기에서는 다시 로그인해야 해요.',
           AppBannerKind.success,
         ),
-        const Duration(milliseconds: 4100),
+        const Duration(milliseconds: 3800),
       );
-      // 46자: 가장 긴 앱 문구(세션 만료 + 정리 실패).
+      // 43자: 가장 긴 앱 문구(스캔 중 로그인 만료 + 정리 실패).
       expect(
         AppBanner.durationFor(
-          '로그인 세션이 만료되었습니다. 다시 로그인해 주세요. (저장된 로그인 정보 정리는 완료하지 못했습니다)',
+          '로그인 정보가 만료되었어요. 다시 로그인한 뒤 스캔해 주세요. 일부 로그인 정보는 지우지 못했어요.',
           AppBannerKind.failure,
         ),
-        const Duration(milliseconds: 5600),
+        const Duration(milliseconds: 5300),
       );
       // 공백·줄바꿈은 세지 않는다.
       expect(
@@ -58,7 +58,7 @@ void main() {
     test('읽기 프로그램이 켜지면 평소 시간(종류 기본값과 하한 중 큰 쪽)의 두 배', () {
       expect(
         AppBanner.durationFor(
-          '의류 정보가 수정되었습니다.',
+          '의류 정보가 수정됐어요.',
           AppBannerKind.success,
           accessibleNavigation: true,
         ),
@@ -90,7 +90,7 @@ void main() {
       _useIPhoneView(tester);
       await _pumpApp(tester);
 
-      _banner(tester).show('의류 정보가 수정되었습니다.', kind: AppBannerKind.success);
+      _banner(tester).show('의류 정보가 수정됐어요.', kind: AppBannerKind.success);
       await tester.pumpAndSettle();
 
       final rect = tester.getRect(find.byType(AppBannerView));
@@ -108,21 +108,21 @@ void main() {
       await _pumpApp(tester);
 
       _banner(tester).show(
-        '로그인 세션이 만료되었습니다. 다시 로그인해 주세요.',
+        '로그인이 만료됐어요. 다시 로그인해 주세요.',
         kind: AppBannerKind.info,
       );
       await tester.pump();
       await _openNoAppBarPage(tester);
 
       expect(find.text('첫 화면'), findsNothing);
-      expect(find.text('로그인 세션이 만료되었습니다. 다시 로그인해 주세요.'), findsOneWidget);
+      expect(find.text('로그인이 만료됐어요. 다시 로그인해 주세요.'), findsOneWidget);
     });
 
     testWidgets('종류 기본 시간이 지나면 닫힌다', (tester) async {
       await _pumpApp(tester);
       final banner = _banner(tester);
 
-      banner.show('의류 정보가 수정되었습니다.', kind: AppBannerKind.success);
+      banner.show('의류 정보가 수정됐어요.', kind: AppBannerKind.success);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 2400));
       expect(find.byType(AppBannerView), findsOneWidget);
@@ -149,15 +149,15 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(seconds: 3));
 
-      banner.show('의류 정보가 수정되었습니다.', kind: AppBannerKind.success);
+      banner.show('의류 정보가 수정됐어요.', kind: AppBannerKind.success);
       await tester.pump();
 
       expect(find.text('저장하지 못했어요.'), findsNothing);
-      expect(find.text('의류 정보가 수정되었습니다.'), findsOneWidget);
+      expect(find.text('의류 정보가 수정됐어요.'), findsOneWidget);
 
       // 앞 알림의 4초가 지나도 새 알림은 자기 2.5초를 다 채운다.
       await tester.pump(const Duration(milliseconds: 2400));
-      expect(find.text('의류 정보가 수정되었습니다.'), findsOneWidget);
+      expect(find.text('의류 정보가 수정됐어요.'), findsOneWidget);
 
       await tester.pump(const Duration(milliseconds: 200));
       await tester.pumpAndSettle();
@@ -266,20 +266,20 @@ void main() {
       await _pumpApp(tester);
       final banner = _banner(tester);
 
-      banner.show('의류 정보가 수정되었습니다.', kind: AppBannerKind.success);
+      banner.show('의류 정보가 수정됐어요.', kind: AppBannerKind.success);
       await tester.pumpAndSettle();
 
       // 바깥 칸의 label 과 안쪽 Text 가 따로 있으면 두 번 읽힌다.
       expect(
         find.semantics.byPredicate(
-          (node) => node.label.contains('의류 정보가 수정되었습니다.'),
+          (node) => node.label.contains('의류 정보가 수정됐어요.'),
         ),
         findsOne,
       );
-      final node = find.semantics.byLabel('의류 정보가 수정되었습니다.').evaluate().single;
+      final node = find.semantics.byLabel('의류 정보가 수정됐어요.').evaluate().single;
       expect(node.getSemanticsData().flagsCollection.isLiveRegion, isTrue);
 
-      tester.semantics.dismiss(find.semantics.byLabel('의류 정보가 수정되었습니다.'));
+      tester.semantics.dismiss(find.semantics.byLabel('의류 정보가 수정됐어요.'));
       await tester.pumpAndSettle();
       expect(find.byType(AppBannerView), findsNothing);
 
@@ -355,7 +355,7 @@ void main() {
       addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
       await _pumpApp(tester);
 
-      _banner(tester).show('의류 정보가 수정되었습니다.', kind: AppBannerKind.success);
+      _banner(tester).show('의류 정보가 수정됐어요.', kind: AppBannerKind.success);
       await tester.pump();
       expect(tester.getRect(find.byType(AppBannerView)).top, 126);
 
@@ -374,7 +374,7 @@ void main() {
       addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
       await _pumpApp(tester);
 
-      _banner(tester).show('의류 정보가 수정되었습니다.', kind: AppBannerKind.success);
+      _banner(tester).show('의류 정보가 수정됐어요.', kind: AppBannerKind.success);
       await tester.pump();
       expect(tester.getRect(find.byType(AppBannerView)).top, 126);
 
