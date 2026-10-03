@@ -2,12 +2,23 @@
 
 FastAPI 기반 백엔드입니다. 라벨 OCR로 소재 혼용률을 추출하고, 사용자가 선택한 의류 무게 범위와 DB 소재 계수를 기준으로 탄소배출량을 계산합니다. 로그인 사용자의 최종 계산 결과는 분석 이력에 기록됩니다.
 
+## PostgreSQL 준비
+
+이 브랜치는 탄소 v2 의 DB 를 SQLite 에서 PostgreSQL 로 옮긴 브랜치입니다. SQLite 는 더 지원하지 않습니다.
+PostgreSQL 은 develop 의 `BACKEND/compose.yaml` 로 띄운 컨테이너를 같이 쓰고, develop 의 `k_dpp`·`k_dpp_test` 와 섞이지 않게 DB 두 개를 따로 만듭니다(develop 의 `BACKEND` 폴더에서 한 번만).
+
+```bat
+docker compose up -d --wait
+docker compose exec postgres createdb -U kdpp k_dpp_v2
+docker compose exec postgres createdb -U kdpp k_dpp_v2_test
+```
+
 ## 주요 파일
 
 ```text
 BACKEND/
   main.py              FastAPI 엔트리포인트
-  database.py          SQLite/SQLAlchemy 모델과 스키마 준비
+  database.py          PostgreSQL/SQLAlchemy 모델과 스키마 준비(불변 규칙 트리거 포함)
   init_data.py         소재 seed 데이터 삽입
   reset_db.py          로컬 DB 초기화 후 seed 재삽입
   API_CONTRACT.md      프론트/백엔드/API 협업 계약 문서
@@ -49,15 +60,15 @@ http://10.0.2.2:8000
 
 ## DB 초기화
 
-로컬 SQLite DB를 삭제하고 테이블 생성 및 소재 seed를 다시 넣으려면:
+로컬 `k_dpp_v2` DB를 비우고 테이블 생성 및 소재 seed를 다시 넣으려면(develop 의 `BACKEND` 폴더에서 DB 를 다시 만든 뒤 이 폴더에서 seed):
 
 ```bat
-cd C:\DEV\K-DPP\BACKEND
-.venv\Scripts\activate.bat
-python reset_db.py
+docker compose exec postgres dropdb -U kdpp k_dpp_v2
+docker compose exec postgres createdb -U kdpp k_dpp_v2
+python init_data.py
 ```
 
-서버 시작 시에도 `init_data.seed_materials()`가 실행되어 소재 seed는 보강됩니다. 다만 사용자, 토큰, 분석 기록까지 깨끗하게 지우려면 `reset_db.py`를 사용합니다.
+서버 시작 시에도 `init_data.seed_materials()`가 실행되어 표·트리거가 준비되고 소재 seed는 보강됩니다. `reset_db.py` 는 SQLite 전용이라 이 브랜치에서는 쓰지 않습니다.
 
 ## 테스트
 
@@ -69,7 +80,7 @@ cd C:\DEV\K-DPP\BACKEND
 python -m pytest
 ```
 
-테스트는 실제 `k_dpp.db` 대신 테스트용 SQLite DB를 잠깐 만들고 삭제합니다.
+테스트는 PostgreSQL 의 테스트 전용 DB `k_dpp_v2_test` 를 쓰고 테스트마다 표를 지우고 다시 만듭니다. 주소는 `K_DPP_V2_TEST_DATABASE_URL` 로 바꿀 수 있고, DB 이름이 `_test` 로 끝나지 않으면 시작하지 않습니다.
 
 현재 테스트 범위:
 
@@ -108,7 +119,7 @@ POST /api/carbon/calculate
 copy .env.example .env
 ```
 
-현재 코드는 `.env` 파일 없이도 실행됩니다. `BACKEND/.env`의 `K_DPP_DATABASE_URL` 또는 운영체제 환경변수를 지정하면 기본 `BACKEND/k_dpp.db` 대신 다른 SQLite DB를 사용할 수 있습니다.
+현재 코드는 `.env` 파일 없이도 실행됩니다. `BACKEND/.env`의 `K_DPP_DATABASE_URL` 또는 운영체제 환경변수를 지정하면 기본 `postgresql+psycopg://kdpp:kdpp@127.0.0.1:5432/k_dpp_v2` 대신 다른 PostgreSQL DB를 사용할 수 있습니다.
 
 ## Git에 올리지 않는 파일
 
