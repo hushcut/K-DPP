@@ -15,9 +15,12 @@ class SessionExpiryHandler {
   static const String _signInAgain = '다시 로그인해 주세요.';
 
   /// 로컬 사용자 상태를 로그아웃한 뒤 탐색 스택을 초기화하고 안내 메시지를 표시한다.
+  ///
+  /// 사용자가 요청한 작업이 만료 때문에 이뤄지지 않았다면 [kind]로 실패를 넘긴다.
   static Future<void> handle(
     BuildContext context, {
     String message = defaultMessage,
+    AppBannerKind kind = AppBannerKind.info,
   }) async {
     final provider = context.read<ClosetProvider>();
     final navigator = Navigator.of(context);
@@ -40,10 +43,10 @@ class SessionExpiryHandler {
 
     navigator.pushNamedAndRemoveUntil('/login', (route) => false);
     // 배너는 Navigator 위에 있어 로그인 화면으로 넘어가도 남고, 앞 알림은 바로 바뀐다.
-    // 만료는 사용자가 요청하지 않은 상태 변화라 안내, 정리까지 못 했으면 실패다.
+    // 만료는 사용자가 요청하지 않은 상태 변화라 기본은 안내, 정리까지 못 했으면 실패다.
     banner.show(
       storageCleanupFailed ? _withCleanupFailure(message) : message,
-      kind: storageCleanupFailed ? AppBannerKind.failure : AppBannerKind.info,
+      kind: storageCleanupFailed ? AppBannerKind.failure : kind,
     );
   }
 

@@ -102,8 +102,8 @@ class SettingsScreen extends StatelessWidget {
 
     // 서버 로그아웃은 최대 15초까지 걸립니다. 그동안 설정 화면이 그대로 눌리면
     // 사용자가 로그아웃을 다시 누르거나, 곧 폐기될 토큰으로 회원 탈퇴를 시작할 수
-    // 있습니다. 그 탈퇴 요청은 401을 받는데 탈퇴 흐름은 401을 '이미 삭제됨'으로
-    // 해석하므로, 계정이 남아 있는데 탈퇴됐다고 안내하게 됩니다.
+    // 있습니다. 그 탈퇴 요청은 401을 받아 탈퇴되지 않은 채 로그인 화면으로 넘어가므로,
+    // 사용자는 비밀번호까지 입력한 탈퇴를 처음부터 다시 해야 합니다.
     final navigator = Navigator.of(context);
     var isProgressVisible = true;
 
@@ -254,10 +254,16 @@ class SettingsScreen extends StatelessWidget {
 
     if (!context.mounted) return;
 
-    // 탈퇴 흐름에서 401은 계정·토큰이 이미 서버에서 사라졌다는 뜻입니다.
-    // (예: 삭제는 됐는데 응답만 유실돼 재시도한 경우) 세션만 지우면 계정 전용
-    // 옷장이 기기에 남으므로, 성공 흐름과 똑같이 정리합니다.
-    final expiredMessage = outcome.sessionExpiredMessage;
+    // 401은 탈퇴가 끝났다는 증거가 아니므로 로그아웃만 합니다. 앞선 시도의 결과를
+    // 아는 대화상자가 문구를 정하고, 계정이 남아 있을 수 있어 옷장은 지우지 않습니다.
+    if (outcome.sessionExpiredMessage case final message?) {
+      await SessionExpiryHandler.handle(
+        context,
+        message: message,
+        kind: AppBannerKind.failure,
+      );
+      return;
+    }
 
     bool localPurgeFailed = false;
 
@@ -273,15 +279,9 @@ class SettingsScreen extends StatelessWidget {
 
     Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
 
-    final String message;
-
-    if (localPurgeFailed) {
-      message = '회원 탈퇴가 완료되었지만 이 기기에 남은 데이터 정리를 마치지 못했습니다.';
-    } else if (expiredMessage != null) {
-      message = '회원 탈퇴가 완료되었습니다. 다시 로그인해 주세요.';
-    } else {
-      message = '회원 탈퇴가 완료되었습니다.';
-    }
+    final message = localPurgeFailed
+        ? '회원 탈퇴가 완료됐어요. 이 기기의 일부 정보는 정리하지 못했어요.'
+        : '회원 탈퇴가 완료됐어요.';
 
     AppBanner.of(context).show(
       message,
@@ -1008,6 +1008,12 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
   final TextEditingController _passwordController = TextEditingController();
   String? _errorText;
 
+  /// 앞선 탈퇴 요청이 서버에서 처리됐는지 모르는 채 끝난 적이 있는지 여부입니다.
+  ///
+  /// 400 계열(비밀번호 불일치·잠금)은 서버가 삭제 전에 거절한 것이지만, 네트워크·
+  /// 시간 초과·서버 오류는 삭제를 마친 뒤 응답만 잃었을 수도 있습니다.
+  bool _earlierAttemptUnresolved = false;
+
   @override
   void dispose() {
     _passwordController.dispose();
@@ -1026,10 +1032,30 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
 
     await runAccountAction(
       action: () async {
-        await widget.service.withdraw(
-          accessToken: widget.accessToken,
-          password: password,
-        );
+        try {
+          await widget.service.withdraw(
+            accessToken: widget.accessToken,
+            password: password,
+          );
+        } on AuthApiException catch (error) {
+          // 401은 이 토큰이 서버에 없다는 것만 알려 줍니다. 다른 기기의 비밀번호
+          // 변경·만료로 폐기된 토큰도, 탈퇴로 토큰까지 지워진 계정도 같은 응답을
+          // 받으므로(main.py `get_current_access_token`) 탈퇴됐다고 단정하지 않습니다.
+          if (error.type == AuthApiErrorType.unauthorized) {
+            return _AccountActionResult(
+              sessionExpiredMessage: _earlierAttemptUnresolved
+                  ? '로그인이 만료돼 탈퇴됐는지 확인하지 못했어요. '
+                        '다시 로그인되면 탈퇴를 다시 해 주세요.'
+                  : '로그인이 만료돼 탈퇴되지 않았어요. '
+                        '다시 로그인한 뒤 탈퇴해 주세요.',
+            );
+          }
+
+          if (error.type != AuthApiErrorType.badRequest) {
+            _earlierAttemptUnresolved = true;
+          }
+          rethrow;
+        }
         return const _AccountActionResult();
       },
       onFailure: (message) => setState(() => _errorText = message),
