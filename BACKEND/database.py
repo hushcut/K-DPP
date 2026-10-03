@@ -16,37 +16,21 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-# 1. DB 파일 경로 설정
-# 서버를 어느 폴더에서 실행하더라도 BACKEND/k_dpp.db를 사용합니다.
-DB_PATH = Path(__file__).resolve().parent / "k_dpp.db"
-load_dotenv(DB_PATH.parent / ".env")
+# 1. DB 주소 설정
+# 환경변수 K_DPP_DATABASE_URL → BACKEND/.env 순서로 읽고, 없으면 로컬 개발용
+# PostgreSQL(BACKEND/compose.yaml)에 붙습니다. SQLite 는 더 지원하지 않습니다.
+# 표는 서버가 만들지 않고 `alembic upgrade head` 로 만듭니다(migrations/).
+BACKEND_DIR = Path(__file__).resolve().parent
+load_dotenv(BACKEND_DIR / ".env")
 SQLALCHEMY_DATABASE_URL = os.getenv(
     "K_DPP_DATABASE_URL",
-    f"sqlite:///{DB_PATH.as_posix()}",
+    "postgresql+psycopg://kdpp:kdpp@127.0.0.1:5432/k_dpp",
 )
 
 # 2. 엔진 및 세션 설정
-# check_same_thread·timeout 은 SQLite 드라이버 전용 옵션이라 PostgreSQL(psycopg)에
-# 넘기면 연결이 실패합니다. SQLite 일 때만 넣습니다.
-# timeout: 다른 요청이 잠금을 잡고 있을 때 바로 실패하지 않고 잠시 대기합니다.
-_is_sqlite = SQLALCHEMY_DATABASE_URL.startswith("sqlite")
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False, "timeout": 5} if _is_sqlite else {},
-)
-
-# SQLite에서 동시 요청(로그인·계산·이력 저장이 겹치는 상황)에 대비해
-# WAL 모드를 켭니다. 읽기와 쓰기가 서로를 덜 막아 'database is locked'
-# 오류 가능성이 크게 줄어듭니다.
-if _is_sqlite:
-    from sqlalchemy import event
-
-    @event.listens_for(engine, "connect")
-    def _set_sqlite_pragma(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=5000")
-        cursor.close()
+# pool_pre_ping: DB 가 재시작되면 풀에 남은 연결이 끊겨 있는데, 쓰기 전에 확인해
+# 끊긴 연결을 버리고 새로 맺습니다(없으면 재시작 직후 끊긴 연결을 받은 요청이 500).
+engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -114,85 +98,21 @@ class AnalysisResult(Base):
     created_at = Column(DateTime, nullable=False, default=utc_now)
 
 
-# 서버 시작(lifespan → init_data.seed_materials)과 reset_db.py 가 부릅니다. 이 모듈은
-# import 만으로는 DB 에 손대지 않습니다 — Alembic 이 모델을 읽으려고 import 하는데,
-# 그때 표가 먼저 생기면 마이그레이션이 "이미 있음"으로 실패합니다.
-def ensure_schema():
-    Base.metadata.create_all(bind=engine)
+# 5. 서버 시작 때 스키마 확인
+# 서버는 표를 만들거나 바꾸지 않습니다. 마이그레이션을 빼먹고 켜면 요청마다 500 이
+# 나는 대신, 시작할 때 바로 멈추고 할 일을 알려 줍니다(main.py lifespan).
+def assert_schema_current() -> None:
+    from alembic.config import Config
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
 
-    # 아래는 옛 로컬 SQLite DB 를 고쳐 쓰기 위한 PRAGMA·ALTER 라 PostgreSQL 에서는
-    # 돌지 않습니다. PostgreSQL 은 새 DB 로 시작하므로 create_all 만으로 충분합니다.
-    if not _is_sqlite:
-        return
+    script = ScriptDirectory.from_config(Config(str(BACKEND_DIR / "alembic.ini")))
+    head = script.get_current_head()
+    with engine.connect() as connection:
+        current = MigrationContext.configure(connection).get_current_revision()
 
-    with engine.begin() as connection:
-        material_rows = connection.exec_driver_sql("PRAGMA table_info(materials)").fetchall()
-        material_columns = {row[1] for row in material_rows}
-
-        # 이전 개발 중 만들어진 불필요한 컬럼이 있으면 v1 스키마로 정리합니다.
-        if {"source", "description"} & material_columns:
-            connection.exec_driver_sql("ALTER TABLE materials RENAME TO materials_old")
-            connection.exec_driver_sql(
-                """
-                CREATE TABLE materials_new (
-                    id INTEGER NOT NULL,
-                    name_ko VARCHAR NOT NULL,
-                    name_en VARCHAR NOT NULL,
-                    aliases TEXT NOT NULL,
-                    carbon_factor FLOAT NOT NULL,
-                    unit VARCHAR NOT NULL,
-                    PRIMARY KEY (id),
-                    UNIQUE (name_ko),
-                    UNIQUE (name_en)
-                )
-                """
-            )
-            connection.exec_driver_sql(
-                """
-                INSERT INTO materials_new (id, name_ko, name_en, aliases, carbon_factor, unit)
-                SELECT id, name_ko, name_en, aliases, carbon_factor, unit
-                FROM materials_old
-                """
-            )
-            connection.exec_driver_sql("DROP TABLE materials_old")
-            connection.exec_driver_sql("ALTER TABLE materials_new RENAME TO materials")
-            connection.exec_driver_sql(
-                "CREATE INDEX IF NOT EXISTS ix_materials_id ON materials (id)"
-            )
-            connection.exec_driver_sql(
-                "CREATE INDEX IF NOT EXISTS ix_materials_name_ko ON materials (name_ko)"
-            )
-            connection.exec_driver_sql(
-                "CREATE INDEX IF NOT EXISTS ix_materials_name_en ON materials (name_en)"
-            )
-
-        # 기존 로컬 DB가 있어도 새 컬럼을 안전하게 추가합니다.
-        rows = connection.exec_driver_sql("PRAGMA table_info(analysis_results)").fetchall()
-        existing_columns = {row[1] for row in rows}
-
-        missing_columns = {
-            "user_id": "INTEGER",
-            "carbon_footprint_min": "FLOAT",
-            "carbon_footprint_max": "FLOAT",
-            "min_weight_grams": "FLOAT",
-            "max_weight_grams": "FLOAT",
-            "unit": "VARCHAR DEFAULT 'kg CO2eq' NOT NULL",
-            "raw_ocr_text": "TEXT",
-            "unknown_materials": "TEXT DEFAULT '[]' NOT NULL",
-            "created_at": "DATETIME",
-        }
-
-        for column_name, column_sql in missing_columns.items():
-            if column_name not in existing_columns:
-                connection.exec_driver_sql(
-                    f"ALTER TABLE analysis_results ADD COLUMN {column_name} {column_sql}"
-                )
-
-        token_rows = connection.exec_driver_sql(
-            "PRAGMA table_info(access_tokens)"
-        ).fetchall()
-        token_columns = {row[1] for row in token_rows}
-        if "expires_at" not in token_columns:
-            connection.exec_driver_sql(
-                "ALTER TABLE access_tokens ADD COLUMN expires_at DATETIME"
-            )
+    if current != head:
+        raise RuntimeError(
+            f"DB 스키마가 최신이 아닙니다(현재 {current}, 최신 {head}). "
+            "BACKEND 에서 `alembic upgrade head` 를 먼저 실행하세요."
+        )

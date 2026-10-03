@@ -133,7 +133,7 @@ factor_note: 팀 검토 후 최종 발표용 계수로 확정
 1. 위 표에서 A 우선순위 소재 7개를 먼저 검토한다.
 2. 각 소재별로 사용할 출처 URL과 실제 계수를 확정한다.
 3. 기존 개발용 계수와 최종 계수의 차이를 기록한다.
-4. 최종 확정된 계수만 `BACKEND/init_data.py`와 DB에 반영한다.
+4. 최종 확정된 계수만 `BACKEND/init_data.py`(프런트 사본 두 파일 포함)와 새 Alembic 리비전(UPDATE)으로 DB에 반영한다.
 5. `BACKEND/API_CONTRACT.md`의 `calculation_source`, `calculation_note`를 개발용 추정값에서 최종 출처명으로 교체한다.
 6. 발표 자료에는 "원료/소재 생산 단계 중심 추정" 범위를 명시한다.
 

@@ -5,39 +5,22 @@
 - 시드 리비전이 넣은 소재가 init_data.MATERIAL_SEEDS 와 같다. 목록을 고치고
   리비전을 안 더하면(또는 그 반대) 여기서 실패한다.
 - downgrade base 로 모두 되돌리고 다시 올릴 수 있다.
+- DB 가 최신 리비전이 아니면 서버가 시작하지 않는다(마이그레이션을 빼먹은 배포).
 """
 
 import json
-from pathlib import Path
 
 import pytest
 from alembic import command
-from alembic.config import Config
+from fastapi.testclient import TestClient
 from sqlalchemy import inspect, text
 
 import database
 import init_data
+import main
 
-ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 # 기준선(develop 표 4개) 리비전. 시드 리비전은 이 바로 위에 있다.
 BASELINE_REVISION = "98b9938f3cd5"
-
-
-def _drop_everything():
-    database.Base.metadata.drop_all(bind=database.engine)
-    with database.engine.begin() as connection:
-        connection.execute(text("DROP TABLE IF EXISTS alembic_version"))
-
-
-@pytest.fixture()
-def alembic_config():
-    # 다른 테스트가 create_all 로 만든 표가 남아 있어도 빈 DB 에서 시작한다.
-    _drop_everything()
-    config = Config(str(ALEMBIC_INI))
-    config.attributes["configure_logger"] = False
-    yield config
-    _drop_everything()
-    database.engine.dispose()
 
 
 def test_upgrade_head_matches_models(alembic_config):
@@ -92,3 +75,18 @@ def test_downgrade_base_then_upgrade_again(alembic_config):
 
     command.upgrade(alembic_config, "head")
     command.check(alembic_config)
+
+
+@pytest.mark.parametrize("target", [None, BASELINE_REVISION])
+def test_server_refuses_to_start_unless_schema_is_head(alembic_config, target):
+    # None = 아무 리비전도 적용 안 한 빈 DB, BASELINE = 시드 리비전을 빼먹은 DB
+    if target is not None:
+        command.upgrade(alembic_config, target)
+
+    with pytest.raises(RuntimeError, match="alembic upgrade head"):
+        with TestClient(main.app):
+            pass
+
+    command.upgrade(alembic_config, "head")
+    with TestClient(main.app) as client:
+        assert client.get("/materials").status_code == 200
