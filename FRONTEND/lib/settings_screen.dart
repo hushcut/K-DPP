@@ -280,8 +280,8 @@ class SettingsScreen extends StatelessWidget {
     Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
 
     final message = localPurgeFailed
-        ? '회원 탈퇴가 완료되었지만 이 기기에 남은 데이터 정리를 마치지 못했습니다.'
-        : '회원 탈퇴가 완료되었습니다.';
+        ? '회원 탈퇴가 완료됐어요. 이 기기의 일부 정보는 정리하지 못했어요.'
+        : '회원 탈퇴가 완료됐어요.';
 
     AppBanner.of(context).show(
       message,
@@ -1044,9 +1044,9 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
           if (error.type == AuthApiErrorType.unauthorized) {
             return _AccountActionResult(
               sessionExpiredMessage: _earlierAttemptUnresolved
-                  ? '로그인이 만료되어 앞서 보낸 탈퇴 요청이 처리됐는지 확인하지 못했습니다. '
-                        '다시 로그인되면 탈퇴를 다시 진행해 주세요.'
-                  : '로그인이 만료되어 회원 탈퇴가 진행되지 않았습니다. '
+                  ? '로그인이 만료돼 탈퇴됐는지 확인하지 못했어요. '
+                        '다시 로그인되면 탈퇴를 다시 해 주세요.'
+                  : '로그인이 만료돼 탈퇴되지 않았어요. '
                         '다시 로그인한 뒤 탈퇴해 주세요.',
             );
           }

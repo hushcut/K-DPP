@@ -224,7 +224,37 @@ void main() {
     );
     expect(find.text('로그인 화면'), findsOneWidget);
     // 스택을 비우고 로그인 화면으로 넘어가도 알림은 남는다.
-    expectAppBanner(tester, '회원 탈퇴가 완료되었습니다.', AppBannerKind.success);
+    expectAppBanner(tester, '회원 탈퇴가 완료됐어요.', AppBannerKind.success);
+  });
+
+  testWidgets('회원 탈퇴 뒤 기기의 계정 옷장을 지우지 못하면 탈퇴는 알리되 실패로 띄운다', (tester) async {
+    final storage = FakeClosetStorage();
+    final harness = await _pumpSettings(
+      tester,
+      storage: storage,
+      client: MockClient((request) async {
+        return http.Response(
+          jsonEncode({'status': 'success', 'message': '회원 탈퇴가 완료되었습니다.'}),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }),
+    );
+    storage.clearClothesForError = Exception('저장소 쓰기 실패');
+
+    await _openAccountMenu(tester, '회원 탈퇴');
+    await tester.enterText(find.byType(TextField).first, 'password123');
+    await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
+    await tester.pumpAndSettle();
+
+    // 서버 계정은 지워졌으므로 로그아웃해 로그인 화면으로 보내고, 남은 기기 정보만 알린다.
+    expect(harness.isAuthenticated, isFalse);
+    expect(find.text('로그인 화면'), findsOneWidget);
+    expectAppBanner(
+      tester,
+      '회원 탈퇴가 완료됐어요. 이 기기의 일부 정보는 정리하지 못했어요.',
+      AppBannerKind.failure,
+    );
   });
 
   testWidgets('회원 탈퇴가 서버에서 거절되면 기기 데이터를 건드리지 않는다', (tester) async {
@@ -279,7 +309,7 @@ void main() {
     expect(find.text('로그인 화면'), findsOneWidget);
     expectAppBanner(
       tester,
-      '로그인이 만료되어 회원 탈퇴가 진행되지 않았습니다. 다시 로그인한 뒤 탈퇴해 주세요.',
+      '로그인이 만료돼 탈퇴되지 않았어요. 다시 로그인한 뒤 탈퇴해 주세요.',
       AppBannerKind.failure,
     );
   });
@@ -321,8 +351,7 @@ void main() {
     expect(find.text('로그인 화면'), findsOneWidget);
     expectAppBanner(
       tester,
-      '로그인이 만료되어 앞서 보낸 탈퇴 요청이 처리됐는지 확인하지 못했습니다. '
-      '다시 로그인되면 탈퇴를 다시 진행해 주세요.',
+      '로그인이 만료돼 탈퇴됐는지 확인하지 못했어요. 다시 로그인되면 탈퇴를 다시 해 주세요.',
       AppBannerKind.failure,
     );
   });
@@ -356,7 +385,7 @@ void main() {
     expect(requestCount, 2);
     expectAppBanner(
       tester,
-      '로그인이 만료되어 회원 탈퇴가 진행되지 않았습니다. 다시 로그인한 뒤 탈퇴해 주세요.',
+      '로그인이 만료돼 탈퇴되지 않았어요. 다시 로그인한 뒤 탈퇴해 주세요.',
       AppBannerKind.failure,
     );
   });
