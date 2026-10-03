@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/models/clothing_type_option.dart';
 import 'package:k_dpp/utils/clothing_type_catalog.dart';
 import 'package:k_dpp/widgets/clothing_type_picker_sheet.dart';
+import 'package:k_dpp/widgets/number_keyboard_toolbar.dart';
 
 // 유형 선택 시트의 닫기 경로를 경로별로 확인한다(C21).
 // PopScope는 시스템 뒤로가기만 막고, 드래그·손잡이·접근성 닫기는 Navigator.pop으로 가서
@@ -80,6 +81,36 @@ void main() {
 
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets('iOS 무게 칸에는 키보드 위에 완료 막대가 뜨고, 키보드가 올라와도 시트가 넘치지 않는다', (
+      tester,
+    ) async {
+      // iOS 숫자 키패드에는 확인 키가 없다. 무게 뒤로 이어지는 입력란이 없어 [다음]은 없다.
+      _usePhoneView(tester);
+      EditableText.debugDeterministicCursor = true;
+      addTearDown(() => EditableText.debugDeterministicCursor = false);
+      await _openSheet(tester, discardPrompt: prompt);
+      await tester.scrollUntilVisible(find.text('직접 입력'), 100);
+      // iOS 스크롤은 멈춘 뒤에도 항목 중심이 화면 밖에 걸칠 수 있어 끝까지 끌어온다.
+      await tester.ensureVisible(find.text('직접 입력'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('직접 입력'));
+      await tester.pumpAndSettle();
+      expect(find.text('직접 무게 입력'), findsOneWidget);
+      // 의류 종류 칸이 먼저 포커스를 받으므로 아직 막대가 없다.
+      expect(find.byType(NumberKeyboardToolbar), findsNothing);
+
+      await tester.tap(find.widgetWithText(TextField, '실제 무게'));
+      tester.view.viewInsets = const FakeViewPadding(bottom: 1098);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(_toolbarButton('완료'), findsOneWidget);
+      expect(_toolbarButton('다음'), findsNothing);
+
+      await tester.tap(_toolbarButton('완료'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NumberKeyboardToolbar), findsNothing);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
     testWidgets('바깥을 탭해도 닫히지 않고 확인창도 뜨지 않는다', (tester) async {
       _usePhoneView(tester);
@@ -308,6 +339,13 @@ Finder _dragHandles() => find.byWidgetPredicate(
 Finder _dialogButton(String label) {
   return find.descendant(
     of: find.byType(AlertDialog),
+    matching: find.text(label),
+  );
+}
+
+Finder _toolbarButton(String label) {
+  return find.descendant(
+    of: find.byType(NumberKeyboardToolbar),
     matching: find.text(label),
   );
 }

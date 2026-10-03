@@ -32,6 +32,17 @@ void main() {
     );
   });
 
+  test('isMaterialsTotalOver is true only above the 100.5 tolerance', () {
+    expect(
+      ClothingEstimator.isMaterialsTotalOver({'cotton': 60, 'polyester': 40.5}),
+      isFalse,
+    );
+    expect(
+      ClothingEstimator.isMaterialsTotalOver({'cotton': 60, 'polyester': 40.6}),
+      isTrue,
+    );
+  });
+
   test('estimateCarbonFootprint uses material ratio and clothing weight', () {
     // 서버 시드 계수 기준: (0.8 × 8.3 + 0.2 × 9.5) × 0.5kg = 4.27
     final carbon = ClothingEstimator.estimateCarbonFootprint({

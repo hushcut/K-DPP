@@ -10,7 +10,7 @@ import 'splash_screen.dart';
 import 'email_login_screen.dart';
 import 'signup_screen.dart';
 import 'settings_screen.dart';
-import 'theme/app_palette.dart';
+import 'theme/app_theme.dart';
 import 'theme_provider.dart';
 import 'display_settings_screen.dart';
 import 'material_name_display_provider.dart';
@@ -42,69 +42,6 @@ Future<void> main() async {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  ThemeData _lightTheme() {
-    return ThemeData(
-      brightness: Brightness.light,
-      scaffoldBackgroundColor: const Color(0xFFF8F9FC),
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: AppPalette.accent,
-        brightness: Brightness.light,
-      ),
-      useMaterial3: true,
-    );
-  }
-
-  ThemeData _darkTheme() {
-    return ThemeData(
-      brightness: Brightness.dark,
-      scaffoldBackgroundColor: const Color(0xFF121212),
-      canvasColor: const Color(0xFF121212),
-      cardColor: const Color(0xFF1C1C1E),
-      dividerColor: const Color(0xFF2C2C2E),
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: AppPalette.accent,
-        brightness: Brightness.dark,
-        surface: const Color(0xFF1C1C1E),
-      ),
-      appBarTheme: const AppBarTheme(
-        backgroundColor: Color(0xFF121212),
-        foregroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        iconTheme: IconThemeData(color: Colors.white),
-        titleTextStyle: TextStyle(
-          color: Colors.white,
-          fontSize: 20,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-      dialogTheme: const DialogThemeData(
-        backgroundColor: Color(0xFF1C1C1E),
-        titleTextStyle: TextStyle(
-          color: Colors.white,
-          fontSize: 18,
-          fontWeight: FontWeight.w700,
-        ),
-        contentTextStyle: TextStyle(
-          color: Color(0xFFD1D1D6),
-          fontSize: 14,
-          height: 1.5,
-        ),
-      ),
-      navigationBarTheme: const NavigationBarThemeData(
-        backgroundColor: Color(0xFF161616),
-        indicatorColor: Color(0xFF2A2A2E),
-        labelTextStyle: WidgetStatePropertyAll(
-          TextStyle(
-            color: Colors.white,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-      useMaterial3: true,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     // ThemeProvider가 알림을 보내면 MaterialApp의 themeMode도 즉시 갱신됩니다.
@@ -113,8 +50,8 @@ class MyApp extends StatelessWidget {
         return MaterialApp(
           title: 'K-DPP',
           debugShowCheckedModeBanner: false,
-          theme: _lightTheme(),
-          darkTheme: _darkTheme(),
+          theme: AppTheme.light(),
+          darkTheme: AppTheme.dark(),
           themeMode: themeProvider.themeMode,
           // 앱 문구가 전부 한국어라 앱 언어도 한국어로 고정합니다. 기본값(영어)이면
           // TalkBack이 한국어 글자와 숫자를 영어 음성으로 읽습니다(2026-09-18 폰 확인).
