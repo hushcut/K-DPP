@@ -7,11 +7,13 @@ FastAPI 기반 백엔드입니다. 라벨 OCR로 소재 혼용률을 추출하�
 ```text
 BACKEND/
   main.py              FastAPI 엔트리포인트
-  database.py          SQLite/SQLAlchemy 모델과 스키마 준비
+  database.py          SQLAlchemy 모델과 스키마 준비(PostgreSQL·SQLite)
   init_data.py         소재 seed 데이터 삽입
-  reset_db.py          로컬 DB 초기화 후 seed 재삽입
+  reset_db.py          로컬 SQLite DB 초기화 후 seed 재삽입
   API_CONTRACT.md      프론트/백엔드/API 협업 계약 문서
   requirements.txt     Python 의존성
+  compose.yaml         로컬 개발용 PostgreSQL(Docker Compose)
+  docker/              PostgreSQL 첫 실행 때 테스트 DB를 만드는 스크립트
   tests/               pytest 백엔드 테스트
 ```
 
@@ -65,15 +67,22 @@ python reset_db.py
 
 ## 테스트
 
-테스트 도구는 `requirements.txt`에 포함되어 있습니다.
+테스트 도구는 `requirements.txt`에 포함되어 있습니다. 테스트는 **로컬 PostgreSQL**의
+테스트 전용 DB(`k_dpp_test`)를 씁니다. 먼저 Docker Desktop을 설치하고 PostgreSQL을 띄웁니다.
 
 ```bat
 cd C:\DEV\K-DPP\BACKEND
+docker compose up -d --wait
 .venv\Scripts\activate.bat
 python -m pytest
 ```
 
-테스트는 실제 `k_dpp.db` 대신 테스트용 SQLite DB를 잠깐 만들고 삭제합니다.
+- `docker compose up -d --wait` 는 PostgreSQL이 접속을 받을 때까지 기다립니다. 처음 한 번은 이미지를 받느라 시간이 걸립니다.
+  `k_dpp_test` DB는 볼륨을 처음 만들 때 `docker/postgres-init/`이 만듭니다.
+- 테스트는 테스트마다 `k_dpp_test`의 표를 모두 지우고 다시 만듭니다. 실제 DB를 지우지 않도록 DB 이름이 `_test`로 끝나지 않으면 시작하지 않습니다.
+- 다른 주소의 PostgreSQL을 쓰려면 환경변수 `K_DPP_TEST_DATABASE_URL`을 지정합니다(기본값 `postgresql+psycopg://kdpp:kdpp@127.0.0.1:5432/k_dpp_test`).
+  Docker가 무거우면 PostgreSQL 설치판에 `k_dpp_test` DB를 만들고 이 값으로 가리켜도 됩니다.
+- 다 쓰면 `docker compose down`(데이터 유지) 또는 `docker compose down -v`(데이터까지 삭제).
 
 현재 테스트 범위:
 
@@ -121,7 +130,8 @@ POST /api/carbon/calculate
 copy .env.example .env
 ```
 
-현재 코드는 `.env` 파일 없이도 실행됩니다. `BACKEND/.env`의 `K_DPP_DATABASE_URL` 또는 운영체제 환경변수를 지정하면 기본 `BACKEND/k_dpp.db` 대신 다른 SQLite DB를 사용할 수 있습니다.
+현재 코드는 `.env` 파일 없이도 실행됩니다. `BACKEND/.env`의 `K_DPP_DATABASE_URL` 또는 운영체제 환경변수를 지정하면 기본 `BACKEND/k_dpp.db` 대신 다른 DB를 사용할 수 있습니다.
+로컬 PostgreSQL(`compose.yaml`)은 `postgresql+psycopg://kdpp:kdpp@127.0.0.1:5432/k_dpp` 입니다.
 
 ## Git에 올리지 않는 파일
 

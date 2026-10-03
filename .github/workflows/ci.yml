@@ -34,6 +34,22 @@ jobs:
   backend:
     name: Backend (pytest)
     runs-on: ubuntu-latest
+    # pytest 는 PostgreSQL 테스트 DB 를 씁니다. 이미지·계정은 BACKEND/compose.yaml 과
+    # 같고, tests/conftest.py 의 기본 주소(127.0.0.1:5432/k_dpp_test)로 접속합니다.
+    services:
+      postgres:
+        image: postgres:18-trixie
+        env:
+          POSTGRES_USER: kdpp
+          POSTGRES_PASSWORD: kdpp
+          POSTGRES_DB: k_dpp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U kdpp -d k_dpp_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - uses: actions/checkout@v4
 

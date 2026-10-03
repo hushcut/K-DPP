@@ -16,16 +16,19 @@ SQLALCHEMY_DATABASE_URL = os.getenv(
 )
 
 # 2. 엔진 및 세션 설정
+# check_same_thread·timeout 은 SQLite 드라이버 전용 옵션이라 PostgreSQL(psycopg)에
+# 넘기면 연결이 실패합니다. SQLite 일 때만 넣습니다.
 # timeout: 다른 요청이 잠금을 잡고 있을 때 바로 실패하지 않고 잠시 대기합니다.
+_is_sqlite = SQLALCHEMY_DATABASE_URL.startswith("sqlite")
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False, "timeout": 5},
+    connect_args={"check_same_thread": False, "timeout": 5} if _is_sqlite else {},
 )
 
 # SQLite에서 동시 요청(로그인·계산·이력 저장이 겹치는 상황)에 대비해
 # WAL 모드를 켭니다. 읽기와 쓰기가 서로를 덜 막아 'database is locked'
 # 오류 가능성이 크게 줄어듭니다.
-if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+if _is_sqlite:
     from sqlalchemy import event
 
     @event.listens_for(engine, "connect")
@@ -94,6 +97,11 @@ class AnalysisResult(Base):
 
 def ensure_schema():
     Base.metadata.create_all(bind=engine)
+
+    # 아래는 옛 로컬 SQLite DB 를 고쳐 쓰기 위한 PRAGMA·ALTER 라 PostgreSQL 에서는
+    # 돌지 않습니다. PostgreSQL 은 새 DB 로 시작하므로 create_all 만으로 충분합니다.
+    if not _is_sqlite:
+        return
 
     with engine.begin() as connection:
         material_rows = connection.exec_driver_sql("PRAGMA table_info(materials)").fetchall()
