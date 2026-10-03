@@ -64,9 +64,11 @@ extension _ScanResultActions on _ScanScreenState {
   }
 
   /// [discardPrompt]를 주면 선택을 건너뛸 수 없고, '다시 촬영' 확인 후에만 null을 반환합니다.
+  /// [failureMessage]는 분석 실패 이유로, 시트 맨 위에 보입니다.
   Future<ClothingTypeOption?> _showClothingTypePicker({
     required ClothingTypeOption initialSelection,
     ClothingTypePickerDiscardPrompt? discardPrompt,
+    String? failureMessage,
   }) {
     return showClothingTypePickerSheet(
       context: context,
@@ -74,6 +76,7 @@ extension _ScanResultActions on _ScanScreenState {
       optionsListenable: _clothingTypeCatalog,
       initialSelection: initialSelection,
       discardPrompt: discardPrompt,
+      failureMessage: failureMessage,
     );
   }
 
