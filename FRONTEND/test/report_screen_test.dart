@@ -139,6 +139,86 @@ void main() {
     expectAppBanner(tester, '의류 정보가 수정됐어요.', AppBannerKind.success);
   });
 
+  group('수정 시트의 분류(결정 134)', () {
+    Future<ClosetProvider> openEditSheet(
+      WidgetTester tester, {
+      required String category,
+    }) async {
+      final provider = ClosetProvider(storage: FakeClosetStorage());
+
+      await provider.addClothes(
+        Clothes(
+          title: '분류 테스트 옷',
+          category: category,
+          health: 82,
+          materials: {'cotton': 100},
+          careInstruction: '찬물 세탁',
+          carbonFootprint: 3.2,
+        ),
+      );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: provider),
+            ChangeNotifierProvider(
+              create: (_) => MaterialNameDisplayProvider(),
+            ),
+          ],
+          child: const MaterialApp(
+            builder: AppBannerHost.builder,
+            home: Scaffold(body: ReportScreen()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.edit_outlined));
+      await tester.pumpAndSettle();
+
+      return provider;
+    }
+
+    Finder segment(String label) => find.descendant(
+      of: find.byType(SegmentedButton<String>),
+      matching: find.text(label),
+    );
+
+    testWidgets('드롭다운 대신 세그먼트로 고르고, 고른 분류로 저장된다', (tester) async {
+      final provider = await openEditSheet(tester, category: '상의');
+
+      expect(find.byType(DropdownButtonFormField<String>), findsNothing);
+      expect(segment('상의'), findsOneWidget);
+      expect(segment('하의'), findsOneWidget);
+
+      await tester.tap(segment('하의'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('수정 완료'));
+      await tester.pumpAndSettle();
+
+      expect(provider.items.single.category, '하의');
+      expectAppBanner(tester, '의류 정보가 수정됐어요.', AppBannerKind.success);
+    });
+
+    testWidgets('상의·하의가 아닌 옛 분류는 셋째 칸으로 남고, 그대로 두면 그대로 저장된다', (tester) async {
+      final provider = await openEditSheet(tester, category: '아우터');
+
+      expect(segment('아우터'), findsOneWidget);
+      expect(
+        tester
+            .widget<SegmentedButton<String>>(
+              find.byType(SegmentedButton<String>),
+            )
+            .selected,
+        {'아우터'},
+      );
+
+      await tester.tap(find.text('수정 완료'));
+      await tester.pumpAndSettle();
+
+      expect(provider.items.single.category, '아우터');
+    });
+  });
+
   testWidgets('내장 리포트에서 의류를 삭제하면 콜백으로 옷장 화면 복귀를 요청한다', (tester) async {
     final provider = ClosetProvider(storage: FakeClosetStorage());
     final selected = Clothes(

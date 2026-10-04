@@ -163,31 +163,19 @@ class _ReportEditSheetState extends State<_ReportEditSheet> {
                   ),
                 ),
                 const SizedBox(height: 14),
-                DropdownButtonFormField<String>(
-                  initialValue: _category,
-                  items: _categoryOptions
-                      .map(
-                        (category) => DropdownMenuItem(
-                          value: category,
-                          child: Text(category),
-                        ),
-                      )
-                      .toList(),
-                  dropdownColor: inputFillColor,
-                  style: TextStyle(color: primaryText),
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: inputFillColor,
-                    labelText: '분류',
-                    labelStyle: TextStyle(color: secondaryText),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    prefixIcon: const Icon(Icons.category_outlined),
+                Text(
+                  '분류',
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
                   ),
+                ),
+                const SizedBox(height: 10),
+                ClothingCategorySegmentedControl(
+                  options: _categoryOptions,
+                  selected: _category,
                   onChanged: (value) {
-                    if (value == null) return;
-
                     setState(() {
                       _category = value;
                     });

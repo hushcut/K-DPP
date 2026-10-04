@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../models/clothing_type_option.dart';
 import '../theme/app_palette.dart';
+import 'clothing_category_segmented_control.dart';
 import 'number_keyboard_toolbar.dart';
 
 /// 선택을 건너뛸 수 없는 유형 선택 시트에서 '다시 촬영'으로 나갈 때 보여 줄 확인 문구입니다.
@@ -636,32 +637,14 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
           ),
         ),
         const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: _CategoryChoiceChip(
-                label: '상의',
-                selected: _directCategory == '상의',
-                onTap: () {
-                  setState(() {
-                    _directCategory = '상의';
-                  });
-                },
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _CategoryChoiceChip(
-                label: '하의',
-                selected: _directCategory == '하의',
-                onTap: () {
-                  setState(() {
-                    _directCategory = '하의';
-                  });
-                },
-              ),
-            ),
-          ],
+        ClothingCategorySegmentedControl(
+          options: const ['상의', '하의'],
+          selected: _directCategory,
+          onChanged: (value) {
+            setState(() {
+              _directCategory = value;
+            });
+          },
         ),
         if (_directErrorText != null) ...[
           const SizedBox(height: 12),
@@ -713,60 +696,6 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// 직접 입력 의류의 분류 하나를 선택하는 내부 선택형 칩입니다.
-class _CategoryChoiceChip extends StatelessWidget {
-  const _CategoryChoiceChip({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final borderColor = selected
-        ? AppPalette.accent
-        : const Color(0xFF8C8C8C);
-    final backgroundColor = selected
-        ? AppPalette.accent.withValues(alpha: isDark ? 0.22 : 0.10)
-        : Colors.transparent;
-    final textColor = selected
-        ? AppPalette.accent
-        : (isDark ? Colors.white : Colors.black87);
-
-    // 선택 색을 Container 로 칠하면 누름 효과가 그 아래에 가려지므로 Ink 로 칠합니다.
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Ink(
-          height: 48,
-          decoration: BoxDecoration(
-            color: backgroundColor,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: borderColor),
-          ),
-          child: Center(
-            child: Text(
-              label,
-              style: TextStyle(
-                color: textColor,
-                fontSize: 14,
-                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
