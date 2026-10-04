@@ -18,6 +18,7 @@ RUNTIME_FILES = (
     "apps/service/__main__.py",
     "apps/service/label_analysis.py",
     "apps/service/main.py",
+    "apps/service/request_limits.py",
     "apps/service/response_contract.py",
     "apps/text/__init__.py",
     "apps/text/composition_candidates.py",

@@ -54,7 +54,7 @@ from apps.text.ocr_image import (
 from apps.text.ocr_layout import (
     OcrWord, extract_response_layout_text, extract_response_words, spatial_text_from_words,
 )
-from apps.text.ocr_regions import find_material_region, prepare_material_region
+from apps.text.ocr_regions import find_material_region, material_region_options, prepare_material_region
 
 __all__ = [
     "ImageTooLargeError",
@@ -828,6 +828,7 @@ def run_ocr_bytes(
     if use_material_region and _assess_candidates(candidates).status != "success":
         region = find_material_region(candidates, validated.width, validated.height)
         if region is not None:
+            font_height, rotation_degrees = material_region_options(candidates, region)
             for rotated in (False, True):
                 if _assess_candidates(candidates).status == "success":
                     break
@@ -836,7 +837,10 @@ def run_ocr_bytes(
                     if remaining_timeout_seconds() <= 0:
                         record_total_timeout(source)
                         break
-                    cropped = prepare_material_region(validated.content, region, rotated=rotated)
+                    cropped = prepare_material_region(
+                        validated.content, region, rotated=rotated,
+                        font_height=font_height, rotation_degrees=rotation_degrees,
+                    )
                     if remaining_timeout_seconds() <= 0:
                         record_total_timeout(source)
                         break

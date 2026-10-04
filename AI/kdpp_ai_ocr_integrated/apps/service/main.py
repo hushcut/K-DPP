@@ -20,6 +20,7 @@ from apps.service.label_analysis import (
     analyze_label_text,
 )
 from apps.service.response_contract import LabelResponseContract, failed_label_response
+from apps.service.request_limits import BodySizeLimitMiddleware, MAX_REQUEST_BYTES
 from apps.text.ocr_text import (
     ImageTooLargeError,
     InvalidImageError,
@@ -38,6 +39,7 @@ app = FastAPI(
     version=API_VERSION,
     description="Google Vision OCR과 소재 혼용률 파서의 AI 서비스 경계",
 )
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES, api_version=API_VERSION)
 
 
 class ParseTextRequest(BaseModel):
@@ -123,6 +125,8 @@ def health() -> dict[str, str]:
     "/v1/parse-text",
     response_model=LabelResponseContract,
     responses={
+        400: {"model": LabelResponseContract, "description": "잘못된 요청 크기 헤더"},
+        413: {"model": LabelResponseContract, "description": "전체 요청 본문 크기 초과"},
         422: {"model": LabelResponseContract, "description": "요청 또는 소재 조성 해석 실패"},
         500: {"model": LabelResponseContract, "description": "내부 처리 오류"},
     },

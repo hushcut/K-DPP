@@ -28,23 +28,33 @@ def transform_words(words: tuple[OcrWord, ...], transform: tuple[float, ...]) ->
 
 
 def _tokens(text: str) -> tuple[str, ...]:
-    # Vision text may join a fiber and ratio while word boxes split them.
-    return tuple(re.findall(r"[^\W\d_]+|\d+|[^\w\s]", normalize_text(text)))
+    # 동아시아 소재명이 여러 상자로 나뉘어도 모든 글자를 보존한다.
+    # 숫자는 한 토큰으로 유지하여 자릿수 누락이나 숫자 재사용을 검사한다.
+    return tuple(re.findall(
+        r"[가-힣一-龥ぁ-んァ-ンー]|[^\W\d_가-힣一-龥ぁ-んァ-ンー]+|\d+|[^\w\s]",
+        normalize_text(text),
+    ))
 
 
 def _row_words(text: str, words: tuple[OcrWord, ...]) -> tuple[OcrWord, ...]:
     row = _tokens(text)
     row_numbers = Counter(token for token in row if token.isdecimal())
-    matches = [word for word in words if _tokens(word.text) and any(
-        row[index:index + len(_tokens(word.text))] == _tokens(word.text)
-        for index in range(len(row))
-    )]
+    # 같은 단어의 정규화와 토큰 분할은 행마다 한 번만 계산한다.
+    word_tokens = {value: _tokens(value) for value in dict.fromkeys(word.text for word in words)}
+    matches = []
+    for word in words:
+        tokens = word_tokens[word.text]
+        if tokens and any(
+            row[index:index + len(tokens)] == tokens
+            for index in range(len(row) - len(tokens) + 1)
+        ):
+            matches.append(word)
     anchors = [word for word in matches if len(normalize_text(word.text).strip()) > 1
                or normalize_text(word.text).strip().isdigit()]
     if not anchors:
         return tuple(matches) if len(matches) == 1 and not row_numbers else ()
     # A repeated token in different physical rows cannot locate this row safely.
-    counts = Counter(_tokens(word.text) for word in anchors)
+    counts = Counter(word_tokens[word.text] for word in anchors)
     if any(count > sum(row[i:i + len(token)] == token for i in range(len(row)))
            for token, count in counts.items()):
         return ()
@@ -56,13 +66,113 @@ def _row_words(text: str, words: tuple[OcrWord, ...]) -> tuple[OcrWord, ...]:
     percent_words = [word for word in matches if normalize_text(word.text) == "%"]
     if len(percent_words) == 1 and percent_words[0] not in selected:
         selected.append(percent_words[0])
+    # 넓은 행 범위에 옆줄의 퍼센트가 섞이지 않도록 가장 가까운 숫자 행에 연결한다.
+    numeric_anchors = [
+        word for word in anchors if any(token.isdecimal() for token in word_tokens[word.text])
+    ]
+    other_numbers = [word for word in words if word not in numeric_anchors
+                     and any(token.isdecimal() for token in word_tokens[word.text])]
+    if numeric_anchors and other_numbers and len(percent_words) > 1:
+        selected = [word for word in selected if normalize_text(word.text) != "%"
+                    or min(abs(word.center_y - anchor.center_y) for anchor in numeric_anchors)
+                    <= min(abs(word.center_y - anchor.center_y) for anchor in other_numbers)]
     # A partial token match must not erase a ratio or reuse its box.
     located_numbers = Counter(
-        token for word in selected for token in _tokens(word.text) if token.isdecimal()
+        token for word in selected for token in word_tokens[word.text] if token.isdecimal()
     )
     if located_numbers != row_numbers:
         return ()
     return tuple(selected)
+
+
+def _same_response_metadata_recovery(
+    candidate: OcrCandidate, alternative: OcrCandidate, part: str,
+) -> bool:
+    """같은 응답의 좌표 행에서 확인된 세탁 숫자만 원문의 잔여 근거에서 제외한다."""
+
+    if (
+        candidate.layout_used or not alternative.layout_used
+        or alternative.parser_status != "success"
+        or not candidate.image_key or candidate.image_key != alternative.image_key
+        or not candidate.image_variant_key or candidate.image_variant_key != alternative.image_variant_key
+        or candidate.source != alternative.source
+        or not candidate.image_words or candidate.image_words != alternative.image_words
+        or len(candidate.image_region) != 4 or candidate.image_region != alternative.image_region
+    ):
+        return False
+    # 좌표 복원은 글자·숫자·퍼센트·기호를 추가하거나 버릴 수 없다.
+    tokens = Counter(_tokens(candidate.text))
+    if (tokens != Counter(_tokens(alternative.text))
+            or tokens != Counter(_tokens(" ".join(word.text for word in candidate.image_words)))):
+        return False
+
+    from apps.text.parse_label import build_line_infos, _is_metadata_line, _mentions_care
+
+    source_infos = build_line_infos(candidate.text)
+    target_infos = build_line_infos(alternative.text)
+    if any(info.marker_part == "outer_2" for info in source_infos) and "outer_2" not in alternative.parts:
+        return False
+    target_part = part
+    if part == "generic" and part not in alternative.parts:
+        if len(alternative.parts) != 1:
+            return False
+        target_part = next(iter(alternative.parts))
+    if target_part not in alternative.parts:
+        return False
+    source_rows = [(info, _row_words(info.raw, candidate.image_words)) for info in source_infos
+                   if info.part == part and not _is_metadata_line(info)
+                   and (info.materials or info.numbers or info.explicit_percent
+                        or info.invalid_evidence or info.unresolved_materials)]
+    metadata_words = []
+    for index, info in enumerate(target_infos):
+        if info.part != target_part or not _is_metadata_line(info):
+            continue
+        wash_outline = (
+            re.search(r"(?<!\d)1(?:30|40|50|60|70|95)(?!\d)", info.normalized)
+            and re.search(r"[/\\]", info.normalized)
+        )
+        care_nearby = any(_mentions_care(row.normalized) and not row.materials and not row.explicit_percent
+                          for row in target_infos[index:index + 4] if row.part == target_part)
+        if wash_outline or care_nearby:
+            metadata_words.extend(_row_words(info.raw, alternative.image_words))
+    if not source_rows or not metadata_words:
+        return False
+    retained = []
+    removed = False
+    for info, words in source_rows:
+        # 모든 토큰과 숫자의 좌표가 필요하다. 반복 숫자 상자의 재사용도 허용하지 않는다.
+        if (not words or info.unresolved_materials
+                or Counter(_tokens(info.raw)) != Counter(token for word in words for token in _tokens(word.text))):
+            return False
+        left, top, right, bottom = alternative.image_region
+        if any(
+            word.left < left - 2 or word.top < top - 2
+            or word.right > right + 2 or word.bottom > bottom + 2
+            for word in words
+        ):
+            return False
+        compact = re.sub(r"[ \t]+", "", info.normalized)
+        wash_number = not info.materials and not info.explicit_percent and re.fullmatch(
+            r"(?:30|40|50|60|70|95)|1(?:30|40|50|60|70|95)[/\\]", compact,
+        )
+        if wash_number and all(word in metadata_words for word in words):
+            removed = True
+            continue
+        if info.invalid_evidence:
+            return False
+        retained.append(info)
+    if not removed:
+        return False
+    paired = Counter(tuple(pair) for pair in candidate.paired_material_ratios.get(part, ()))
+    if not paired <= Counter(alternative.parts[target_part].items()):
+        return False
+    targets = [info for info in target_infos if info.part == target_part and not _is_metadata_line(info)]
+    return (
+        Counter(material for info in retained for material in info.materials)
+        == Counter(material for info in targets for material in info.materials)
+        and Counter(number for info in retained for number in info.numbers)
+        == Counter(number for info in targets for number in info.numbers)
+    )
 
 
 def _evidence_rows(candidate: OcrCandidate, part: str):
@@ -127,6 +237,8 @@ def same_region_recovery(
             or not candidate.image_words or not alternative.image_words
             or len(alternative.image_region) != 4):
         return False
+    if _same_response_metadata_recovery(candidate, alternative, part):
+        return True
     target_part = part
     if part == "generic" and part not in alternative.parts:
         if len(alternative.parts) != 1:
