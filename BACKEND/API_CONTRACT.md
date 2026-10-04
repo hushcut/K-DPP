@@ -410,3 +410,10 @@ Authorization: Bearer <token>
   요청도 상한(11MB) 초과 시 413. (buffer-and-replay ASGI 미들웨어)
 - 로그인 실패 기록에 TTL(15분)과 항목 상한(1만 건) 청소 도입 — 저횟수
   기록의 무한 잔류로 인한 메모리 증가 차단.
+
+## 변경 이력 — 2026-10-04 보안 손질 (DECISIONS 139)
+
+- **비밀번호 해시 반복 수 12만 → 60만**(PBKDF2-HMAC-SHA256, OWASP 권장값,
+  `main.PASSWORD_HASH_ITERATIONS`). 저장 형식 `pbkdf2_sha256$<반복>$<salt>$<digest>`
+  는 그대로라 옛 해시도 검증되고, **로그인에 성공하면 지금 반복 수로 다시 저장**
+  (같은 순간 비밀번호 변경이 먼저 커밋됐으면 덮지 않음). 요청·응답 형식은 같음.

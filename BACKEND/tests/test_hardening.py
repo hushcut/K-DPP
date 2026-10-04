@@ -1,5 +1,6 @@
 """전면 점검(2026-08-29)에서 확정된 결함들의 회귀 테스트."""
 
+import hashlib
 import threading
 from datetime import timedelta
 
@@ -440,3 +441,107 @@ def test_me_history_reports_no_more_when_under_the_cap(client):
     assert response.status_code == 200
     assert body["history"] == []
     assert body["has_more"] is False
+
+
+# --- 비밀번호 해시 반복 수 (2026-10-04 보안 손질, DECISIONS 139) ---------------
+
+
+def _legacy_hash(password, iterations=120_000):
+    """반복 수를 올리기 전 형식 그대로 만든 해시."""
+    salt = "legacy-salt-0001"
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations
+    ).hex()
+    return f"pbkdf2_sha256${iterations}${salt}${digest}"
+
+
+def _stored_hash(email):
+    session = database.SessionLocal()
+    try:
+        return (
+            session.query(database.User.password_hash)
+            .filter(database.User.email == email)
+            .scalar()
+        )
+    finally:
+        session.close()
+
+
+def _set_stored_hash(email, password_hash):
+    session = database.SessionLocal()
+    try:
+        session.query(database.User).filter(database.User.email == email).update(
+            {"password_hash": password_hash}
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
+def _signup(client, email):
+    client.post(
+        "/auth/signup",
+        json={"email": email, "password": "password123", "nickname": "iter-user"},
+    )
+
+
+def test_signup_stores_hash_with_current_iterations(client):
+    email = "iter-new@example.com"
+    _signup(client, email)
+
+    # OWASP 권장 하한(PBKDF2-HMAC-SHA256 60만 회)보다 낮아지면 안 됩니다.
+    assert main.PASSWORD_HASH_ITERATIONS >= 600_000
+    prefix = f"pbkdf2_sha256${main.PASSWORD_HASH_ITERATIONS}$"
+    assert _stored_hash(email).startswith(prefix)
+    # 미가입 이메일의 타이밍 가드도 같은 반복 수여야 응답 시간이 맞습니다.
+    assert main.DUMMY_PASSWORD_HASH.startswith(prefix)
+
+
+def test_login_upgrades_legacy_iteration_hash(client):
+    email = "iter-legacy@example.com"
+    _signup(client, email)
+    _set_stored_hash(email, _legacy_hash("password123"))
+
+    first = client.post("/auth/login", json={"email": email, "password": "password123"})
+    assert first.status_code == 200
+
+    upgraded = _stored_hash(email)
+    assert upgraded.startswith(f"pbkdf2_sha256${main.PASSWORD_HASH_ITERATIONS}$")
+    assert main.verify_password("password123", upgraded)
+
+    # 이미 지금 반복 수면 다시 쓰지 않고, 같은 비밀번호로 계속 로그인됩니다.
+    second = client.post("/auth/login", json={"email": email, "password": "password123"})
+    assert second.status_code == 200
+    assert _stored_hash(email) == upgraded
+
+
+def test_failed_login_keeps_legacy_hash(client):
+    email = "iter-wrong@example.com"
+    _signup(client, email)
+    legacy = _legacy_hash("password123")
+    _set_stored_hash(email, legacy)
+
+    response = client.post("/auth/login", json={"email": email, "password": "wrong-password"})
+
+    assert response.status_code == 401
+    assert _stored_hash(email) == legacy
+
+
+def test_rehash_does_not_undo_a_concurrent_password_change(client, monkeypatch):
+    email = "iter-race@example.com"
+    _signup(client, email)
+    _set_stored_hash(email, _legacy_hash("password123"))
+    changed = main.hash_password("brand-new-pass1")
+    original_verify = main.verify_password
+
+    def verify_then_change(password, stored_hash):
+        ok = original_verify(password, stored_hash)
+        # 로그인이 옛 해시를 검증한 직후 다른 요청의 비밀번호 변경이 먼저 커밋된 상황.
+        _set_stored_hash(email, changed)
+        return ok
+
+    monkeypatch.setattr(main, "verify_password", verify_then_change)
+    response = client.post("/auth/login", json={"email": email, "password": "password123"})
+
+    assert response.status_code == 200
+    assert _stored_hash(email) == changed

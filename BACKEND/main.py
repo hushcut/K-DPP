@@ -408,15 +408,29 @@ def ensure_password_rules(password: str) -> None:
         raise HTTPException(status_code=400, detail="비밀번호는 8자 이상 입력해 주세요.")
 
 
+# PBKDF2-SHA256 반복 수(OWASP 권장값). 저장 형식에 반복 수가 들어 있어 값을 올려도
+# 옛 해시는 그대로 검증되고, 로그인에 성공하면 이 값으로 다시 저장됩니다.
+PASSWORD_HASH_ITERATIONS = 600_000
+
+
 def hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac(
         "sha256",
         password.encode("utf-8"),
         salt.encode("utf-8"),
-        120000,
+        PASSWORD_HASH_ITERATIONS,
     ).hex()
-    return f"pbkdf2_sha256$120000${salt}${digest}"
+    return f"pbkdf2_sha256${PASSWORD_HASH_ITERATIONS}${salt}${digest}"
+
+
+def password_needs_rehash(stored_hash: str) -> bool:
+    """저장된 해시의 반복 수가 지금 값보다 낮으면 True."""
+    try:
+        _algorithm, iterations_text, _salt, _digest = stored_hash.split("$", 3)
+        return int(iterations_text) < PASSWORD_HASH_ITERATIONS
+    except ValueError:
+        return False
 
 
 def verify_password(password: str, stored_hash: str) -> bool:
@@ -1031,6 +1045,18 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다.")
 
     clear_login_failures(email)
+
+    if password_needs_rehash(user.password_hash):
+        # 반복 수를 올리기 전에 만든 해시는 원문을 아는 지금 새로 저장합니다(토큰 발급과
+        # 한 커밋). 같은 순간 비밀번호 변경이 먼저 커밋됐다면 그 값을 되돌리지 않도록
+        # 저장된 값이 방금 검증한 옛 해시일 때만 바꿉니다.
+        db.query(database.User).filter(
+            database.User.id == user.id,
+            database.User.password_hash == user.password_hash,
+        ).update(
+            {"password_hash": hash_password(request.password)},
+            synchronize_session=False,
+        )
 
     raw_token, _access_token = create_access_token(user, db)
 
