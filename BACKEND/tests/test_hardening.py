@@ -696,19 +696,136 @@ def test_login_ip_failure_window_expires(client):
         assert main._login_ip_failures["testclient"][0] == 1
 
 
-def test_login_ip_key_groups_ipv6_by_64_prefix():
-    assert main.login_ip_key("8.8.8.8") == "8.8.8.8"
-    assert main.login_ip_key("::ffff:8.8.8.8") == "8.8.8.8"
-    same_64 = main.login_ip_key("2001:4860:1:2:aaaa::1")
+def test_client_ip_key_groups_ipv6_by_64_prefix():
+    assert main.client_ip_key("8.8.8.8") == "8.8.8.8"
+    assert main.client_ip_key("::ffff:8.8.8.8") == "8.8.8.8"
+    same_64 = main.client_ip_key("2001:4860:1:2:aaaa::1")
     assert same_64 == "2001:4860:1:2::/64"
-    assert main.login_ip_key("2001:4860:1:2:bbbb:cccc:dddd:2") == same_64
-    assert main.login_ip_key("2001:4860:1:3::1") != same_64
-    assert main.login_ip_key("testclient") == "testclient"
-    assert main.login_ip_key(None) is None
+    assert main.client_ip_key("2001:4860:1:2:bbbb:cccc:dddd:2") == same_64
+    assert main.client_ip_key("2001:4860:1:3::1") != same_64
+    assert main.client_ip_key("testclient") == "testclient"
+    assert main.client_ip_key(None) is None
 
 
-def test_login_ip_key_skips_non_public_addresses():
+def test_client_ip_key_skips_non_public_addresses():
     # Docker·프록시가 접속 주소를 가리면 모두가 게이트웨이 주소(리허설에서 172.19.0.1)로
     # 보입니다. 그 주소 하나로 모두를 함께 막지 않도록 IP 기준을 건너뜁니다.
     for host in ("172.19.0.1", "127.0.0.1", "10.0.0.5", "192.168.0.10", "::1", "fd00::1"):
-        assert main.login_ip_key(host) is None, host
+        assert main.client_ip_key(host) is None, host
+
+
+# --- 가입 IP 기준 (2026-10-04 보안 손질, DECISIONS 142) ---------------------------
+
+
+def _count_signup_hashes(monkeypatch, delay=0.0):
+    calls = []
+    original_hash = main.hash_password
+
+    def counting_hash(password):
+        calls.append(1)
+        if delay:
+            time.sleep(delay)
+        return original_hash(password)
+
+    monkeypatch.setattr(main, "hash_password", counting_hash)
+    return calls
+
+
+def _try_signup(client, email, password="password123", nickname="ip-user"):
+    return client.post(
+        "/auth/signup",
+        json={"email": email, "password": password, "nickname": nickname},
+    )
+
+
+def test_signup_ip_limit_counts_successes_and_conflicts(client, monkeypatch):
+    monkeypatch.setattr(main, "SIGNUP_IP_MAX_ATTEMPTS", 3)
+    hashes = _count_signup_hashes(monkeypatch)
+
+    assert _try_signup(client, "signup-a@example.com").status_code == 200
+    # 이미 가입된 이메일(409)은 그 이메일이 가입돼 있는지를 알려 주므로 셉니다.
+    assert _try_signup(client, "signup-a@example.com").status_code == 409
+    assert _try_signup(client, "signup-b@example.com").status_code == 200
+
+    blocked = _try_signup(client, "signup-c@example.com")
+    assert blocked.status_code == 429
+    assert blocked.json()["error_code"] == "TOO_MANY_ATTEMPTS"
+    assert blocked.json()["message"] == "가입 시도가 너무 많습니다. 60분 후 다시 시도해 주세요."
+    # 가입 여부 조회(409)도 창이 끝날 때까지 막히고, 막힌 시도는 해시·계정 생성까지 가지 않습니다.
+    assert _try_signup(client, "signup-a@example.com").status_code == 429
+    assert len(hashes) == 2
+    assert _try_login(client, "signup-c@example.com", "password123").status_code == 401
+
+
+def test_signup_format_errors_do_not_count_toward_ip_limit(client, monkeypatch):
+    # 형식 오류(400)는 DB·해시를 거치지 않으므로 세지 않습니다 — 입력 실수로 한도를 쓰지 않게.
+    monkeypatch.setattr(main, "SIGNUP_IP_MAX_ATTEMPTS", 1)
+
+    assert _try_signup(client, "not-an-email").status_code == 400
+    assert _try_signup(client, "short-nick@example.com", nickname="a").status_code == 400
+    assert _try_signup(client, "short-pw@example.com", password="short").status_code == 400
+    assert _try_signup(client, "format-ok@example.com").status_code == 200
+    assert _try_signup(client, "format-next@example.com").status_code == 429
+
+
+def test_concurrent_signup_burst_hashes_only_up_to_the_ip_limit(client, monkeypatch):
+    # 해시가 끝난 뒤에 세면, 동시에 몰아친 가입이 모두 검사를 통과해 해시·계정 생성까지 갑니다.
+    monkeypatch.setattr(main, "SIGNUP_IP_MAX_ATTEMPTS", 3)
+    hashes = _count_signup_hashes(monkeypatch, delay=0.3)
+    statuses = []
+
+    def attempt(i):
+        statuses.append(_try_signup(client, f"signup-burst-{i}@example.com").status_code)
+
+    threads = [threading.Thread(target=attempt, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert sorted(statuses) == [200] * 3 + [429] * 5
+    assert len(hashes) == 3
+
+
+def test_signup_ip_window_expires(client):
+    stale = database.utc_now() - timedelta(seconds=main.SIGNUP_IP_WINDOW_SECONDS + 1)
+    with main._login_failures_lock:
+        main._signup_ip_attempts["testclient"] = (main.SIGNUP_IP_MAX_ATTEMPTS, stale)
+
+    assert _try_signup(client, "signup-after-window@example.com").status_code == 200
+    with main._login_failures_lock:
+        assert main._signup_ip_attempts["testclient"][0] == 1
+
+
+def test_signup_and_login_ip_limits_are_counted_separately(client, monkeypatch):
+    monkeypatch.setattr(main, "SIGNUP_IP_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(main, "LOGIN_IP_MAX_FAILURES", 1)
+    email = "separate@example.com"
+
+    assert _try_signup(client, email).status_code == 200
+    # 가입 시도는 로그인 실패로 세지 않습니다.
+    assert _try_login(client, email, "password123").status_code == 200
+    assert _try_login(client, email).status_code == 401
+    blocked_login = _try_login(client, email)
+    assert blocked_login.status_code == 429
+    assert blocked_login.json()["message"].startswith("로그인 시도가")
+    # 로그인 실패도 가입 시도로 세지 않습니다.
+    assert _try_signup(client, "separate-2@example.com").status_code == 200
+    blocked_signup = _try_signup(client, "separate-3@example.com")
+    assert blocked_signup.status_code == 429
+    assert blocked_signup.json()["message"].startswith("가입 시도가")
+
+
+def test_signup_ip_limit_uses_the_same_ip_key_as_login(client, monkeypatch):
+    # IPv6 는 /64 대역으로 묶고, 공인 주소가 아니면(게이트웨이·사설) 건너뜁니다.
+    monkeypatch.setattr(main, "SIGNUP_IP_MAX_ATTEMPTS", 1)
+    first = TestClient(main.app, client=("2001:4860:1:2::1", 50000))
+    same_64 = TestClient(main.app, client=("2001:4860:1:2:ffff::9", 50000))
+    other = TestClient(main.app, client=("8.8.4.4", 50000))
+    gateway = TestClient(main.app, client=("172.19.0.1", 50000))
+
+    assert _try_signup(first, "v6-a@example.com").status_code == 200
+    assert _try_signup(same_64, "v6-b@example.com").status_code == 429
+    assert _try_signup(other, "v4-a@example.com").status_code == 200
+    for i in range(3):
+        assert _try_signup(gateway, f"gateway-{i}@example.com").status_code == 200

@@ -86,9 +86,10 @@ def client():
         connection.execute(
             text(f"TRUNCATE {', '.join(PER_TEST_TABLES)} RESTART IDENTITY")
         )
-    # 로그인 잠금 카운터는 프로세스 메모리에 남으므로 테스트마다 초기화합니다.
+    # 로그인 잠금·가입 IP 카운터는 프로세스 메모리에 남으므로 테스트마다 초기화합니다.
     main._login_failures.clear()
     main._login_ip_failures.clear()
+    main._signup_ip_attempts.clear()
 
     with TestClient(main.app) as test_client:
         yield test_client

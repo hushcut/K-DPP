@@ -471,8 +471,8 @@ DUMMY_PASSWORD_HASH = hash_password("k-dpp-timing-guard")
 EMAIL_PATTERN = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 # 로그인 무차별 대입 방어: 같은 이메일로 연속 실패하면 잠시 잠급니다.
-# 실패 기록(아래 IP 기준도)은 프로세스 메모리에 둡니다 — 서버 1대·uvicorn 워커 1개 전제
-# (DECISIONS 139). 재시작하면 지워지고, 워커를 늘리면 한도가 워커 수만큼 늘어납니다.
+# 실패 기록(아래 로그인·가입 IP 기준도)은 프로세스 메모리에 둡니다 — 서버 1대·uvicorn 워커
+# 1개 전제(DECISIONS 139). 재시작하면 지워지고, 워커를 늘리면 한도가 워커 수만큼 늘어납니다.
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_LOCKOUT_SECONDS = 60
 # 저횟수(1~4회) 실패 기록이 영구히 남으면 임의 이메일 반복 전송으로 메모리를
@@ -541,8 +541,17 @@ LOGIN_IP_WINDOW_SECONDS = 15 * 60
 # IP(키) → (이번 창의 실패 수, 창 시작 시각)
 _login_ip_failures: dict[str, tuple[int, datetime]] = {}
 
+# 가입에도 같은 IP 기준을 둡니다(DECISIONS 142). 가입 한 번은 해시 한 번과 계정 한 줄을
+# 만들고, '이미 가입된 이메일'(409) 응답은 그 이메일이 가입돼 있는지를 알려 줍니다. 그래서
+# 형식 검사를 통과한 시도는 성공·409 모두 세고 되돌리지 않습니다(형식 오류 400 은 DB·해시를
+# 거치지 않아 세지 않음). 로그인처럼 해시 전에 세고, 한 IP 를 여럿이 쓰는 경우를 생각해 넉넉히 둡니다.
+SIGNUP_IP_MAX_ATTEMPTS = 20
+SIGNUP_IP_WINDOW_SECONDS = 60 * 60
+# IP(키) → (이번 창의 가입 시도 수, 창 시작 시각)
+_signup_ip_attempts: dict[str, tuple[int, datetime]] = {}
 
-def login_ip_key(host: str | None) -> str | None:
+
+def client_ip_key(host: str | None) -> str | None:
     """IP 기준의 키. IPv6 는 /64 대역으로 묶는다 — 한 가입자가 대역 안 주소를 마음대로
     바꿀 수 있어서. 공인 주소가 아니면 None(IP 기준을 건너뜀)."""
     if not host:
@@ -556,30 +565,50 @@ def login_ip_key(host: str | None) -> str | None:
     if not address.is_global:
         # 사설·루프백 주소는 실제 사용자 주소가 아니다(개발 서버, 또는 Docker·프록시가 접속
         # 주소를 가려 모두가 게이트웨이 주소로 보이는 경우). 모두를 한 칸에 묶어 함께 막느니
-        # IP 기준을 건너뛰고 이메일 기준만 둔다.
+        # IP 기준을 건너뛴다(로그인은 이메일 기준만, 가입은 제한 없이 남는다).
         return None
     if address.version == 6:
         return str(ipaddress.ip_network(f"{address}/64", strict=False))
     return str(address)
 
 
-def reserve_login_attempt_for_ip(ip_key: str | None) -> None:
-    """이 IP 의 실패가 한도에 닿았으면 429, 아니면 실패 한 번을 미리 센다."""
+def _reserve_ip_attempt(
+    records: dict[str, tuple[int, datetime]],
+    ip_key: str | None,
+    max_attempts: int,
+    window_seconds: int,
+    action: str,
+) -> None:
+    """이 IP 의 이번 창 횟수가 한도에 닿았으면 429, 아니면 한 번을 미리 센다."""
     if ip_key is None:
         return
     now = utc_now()
     with _login_failures_lock:
-        _prune_failure_records_locked(_login_ip_failures, LOGIN_IP_WINDOW_SECONDS)
-        count, window_start = _login_ip_failures.get(ip_key, (0, now))
-        if count < LOGIN_IP_MAX_FAILURES:
-            _login_ip_failures[ip_key] = (count + 1, window_start)
+        _prune_failure_records_locked(records, window_seconds)
+        count, window_start = records.get(ip_key, (0, now))
+        if count < max_attempts:
+            records[ip_key] = (count + 1, window_start)
             return
-        wait = window_start + timedelta(seconds=LOGIN_IP_WINDOW_SECONDS) - now
+        wait = window_start + timedelta(seconds=window_seconds) - now
 
     wait_minutes = max(1, math.ceil(wait.total_seconds() / 60))
     raise HTTPException(
         status_code=429,
-        detail=f"로그인 시도가 너무 많습니다. {wait_minutes}분 후 다시 시도해 주세요.",
+        detail=f"{action} 시도가 너무 많습니다. {wait_minutes}분 후 다시 시도해 주세요.",
+    )
+
+
+def reserve_login_attempt_for_ip(ip_key: str | None) -> None:
+    """이 IP 의 실패가 한도에 닿았으면 429, 아니면 실패 한 번을 미리 센다."""
+    _reserve_ip_attempt(
+        _login_ip_failures, ip_key, LOGIN_IP_MAX_FAILURES, LOGIN_IP_WINDOW_SECONDS, "로그인"
+    )
+
+
+def reserve_signup_attempt_for_ip(ip_key: str | None) -> None:
+    """이 IP 의 가입 시도가 한도에 닿았으면 429, 아니면 한 번을 센다(되돌리지 않음)."""
+    _reserve_ip_attempt(
+        _signup_ip_attempts, ip_key, SIGNUP_IP_MAX_ATTEMPTS, SIGNUP_IP_WINDOW_SECONDS, "가입"
     )
 
 
@@ -1072,7 +1101,7 @@ def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
 # --- API 엔드포인트 시작 ---
 
 @app.post("/auth/signup", tags=["auth"])
-def signup(request: SignupRequest, db: Session = Depends(get_db)):
+def signup(request: SignupRequest, http_request: Request, db: Session = Depends(get_db)):
     email = normalize_email(request.email)
     nickname = request.nickname.strip()
     password = request.password
@@ -1082,6 +1111,10 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)):
     if len(nickname) < 2:
         raise HTTPException(status_code=400, detail="닉네임은 2자 이상 입력해 주세요.")
     ensure_password_rules(password)
+    # 형식을 통과한 시도부터 DB 조회·해시 전에 셉니다(409 도 셈, 접속 주소는 로그인과 같음).
+    reserve_signup_attempt_for_ip(
+        client_ip_key(http_request.client.host if http_request.client else None)
+    )
 
     existing_user = db.query(database.User).filter(database.User.email == email).first()
     if existing_user is not None:
@@ -1115,7 +1148,7 @@ def login(request: LoginRequest, http_request: Request, db: Session = Depends(ge
     check_login_lockout(email)
     # 배포에서는 Caddy 가 X-Forwarded-For 를 실제 접속 주소로 채우고 uvicorn
     # --proxy-headers 가 그 값을 client 로 넘깁니다(앱 포트는 밖에 열려 있지 않음).
-    ip_key = login_ip_key(http_request.client.host if http_request.client else None)
+    ip_key = client_ip_key(http_request.client.host if http_request.client else None)
     reserve_login_attempt_for_ip(ip_key)
 
     user = db.query(database.User).filter(database.User.email == email).first()
