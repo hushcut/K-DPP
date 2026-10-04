@@ -55,6 +55,26 @@ docker compose up -d --build --wait   # 배포 직전 백업 → migrate(새 리
   잘못된 리비전이 적용됐으면 그 파일로 '복구' 합니다.
 - 앱 컨테이너가 바뀌는 몇 초 동안 요청이 실패할 수 있습니다.
 - 보안 패치: `docker compose pull postgres caddy` 와 `docker compose build --pull` 뒤 `up -d --wait`.
+- 받기 전에 그 커밋의 GitHub Actions `Backend image (docker build)` 잡이 초록인지 봅니다 — 서버와 같은
+  x86_64 에서 이 이미지를 빌드하고 migrate·앱 시작까지 해 본 결과입니다.
+
+## 의존성 버전
+
+`BACKEND/requirements.txt` 는 간접 의존성까지 모두 `==` 로 고정합니다. 서버에서 언제 빌드해도 같은 판이
+들어갑니다(바뀌는 것은 `build --pull` 로 받는 기본 이미지의 패치뿐입니다).
+
+올리는 법: 올릴 줄을 새 버전으로 고치고 파일 끝 간접 의존성 묶음을 지운 뒤, 깨끗한 Python 3.12 에 깔아
+나온 `pip freeze` 로 끝 묶음을 다시 적습니다(저장소 루트에서).
+
+```sh
+docker run --rm -v "$PWD/BACKEND/requirements.txt:/r.txt:ro" python:3.12-slim-trixie \
+  sh -c 'pip install -q --root-user-action=ignore -r /r.txt && pip freeze'
+```
+
+- `psycopg-binary` 는 `psycopg[binary]` 가 같은 버전으로 끌어오므로 적지 않습니다.
+- 파일에는 **ASCII 만** 씁니다. 한국어 Windows 의 옛 pip 는 이 파일을 cp949 로 읽어 한글 주석에서 설치가 멈춥니다.
+- 고친 뒤 CI 세 잡이 초록인지 봅니다. 빌드 중 `check_ai_wiring.py` 가 AI 모듈·Pillow·google-cloud-vision 을
+  불러 보므로, Vision 이 깨진 이미지는 만들어지지 않습니다(앱은 Vision 실패를 키 없음과 같은 502 로 삼킵니다).
 
 ## 백업
 
