@@ -24,6 +24,7 @@ from apps.text.material_extraction import (
     find_material_key,
     is_part_marker_match,
     normalize_text,
+    restore_registered_han_aliases,
     unresolved_material_tokens,
 )
 from apps.text.rules import (
@@ -383,6 +384,8 @@ _LANGUAGE_RATIO_PREFIX_PATTERN = re.compile(
 
 def _prepare_multilingual_rows(text: str) -> str:
     """Restore exact wrapped aliases and separate explicit language blocks."""
+
+    text = restore_registered_han_aliases(text, allow_newlines=True)
 
     def restore_alias(match: re.Match[str]) -> str:
         joined = match.group(1) + match.group(2)

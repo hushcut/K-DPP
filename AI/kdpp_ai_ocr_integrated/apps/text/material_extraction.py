@@ -142,6 +142,60 @@ MULTIWORD_ALIASES = sorted(
 )
 
 
+_HAN_ALIAS_NAMES = sorted(
+    (alias for alias in ALIAS_TO_MATERIAL if re.fullmatch(r"[\u4e00-\u9fff]{2,}", alias)),
+    key=len,
+    reverse=True,
+)
+_HAN_PART_PREFIX = "|".join(
+    re.escape(alias)
+    for alias in sorted(
+        {alias for aliases in PART_PATTERNS.values() for alias in aliases
+         if re.fullmatch(r"[\u4e00-\u9fff]+", alias)},
+        key=len,
+        reverse=True,
+    )
+)
+_HAN_ALIAS_PATTERNS = {
+    allow_newlines: re.compile(
+        r"(?<![^\W\d_])"
+        rf"(?P<prefix>(?:(?:{_HAN_PART_PREFIX})[ \t]*)?)"
+        + "(?P<alias>"
+        + "|".join(gap.join(map(re.escape, alias)) for alias in _HAN_ALIAS_NAMES)
+        + r")(?![^\W\d_])"
+    )
+    for allow_newlines, gap in ((False, r"[ \t]*"), (True, r"[ \t\n]*"))
+}
+_HAN_GAP_PATTERNS = {
+    False: re.compile(r"[\u4e00-\u9fff][ \t]+[\u4e00-\u9fff]"),
+    True: re.compile(r"[\u4e00-\u9fff][ \t\n]+[\u4e00-\u9fff]"),
+}
+
+
+def restore_registered_han_aliases(text: str, *, allow_newlines: bool = False) -> str:
+    """Restore whitespace only inside a complete registered Han fiber name."""
+
+    if not _HAN_GAP_PATTERNS[allow_newlines].search(text):
+        return text
+
+    def restore(match: re.Match[str]) -> str:
+        body = match.group("alias")
+        alias = re.sub(r"[ \t\n]+", "", body)
+        if "\n" in body:
+            # A wrapped prefix may already name this same fiber (聚酯), but
+            # never turn two different fibers into one compound: polyurethane
+            # (聚氨酯) and elastane (弹性纤维) must retain their row boundary.
+            rows = body.split("\n")
+            for index in range(1, len(rows)):
+                for fragment in ("".join(rows[:index]), "".join(rows[index:])):
+                    material = ALIAS_TO_MATERIAL.get(re.sub(r"[ \t]+", "", fragment))
+                    if material and material != ALIAS_TO_MATERIAL[alias]:
+                        return match.group()
+        return match.group("prefix") + alias
+
+    return _HAN_ALIAS_PATTERNS[allow_newlines].sub(restore, text)
+
+
 def _replace_token(text: str, wrong: str, correct: str) -> str:
     if wrong.isascii():
         pattern = rf"(?<![a-z]){re.escape(wrong)}(?![a-z])"
@@ -163,6 +217,8 @@ def normalize_text(text: str) -> str:
 
     for wrong, correct in OCR_CORRECTIONS.items():
         normalized = _replace_token(normalized, wrong.casefold(), correct.casefold())
+
+    normalized = restore_registered_han_aliases(normalized)
 
     lines = [re.sub(r"[ \t]+", " ", line).strip() for line in normalized.split("\n")]
     return "\n".join(line for line in lines if line)
