@@ -17,7 +17,7 @@
 | `migrate` | 표·소재를 최신 리비전으로 맞추고 종료 — 실패하면 `app` 이 시작하지 않음 | 없음 |
 | `app` | 백엔드(`BACKEND/Dockerfile` 로 빌드), 워커 1개 | 없음 |
 | `caddy` | HTTPS 인증서 자동 발급·갱신, http → https, 요청 본문 11MiB 상한 | 80, 443 |
-| `backup` | 매일 04:00(KST) 백업 + 되살리기 검사, 26시간 넘게 성공이 없으면 unhealthy | 없음 |
+| `backup` | 매일 04:00(KST) 백업 + 되살리기 검사, 26시간 넘게 매일 백업 성공이 없으면 unhealthy(배포 직전·수동 백업은 세지 않음) | 없음 |
 
 ## 서버 준비
 
@@ -89,7 +89,9 @@ docker run --rm -v "$PWD/BACKEND/requirements.txt:/r.txt:ro" python:3.12-slim-tr
   행 수가 파일과 같은지, 표 목록·Alembic 리비전·소재 수가 운영과 같은지 봅니다.
   검사에 실패하면 파일은 남기고 오래된 파일도 지우지 않습니다.
 - 상태 확인: `docker compose ps backup`(healthy 여부), `docker compose logs backup`(`OK`·`FAIL` 줄),
-  `sudo cat backups/.last-success`(마지막 성공 시각).
+  `sudo cat backups/.last-daily-success`(매일 백업의 마지막 성공 — healthy 는 이것만 봄),
+  `sudo cat backups/.last-success`(종류와 상관없이 마지막 성공).
+  새 서버는 매일 백업이 처음 성공하기 전까지 첫 백업 뒤 26시간 동안 healthy 로 봐줍니다(첫 `up --wait` 가 통과하게).
 - 손으로 한 번 뜨기: `docker compose run --rm --no-deps backup once manual`(`backups/manual/`, 최근 10개).
 - 파일 하나만 검사: `docker compose run --rm --no-deps backup check /backups/daily/<파일>`.
 - 백업에는 **이메일과 비밀번호 해시**가 들어 있습니다. 폴더 700·파일 600 이고 서버에서는 root 소유라

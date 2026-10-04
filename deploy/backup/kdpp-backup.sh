@@ -6,7 +6,7 @@
 #   kdpp-backup loop                             매일 K_DPP_BACKUP_AT(기본 04:00, TZ 기준)에 once daily
 #   kdpp-backup check <파일>                     파일 하나를 임시 DB 에 되살려 검사만
 #   kdpp-backup stage <파일>                     복구용: 새 DB k_dpp_restored 에 되살림(deploy/README.md '복구')
-#   kdpp-backup health                           마지막 성공이 K_DPP_BACKUP_MAX_AGE_MIN 분 안인지
+#   kdpp-backup health                           매일 백업의 마지막 성공이 K_DPP_BACKUP_MAX_AGE_MIN 분 안인지
 #
 # 접속은 PGHOST·PGUSER·PGPASSWORD·PGDATABASE 환경변수로 받습니다(compose 가 넣음).
 # 운영 DB 는 읽기만 합니다. 지우는 DB 는 검사용 임시 DB(k_dpp_restore_check)와, stage 가
@@ -22,7 +22,10 @@ BACKUP_DIR=${K_DPP_BACKUP_DIR:-/backups}
 LIVE_DB=${PGDATABASE:?PGDATABASE 환경변수가 필요합니다}
 CHECK_DB=k_dpp_restore_check
 STAGE_DB=k_dpp_restored
+# 성공 기록: 종류와 상관없이 마지막(사람이 보는 것) · 매일 백업의 마지막(health 가 보는 것) · 맨 처음.
 LAST_SUCCESS="$BACKUP_DIR/.last-success"
+LAST_DAILY="$BACKUP_DIR/.last-daily-success"
+FIRST_SUCCESS="$BACKUP_DIR/.first-success"
 declare -A KEEP=(
   [daily]=${K_DPP_BACKUP_KEEP_DAILY:-14}
   [pre-migrate]=${K_DPP_BACKUP_KEEP_PRE_MIGRATE:-10}
@@ -133,6 +136,8 @@ once() {
   verify "$file" strict || die "되살리기 검사 실패: $kind/$name(파일은 남겨 둠, 보관 정리 안 함)"
   rotate "$kind"
   printf '%s %s\n' "$(date '+%F %T %Z')" "$kind/$name" >"$LAST_SUCCESS"
+  [[ $kind != daily ]] || cp -- "$LAST_SUCCESS" "$LAST_DAILY"
+  [[ -e $FIRST_SUCCESS ]] || cp -- "$LAST_SUCCESS" "$FIRST_SUCCESS"
   log "OK $kind/$name $(du -h -- "$file" | cut -f1) $SUMMARY"
 }
 
@@ -161,12 +166,25 @@ stage() {
   log "운영 DB($LIVE_DB)는 그대로입니다. 바꿔 끼우는 순서는 deploy/README.md '복구'."
 }
 
+# 파일 $1 이 $2 분 안에 바뀌었는지.
+fresh() { [[ -n $(find "$1" -mmin "-$2" 2>/dev/null) ]]; }
+
+# 매일 백업의 마지막 성공만 봅니다 — 배포 직전·수동 백업이 매일 백업 실패를 가리지 않게.
+# 매일 백업이 아직 한 번도 성공하지 않았으면 첫 백업 뒤 max 분까지만 봐줍니다(새 서버의 첫 `up --wait`).
+# 둘 다 없으면(이 기록을 남기기 전 판으로만 백업한 서버) 예전처럼 종류와 상관없이 마지막 성공을 봅니다.
 health() {
   local max=${K_DPP_BACKUP_MAX_AGE_MIN:-1560}
-  [[ -n $(find "$LAST_SUCCESS" -mmin "-$max" 2>/dev/null) ]] || {
+  if [[ -e $LAST_DAILY ]]; then
+    fresh "$LAST_DAILY" "$max" && return 0
+    echo "마지막 매일 백업 성공이 ${max}분보다 오래됐습니다: $(cat "$LAST_DAILY")"
+  elif [[ -e $FIRST_SUCCESS ]]; then
+    fresh "$FIRST_SUCCESS" "$max" && return 0
+    echo "첫 백업($(cat "$FIRST_SUCCESS")) 뒤 ${max}분이 지나도록 매일 백업이 한 번도 성공하지 않았습니다"
+  else
+    fresh "$LAST_SUCCESS" "$max" && return 0
     echo "마지막 성공 백업이 ${max}분보다 오래됐거나 없습니다: $(cat "$LAST_SUCCESS" 2>/dev/null || echo 없음)"
-    exit 1
-  }
+  fi
+  exit 1
 }
 
 loop() {

@@ -79,8 +79,8 @@ services:
     restart: "no"
 
   backup:
-    # ② 매일 백업: 매일 K_DPP_BACKUP_AT 에 백업하고 되살려 검사합니다. 마지막 성공이
-    # K_DPP_BACKUP_MAX_AGE_MIN(기본 26시간)보다 오래되면 unhealthy 로 보입니다.
+    # ② 매일 백업: 매일 K_DPP_BACKUP_AT 에 백업하고 되살려 검사합니다. 매일 백업의 마지막 성공이
+    # K_DPP_BACKUP_MAX_AGE_MIN(기본 26시간)보다 오래되면 unhealthy 로 보입니다(배포 직전·수동 백업은 세지 않음).
     <<: *backup
     command: ["loop"]
     init: true
