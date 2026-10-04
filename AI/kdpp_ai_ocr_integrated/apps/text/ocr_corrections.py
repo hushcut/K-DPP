@@ -168,10 +168,10 @@ def _physical_row(text: str, words: tuple[OcrWord, ...], *, allow_quantisation: 
 
 
 def _row_options(text: str, words: tuple[OcrWord, ...], *, physical: bool = False,
-                 allow_quantisation: bool = False):
+                 allow_quantisation: bool = False, tokenise=_tokens):
     """Bounded, disjoint word partitions; identical physical rows stay distinct."""
-    row = _tokens(text)
-    sequences = tuple(_tokens(word.text) for word in words)
+    row = tokenise(text)
+    sequences = tuple(tokenise(word.text) for word in words)
     pending = [(0, ())]
     seen = set()
     options = {}
@@ -186,7 +186,8 @@ def _row_options(text: str, words: tuple[OcrWord, ...], *, physical: bool = Fals
         if position == len(row):
             selected = tuple(words[index] for index in chosen)
             if not physical or (all(len(word.vertices) == 4 for word in selected)
-                                and _physical_row(text, selected, allow_quantisation=allow_quantisation)):
+                                and _physical_row(text, selected, allow_quantisation=allow_quantisation,
+                                                  tokenise=tokenise)):
                 options[frozenset(chosen)] = chosen
             continue
         for index, sequence in enumerate(sequences):
@@ -196,12 +197,12 @@ def _row_options(text: str, words: tuple[OcrWord, ...], *, physical: bool = Fals
 
 
 def _locate_rows(infos, words: tuple[OcrWord, ...], *, physical: bool,
-                 allow_quantisation: bool = False):
+                 allow_quantisation: bool = False, tokenise=_tokens):
     if not infos or len(set(words)) != len(words):
         return []
     choices = [_row_options(info.raw, words, physical=bool(
         physical and info.materials and info.numbers and info.explicit_percent
-    ), allow_quantisation=allow_quantisation) for info in infos]
+    ), allow_quantisation=allow_quantisation, tokenise=tokenise) for info in infos]
     if any(not options for options in choices):
         return []
     pending = [(0, frozenset(), ())]
@@ -232,15 +233,16 @@ def _locate_rows(infos, words: tuple[OcrWord, ...], *, physical: bool,
     return [(info, tuple(words[index] for index in choice)) for info, choice in zip(infos, solution)]
 
 
-def _evidence_rows(candidate: OcrCandidate, part: str):
+def _evidence_rows(candidate: OcrCandidate, part: str, *, tokenise=_tokens):
     from apps.text.parse_label import build_line_infos, _is_metadata_line
 
     # Percent proximity can locate a row without locating its surrounding
     # text. A failed layout still needs its complete annotation proof, or the
     # exact same-response raw peer must supply that proof through the narrow
     # fallback below. Never bypass its provenance checks with a clearer row.
-    if (candidate.layout_used and candidate.parser_status != "success"
-            and not _covers_row_tokens(_tokens(candidate.text), list(candidate.image_words))):
+    literal_annotations = tokenise is _annotation_tokens
+    if ((literal_annotations or (candidate.layout_used and candidate.parser_status != "success"))
+            and not _covers_row_tokens(tokenise(candidate.text), list(candidate.image_words), tokenise=tokenise)):
         return []
     all_infos = build_line_infos(candidate.text)
     infos = [info for info in all_infos
@@ -250,10 +252,11 @@ def _evidence_rows(candidate: OcrCandidate, part: str):
     rows = []
     located_words = set()
     for info in infos:
-        words = _row_words(info.raw, candidate.image_words)
+        words = _row_words(info.raw, candidate.image_words, tokenise=tokenise)
         if (not words or located_words.intersection(words)
-                or ((candidate.parser_status == "success" or not candidate.layout_used) and info.materials and info.numbers
-                    and info.explicit_percent and not _physical_row(info.raw, words))):
+                or ((literal_annotations or candidate.parser_status == "success" or not candidate.layout_used)
+                    and info.materials and info.numbers and info.explicit_percent
+                    and not _physical_row(info.raw, words, tokenise=tokenise))):
             break
         located_words.update(words)
         rows.append((info, words))
@@ -261,10 +264,11 @@ def _evidence_rows(candidate: OcrCandidate, part: str):
         return rows
     # A repeated token is resolvable only when all image tokens are preserved
     # and the rows collectively select one complete, non-reused physical union.
-    if not _covers_row_tokens(_tokens(candidate.text), list(candidate.image_words)):
+    if not _covers_row_tokens(tokenise(candidate.text), list(candidate.image_words), tokenise=tokenise):
         return []
     assigned = _locate_rows(all_infos, candidate.image_words,
-                            physical=candidate.parser_status == "success" or not candidate.layout_used)
+                            physical=literal_annotations or candidate.parser_status == "success" or not candidate.layout_used,
+                            tokenise=tokenise)
     relevant = {info.index for info in infos}
     return [(info, words) for info, words in assigned if info.index in relevant]
 
@@ -286,7 +290,7 @@ def _one_digit_gap(left: str, right: str) -> bool:
     return any(longer[:i] + longer[i + 1:] == shorter for i in range(len(longer)))
 
 
-def _aligned_reading(words: tuple[OcrWord, ...], other: tuple[OcrWord, ...]) -> bool:
+def _aligned_reading(words: tuple[OcrWord, ...], other: tuple[OcrWord, ...], *, literal_cjk: bool = False) -> bool:
     for word in words:
         token = normalize_text(word.text).replace(" ", "")
         if token in {":", ".", ",", ";", "/", "|", "(", ")", "[", "]"}:
@@ -300,18 +304,36 @@ def _aligned_reading(words: tuple[OcrWord, ...], other: tuple[OcrWord, ...]) -> 
                    and token.rstrip("%.") == normalize_text(target.text).replace(" ", "").rstrip("%."))
                for target in nearby):
             continue
-        if _matching_token_parts(word, nearby, allow_change=False) == 0:
+        if _matching_token_parts(word, nearby, allow_change=False, literal_cjk=literal_cjk) == 0:
             continue
         return False
     return True
 
 
 def _matching_token_parts(word: OcrWord, nearby: list[OcrWord], *, allow_change: bool,
-                          corroborated: bool = False, numeric_artifact: bool = False) -> int | None:
+                          corroborated: bool = False, numeric_artifact: bool = False,
+                          literal_cjk: bool = False) -> int | None:
     """Compare joined/split word annotations without losing any component."""
-    remaining = [token for target in nearby for token in _tokens(target.text)]
+    tokenise = _annotation_tokens if literal_cjk else _tokens
+    if literal_cjk:
+        points = word.vertices or ((word.left, word.top), (word.right, word.top))
+        dx, dy = points[1][0] - points[0][0], points[1][1] - points[0][1]
+        nearby = sorted(nearby, key=lambda target: dx * target.center_x + dy * target.center_y)
+    remaining = [token for target in nearby for token in tokenise(target.text)]
     changes = 0
     for token in _tokens(word.text):
+        if literal_cjk and _has_cjk(token):
+            # Match the complete literal sequence, never individual material
+            # aliases. A joined target can cover several source boxes; the
+            # disjoint character-slot proof below prevents sharing a fragment.
+            sequence = _annotation_tokens(token)
+            positions = [index for index in range(len(remaining) - len(sequence) + 1)
+                         if tuple(remaining[index:index + len(sequence)]) == sequence]
+            if not positions:
+                return None
+            index = positions[0]
+            del remaining[index:index + len(sequence)]
+            continue
         if token in {":", ",", ";", "/", "|", "(", ")", "[", "]"}:
             continue
         if token in remaining:
@@ -391,20 +413,20 @@ def _numeric_components_align(source: tuple[OcrWord, ...], target: tuple[OcrWord
     return False
 
 
-def _context_words(alternative: OcrCandidate, core: tuple[OcrWord, ...]) -> tuple[OcrWord, ...]:
+def _context_words(alternative: OcrCandidate, core: tuple[OcrWord, ...], *, tokenise=_tokens) -> tuple[OcrWord, ...]:
     """Preserve complete, non-composition text in a geometrically valid reread."""
     from apps.text.ocr_candidates import _has_explicit_complete_pairs
     from apps.text.parse_label import build_line_infos, _is_metadata_line
 
     if not _has_explicit_complete_pairs(alternative):
         return ()
-    if not _covers_row_tokens(_tokens(alternative.text), list(alternative.image_words)):
+    if not _covers_row_tokens(tokenise(alternative.text), list(alternative.image_words), tokenise=tokenise):
         return ()
     context = [info.raw for info in build_line_infos(alternative.text) if _is_metadata_line(info)
                or not (info.materials or info.numbers or info.explicit_percent
                        or info.invalid_evidence or info.unresolved_materials)]
     remaining = tuple(word for word in alternative.image_words if word not in core)
-    if not _covers_row_tokens(_tokens("\n".join(context)), list(remaining)):
+    if not _covers_row_tokens(tokenise("\n".join(context)), list(remaining), tokenise=tokenise):
         return ()
     return remaining
 
@@ -414,6 +436,44 @@ def _annotation_tokens(text: str) -> tuple[str, ...]:
     # character. ASCII names, numbers and punctuation remain whole tokens.
     return tuple(value for token in _tokens(text)
                  for value in (tuple(token) if token.isalpha() and not token.isascii() else (token,)))
+
+
+def _has_cjk(text: str) -> bool:
+    return bool(re.search(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7a3]", text))
+
+
+def _cjk_components_align(source: tuple[OcrWord, ...], target: tuple[OcrWord, ...]) -> bool:
+    """Each literal CJK character needs a distinct, overlapping target slot."""
+    slots = [(word, token) for word in target for token in _annotation_tokens(word.text) if _has_cjk(token)]
+    choices = []
+    for word in source:
+        for token in _annotation_tokens(word.text):
+            if not _has_cjk(token):
+                continue
+            options = [index for index, (other, value) in enumerate(slots)
+                       if token == value and _overlaps(word, other)]
+            if not options:
+                return False
+            choices.append(options)
+    if len(choices) > len(slots):
+        return False
+    choices.sort(key=len)
+    pending = [(0, frozenset())]
+    seen = set()
+    while pending:
+        position, used = pending.pop()
+        state = (position, used)
+        if state in seen:
+            continue
+        if len(seen) >= _MAX_ROW_COVERAGE_STATES:
+            return False
+        seen.add(state)
+        if position == len(choices):
+            return True
+        for index in choices[position]:
+            if index not in used:
+                pending.append((position + 1, used | {index}))
+    return False
 
 
 def _has_unclassified_context(candidate: OcrCandidate) -> bool:
@@ -824,9 +884,32 @@ def same_region_recovery(
         return False
     rows = _evidence_rows(candidate, part)
     target_rows = _evidence_rows(alternative, target_part)
+    literal_cjk = False
+    tokenise = _tokens
+    if (any(_has_cjk(token) and find_material_key(token)
+            for token in _tokens(candidate.text) + _tokens(alternative.text))
+            and (not rows or not target_rows
+                 or not _covers_row_tokens(_tokens(candidate.text), list(candidate.image_words))
+                 or not _covers_row_tokens(_tokens(alternative.text), list(alternative.image_words)))):
+        # Only the coordinate proof may split CJK names. Both complete OCR
+        # texts must partition all annotations, including context and unknown
+        # characters outside the selected composition rows. The failed read
+        # and its correction must still be two actual OCR inputs.
+        if (not candidate.image_variant_key or not alternative.image_variant_key
+                or candidate.image_variant_key == alternative.image_variant_key
+                or candidate.source == alternative.source):
+            return False
+        literal_cjk = True
+        tokenise = _annotation_tokens
+        rows = _evidence_rows(candidate, part, tokenise=tokenise)
+        target_rows = _evidence_rows(alternative, target_part, tokenise=tokenise)
     if not rows:
         return _same_response_source_recovery(candidate, alternative, part, candidates or [])
     if not target_rows:
+        return False
+    if literal_cjk and any(info.invalid_evidence or info.unresolved_materials for info, _words in target_rows):
+        # A complete character partition cannot turn an unpriced/negated
+        # material caption into valid context merely because it has no ratio.
         return False
     # Equal digit/dot tokens can still mean .5 in the source and 5 after an
     # inferred row join. Ordinary recovery must preserve fractional values;
@@ -850,12 +933,12 @@ def same_region_recovery(
     left, top, right, bottom = alternative.image_region
     source_words = tuple(dict.fromkeys(word for _info, words in rows for word in words))
     target_words = tuple(dict.fromkeys(word for _info, words in target_rows for word in words))
-    context_words = _context_words(alternative, target_words)
+    context_words = _context_words(alternative, target_words, tokenise=tokenise)
     if candidate.layout_used and candidate.parser_status != "success" and context_words:
         # A bad horizontal layout can spread one physical composition row
         # over both composition and context lines. Prove all words instead of
         # choosing which repeated percentage belongs to its broken row.
-        if not _covers_row_tokens(_tokens(candidate.text), list(candidate.image_words)):
+        if not _covers_row_tokens(tokenise(candidate.text), list(candidate.image_words), tokenise=tokenise):
             return False
         source_words = candidate.image_words
     supporters = []
@@ -864,15 +947,20 @@ def same_region_recovery(
                 or item.parser_status != "success"
                 or item.parts.get(target_part) != alternative.parts[target_part]):
             continue
-        other_rows = _evidence_rows(item, target_part)
+        other_rows = _evidence_rows(item, target_part, tokenise=tokenise)
         other_words = tuple(dict.fromkeys(word for _info, words in other_rows for word in words))
-        if other_words and _aligned_reading(target_words, other_words) and _aligned_reading(other_words, target_words):
+        if (other_words and _aligned_reading(target_words, other_words, literal_cjk=literal_cjk)
+                and _aligned_reading(other_words, target_words, literal_cjk=literal_cjk)
+                and (not literal_cjk or (_cjk_components_align(target_words, other_words)
+                                        and _cjk_components_align(other_words, target_words)))):
             supporters.append(item)
     # Raw and layout text from one response are one input, not two confirmations.
     corroborated = (len({item.image_variant_key for item in supporters}) >= 2
                     and len({item.source for item in supporters}) >= 2)
     if not _numeric_components_align(source_words, target_words, context_words,
                                      corroborated=corroborated):
+        return False
+    if literal_cjk and not _cjk_components_align(source_words, target_words + context_words):
         return False
     if any(not (left - 2 <= word.left and word.right <= right + 2
                 and top - 2 <= word.top and word.bottom <= bottom + 2) for word in source_words):
@@ -891,7 +979,7 @@ def same_region_recovery(
         # they cannot supply a material name or a changed percentage.
         if context_words and not re.search(r"\d|%", token) and not find_material_key(token):
             context_nearby = [target for target in context_words if _overlaps(word, target)]
-            if _matching_token_parts(word, context_nearby, allow_change=False) == 0:
+            if _matching_token_parts(word, context_nearby, allow_change=False, literal_cjk=literal_cjk) == 0:
                 continue
         nearby = [target for target in target_words if _overlaps(word, target)]
         if not nearby:
@@ -899,12 +987,17 @@ def same_region_recovery(
         if any(token == normalize_text(target.text).replace(" ", "") for target in nearby):
             continue
         matched = _matching_token_parts(word, nearby, allow_change=True,
-                                        corroborated=corroborated, numeric_artifact=numeric_artifact)
+                                        corroborated=corroborated, numeric_artifact=numeric_artifact,
+                                        literal_cjk=literal_cjk)
         if matched is not None:
             numeric_changes += matched
             if numeric_changes > 1:
                 return False
             continue
+        if literal_cjk and _has_cjk(word.text):
+            # A permissive alias lookup must not erase an unmatched sign or
+            # character after the complete literal CJK comparison failed.
+            return False
         # A material alias lookup may strip a trailing dot. That cannot erase
         # a decimal/separator component that the complete-token match rejected.
         if "." in _tokens(word.text):
