@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, StringConstraints
+import ipaddress
 import json
 import math
 import os
@@ -470,7 +471,8 @@ DUMMY_PASSWORD_HASH = hash_password("k-dpp-timing-guard")
 EMAIL_PATTERN = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 # 로그인 무차별 대입 방어: 같은 이메일로 연속 실패하면 잠시 잠급니다.
-# (프로세스 메모리 기준 — 단일 서버 개발 환경에는 충분합니다)
+# 실패 기록(아래 IP 기준도)은 프로세스 메모리에 둡니다 — 서버 1대·uvicorn 워커 1개 전제
+# (DECISIONS 139). 재시작하면 지워지고, 워커를 늘리면 한도가 워커 수만큼 늘어납니다.
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_LOCKOUT_SECONDS = 60
 # 저횟수(1~4회) 실패 기록이 영구히 남으면 임의 이메일 반복 전송으로 메모리를
@@ -503,22 +505,24 @@ def check_login_lockout(email: str) -> None:
     )
 
 
-def _prune_login_failures_locked() -> None:
-    """오래된 실패 기록과 상한 초과분을 제거한다. 반드시 잠금 안에서 호출."""
-    cutoff = utc_now() - timedelta(seconds=LOGIN_FAILURE_TTL_SECONDS)
-    for key in [k for k, (_, last) in _login_failures.items() if last < cutoff]:
-        del _login_failures[key]
+def _prune_failure_records_locked(
+    records: dict[str, tuple[int, datetime]], ttl_seconds: int
+) -> None:
+    """오래된 기록과 상한 초과분을 제거한다. 반드시 잠금 안에서 호출."""
+    cutoff = utc_now() - timedelta(seconds=ttl_seconds)
+    for key in [k for k, (_, at) in records.items() if at < cutoff]:
+        del records[key]
 
-    overflow = len(_login_failures) - LOGIN_FAILURES_MAX_ENTRIES
+    overflow = len(records) - LOGIN_FAILURES_MAX_ENTRIES
     if overflow > 0:
-        oldest = sorted(_login_failures.items(), key=lambda kv: kv[1][1])[:overflow]
+        oldest = sorted(records.items(), key=lambda kv: kv[1][1])[:overflow]
         for key, _ in oldest:
-            del _login_failures[key]
+            del records[key]
 
 
 def record_login_failure(email: str) -> None:
     with _login_failures_lock:
-        _prune_login_failures_locked()
+        _prune_failure_records_locked(_login_failures, LOGIN_FAILURE_TTL_SECONDS)
         count, _ = _login_failures.get(email, (0, utc_now()))
         _login_failures[email] = (count + 1, utc_now())
 
@@ -526,6 +530,72 @@ def record_login_failure(email: str) -> None:
 def clear_login_failures(email: str) -> None:
     with _login_failures_lock:
         _login_failures.pop(email, None)
+
+
+# 두 번째 기준: 같은 IP 에서 이메일을 돌려 가며 찌르면 이메일별 잠금에 안 걸리고, 실패
+# 한 번마다 해시(60만 회) 비용이 듭니다. 학교 와이파이처럼 여러 사람이 한 IP 를 쓰는
+# 경우를 생각해 한도는 넉넉히 두고 성공한 로그인은 세지 않습니다. 해시 전에 한 번을 미리
+# 세고 성공하면 되돌리므로, 동시에 몰아친 요청도 한도만큼만 해시까지 갑니다.
+LOGIN_IP_MAX_FAILURES = 30
+LOGIN_IP_WINDOW_SECONDS = 15 * 60
+# IP(키) → (이번 창의 실패 수, 창 시작 시각)
+_login_ip_failures: dict[str, tuple[int, datetime]] = {}
+
+
+def login_ip_key(host: str | None) -> str | None:
+    """IP 기준의 키. IPv6 는 /64 대역으로 묶는다 — 한 가입자가 대역 안 주소를 마음대로
+    바꿀 수 있어서. 공인 주소가 아니면 None(IP 기준을 건너뜀)."""
+    if not host:
+        return None
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return host
+    if address.version == 6 and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    if not address.is_global:
+        # 사설·루프백 주소는 실제 사용자 주소가 아니다(개발 서버, 또는 Docker·프록시가 접속
+        # 주소를 가려 모두가 게이트웨이 주소로 보이는 경우). 모두를 한 칸에 묶어 함께 막느니
+        # IP 기준을 건너뛰고 이메일 기준만 둔다.
+        return None
+    if address.version == 6:
+        return str(ipaddress.ip_network(f"{address}/64", strict=False))
+    return str(address)
+
+
+def reserve_login_attempt_for_ip(ip_key: str | None) -> None:
+    """이 IP 의 실패가 한도에 닿았으면 429, 아니면 실패 한 번을 미리 센다."""
+    if ip_key is None:
+        return
+    now = utc_now()
+    with _login_failures_lock:
+        _prune_failure_records_locked(_login_ip_failures, LOGIN_IP_WINDOW_SECONDS)
+        count, window_start = _login_ip_failures.get(ip_key, (0, now))
+        if count < LOGIN_IP_MAX_FAILURES:
+            _login_ip_failures[ip_key] = (count + 1, window_start)
+            return
+        wait = window_start + timedelta(seconds=LOGIN_IP_WINDOW_SECONDS) - now
+
+    wait_minutes = max(1, math.ceil(wait.total_seconds() / 60))
+    raise HTTPException(
+        status_code=429,
+        detail=f"로그인 시도가 너무 많습니다. {wait_minutes}분 후 다시 시도해 주세요.",
+    )
+
+
+def release_login_attempt_for_ip(ip_key: str | None) -> None:
+    """로그인에 성공하면 미리 센 한 번을 되돌린다."""
+    if ip_key is None:
+        return
+    with _login_failures_lock:
+        record = _login_ip_failures.get(ip_key)
+        if record is None:
+            return
+        count, window_start = record
+        if count <= 1:
+            del _login_ip_failures[ip_key]
+        else:
+            _login_ip_failures[ip_key] = (count - 1, window_start)
 
 
 def auth_user_response(user: database.User) -> dict:
@@ -1040,9 +1110,13 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)):
 
 
 @app.post("/auth/login", tags=["auth"])
-def login(request: LoginRequest, db: Session = Depends(get_db)):
+def login(request: LoginRequest, http_request: Request, db: Session = Depends(get_db)):
     email = normalize_email(request.email)
     check_login_lockout(email)
+    # 배포에서는 Caddy 가 X-Forwarded-For 를 실제 접속 주소로 채우고 uvicorn
+    # --proxy-headers 가 그 값을 client 로 넘깁니다(앱 포트는 밖에 열려 있지 않음).
+    ip_key = login_ip_key(http_request.client.host if http_request.client else None)
+    reserve_login_attempt_for_ip(ip_key)
 
     user = db.query(database.User).filter(database.User.email == email).first()
 
@@ -1058,6 +1132,7 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다.")
 
     clear_login_failures(email)
+    release_login_attempt_for_ip(ip_key)
 
     if password_needs_rehash(user.password_hash):
         # 반복 수를 올리기 전에 만든 해시는 원문을 아는 지금 새로 저장합니다(토큰 발급과

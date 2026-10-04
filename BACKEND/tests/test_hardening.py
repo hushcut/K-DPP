@@ -2,6 +2,7 @@
 
 import hashlib
 import threading
+import time
 from datetime import timedelta
 
 from fastapi.testclient import TestClient
@@ -613,3 +614,101 @@ def test_cors_stays_outside_the_body_size_limit():
     # 바깥층이어야 413 응답에도 CORS 헤더가 붙는다(user_middleware 는 바깥층부터).
     classes = [m.cls for m in main.app.user_middleware]
     assert classes.index(CORSMiddleware) < classes.index(main.BodySizeLimitMiddleware)
+
+
+# --- 로그인 IP 기준 (2026-10-04 보안 손질, DECISIONS 139) -------------------------
+
+
+def _count_hashes(monkeypatch, delay=0.0):
+    calls = []
+    original_verify = main.verify_password
+
+    def counting_verify(password, stored_hash):
+        calls.append(1)
+        if delay:
+            time.sleep(delay)
+        return original_verify(password, stored_hash)
+
+    monkeypatch.setattr(main, "verify_password", counting_verify)
+    return calls
+
+
+def _try_login(client, email, password="wrong-password"):
+    return client.post("/auth/login", json={"email": email, "password": password})
+
+
+def test_login_ip_limit_blocks_rotating_emails(client, monkeypatch):
+    monkeypatch.setattr(main, "LOGIN_IP_MAX_FAILURES", 3)
+    hashes = _count_hashes(monkeypatch)
+    _signup(client, "ip-victim@example.com")
+
+    for i in range(3):
+        assert _try_login(client, f"ip-spray-{i}@example.com").status_code == 401
+
+    # 처음 보는 이메일이라 이메일 잠금엔 안 걸리지만 IP 한도에 걸리고, 해시까지 가지 않습니다.
+    blocked = _try_login(client, "ip-spray-9@example.com")
+    assert blocked.status_code == 429
+    assert blocked.json()["error_code"] == "TOO_MANY_ATTEMPTS"
+    assert "15분 후" in blocked.json()["message"]
+    # 같은 IP 면 맞는 비밀번호여도 창이 끝날 때까지 막힙니다.
+    assert _try_login(client, "ip-victim@example.com", "password123").status_code == 429
+    assert len(hashes) == 3
+
+
+def test_successful_logins_do_not_count_toward_ip_limit(client, monkeypatch):
+    monkeypatch.setattr(main, "LOGIN_IP_MAX_FAILURES", 2)
+    email = "ip-ok@example.com"
+    _signup(client, email)
+
+    for _ in range(4):
+        assert _try_login(client, email, "password123").status_code == 200
+    assert _try_login(client, email).status_code == 401
+    # 실패는 1번뿐이라 아직 한도(2) 아래입니다.
+    assert _try_login(client, email, "password123").status_code == 200
+
+
+def test_concurrent_login_burst_hashes_only_up_to_the_ip_limit(client, monkeypatch):
+    # 실패를 해시가 끝난 뒤에 세면, 동시에 몰아친 요청이 모두 검사를 통과해 해시까지 갑니다.
+    monkeypatch.setattr(main, "LOGIN_IP_MAX_FAILURES", 3)
+    hashes = _count_hashes(monkeypatch, delay=0.3)
+    statuses = []
+
+    def attempt(i):
+        statuses.append(_try_login(client, f"burst-{i}@example.com").status_code)
+
+    threads = [threading.Thread(target=attempt, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert sorted(statuses) == [401] * 3 + [429] * 5
+    assert len(hashes) == 3
+
+
+def test_login_ip_failure_window_expires(client):
+    stale = database.utc_now() - timedelta(seconds=main.LOGIN_IP_WINDOW_SECONDS + 1)
+    with main._login_failures_lock:
+        main._login_ip_failures["testclient"] = (main.LOGIN_IP_MAX_FAILURES, stale)
+
+    assert _try_login(client, "after-window@example.com").status_code == 401
+    with main._login_failures_lock:
+        assert main._login_ip_failures["testclient"][0] == 1
+
+
+def test_login_ip_key_groups_ipv6_by_64_prefix():
+    assert main.login_ip_key("8.8.8.8") == "8.8.8.8"
+    assert main.login_ip_key("::ffff:8.8.8.8") == "8.8.8.8"
+    same_64 = main.login_ip_key("2001:4860:1:2:aaaa::1")
+    assert same_64 == "2001:4860:1:2::/64"
+    assert main.login_ip_key("2001:4860:1:2:bbbb:cccc:dddd:2") == same_64
+    assert main.login_ip_key("2001:4860:1:3::1") != same_64
+    assert main.login_ip_key("testclient") == "testclient"
+    assert main.login_ip_key(None) is None
+
+
+def test_login_ip_key_skips_non_public_addresses():
+    # Docker·프록시가 접속 주소를 가리면 모두가 게이트웨이 주소(리허설에서 172.19.0.1)로
+    # 보입니다. 그 주소 하나로 모두를 함께 막지 않도록 IP 기준을 건너뜁니다.
+    for host in ("172.19.0.1", "127.0.0.1", "10.0.0.5", "192.168.0.10", "::1", "fd00::1"):
+        assert main.login_ip_key(host) is None, host
