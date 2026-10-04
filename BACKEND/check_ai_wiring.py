@@ -1,8 +1,12 @@
-"""BACKEND가 AI 모듈과 실제로 결합되는지 확인합니다 (CI 백엔드 잡에서 실행).
+"""BACKEND가 AI 모듈과 실제로 결합되는지 확인합니다 (CI 백엔드 잡·배포 이미지 빌드에서 실행).
 
 main.py는 AI 모듈 import 실패를 try/except로 삼켜 run_ocr / parse_label을 None으로 둡니다.
 그러면 실사진 스캔이 전부 503(AI_MODULE_FAILED)이 되는데, pytest는 raw_ocr_text를 보내거나
 스텁을 쓰기 때문에 이 경로에 들어가지 않아 결합이 끊겨도 전건 초록입니다. 그 사각지대를 메웁니다.
+
+google-cloud-vision은 run_ocr가 스캔할 때에야 불러옵니다. 그때 import가 실패하면 main.py가
+키가 없을 때와 같은 502(OCR_FAILED)로 삼키므로, 서버에서 설치가 깨져도 평소처럼 보입니다.
+그래서 여기서 미리 불러 봅니다(키는 필요 없습니다).
 
 BACKEND/requirements.txt만 설치된 상태(배포 런타임과 같은 조건)에서 돌려야 의미가 있습니다.
 """
@@ -30,13 +34,22 @@ def main() -> int:
                 "조용히 비활성화됩니다(스캔당 Vision 호출이 2회에서 1회로 줄어 인식률이 달라짐)"
             )
 
+    try:
+        # protobuf·grpcio 버전이 맞지 않으면 ImportError가 아닌 TypeError 등으로 실패합니다.
+        from google.cloud import vision  # noqa: F401, PLC0415
+    except Exception as exc:  # noqa: BLE001
+        problems.append(
+            f"google-cloud-vision import 실패({exc!r}) - 스캔마다 run_ocr가 실패하고, "
+            "main.py가 키 없음과 같은 502로 삼켜 겉으로는 구분되지 않습니다"
+        )
+
     for problem in problems:
         print(f"[FAIL] {problem}", file=sys.stderr)
     if problems:
         print("BACKEND/requirements.txt를 확인하세요.", file=sys.stderr)
         return 1
 
-    print("AI 모듈 결합 OK (run_ocr / parse_label / Pillow)")
+    print("AI 모듈 결합 OK (run_ocr / parse_label / Pillow / google-cloud-vision)")
     return 0
 
 
