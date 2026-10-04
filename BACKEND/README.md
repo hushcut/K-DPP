@@ -171,6 +171,7 @@ copy .env.example .env
 
 현재 코드는 `.env` 파일 없이도 실행됩니다. 이때 DB 는 로컬 PostgreSQL(`compose.yaml`) `postgresql+psycopg://kdpp:kdpp@127.0.0.1:5432/k_dpp` 입니다.
 `BACKEND/.env`의 `K_DPP_DATABASE_URL` 또는 운영체제 환경변수로 다른 PostgreSQL을 가리킬 수 있습니다(SQLite는 더 지원하지 않습니다).
+브라우저(Flutter 웹 등)에서 API를 부를 때만 `K_DPP_CORS_ORIGINS`에 출처를 쉼표로 적습니다(예: `flutter run -d chrome --web-port 5000` 이면 `http://localhost:5000`). 비워 두면 어떤 출처도 허용하지 않습니다 — 모바일 앱은 CORS와 무관합니다.
 
 ## Git에 올리지 않는 파일
 

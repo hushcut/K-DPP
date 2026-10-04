@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, StringConstraints
 import json
 import math
+import os
 import re
 import shutil
 import sys
@@ -255,15 +256,27 @@ class BodySizeLimitMiddleware:
         await send({"type": "http.response.body", "body": body})
 
 
+def parse_cors_origins(value: str | None) -> list[str]:
+    """K_DPP_CORS_ORIGINS(쉼표 구분)를 허용 출처 목록으로 바꾼다. 비어 있으면 []."""
+    if not value:
+        return []
+    return [origin.strip().rstrip("/") for origin in value.split(",") if origin.strip()]
+
+
+# 앱(iOS·Android)은 CORS 와 무관하고 브라우저에서 부르는 클라이언트가 없어, 기본은 어떤
+# 출처도 허용하지 않습니다. Flutter 웹 등 브라우저로 확인할 때만 K_DPP_CORS_ORIGINS 에
+# 출처를 적습니다(예: http://localhost:5000). 인증은 Bearer 토큰이라 쿠키는 쓰지 않습니다.
+CORS_ALLOWED_ORIGINS = parse_cors_origins(os.getenv("K_DPP_CORS_ORIGINS"))
+
 # CORS를 나중에 추가해야 바깥층이 되어 413 응답에도 CORS 헤더가 붙습니다.
 app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 

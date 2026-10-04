@@ -23,6 +23,8 @@ if not (make_url(TEST_DATABASE_URL).database or "").endswith("_test"):
         returncode=4,
     )
 os.environ["K_DPP_DATABASE_URL"] = TEST_DATABASE_URL
+# CORS 는 기본값(허용 출처 없음)으로 시험합니다. BACKEND/.env 는 이미 있는 값을 덮지 않습니다.
+os.environ["K_DPP_CORS_ORIGINS"] = ""
 
 import database  # noqa: E402
 

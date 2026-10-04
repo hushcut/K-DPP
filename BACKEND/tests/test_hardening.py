@@ -4,6 +4,9 @@ import hashlib
 import threading
 from datetime import timedelta
 
+from fastapi.testclient import TestClient
+from starlette.middleware.cors import CORSMiddleware
+
 import database
 import main
 
@@ -545,3 +548,68 @@ def test_rehash_does_not_undo_a_concurrent_password_change(client, monkeypatch):
 
     assert response.status_code == 200
     assert _stored_hash(email) == changed
+
+
+# --- CORS (2026-10-04 보안 손질, DECISIONS 139) ---------------------------------
+
+
+def _cors_middleware():
+    return next(m for m in main.app.user_middleware if m.cls is CORSMiddleware)
+
+
+def test_parse_cors_origins():
+    assert main.parse_cors_origins(None) == []
+    assert main.parse_cors_origins("") == []
+    assert main.parse_cors_origins(" http://localhost:5000/ , ,https://a.example") == [
+        "http://localhost:5000",
+        "https://a.example",
+    ]
+
+
+def test_cors_allows_no_origin_by_default(client):
+    simple = client.get("/", headers={"Origin": "https://evil.example"})
+    assert simple.status_code == 200
+    assert "access-control-allow-origin" not in simple.headers
+
+    preflight = client.options(
+        "/auth/login",
+        headers={
+            "Origin": "https://evil.example",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert preflight.status_code == 400
+    assert "access-control-allow-origin" not in preflight.headers
+
+
+def test_cors_configured_origin_can_call_the_api():
+    # 미들웨어는 import 때 정해지므로, main 의 CORS 설정에 출처만 넣은 같은 미들웨어로 감싸
+    # 허용 메서드·헤더가 실제 요청(Bearer 토큰·JSON POST)에 충분한지 본다.
+    allowed = "http://localhost:5000"
+    cors = _cors_middleware()
+    browser = TestClient(
+        CORSMiddleware(main.app, **{**cors.kwargs, "allow_origins": [allowed]})
+    )
+
+    preflight = browser.options(
+        "/auth/login",
+        headers={
+            "Origin": allowed,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == allowed
+
+    simple = browser.get("/", headers={"Origin": allowed})
+    assert simple.headers["access-control-allow-origin"] == allowed
+
+    other = browser.get("/", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in other.headers
+
+
+def test_cors_stays_outside_the_body_size_limit():
+    # 바깥층이어야 413 응답에도 CORS 헤더가 붙는다(user_middleware 는 바깥층부터).
+    classes = [m.cls for m in main.app.user_middleware]
+    assert classes.index(CORSMiddleware) < classes.index(main.BodySizeLimitMiddleware)

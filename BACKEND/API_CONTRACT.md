@@ -417,3 +417,6 @@ Authorization: Bearer <token>
   `main.PASSWORD_HASH_ITERATIONS`). 저장 형식 `pbkdf2_sha256$<반복>$<salt>$<digest>`
   는 그대로라 옛 해시도 검증되고, **로그인에 성공하면 지금 반복 수로 다시 저장**
   (같은 순간 비밀번호 변경이 먼저 커밋됐으면 덮지 않음). 요청·응답 형식은 같음.
+- **CORS 기본값을 '허용 출처 없음'으로**(이전 `*`). 브라우저에서 부를 때만 환경변수
+  `K_DPP_CORS_ORIGINS`(쉼표 구분)에 출처를 적는다. 허용 메서드 GET·POST, 허용 헤더
+  Authorization·Content-Type. 모바일 앱은 CORS 와 무관해 바뀌는 것이 없다.
