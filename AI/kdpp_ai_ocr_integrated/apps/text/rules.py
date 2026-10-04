@@ -9,6 +9,7 @@ sentences.
 MATERIAL_ALIASES = {
     "cotton": [
         "cotton",
+        "mercerized cotton",
         "pimacotton",
         "coton",
         "baumwolle",
@@ -137,10 +138,13 @@ MATERIAL_ALIASES = {
     ],
     "spandex": [
         "spandex",
+        "span",
         "elastane",
         "elastan",
         "elasthan",
         "elastano",
+        "élasthanne",
+        "elasthanne",
         "lycra",
         "스판덱스",
         "스판",
@@ -155,6 +159,7 @@ MATERIAL_ALIASES = {
         "彈性纖維",
         "ポリウレタン弾性繊維",
         "スパンデックス",
+        "エラスタン",
     ],
     "linen": [
         "linen",

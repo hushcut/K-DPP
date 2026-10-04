@@ -1,4 +1,5 @@
 import re
+from collections import Counter
 from dataclasses import replace, dataclass
 from decimal import Decimal, InvalidOperation
 
@@ -35,6 +36,7 @@ from apps.text.rules import (
 PART_PRIORITY = [
     "outer",
     "generic",
+    "outer_2",
     "lining",
     "filling",
     "pocket",
@@ -167,6 +169,66 @@ def _looks_like_non_composition_number(line: str) -> bool:
     if re.search(r"\d+(?:\.\d+)?\s*(?:cm|mm|kg|g|호|년|월|일)\b", line):
         return True
     return False
+
+
+_NUMERIC_IDENTIFIER_ROW_PATTERN = re.compile(r"\(?\s*[0-9]+(?:\s*-\s*[0-9]+){1,3}\s*\)?")
+_WASH_SYMBOL_OCR_PATTERN = re.compile(r"1(?:30|40|50|60|70|95)\s*[/\\]")
+_PAREN_WASH_SYMBOL_OCR_PATTERN = re.compile(r"\(\s*(?:30|40|50|60|70|95)0\s*\)?")
+_NUMBERED_OUTER_MARKER_PATTERN = re.compile(
+    r"(?<![a-z0-9])(?:outshell|cutshell|shell|outer|겉\s*감)\s*[12](?![a-z0-9.,]|\s*%)"
+)
+_STORAGE_DOWN_PATTERN = re.compile(r"(?<![a-z])(?:fold|ford)\s+down(?![a-z])")
+
+
+def _has_complete_preceding_composition(infos: list[LineInfo]) -> bool:
+    if not infos or infos[-1].is_metadata or infos[-1].invalid_evidence:
+        return False
+    return any(
+        candidate.part == infos[-1].part and candidate.explicit_percent
+        and candidate.row_indices and candidate.row_indices[-1] == infos[-1].index
+        and has_exact_total(candidate.materials.values())
+        for candidate in _collect_candidates(infos[-12:])
+    )
+
+
+def _is_non_composition_numeric_row(
+    line: str, previous: LineInfo | None, following: str,
+    *, preceding_infos: list[LineInfo] | None = None,
+) -> bool:
+    """Recognize whole identifier rows and a narrow wash-symbol OCR shape."""
+
+    if _NUMERIC_IDENTIFIER_ROW_PATTERN.fullmatch(line):
+        groups = re.findall(r"[0-9]+", line)
+        # Long hyphenated product/contact numbers cannot be percentage ranges.
+        return sum(map(len, groups)) >= 7 and max(map(len, groups)) >= 4
+    # A tub outline can turn 30 degrees into '(300'. Keep explicit ratios,
+    # incomplete blocks and plain out-of-range numbers under normal validation.
+    if _PAREN_WASH_SYMBOL_OCR_PATTERN.fullmatch(line):
+        return _has_complete_preceding_composition(preceding_infos or [])
+    if line in {"30", "40", "50", "60", "70", "95"} and (
+        previous is not None
+        and not previous.is_standalone_marker
+        and not any(hint in previous.normalized for hint in COMPOSITION_HINTS)
+        and _mentions_care(following)
+        and not extract_materials(following)
+        and "%" not in following
+        and not any(hint in following for hint in COMPOSITION_HINTS)
+    ):
+        # Vision often puts the wash-tub temperature directly before HAND WASH.
+        # Do not use that number to complete a partial fiber composition.
+        return True
+    # A tub outline can become a leading 1 and trailing slash around its
+    # temperature. Require an explicit fiber row immediately before it;
+    # a composition/part heading or a percent sign must never be discarded.
+    return bool(
+        _WASH_SYMBOL_OCR_PATTERN.fullmatch(line)
+        and previous is not None
+        and not previous.is_metadata
+        and not previous.invalid_evidence
+        and previous.explicit_percent
+        and previous.materials
+        and len(previous.materials) == len(previous.numbers)
+    )
 
 
 def _is_metadata_line(info: LineInfo) -> bool:
@@ -312,19 +374,79 @@ def _apply_trailing_part_markers(infos: list[LineInfo]) -> list[LineInfo]:
     return adjusted
 
 
+_WRAPPED_ALIAS_PATTERN = re.compile(r"([^\W\d_]+)[ \t]*\n[ \t]*([^\W\d_]+)")
+_LANGUAGE_RATIO_PREFIX_PATTERN = re.compile(
+    r"(?<![\w])(?:en|uk|us|fr|de|es|es-mx|cat|pt|it|jp|cn|nl|cz|dk|fi|no|pl|"
+    r"sk|se|si|hr|lt|lv|ee|kr|ru|tr|el)\s*:\s*(?=[0-9]+(?:[.,][0-9]+)?\s*%)"
+)
+
+
+def _prepare_multilingual_rows(text: str) -> str:
+    """Restore exact wrapped aliases and separate explicit language blocks."""
+
+    def restore_alias(match: re.Match[str]) -> str:
+        joined = match.group(1) + match.group(2)
+        # A complete table entry is required; partial or fuzzy words stay put.
+        return (
+            joined if match.group(1) not in ALIAS_TO_MATERIAL
+            and joined in ALIAS_TO_MATERIAL else match.group()
+        )
+
+    for _ in range(3):
+        restored = _WRAPPED_ALIAS_PATTERN.sub(restore_alias, text)
+        if restored == text:
+            break
+        text = restored
+    # Restore only complete registered multiword names, across OCR row breaks.
+    for alias in ALIAS_TO_MATERIAL:
+        if " " not in alias:
+            continue
+        pattern = r"(?<!\w)" + r"[ \t\n]+".join(map(re.escape, alias.split())) + r"(?!\w)"
+        text = re.sub(pattern, lambda match, alias=alias: alias if "\n" in match.group() else match.group(), text)
+    # Keep the printed percent sign, attaching only its standalone OCR row.
+    text = re.sub(r"(?m)^(.*[0-9])[ \t]*\n[ \t]*%[ \t]*$", r"\1%", text)
+    # Each language's percentages remain independent; conflicting copies
+    # must still produce conflicting candidates rather than being deduplicated.
+    return _LANGUAGE_RATIO_PREFIX_PATTERN.sub("\n", text)
+
+
 def build_line_infos(text: str) -> list[LineInfo]:
     infos: list[LineInfo] = []
     current_part = "generic"
     pending_metadata_kind = None
-    prepared = _split_part_markers(normalize_text(text))
+    original_prepared = _split_part_markers(normalize_text(text))
+    prepared = _split_part_markers(_prepare_multilingual_rows(original_prepared))
+    original_rows = Counter(normalize_text(original_prepared).splitlines())
+    prepared_rows = Counter(normalize_text(prepared).splitlines())
+    restored_rows = {row for row, count in prepared_rows.items() if count > original_rows[row]}
     raw_lines = prepared.split("\n")
     content_indices = [i for i, raw in enumerate(raw_lines) if normalize_text(raw)]
     last_content_index = content_indices[-1] if content_indices else -1
+    following_lines = {
+        current: normalize_text(raw_lines[following])
+        for current, following in zip(content_indices, content_indices[1:])
+    }
+    for position, index in enumerate(content_indices[:-1]):
+        if following_lines[index] != "neutral":
+            continue
+        # Printed NEUTRAL DETERGENT HAND WASH may span three OCR rows.
+        # Join only this care prefix, keeping fiber/percent guards below.
+        care_context = " ".join(
+            normalize_text(raw_lines[following])
+            for following in content_indices[position + 1:position + 4]
+        )
+        if care_context.startswith("neutral detergent "):
+            following_lines[index] = care_context
     for index, raw in enumerate(raw_lines):
         normalized = normalize_text(raw)
         if not normalized:
             continue
         is_metadata, pending_metadata_kind = _classify_metadata_line(normalized, pending_metadata_kind)
+        if not is_metadata:
+            is_metadata = _is_non_composition_numeric_row(
+                normalized, infos[-1] if infos else None, following_lines.get(index, ""),
+                preceding_infos=infos,
+            )
         inferred_metadata = False
         if not is_metadata and _is_unlabeled_korean_garment_size(
             normalized, infos[-1] if infos else None, is_last_line=index == last_content_index,
@@ -333,12 +455,27 @@ def build_line_infos(text: str) -> list[LineInfo]:
         marker_part = None if is_metadata else declared_part(normalized)
         current_part = marker_part or current_part
         composition_text = "" if is_metadata else _strip_excluded_segments(normalized)
+        # FOLD DOWN describes storage, not down filling. Mask only that
+        # action phrase; all remaining fibers and percentages still count.
+        composition_text = _STORAGE_DOWN_PATTERN.sub(
+            lambda match: " " * len(match.group()), composition_text,
+        )
+        # Heading indices name separate fabrics; they are not fiber ratios.
+        composition_text = normalize_text(_NUMBERED_OUTER_MARKER_PATTERN.sub(
+            lambda match: re.sub(r"[12]", " ", match.group()), composition_text,
+        ))
         materials = tuple(extract_materials(composition_text))
         number_only_line = not materials and not _TOKEN_PATTERN.search(composition_text)
         numbers, invalid_evidence, explicit_percent, number_evidence = _read_numbers(
             composition_text, allow_plain_numbers=bool(materials) or number_only_line,
         )
         invalid_evidence |= bool(_IMITATION_LEATHER_PATTERN.search(composition_text))
+        if materials and normalized in restored_rows:
+            # Joining an alias must not move an unknown continuation into an
+            # unchecked trailing suffix of a material/ratio row.
+            invalid_evidence |= not _contains_only_known_phrases(
+                composition_text, _MATERIAL_ONLY_LINE_CONTEXTS,
+            )
         if materials and not numbers:
             invalid_evidence |= not _contains_only_known_phrases(composition_text, _MATERIAL_ONLY_LINE_CONTEXTS)
         if materials and numbers and len(materials) == len(numbers):
@@ -353,7 +490,34 @@ def build_line_infos(text: str) -> list[LineInfo]:
             marker_part=marker_part, invalid_evidence=invalid_evidence,
             is_metadata=is_metadata, inferred_metadata=inferred_metadata,
         ))
-    return _mark_split_imitation_leather(_apply_trailing_part_markers(infos))
+    return _mark_split_imitation_leather(_apply_trailing_part_markers(_mark_leading_garment_size(infos)))
+
+
+def _mark_leading_garment_size(infos: list[LineInfo]) -> list[LineInfo]:
+    """Infer a small header size only before an origin row and complete content."""
+    first = next((position for position, info in enumerate(infos) if info.materials), None)
+    if first is None:
+        return infos
+    prefix = infos[:first]
+    sizes = [info for info in prefix if info.normalized in {"0", "1", "2", "3", "4", "5"}]
+    if len(sizes) != 1 or not any(re.search(r"(?<![a-z])made\s+in\s+[a-z]+", info.normalized) for info in prefix):
+        return infos
+    size = sizes[0]
+    if any(
+        info.explicit_percent or info.unresolved_materials or info.marker_part is not None
+        or any(hint in info.normalized for hint in COMPOSITION_HINTS)
+        or (info is not size and (info.numbers or info.invalid_evidence))
+        for info in prefix
+    ):
+        return infos
+    if not any(
+        candidate.start_index == infos[first].index
+        and has_exact_total(candidate.materials.values())
+        for candidate in _collect_candidates(infos[first:])
+    ):
+        return infos
+    return [replace(info, numbers=(), is_metadata=True, inferred_metadata=True)
+            if info is size else info for info in infos]
 
 
 def _mark_split_imitation_leather(infos: list[LineInfo]) -> list[LineInfo]:
@@ -412,6 +576,7 @@ def _is_unresolved_percent_row(info: LineInfo) -> bool:
     metadata_header = _METADATA_HEADER_PATTERN.fullmatch(info.normalized)
     if (
         metadata_header
+        and not metadata_header.group("measurement")
         and _looks_like_non_composition_number(info.normalized)
         and not _TOKEN_PATTERN.search(metadata_header.group("value"))
     ):
@@ -999,10 +1164,14 @@ _PLAIN_NUMBER_METADATA_PREFIX = re.compile(
 )
 _METADATA_HEADER_PATTERN = re.compile(
     r"(?:(?P<size>size(?![a-z])|사이즈|호칭)|"
+    r"(?P<measurement>신체\s*치수|가슴\s*둘레|허리\s*둘레)|"
     r"(?P<shrinkage>shrinkage(?:\s+rate)?(?![a-z])|수축률|수축율))"
     r"\s*[:=]?\s*(?P<value>.*)",
 )
 _METADATA_VALUE_PATTERNS = {
+    "measurement": re.compile(
+        r"[0-9]+(?:[.,][0-9]+)?(?:\s*[-/x×]\s*[0-9]+(?:[.,][0-9]+)?)*\s*(?:cm|mm)?"
+    ),
     "size": re.compile(
         r"(?:[0-9]+(?:[.,][0-9]+)?"
         r"(?:\s*[-/x×]\s*[0-9]+(?:[.,][0-9]+)?)*\s*(?:cm|mm|호)?|"
@@ -1294,7 +1463,7 @@ def _classify_metadata_line(
     """명시한 항목의 값만 제외하며, 헤더의 대기 상태는 바로 다음 줄에만 적용한다."""
     header = _METADATA_HEADER_PATTERN.fullmatch(line)
     if header:
-        kind = "size" if header.group("size") else "shrinkage"
+        kind = "size" if header.group("size") else "measurement" if header.group("measurement") else "shrinkage"
         value = header.group("value").strip()
         if not value:
             return True, kind

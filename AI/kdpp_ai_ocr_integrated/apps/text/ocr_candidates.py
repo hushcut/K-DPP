@@ -8,8 +8,9 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from apps.text.composition_candidates import equivalent_composition
-from apps.text.material_extraction import PART_PATTERNS, normalize_text
+from apps.text.material_extraction import PART_PATTERNS, extract_materials, normalize_text
 from apps.text.rules import EQUIVALENT_MATERIALS
+from apps.text.ocr_layout import OcrWord
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,65 @@ class OcrCandidate:
     observed_materials: dict[str, list[str]] = field(default_factory=dict)
     paired_material_ratios: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
     rejected_composition_parts: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    image_key: str = ""
+    image_variant_key: str = ""
+    image_words: tuple[OcrWord, ...] = ()
+    image_region: tuple[float, ...] = ()
+    parser_warnings: tuple[str, ...] = ()
+
+
+def agreed_original_composition(candidates: list[OcrCandidate]) -> bool:
+    """같은 응답의 완전한 원문·좌표 해석이면 중간 신뢰도만으로 재호출하지 않는다."""
+
+    originals = [candidate for candidate in candidates if candidate.source == "original"]
+    for raw in originals:
+        if raw.layout_used or raw.parser_status != "success" or raw.parser_warnings:
+            continue
+        if not raw.image_key or not raw.image_variant_key or not raw.image_words or len(raw.image_region) != 4:
+            continue
+        for layout in originals:
+            if (
+                not layout.layout_used or layout.parser_status != "success" or layout.parser_warnings
+                or raw.image_key != layout.image_key or raw.image_variant_key != layout.image_variant_key
+                or raw.image_words != layout.image_words
+                or raw.image_region != layout.image_region
+                or raw.selected_part != layout.selected_part or raw.parts != layout.parts
+            ):
+                continue
+            if (
+                raw.observed_materials.keys() == layout.observed_materials.keys()
+                and raw.observed_ratios.keys() == layout.observed_ratios.keys()
+                and all(Counter(raw.observed_materials[part]) == Counter(layout.observed_materials[part])
+                        for part in raw.observed_materials)
+                and all(Counter(raw.observed_ratios[part]) == Counter(layout.observed_ratios[part])
+                        for part in raw.observed_ratios)
+            ):
+                return True
+    return False
+
+
+def rotated_layout_has_same_tokens(text: str, layout_text: str, words: tuple[OcrWord, ...]) -> bool:
+    """Vertical word baselines cannot validate a horizontal row reconstruction."""
+
+    token_pattern = r"[^\W\d_]+|\d+|[^\w\s]"
+    tokens = Counter(re.findall(token_pattern, normalize_text(text)))
+    if (
+        tokens != Counter(re.findall(token_pattern, normalize_text(layout_text)))
+        or tokens != Counter(re.findall(token_pattern, normalize_text(" ".join(word.text for word in words))))
+    ):
+        return False
+    anchors = [word for word in words if len(word.vertices) == 4
+               and (extract_materials(word.text) or "%" in word.text)]
+    if (
+        len(anchors) < 2 or not any(extract_materials(word.text) for word in anchors)
+        or not any("%" in word.text for word in anchors)
+    ):
+        return False
+    vertical = sum(
+        abs(word.vertices[1][1] - word.vertices[0][1]) > 1.7 * abs(word.vertices[1][0] - word.vertices[0][0])
+        for word in anchors
+    )
+    return vertical / len(anchors) >= 0.8
 
 
 def find_conflicting_parts(candidates: list[OcrCandidate]) -> tuple[str, ...]:
@@ -76,6 +136,10 @@ def find_unpaired_ratio_parts(candidates: list[OcrCandidate]) -> tuple[str, ...]
                 if required and available >= required:
                     resolved = True
                     break
+            if not resolved:
+                from apps.text.ocr_corrections import same_region_recovery
+
+                resolved = any(same_region_recovery(candidate, alternative, part, candidates) for alternative in candidates)
             if not resolved:
                 unresolved.add(part)
     return tuple(sorted(unresolved))
@@ -181,8 +245,10 @@ def find_rejected_composition_parts(
     rejected: dict[str, set[str]] = {}
     for candidate in candidates:
         for part, reasons in candidate.rejected_composition_parts.items():
-            resolved = False
-            if set(reasons) == {"unpaired_material_rows"}:
+            from apps.text.ocr_corrections import same_region_recovery
+
+            resolved = any(same_region_recovery(candidate, alternative, part, candidates) for alternative in candidates)
+            if not resolved and set(reasons) == {"unpaired_material_rows"}:
                 source_parts = (
                     candidate.observed_materials.keys() | candidate.observed_ratios.keys()
                     if part == "generic" else (part,)
@@ -209,6 +275,17 @@ def find_rejected_composition_parts(
                 )
                 for alternative in candidates:
                     if alternative.parser_status != "success":
+                        continue
+                    # A single outer block cannot supply a missing ratio from
+                    # a source that explicitly distinguishes two outer fabrics.
+                    if (
+                        "outer_2" in (
+                            candidate.observed_materials.keys()
+                            | candidate.observed_ratios.keys()
+                            | candidate.rejected_composition_parts.keys()
+                        )
+                        and "outer_2" not in alternative.parts
+                    ):
                         continue
                     target_parts = alternative.parts.keys() if part == "generic" else (part,)
                     valid_parts = [key for key in target_parts if key in alternative.parts]
@@ -243,6 +320,10 @@ def find_rejected_composition_parts(
                         break
             if not resolved:
                 rejected.setdefault(part, set()).update(reasons)
+                # An isolated second-shell heading is still an unresolved outer
+                # boundary; another candidate's unnumbered shell cannot erase it.
+                if part == "outer_2" and selected_part == "outer" and "outer" not in candidate.observed_materials:
+                    rejected.setdefault("outer", set()).update(reasons)
     # 부위명이 없는 거절 근거를 다른 후보의 OUTER 표기로 숨기지 않는다.
     if "generic" in rejected and selected_part:
         rejected.setdefault(selected_part, set()).update(rejected["generic"])
@@ -271,8 +352,9 @@ def score_candidate(
     )
     confidence_rank = {"low": 0, "medium": 1, "high": 2}.get(parser_confidence, 0)
     part_rank = {
-        "outer": 7,
-        "generic": 6,
+        "outer": 8,
+        "generic": 7,
+        "outer_2": 6,
         "lining": 5,
         "filling": 4,
         "pocket": 3,
@@ -349,4 +431,5 @@ def build_candidate(
             part: tuple(reasons)
             for part, reasons in evidence.get("rejected_composition_parts", {}).items()
         },
+        parser_warnings=tuple(parser_warnings),
     )

@@ -28,6 +28,42 @@ MAX_PREPROCESSED_PIXELS = 16_000_000
 MAX_PREPROCESSED_DIMENSION = 8192
 SUPPORTED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP", "MPO"}
 
+
+def ocr_coordinate_frame(
+    original: bytes, candidate: bytes, source: str,
+) -> tuple[tuple[float, ...], tuple[float, ...]] | None:
+    """Map a generated candidate's word boxes back to the unchanged input image."""
+    with Image.open(BytesIO(original)) as image:
+        if image.getexif().get(274, 1) != 1:
+            return None  # EXIF orientation needs its own verified coordinate map.
+        width, height = image.size
+    with Image.open(BytesIO(candidate)) as image:
+        output_width, output_height = image.size
+    region = (0.0, 0.0, float(width), float(height))
+    if source != "rotated":
+        return ((width / output_width, 0.0, 0.0, 0.0, height / output_height, 0.0), region)
+    scale = MIN_OCR_WIDTH / width if width < MIN_OCR_WIDTH else MAX_OCR_WIDTH / width if width > MAX_OCR_WIDTH else 1.0
+    scale = min(scale, math.sqrt(MAX_PREPROCESSED_PIXELS / (width * height)),
+                MAX_PREPROCESSED_DIMENSION / max(width, height))
+    prepared_width, prepared_height = max(1, int(width * scale)), max(1, int(height * scale))
+    angle = math.radians(-3)
+    cosine, sine = round(math.cos(angle), 15), round(math.sin(angle), 15)
+    corners = [(x, y) for x in (-prepared_width / 2, prepared_width / 2)
+               for y in (-prepared_height / 2, prepared_height / 2)]
+    xs = [cosine * x + sine * y + prepared_width / 2 for x, y in corners]
+    ys = [-sine * x + cosine * y + prepared_height / 2 for x, y in corners]
+    canvas_width = math.ceil(max(xs)) - math.floor(min(xs))
+    canvas_height = math.ceil(max(ys)) - math.floor(min(ys))
+    sx, sy = canvas_width / output_width, canvas_height / output_height
+    ox, oy = width / prepared_width, height / prepared_height
+    transform = (
+        cosine * sx * ox, -sine * sy * ox,
+        (prepared_width / 2 - cosine * canvas_width / 2 + sine * canvas_height / 2) * ox,
+        sine * sx * oy, cosine * sy * oy,
+        (prepared_height / 2 - sine * canvas_width / 2 - cosine * canvas_height / 2) * oy,
+    )
+    return transform, region
+
 # Keep Pillow's own decompression-bomb protection aligned with the API limit.
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 

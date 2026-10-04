@@ -8,6 +8,12 @@ from apps.text.rules import MATERIAL_ALIASES, OCR_CORRECTIONS
 
 
 PART_PATTERNS = {
+    # Match the full numbered heading before the unnumbered outer aliases.
+    "outer_2": [
+        "outshell2", "outshell 2", "cutshell2", "cutshell 2",
+        "shell2", "shell 2", "outer2", "outer 2",
+        "겉감2", "겉감 2", "겉 감2", "겉 감 2",
+    ],
     "outer": [
         "겉감",
         "겉 감",
@@ -18,6 +24,10 @@ PART_PATTERNS = {
         "본피",
         "shell",
         "outshell",
+        "cutshell",
+        "outshell1", "outshell 1", "cutshell1", "cutshell 1",
+        "shell1", "shell 1", "outer1", "outer 1",
+        "겉감1", "겉감 1", "겉 감1", "겉 감 1",
         "outer",
         "face",
         "main fabric",
@@ -252,6 +262,14 @@ _SHORT_PART_MARKERS = {"솜", "립", "袖", "표면"}
 
 def is_part_marker_match(text: str, match: re.Match[str]) -> bool:
     """Reject short markers embedded in words, but keep joined marker+fiber OCR."""
+    marker = match.group().casefold()
+    if marker in {*PART_PATTERNS["outer"], *PART_PATTERNS["outer_2"]}:
+        suffix = text[match.end():]
+        if marker[-1].isdigit():
+            if suffix[:1].isdigit() or suffix.lstrip().startswith(("%", ".", ",")):
+                return False
+        elif re.match(r"[12]", suffix) and not re.match(r"(?:100(?!\d)|[0-9]+(?:\.[0-9]+)?\s*%)", suffix):
+            return False
     if match.group().casefold() not in _SHORT_PART_MARKERS:
         return True
     if match.start() > 0 and text[match.start() - 1].isalpha():
