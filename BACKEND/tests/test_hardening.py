@@ -1,10 +1,16 @@
 """전면 점검(2026-08-29)에서 확정된 결함들의 회귀 테스트."""
 
 import hashlib
+import json
+import os
+import subprocess
+import sys
 import threading
 import time
 from datetime import timedelta
+from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from starlette.middleware.cors import CORSMiddleware
 
@@ -829,3 +835,59 @@ def test_signup_ip_limit_uses_the_same_ip_key_as_login(client, monkeypatch):
     assert _try_signup(other, "v4-a@example.com").status_code == 200
     for i in range(3):
         assert _try_signup(gateway, f"gateway-{i}@example.com").status_code == 200
+
+
+# --- API 문서 끄기 (2026-10-04 보안 손질, DECISIONS 142) ----------------------------
+
+API_DOC_PATHS = ("/docs", "/redoc", "/openapi.json")
+
+
+def test_parse_api_docs_enabled():
+    for value in (None, "", "  ", "on", "TRUE", "1"):
+        assert main.parse_api_docs_enabled(value) is True, value
+    for value in ("off", "False", " 0 "):
+        assert main.parse_api_docs_enabled(value) is False, value
+    # 알 수 없는 값은 켬으로 넘기지 않고 시작을 막습니다(배포 설정 오타 대비).
+    for value in ("disable", "no", "offf"):
+        with pytest.raises(ValueError):
+            main.parse_api_docs_enabled(value)
+
+
+def test_api_docs_are_on_by_default(client):
+    for path in API_DOC_PATHS:
+        assert client.get(path).status_code == 200, path
+
+
+_API_DOCS_PROBE = """
+import json
+from fastapi.testclient import TestClient
+import main
+client = TestClient(main.app)
+print(json.dumps({p: client.get(p).status_code for p in ("/", "/docs", "/redoc", "/openapi.json")}))
+"""
+
+
+def _import_main_with_api_docs(value):
+    # 앱 객체는 import 때 만들어지므로 환경변수를 바꾼 별도 프로세스에서 봅니다.
+    return subprocess.run(
+        [sys.executable, "-c", _API_DOCS_PROBE],
+        cwd=Path(main.__file__).parent,
+        env=dict(os.environ, K_DPP_API_DOCS=value),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def test_api_docs_can_be_turned_off():
+    result = _import_main_with_api_docs("off")
+    assert result.returncode == 0, result.stderr
+    statuses = json.loads(result.stdout.strip().splitlines()[-1])
+    # 상태 확인(compose healthcheck)이 부르는 / 는 그대로입니다.
+    assert statuses == {"/": 200, "/docs": 404, "/redoc": 404, "/openapi.json": 404}
+
+
+def test_unknown_api_docs_value_stops_startup():
+    result = _import_main_with_api_docs("disable")
+    assert result.returncode != 0
+    assert "K_DPP_API_DOCS" in result.stderr

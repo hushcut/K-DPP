@@ -431,3 +431,6 @@ Authorization: Bearer <token>
   많습니다. N분 후 다시 시도해 주세요."). 형식 검사(400)를 통과한 시도를 DB 조회·해시
   전에 세고 성공·이미 가입(409)도 되돌리지 않는다 — 409 가 그 이메일의 가입 여부를
   알려 주므로. 로그인 IP 기록과 따로 세고, IPv6·공인 주소 처리는 로그인과 같다.
+- **API 문서를 환경변수로 끌 수 있게**(DECISIONS 142): `K_DPP_API_DOCS=off` 면
+  `/docs`·`/redoc`·`/openapi.json` 이 404. 값이 없으면 켬(로컬 기본), on·off·true·false·1·0
+  밖의 값이면 서버가 시작하지 않는다. 배포 서버(`deploy/compose.yaml`)는 끈다.

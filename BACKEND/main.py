@@ -151,12 +151,31 @@ async def lifespan(_: FastAPI):
     yield
 
 
+def parse_api_docs_enabled(value: str | None) -> bool:
+    """K_DPP_API_DOCS 를 읽는다. 비어 있으면 켬, on·true·1 은 켬, off·false·0 은 끔.
+    그 밖의 값이면 시작하지 않는다 — 배포 설정 오타로 문서가 조용히 켜진 채 남지 않게."""
+    normalized = (value or "").strip().lower()
+    if normalized in ("", "on", "true", "1"):
+        return True
+    if normalized in ("off", "false", "0"):
+        return False
+    raise ValueError(f"K_DPP_API_DOCS 는 on/off(true/false, 1/0) 중 하나여야 합니다: {value!r}")
+
+
+# API 문서(/docs·/redoc·/openapi.json)는 기본으로 켜 둡니다(로컬 확인·팀원 Swagger). 배포 서버는
+# K_DPP_API_DOCS=off 로 끕니다(DECISIONS 142) — 저장소가 공개라 숨길 정보는 없지만, 아무나 화면에서
+# API 를 눌러 보는 창은 닫아 둡니다.
+API_DOCS_ENABLED = parse_api_docs_enabled(os.getenv("K_DPP_API_DOCS"))
+
 # 1. 앱 객체 생성
 app = FastAPI(
     title="K-DPP Backend",
     description="K-DPP v1 탄소배출량 계산 API",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url="/docs" if API_DOCS_ENABLED else None,
+    redoc_url="/redoc" if API_DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if API_DOCS_ENABLED else None,
 )
 
 # 큰 본문은 엔드포인트에 닿기 전에 차단합니다. Content-Length만 믿으면

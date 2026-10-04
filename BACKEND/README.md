@@ -62,6 +62,8 @@ cd C:\DEV\K-DPP\BACKEND
 http://127.0.0.1:8000/docs
 ```
 
+배포 서버는 `K_DPP_API_DOCS=off` 로 `/docs`·`/redoc`·`/openapi.json` 을 끕니다(로컬 기본은 켬).
+
 Android Emulator의 Flutter 앱에서 백엔드를 호출할 때는 다음 주소를 사용합니다.
 
 ```text
