@@ -6,6 +6,7 @@
   리비전을 안 더하면(또는 그 반대) 여기서 실패한다.
 - downgrade base 로 모두 되돌리고 다시 올릴 수 있다.
 - DB 가 최신 리비전이 아니면 서버가 시작하지 않는다(마이그레이션을 빼먹은 배포).
+- alembic.ini 는 ASCII 만 쓴다(한국어 Windows 는 이 파일을 cp949 로 읽는다).
 """
 
 import json
@@ -90,3 +91,14 @@ def test_server_refuses_to_start_unless_schema_is_head(alembic_config, target):
     command.upgrade(alembic_config, "head")
     with TestClient(main.app) as client:
         assert client.get("/materials").status_code == 200
+
+
+def test_alembic_ini_is_ascii():
+    # alembic 은 ini 를 시스템 인코딩으로 읽는다(1.20 `read_config_parser` 의 encoding="locale" —
+    # PYTHONUTF8 로도 안 바뀜). 한국어 Windows(cp949)에선 한글 한 줄에 alembic·서버 시작·pytest 가
+    # 모두 UnicodeDecodeError 로 막힌다. 맥·리눅스 CI 에선 안 보이는 문제라 여기서 막는다.
+    lines = (database.BACKEND_DIR / "alembic.ini").read_bytes().splitlines()
+    non_ascii = [number for number, line in enumerate(lines, start=1) if not line.isascii()]
+    assert not non_ascii, (
+        f"alembic.ini 의 {non_ascii}번째 줄에 ASCII 가 아닌 글자가 있습니다. 주석도 영어로 쓰세요."
+    )

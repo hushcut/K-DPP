@@ -26,6 +26,14 @@ Windows 기준입니다. DB 는 PostgreSQL 이고, 로컬에서는 Docker Deskto
 설치되지 않습니다(3.12에서 동작 확인). 여러 버전이 설치돼 있다면 `py -3.12 -m venv .venv`처럼
 버전을 지정해 주세요.
 
+**Docker Desktop 을 처음 설치한다면** 그 전에 두 가지가 켜져 있어야 합니다.
+
+- BIOS(UEFI)의 가상화(Intel VT-x·AMD SVM). 작업 관리자 → 성능 → CPU 의 '가상화' 가 '사용' 이면 켜져 있습니다.
+- WSL. 관리자 권한 터미널에서 `wsl --install --no-distribution` 을 실행하고 재부팅합니다.
+
+사용자 계정에만 설치하면 `docker` 는 `%LOCALAPPDATA%\Programs\DockerDesktop\resources\bin` 에 들어갑니다.
+설치 전에 열어 둔 터미널은 `docker` 를 찾지 못하니 새로 여세요.
+
 ```bat
 cd C:\DEV\K-DPP\BACKEND
 python -m venv .venv
