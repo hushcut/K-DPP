@@ -15,6 +15,7 @@ MATERIAL_ALIASES = {
         "baumwolle",
         "bambaki",
         "bombaz",
+        "bombaž",
         "bomuld",
         "bomull",
         "algodon",

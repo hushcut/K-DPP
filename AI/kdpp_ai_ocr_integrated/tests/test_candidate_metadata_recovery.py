@@ -2,7 +2,7 @@ from dataclasses import replace
 
 import pytest
 
-from apps.text.ocr_corrections import _row_words
+from apps.text.ocr_corrections import _annotation_tokens, _row_words, _tokens
 from apps.text.ocr_layout import OcrWord
 from apps.text.ocr_text import OcrPayload, _assess_candidates, _build_payload_candidates
 
@@ -50,7 +50,9 @@ def test_percent_boxes_from_next_numeric_row_are_not_reused():
 def test_two_percent_boxes_on_same_row_remain_evidence():
     candidates = payload_candidates()
     boxes = candidates[0].image_words + (OcrWord('%', 65, 12, 75, 48),)
-    assert sum(word.text == '%' for word in _row_words('95% Polyester', boxes)) == 2
+    # The row has one printed percent token but two same-row boxes. Complete
+    # annotation proof rejects this ambiguity rather than hiding either box.
+    assert _row_words('95% Polyester', boxes) == ()
     assert _assess_candidates([replace(c, image_words=boxes) for c in candidates]).status == 'failed'
 
 
@@ -117,3 +119,51 @@ def test_bare_temperature_without_care_context_is_not_dismissed(temperature):
 @pytest.mark.parametrize('temperature', ['10', '30%', '-30', '300%', '30/40%'])
 def test_non_wash_numbers_and_explicit_ratios_remain_rejected(temperature):
     assert _assess_candidates(payload_candidates(temperature=temperature)).status == 'failed'
+
+
+@pytest.mark.parametrize('extra', ['FOO', 'FOO BAR', '魚&', 'OLEFIN', 'FAUX', '인조', '未知繊維'])
+def test_same_response_temperature_cannot_hide_preserved_opaque_or_forbidden_context(extra):
+    raw, layout = payload_candidates()
+    boxes = raw.image_words + (OcrWord(extra, 10, 280, 180, 310),)
+    candidates = _build_payload_candidates('original', OcrPayload(
+        raw.text + '\n' + extra, layout_text=layout.text + '\n' + extra, layout_words=boxes),
+        image_key=raw.image_key, image_variant_key=raw.image_variant_key,
+        image_transform=(1, 0, 0, 0, 1, 0), image_region=raw.image_region)
+    assert _assess_candidates(candidates).status == 'failed'
+
+
+@pytest.mark.parametrize('extra', ['FOO', 'FOO BAR', '魚&', 'OLEFIN', 'FAUX', '인조', '未知繊維'])
+def test_general_alphanumeric_metadata_does_not_supply_a_wash_row_proof(extra):
+    raw, layout = payload_candidates()
+    boxes = tuple(replace(word, text=extra, right=210) if word.text == 'AO' else word
+                  for word in raw.image_words)
+    candidates = _build_payload_candidates('original', OcrPayload(
+        raw.text.replace('AO', extra), layout_text=layout.text.replace('AO', extra), layout_words=boxes),
+        image_key=raw.image_key, image_variant_key=raw.image_variant_key,
+        image_transform=(1, 0, 0, 0, 1, 0), image_region=raw.image_region)
+    assert _assess_candidates(candidates).status == 'failed'
+
+
+@pytest.mark.parametrize('failure', ['missing_character', 'extra_character', 'multiple_pages',
+                                   'swapped_physical_materials', 'missing_care_box'])
+def test_metadata_recovery_requires_complete_characters_and_physical_material_pairs(failure):
+    raw, layout = payload_candidates('폴리에스터', ['폴리', '에스터'])
+    if failure == 'missing_character':
+        boxes = tuple(replace(word, text='에스') if word.text == '에스터' else word for word in raw.image_words)
+    elif failure == 'extra_character':
+        boxes = tuple(replace(word, text='에스터X') if word.text == '에스터' else word for word in raw.image_words)
+    elif failure == 'multiple_pages':
+        boxes = tuple(replace(word, page=1) if word.text == 'AO' else word for word in raw.image_words)
+    elif failure == 'swapped_physical_materials':
+        boxes = tuple(replace(word, top=70, bottom=110) if word.text in {'폴리', '에스터'} else
+                      replace(word, top=14, bottom=58) if word.text == 'Spandex' else word for word in raw.image_words)
+    else:
+        boxes = tuple(word for word in raw.image_words if word.text != 'WASH')
+    assert _assess_candidates([replace(raw, image_words=boxes), replace(layout, image_words=boxes)]).status == 'failed'
+
+
+def test_coordinate_character_tokenisation_preserves_semantic_negation_and_whole_digits():
+    assert _tokens('인조 未知繊維 95 -0.5%') == ('인조', '未知繊維', '95', '-', '0', '.', '5', '%')
+    assert _annotation_tokens('인조 未知繊維 95 -0.5%') == (
+        '인', '조', '未', '知', '繊', '維', '95', '-', '0', '.', '5', '%',
+    )

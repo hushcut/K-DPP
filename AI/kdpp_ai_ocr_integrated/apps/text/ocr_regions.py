@@ -54,7 +54,8 @@ def _word_geometry(word: OcrWord) -> tuple[float, float] | None:
 def _supported_geometry(words: list[OcrWord]) -> tuple[float, float] | None:
     unique = []
     for word in sorted(words, key=lambda item: (item.left, item.top, item.right, item.bottom, item.text)):
-        if any(normalize_text(word.text) == normalize_text(other.text) and word.page == other.page
+        # Different OCR spellings of one physical box supply one observation.
+        if any(word.page == other.page
                and abs(word.center_x - other.center_x) < 0.4 * min(word.right - word.left, other.right - other.left)
                and abs(word.center_y - other.center_y) < 0.4 * min(word.height, other.height)
                for other in unique):
@@ -133,8 +134,9 @@ def material_region_options(
     geometry = _supported_geometry(words)
     heights = [value[1] if (value := _word_geometry(word)) is not None else word.height for word in words]
     font_height = median(heights) if heights else None
-    # 근거 없는 방향과 거의 수평인 글자는 기존 작은 회전 후보를 유지한다.
-    angle = geometry[0] if geometry is not None and abs(geometry[0]) >= 1 else -3.0
+    # 5도 미만의 미세 기울기는 기존 -3도 재인식 후보를 유지한다.
+    # 뚜렷한 기울기에만 관측 방향을 적용하며 글자 확대는 그대로 사용한다.
+    angle = geometry[0] if geometry is not None and abs(geometry[0]) >= 5 else -3.0
     return font_height, angle
 
 
@@ -200,6 +202,51 @@ def find_material_region(candidates: list[OcrCandidate], width: int, height: int
     if right - left < 128 or bottom - top < 32 or (right-left) * (bottom-top) >= width * height * 0.85:
         return _fallback_material_region(words, width, height)
     return left, top, right, bottom
+
+
+def find_complete_material_region(candidates: list[OcrCandidate], region: tuple[int, int, int, int]) -> tuple[int, int, int, int] | None:
+    """End a crop before a complete care heading instead of cutting its letters."""
+    from apps.text.ocr_corrections import _row_words
+    from apps.text.parse_label import build_line_infos, _is_metadata_line
+
+    left, top, right, bottom = region
+    heading = re.compile(
+        r"[\[(]?\s*(?:\d{1,2}\s*[.)\]:]?\s*)?"
+        r"(?:세탁\s*(?:및\s*취급\s*)?시\s*주의\s*사항"
+        r"|(?:wash(?:ing)?|care)\s+instructions?|washing\s+care)\s*[\])}:]*"
+    )
+    image_keys = {candidate.image_key for candidate in candidates if candidate.image_key}
+    if len(image_keys) != 1:
+        return None
+    words = set()
+    metadata = set()
+    for candidate in candidates:
+        if (not candidate.image_key or not candidate.image_variant_key
+                or len(candidate.image_region) != 4 or not candidate.image_words):
+            continue
+        local = tuple(word for word in candidate.image_words if word.page == 0)
+        words.update(word for word in local if word.left < right and word.right > left
+                     and word.top < bottom and word.bottom > top)
+        for info in build_line_infos(candidate.text):
+            if (heading.fullmatch(info.normalized) and _is_metadata_line(info) and not (info.materials or info.numbers
+                    or info.explicit_percent or info.invalid_evidence or info.unresolved_materials)):
+                located = _row_words(info.raw, local)
+                if located:
+                    metadata.update(located)
+    cut = {word for word in words if word.top < bottom < word.bottom}
+    if not cut or not cut <= metadata:
+        return None
+    adjusted = min(word.top for word in cut) - 2
+    removed = {word for word in words if word.bottom > adjusted}
+    if not removed <= metadata:
+        return None
+    retained = words - removed
+    # Keep a real gap below every retained word, including unknown text,
+    # separate numbers, part markers and punctuation.
+    if (not retained or adjusted - top < 32
+            or max(word.bottom for word in retained) + 2 > adjusted):
+        return None
+    return left, top, right, adjusted
 
 
 def prepare_material_region(

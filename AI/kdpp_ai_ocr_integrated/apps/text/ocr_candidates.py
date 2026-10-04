@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from apps.text.composition_candidates import equivalent_composition
-from apps.text.material_extraction import PART_PATTERNS, extract_materials, normalize_text
+from apps.text.material_extraction import PART_PATTERNS, _material_evidence, normalize_text
 from apps.text.rules import EQUIVALENT_MATERIALS
-from apps.text.ocr_layout import OcrWord
+from apps.text.ocr_layout import OcrWord, _horizontal_rows, _projected_height
 
 
 @dataclass(frozen=True)
@@ -69,28 +69,144 @@ def agreed_original_composition(candidates: list[OcrCandidate]) -> bool:
     return False
 
 
-def rotated_layout_has_same_tokens(text: str, layout_text: str, words: tuple[OcrWord, ...]) -> bool:
-    """Vertical word baselines cannot validate a horizontal row reconstruction."""
-
+def _matching_word_tokens(text: str, layout_text: str, words: tuple[OcrWord, ...]) -> bool:
     token_pattern = r"[^\W\d_]+|\d+|[^\w\s]"
     tokens = Counter(re.findall(token_pattern, normalize_text(text)))
-    if (
-        tokens != Counter(re.findall(token_pattern, normalize_text(layout_text)))
-        or tokens != Counter(re.findall(token_pattern, normalize_text(" ".join(word.text for word in words))))
-    ):
-        return False
-    anchors = [word for word in words if len(word.vertices) == 4
-               and (extract_materials(word.text) or "%" in word.text)]
-    if (
-        len(anchors) < 2 or not any(extract_materials(word.text) for word in anchors)
-        or not any("%" in word.text for word in anchors)
-    ):
-        return False
-    vertical = sum(
-        abs(word.vertices[1][1] - word.vertices[0][1]) > 1.7 * abs(word.vertices[1][0] - word.vertices[0][0])
-        for word in anchors
+    return (
+        tokens == Counter(re.findall(token_pattern, normalize_text(layout_text)))
+        == Counter(re.findall(token_pattern, normalize_text(" ".join(word.text for word in words))))
     )
-    return vertical / len(anchors) >= 0.8
+
+
+def _upright_rotated_rows(words: tuple[OcrWord, ...]) -> str | None:
+    """Use every polygon to prove one direction before checking upright rows."""
+
+    if len(words) < 2 or len({word.page for word in words}) != 1:
+        return None
+    upright: list[OcrWord] = []
+    slopes: list[float] = []
+    widths: list[int] = []
+    direction: int | None = None
+    long_support = 0
+    for word in words:
+        if len(word.vertices) != 4:
+            return None
+        (x0, y0), (x1, y1), *_ = word.vertices
+        dx, dy = x1 - x0, y1 - y0
+        if not dy or abs(dy) <= 1.7 * abs(dx):
+            return None
+        current = 1 if dy > 0 else -1
+        if direction is not None and direction != current:
+            return None
+        direction = current
+        points = tuple((current * y, -current * x) for x, y in word.vertices)
+        (x0, y0), (x1, y1), (x2, y2), (x3, y3) = points
+        top_width, bottom_width = x1 - x0, x2 - x3
+        if min(top_width, bottom_width, y3 - y0, y2 - y1) <= 0:
+            return None
+        top_slope, bottom_slope = (y1 - y0) / top_width, (y2 - y3) / bottom_width
+        if abs(top_slope - bottom_slope) > 0.06 or max(abs(top_slope), abs(bottom_slope)) > 0.35:
+            return None
+        xs, ys = zip(*points)
+        transformed = replace(word, left=min(xs), top=min(ys), right=max(xs), bottom=max(ys), vertices=points)
+        slope = (top_slope + bottom_slope) / 2
+        long_support += min(top_width, bottom_width) >= 2 * _projected_height(transformed, slope)
+        upright.append(transformed)
+        slopes.extend((top_slope, bottom_slope))
+        widths.extend((top_width, bottom_width))
+    # Long edges carry more angular precision than short percent boxes.
+    slope = sum(value * width for value, width in zip(slopes, widths)) / sum(widths)
+    # Folded rows can share a quarter turn while having opposite residual
+    # angles. Even a small opposing angle can exchange nearby 80/20 rows.
+    if (
+        long_support < 2
+        or any(abs(value - slope) > 0.01 for value in slopes)
+        or (min(slopes) < 0 < max(slopes))
+    ):
+        return None
+    return _horizontal_rows(upright, slope)
+
+
+def _has_explicit_complete_pairs(candidate: OcrCandidate) -> bool:
+    """Every observed material and ratio must have a same-row explicit pair."""
+
+    if (
+        candidate.parser_status != "success" or candidate.parser_warnings
+        or candidate.conflicting_parts or candidate.unpaired_ratio_parts
+        or candidate.rejected_composition_parts or not candidate.parts
+        or candidate.observed_materials.keys() != candidate.parts.keys()
+        or candidate.observed_ratios.keys() != candidate.parts.keys()
+        or candidate.paired_material_ratios.keys() != candidate.parts.keys()
+    ):
+        return False
+    from apps.text.parse_label import build_line_infos
+
+    for info in build_line_infos(candidate.text):
+        if not info.materials or info.is_metadata:
+            continue
+        if not info.explicit_percent:
+            return False
+        materials = _material_evidence(info.normalized)
+        numbers = list(re.finditer(r"\d+(?:[.,]\d+)?\s*%", info.normalized))
+        order = sorted(
+            [(item.start, "material") for item in materials]
+            + [(item.start(), "ratio") for item in numbers]
+        )
+        # A material column followed by its ratio column still guesses the
+        # pairing, even when the parser records them on one reconstructed row.
+        if (
+            len(materials) != len(info.materials) or len(numbers) != len(info.numbers)
+            or any(left[1] == right[1] for left, right in zip(order, order[1:]))
+        ):
+            return False
+    for part, pairs in candidate.paired_material_ratios.items():
+        if (
+            Counter(material for material, _ratio in pairs) != Counter(candidate.observed_materials[part])
+            or Counter(ratio for _material, ratio in pairs) != Counter(candidate.observed_ratios[part])
+            or set((EQUIVALENT_MATERIALS.get(material, material), ratio) for material, ratio in pairs)
+            != set(equivalent_composition(candidate.parts[part]))
+        ):
+            return False
+    return True
+
+
+def rotated_layout_evidence(
+    raw: OcrCandidate, layout: OcrCandidate, words: tuple[OcrWord, ...],
+    *, parse_candidate: Callable[[str], dict[str, Any]],
+) -> tuple[bool, OcrCandidate | None]:
+    """Discard a bad row order only when direct pairs and geometry agree.
+
+    A successful upright interpretation is retained even when it contradicts
+    the raw text, so equal token counts cannot hide a swapped composition.
+    """
+
+    if raw.parser_status != "success" or raw.parser_warnings:
+        return False, None
+    upright_text = _upright_rotated_rows(words)
+    if (
+        upright_text is None or not _has_explicit_complete_pairs(raw)
+        or not _matching_word_tokens(raw.text, layout.text, words)
+    ):
+        return False, None
+    upright = build_candidate(raw.source, upright_text, parse_candidate=parse_candidate, layout_used=True)
+    independent_rejections = any(
+        set(reasons) - {"unpaired_material_rows"}
+        for reasons in layout.rejected_composition_parts.values()
+    )
+    if _has_explicit_complete_pairs(upright):
+        same_parts = (
+            raw.parts.keys() == upright.parts.keys()
+            and all(equivalent_composition(raw.parts[part]) == equivalent_composition(upright.parts[part])
+                    for part in raw.parts)
+        )
+        return (
+            same_parts and not independent_rejections
+            and layout.parser_status != "success" and not layout.conflicting_parts,
+            upright,
+        )
+    # A successful parse that still guesses a flattened column pairing cannot
+    # contribute a second confirmed composition. Failed evidence is retained.
+    return False, upright if upright.parser_status != "success" else None
 
 
 def find_conflicting_parts(candidates: list[OcrCandidate]) -> tuple[str, ...]:

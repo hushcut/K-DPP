@@ -179,6 +179,45 @@ _NUMBERED_OUTER_MARKER_PATTERN = re.compile(
     r"(?<![a-z0-9])(?:outshell|cutshell|shell|outer|겉\s*감)\s*[12](?![a-z0-9.,]|\s*%)"
 )
 _STORAGE_DOWN_PATTERN = re.compile(r"(?<![a-z])(?:fold|ford)\s+down(?![a-z])")
+_STORAGE_CAPTION_WORDS = {
+    "fold", "ford", "down", "for", "storage", "dry", "cleaning", "avoid",
+    "direct", "sunlight", "hanger", "washing", "wash", "water", "hand",
+    "neutral", "detergent", "separateness", "separatense",
+}
+_ORIGIN_ROW_PATTERN = re.compile(
+    r"made\s+in\s+(?:korea|china|japan|vietnam|bangladesh|india|indonesia|"
+    r"cambodia|thailand|myanmar|pakistan|sri\s+lanka|turkey|turkiye|italy|france|"
+    r"portugal|spain|germany|romania|mexico|taiwan|usa|u\.?s\.?a\.?|"
+    r"united\s+states|united\s+kingdom|uk|england)"
+)
+
+
+def _mask_storage_caption(line: str) -> str:
+    """Ignore a complete folding caption without dropping opaque evidence."""
+    match = _STORAGE_DOWN_PATTERN.search(line)
+    if match is None:
+        return line
+    prefix, caption = line[:match.start()], line[match.start():]
+    remainder = _STORAGE_DOWN_PATTERN.sub(" ", caption, count=1)
+    prefix_materials = _material_evidence(prefix)
+    prefix_context = prefix
+    for evidence in reversed(prefix_materials):
+        prefix_context = (
+            prefix_context[:evidence.start] + " " * (evidence.end - evidence.start)
+            + prefix_context[evidence.end:]
+        )
+    if (
+        re.search(r"[0-9%]", caption)
+        or declared_part(caption)
+        or extract_materials(remainder)
+        or not _contains_only_known_phrases(caption, _STORAGE_CAPTION_WORDS)
+        or not _contains_only_known_phrases(
+            prefix_context, _RESTORED_ROW_CONTEXTS,
+        )
+        or len(_NUMBER_CANDIDATE_PATTERN.findall(prefix)) != len(prefix_materials)
+    ):
+        return line
+    return line[:match.start()] + " " * len(match.group()) + line[match.end():]
 
 
 def _has_complete_preceding_composition(infos: list[LineInfo]) -> bool:
@@ -458,11 +497,12 @@ def build_line_infos(text: str) -> list[LineInfo]:
         marker_part = None if is_metadata else declared_part(normalized)
         current_part = marker_part or current_part
         composition_text = "" if is_metadata else _strip_excluded_segments(normalized)
-        # FOLD DOWN describes storage, not down filling. Mask only that
-        # action phrase; all remaining fibers and percentages still count.
-        composition_text = _STORAGE_DOWN_PATTERN.sub(
-            lambda match: " " * len(match.group()), composition_text,
-        )
+        # The folding action is non-composition only when all caption words
+        # are known. A bare unknown fiber must remain in the original row.
+        storage_caption_invalid = bool(_STORAGE_DOWN_PATTERN.search(composition_text))
+        masked_caption = _mask_storage_caption(composition_text)
+        storage_caption_invalid &= masked_caption == composition_text
+        composition_text = masked_caption
         # Heading indices name separate fabrics; they are not fiber ratios.
         composition_text = normalize_text(_NUMBERED_OUTER_MARKER_PATTERN.sub(
             lambda match: re.sub(r"[12]", " ", match.group()), composition_text,
@@ -473,6 +513,7 @@ def build_line_infos(text: str) -> list[LineInfo]:
             composition_text, allow_plain_numbers=bool(materials) or number_only_line,
         )
         invalid_evidence |= bool(_IMITATION_LEATHER_PATTERN.search(composition_text))
+        invalid_evidence |= storage_caption_invalid
         if materials and normalized in restored_rows:
             # Joining an alias must not move an unknown continuation into an
             # unchecked trailing suffix of a material/ratio row.
@@ -662,6 +703,7 @@ def _translated_alias_rows(
     )
     for candidate in anchors:
         material = next(iter(candidate.materials))
+        clear_boundaries = None
         for step in (-1, 1):
             cursor = candidate.start_index + step
             while (info := by_index.get(cursor)) is not None:
@@ -684,9 +726,106 @@ def _translated_alias_rows(
                     ]
                     if sum(alias == material for alias in aliases) < 2:
                         break
+                    if clear_boundaries is None:
+                        clear_boundaries = _restored_block_has_clear_boundaries(candidate, infos)
+                    if not clear_boundaries:
+                        break
                     covered.add(info.index)
                 cursor += step
     return covered
+
+
+def _restored_block_has_clear_boundaries(
+    candidate: CompositionCandidate, infos: list[LineInfo],
+) -> bool:
+    """Shared ratios must not conceal unreadable neighboring fiber rows."""
+    first, last = min(candidate.row_indices), max(candidate.row_indices)
+    by_index = {info.index: position for position, info in enumerate(infos)}
+    for index in candidate.row_indices:
+        line = _strip_excluded_segments(infos[by_index[index]].normalized)
+        line = _mask_storage_caption(line)
+        line = _ORIGIN_ROW_PATTERN.sub(" ", line)
+        line = re.sub(r"(?<![a-z])(?:rn|ca)\s*[0-9]+(?![a-z0-9])", " ", line)
+        line = normalize_text(line)
+        for evidence in reversed(_material_evidence(line)):
+            line = line[:evidence.start] + " " * (evidence.end - evidence.start) + line[evidence.end:]
+        # Also check the primary printed row. Otherwise an opaque suffix on
+        # COTTON 100% could be hidden by covering its ratio-free translations.
+        if not _contains_only_known_phrases(
+            line, _RESTORED_ROW_CONTEXTS,
+        ):
+            return False
+    for origin, step in ((first, -1), (last, 1)):
+        position = by_index[origin] + step
+        while 0 <= position < len(infos):
+            info = infos[position]
+            if info.part != candidate.part:
+                break
+            if info.is_standalone_marker and _contains_only_known_phrases(
+                info.normalized, set(PART_PATTERNS.get(candidate.part, ())),
+            ):
+                # Repeating OUTER does not introduce a different fabric.
+                position += step
+                continue
+            if info.is_metadata:
+                header = _METADATA_HEADER_PATTERN.fullmatch(info.normalized)
+                if header and not header.group("value").strip():
+                    _, pending_kind = _classify_metadata_line(info.normalized, None)
+                    following = position + 1
+                    has_value = following < len(infos) and _METADATA_VALUE_PATTERNS[
+                        pending_kind
+                    ].fullmatch(infos[following].normalized.strip(" \t()[]")) is not None
+                    if not has_value:
+                        position += step
+                        continue
+                if (
+                    _NUMERIC_IDENTIFIER_ROW_PATTERN.fullmatch(info.normalized)
+                    or _PAREN_WASH_SYMBOL_OCR_PATTERN.fullmatch(info.normalized)
+                    or _WASH_SYMBOL_OCR_PATTERN.fullmatch(info.normalized)
+                    or re.fullmatch(r"[0-9]+", info.normalized)
+                ):
+                    # An identifier is safe to skip, but cannot conceal an
+                    # unreadable row next to the composition block.
+                    position += step
+                    continue
+                break
+            if info.materials or info.numbers or info.unresolved_materials or info.invalid_evidence:
+                # Existing coverage and number validation still own these.
+                position += step
+                continue
+            if not _TOKEN_PATTERN.search(info.normalized) and not re.search(r"[0-9%]", info.normalized):
+                position += step
+                continue
+            if not re.search(r"[0-9%]", info.normalized) and (
+                _contains_only_known_phrases(info.normalized, COMPOSITION_HINTS)
+                or _contains_only_known_phrases(info.normalized, PART_PATTERNS.get(candidate.part, ()))
+            ):
+                # Repeated composition headings do not end fiber evidence.
+                position += step
+                continue
+            if (
+                (
+                    _mentions_care(info.normalized)
+                    and not re.search(r"[0-9%]", _mask_temperatures(info.normalized))
+                    and _contains_only_known_phrases(
+                        _mask_temperatures(info.normalized),
+                        set(_CARE_PHRASES) | _STORAGE_CAPTION_WORDS,
+                    )
+                )
+                or _TEMPERATURE_PATTERN.fullmatch(info.normalized)
+                or _ORIGIN_ROW_PATTERN.fullmatch(info.normalized)
+                or (
+                    not re.search(r"[0-9%]", info.normalized)
+                    and _strip_excluded_segments(info.normalized) in {"", "exclusive of"}
+                )
+                or (
+                    _STORAGE_DOWN_PATTERN.search(info.normalized)
+                    and _mask_storage_caption(info.normalized) != info.normalized
+                )
+            ):
+                break
+            return False
+    return True
 
 
 def _best_candidates_by_part(
@@ -719,6 +858,11 @@ def _best_candidates_by_part(
             if info.materials or info.numbers:
                 body_measurement_block = False
     candidates.extend(_collect_candidates(segment))
+    candidates = [
+        candidate for candidate in candidates
+        if candidate.source not in {"translated_lines", "ratio_first_lines"}
+        or _restored_block_has_clear_boundaries(candidate, infos)
+    ]
     heading_indices = _composition_heading_indices(infos)
     best_by_part: dict[str, CompositionCandidate] = {}
     ambiguous_parts: set[str] = set(conflicting_parts)
@@ -1230,6 +1374,10 @@ _EXPLICIT_PART_HEADER_CONTEXTS = _RATIO_PREFIX_CONTEXTS | {
 
 
 _MATERIAL_ONLY_LINE_CONTEXTS = set(ALIAS_TO_MATERIAL) | _RATIO_PAIR_DESCRIPTORS | _EXPLICIT_PART_HEADER_CONTEXTS
+_RESTORED_ROW_CONTEXTS = (
+    _RATIO_PAIR_DESCRIPTORS | _EXPLICIT_PART_HEADER_CONTEXTS
+    | _STORAGE_CAPTION_WORDS | set(_CARE_PHRASES)
+)
 
 @dataclass(frozen=True)
 class NumberEvidence:

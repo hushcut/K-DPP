@@ -125,8 +125,18 @@ def test_original_agreement_cannot_erase_source_rejections(monkeypatch, extra_ro
 @pytest.mark.parametrize('direction', [-90, 90])
 def test_vertical_failed_layout_cannot_poison_complete_raw(monkeypatch, direction):
     raw = 'POLYESTER 100%\nPOLYESTER 100%'
-    layout = 'POLYESTER %\n100\nPOLYESTER %\n100'
-    words = tuple(word(text, x, y, direction) for y in [20,80] for text, x in [('POLYESTER',20),('100',60),('%',100)])
+    layout = 'POLYESTER\nPOLYESTER\n100%\n100%'
+    # Rotate complete physical rows: the fiber, value and percent must still
+    # occupy one baseline after undoing the quarter turn.
+    def rotated_word(text, x, y):
+        upright = word(text, x, y)
+        vertices = tuple(
+            (200 - py, px) if direction == 90 else (py, 200 - px)
+            for px, py in upright.vertices
+        )
+        xs, ys = zip(*vertices)
+        return replace(upright, left=min(xs), top=min(ys), right=max(xs), bottom=max(ys), vertices=vertices)
+    words = tuple(rotated_word(text, x, y) for y in [20,80] for text, x in [('POLYESTER',20),('100%',60)])
     analysis, result, calls = run_payloads(monkeypatch, [ocr_text.OcrPayload(raw, layout, layout_words=words)])
     assert analysis['status'] == 'success'
     assert analysis['materials'] == {'polyester': 100}

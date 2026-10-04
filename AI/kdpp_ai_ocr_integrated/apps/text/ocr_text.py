@@ -17,7 +17,7 @@ from typing import Any
 
 from apps.text.ocr_candidates import (
     OcrCandidate, build_candidate, find_conflicting_parts, find_unpaired_ratio_parts,
-    agreed_original_composition, find_rejected_composition_parts, rotated_layout_has_same_tokens, score_candidate,
+    agreed_original_composition, find_rejected_composition_parts, rotated_layout_evidence, score_candidate,
 )
 from apps.text.ocr_cache import OcrCacheMissError, OcrTextCache, decode_layout_words
 from apps.text.ocr_errors import (
@@ -54,7 +54,9 @@ from apps.text.ocr_image import (
 from apps.text.ocr_layout import (
     OcrWord, extract_response_layout_text, extract_response_words, spatial_text_from_words,
 )
-from apps.text.ocr_regions import find_material_region, material_region_options, prepare_material_region
+from apps.text.ocr_regions import (
+    find_complete_material_region, find_material_region, material_region_options, prepare_material_region,
+)
 
 __all__ = [
     "ImageTooLargeError",
@@ -485,12 +487,13 @@ def _build_payload_candidates(
     if payload.layout_text and payload.layout_text != payload.text:
         raw = candidates[0]
         layout = _build_candidate(source, payload.layout_text, layout_used=True)
-        if not (
-            raw.parser_status == "success" and not raw.parser_warnings
-            and layout.parser_status != "success" and not layout.conflicting_parts
-            and rotated_layout_has_same_tokens(payload.text, payload.layout_text, payload.layout_words)
-        ):
+        discard_layout, upright = rotated_layout_evidence(
+            raw, layout, payload.layout_words, parse_candidate=_parse_candidate,
+        )
+        if not discard_layout:
             candidates.append(layout)
+        if upright is not None:
+            candidates.append(upright)
     if image_key and image_transform is not None and payload.layout_words:
         from apps.text.ocr_corrections import transform_words
 
@@ -724,7 +727,39 @@ def run_ocr_bytes(
     # 재호출하지 않는다. 관측된 충돌·누락의 최종 안전 판정은 계속 우선한다.
     decision = _assess_candidates(candidates)
     original = decision.best
-    if (
+    early_region = None
+    early_rotated = False
+    # A complete crop can avoid turning a clipped care/composition heading
+    # into opaque full-image preprocessing output in the first place.
+    if use_material_region and decision.status != "success":
+        located_region = find_material_region(candidates, validated.width, validated.height)
+        if located_region is not None:
+            early_region = find_complete_material_region(candidates, located_region)
+        if early_region is not None:
+            source = "material_crop_rotated"
+            early_rotated = True
+            try:
+                if remaining_timeout_seconds() <= 0:
+                    record_total_timeout(source)
+                    raise OcrTotalTimeoutError("전체 OCR 시간 제한을 초과했습니다.")
+                font_height, rotation_degrees = material_region_options(candidates, early_region)
+                cropped = prepare_material_region(
+                    validated.content, early_region, rotated=True,
+                    font_height=font_height, rotation_degrees=rotation_degrees,
+                )
+                payload = run_tracked_candidate(source, cropped.content)
+                candidates.extend(_build_payload_candidates(
+                    source, payload, image_key=image_key,
+                    image_variant_key=image_sha256(cropped.content),
+                    image_transform=cropped.transform, image_region=cropped.region,
+                ))
+                ocr_candidate_count += 1
+            except (InvalidImageError, OcrCacheMissError, OcrServiceError, MemoryError) as exc:
+                if not isinstance(exc, OcrTotalTimeoutError):
+                    attempt_failures.append(f"{source}:{type(exc).__name__}")
+                    processing_warnings.append("소재 영역 재인식에 실패하여 기존 후보를 유지했습니다.")
+            decision = _assess_candidates(candidates)
+    if not (early_rotated and decision.status == "success") and (
         original.parser_status != "success"
         or (original.parser_confidence != "high" and not agreed_original_composition(candidates))
         or _needs_composition_retry(decision)
@@ -826,10 +861,18 @@ def run_ocr_bytes(
                 processing_warnings.append(failure_warning)
 
     if use_material_region and _assess_candidates(candidates).status != "success":
-        region = find_material_region(candidates, validated.width, validated.height)
+        region = early_region or find_material_region(candidates, validated.width, validated.height)
         if region is not None:
+            complete_region = find_complete_material_region(candidates, region)
+            if complete_region is not None:
+                region = complete_region
             font_height, rotation_degrees = material_region_options(candidates, region)
-            for rotated in (False, True):
+            # A clipped heading can manufacture opaque OCR characters. Use
+            # the complete crop's rotated reading first, then the plain crop
+            # only if its independent response is still needed.
+            for rotated in ((True, False) if complete_region is not None else (False, True)):
+                if rotated and early_rotated:
+                    continue
                 if _assess_candidates(candidates).status == "success":
                     break
                 source = "material_crop_rotated" if rotated else "material_crop"
