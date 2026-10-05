@@ -46,6 +46,31 @@
 - `EMAIL_SEND_UNAVAILABLE`: 서버의 하루 인증 메일 발송 상한에 닿음(503)
 - `VERIFICATION_CODE_INVALID`: 인증번호가 틀림 — 다시 입력할 기회가 남음(400)
 - `VERIFICATION_CODE_RESEND_REQUIRED`: 받은 인증번호가 없거나 만료됐거나 5번 틀림 — 다시 받아야 함(400)
+- `SOCIAL_TOKEN_INVALID`: 카카오가 토큰을 거부했거나(만료·잘못된 토큰) 우리 앱이 받은 토큰이 아님 — 카카오 로그인부터 다시(`/auth/kakao` 401, 탈퇴 400)
+- `SOCIAL_NICKNAME_REQUIRED`: 카카오 첫 로그인인데 쓸 수 있는 닉네임이 없음 — 닉네임을 받아 다시 보냄(400)
+- `SOCIAL_ACCOUNT_MISMATCH`: 탈퇴 확인에 다른 카카오 계정으로 로그인함(400)
+- `SOCIAL_PROVIDER_UNAVAILABLE`: 카카오 서버가 응답하지 않음·오류(502)
+- `SOCIAL_LOGIN_UNAVAILABLE`: 이 서버에 카카오 로그인이 설정되지 않음(503)
+- `PASSWORD_NOT_SET`: 비밀번호가 없는 계정(카카오 계정)의 비밀번호 변경(400)
+
+## 사용자 객체 (`user`)
+
+가입·로그인·카카오 로그인·비밀번호 변경 응답과 `GET /history`·`GET /me/history` 의 `user` 는 모두 같은 모양입니다(DECISIONS 152).
+앱 시작 때의 세션 확인·로그인 뒤 동기화도 이 `user` 를 읽으므로 같은 규칙을 따릅니다.
+
+```json
+{
+  "id": 1,
+  "email": "user@example.com",
+  "nickname": "홍길동",
+  "login_methods": ["password"]
+}
+```
+
+- `login_methods`: 이 계정으로 로그인하는 방법 목록. 지금은 `["password"]`(이메일·비밀번호 계정) 또는 `["kakao"]`(카카오 계정) 둘 중 하나이고,
+  나중에 `"google"` 이 더해질 수 있습니다. **목록으로 받아 '들어 있는지'로 판단하세요**(순서는 의미 없음, 모르는 값은 무시).
+- `email`: 카카오 계정은 **`null`** 입니다(카카오 이메일은 받지 않음 — DECISIONS 143). 이메일 계정은 늘 문자열.
+- 비밀번호 변경 버튼·탈퇴 확인 방식은 `login_methods` 에 `"password"` 가 있는지로 고릅니다(`docs/SCAN_API_CONTRACT.md` 2-3).
 
 ## POST /auth/email-code
 
@@ -131,7 +156,8 @@
   "user": {
     "id": 1,
     "email": "user@example.com",
-    "nickname": "홍길동"
+    "nickname": "홍길동",
+    "login_methods": ["password"]
   }
 }
 ```
@@ -171,7 +197,8 @@
   "user": {
     "id": 1,
     "email": "user@example.com",
-    "nickname": "홍길동"
+    "nickname": "홍길동",
+    "login_methods": ["password"]
   },
   "access_token": "token-value",
   "token_type": "bearer",
@@ -236,6 +263,107 @@ Authorization: Bearer <token>
 - 서버 `message` 는 다른 API 와 같은 '~습니다' 체입니다. 앱 문구 톤은 `error_code` 로 앱이 정할 수 있습니다.
 - 로컬·시연 서버에서는 메일이 가지 않고 번호가 서버 로그에 찍힙니다.
 - 서버·앱 PR 은 같은 날 머지합니다(DECISIONS 147) — 서버만 먼저 들어가면 지금 앱의 가입이 422.
+
+## POST /auth/kakao
+
+카카오 로그인 API입니다(DECISIONS 140·143·152). **첫 로그인이 곧 가입**입니다 — 따로 가입 화면이나 인증번호가 없습니다.
+앱이 카카오 SDK 로 로그인해 받은 카카오 액세스 토큰을 보내면, 서버가 카카오에 그 토큰이 **우리 앱이 받은 토큰인지**(`app_id`) 확인한 뒤
+이메일 로그인과 같은 우리 서버 토큰을 줍니다.
+
+### Request
+
+```json
+{
+  "access_token": "카카오 SDK 로그인으로 받은 OAuthToken.accessToken",
+  "nickname": "홍길동"
+}
+```
+
+- `access_token`: 필수. 앞뒤 공백을 지우고 봅니다. 비었거나, 1,024자를 넘거나, 공백이 아닌 출력 가능한 ASCII 밖의 문자(가운데 공백·제어 문자·한글 등)가 있으면
+  400 `BAD_REQUEST` — 카카오에 묻지 않고 횟수 제한에도 세지 않습니다. 탈퇴의 `kakao_access_token` 도 같은 규칙입니다.
+- `nickname`: 선택. **새 계정일 때만** 씁니다(이미 있는 계정이면 무시 — 닉네임 바꾸기가 아님). 보내면 가입과 같은 규칙(앞뒤 공백을 지우고 2자 이상, 쓸 수 없는 문자 없음)으로 늘 봅니다.
+- `Authorization` 헤더는 보지 않습니다. 로그인한 상태에서 계정을 잇는 API 가 아니라, 늘 그 카카오 계정으로 로그인합니다.
+
+### Success Response
+
+```json
+{
+  "status": "success",
+  "message": "카카오 계정으로 가입했습니다.",
+  "user": {
+    "id": 7,
+    "email": null,
+    "nickname": "홍길동",
+    "login_methods": ["kakao"]
+  },
+  "access_token": "token-value",
+  "token_type": "bearer",
+  "expires_in": 2592000,
+  "is_new_user": true
+}
+```
+
+- 이미 있는 계정이면 `"message": "로그인되었습니다."`, `"is_new_user": false`. 나머지는 `POST /auth/login` 응답과 같습니다(토큰 30일).
+- 새 계정의 닉네임: 요청의 `nickname` → 없으면 카카오 닉네임(`kakao_account.profile.nickname`, 동의 항목 '닉네임'). 카카오 닉네임은 첫 로그인 때 한 번만 가져오며,
+  나중에 카카오에서 바꿔도 따라가지 않습니다. 둘 다 없거나 카카오 닉네임이 규칙(2자 이상 등)에 맞지 않으면 `SOCIAL_NICKNAME_REQUIRED`.
+- 같은 카카오 계정으로 동시에 두 번 보내도 계정은 하나입니다(늦은 쪽은 `is_new_user: false`).
+- 이메일 계정과 카카오 계정은 서로 다른 계정입니다 — 같은 사람이라도 자동으로 합치지 않습니다(DECISIONS 143).
+- 서버는 카카오 회원번호만 저장하고 카카오 토큰은 저장하지 않습니다.
+
+### Error Response
+
+검사 순서: 본문 모양(422) → 카카오 로그인 설정(503) → 형식(400) → 로그인 IP 한도(429) → 카카오 토큰 확인(401·502) → 이미 있는 계정이면 로그인 · 없으면 닉네임(400) → 계정 만들기·로그인.
+
+| 상태 | `error_code` | 언제 | 앱 처리 |
+|---|---|---|---|
+| 422 | `VALIDATION_ERROR` | `access_token` 이 빠졌거나 문자열이 아님, `nickname` 이 문자열이 아님(가장 먼저 — 앱 버그) | 서버 문구 |
+| 503 | `SOCIAL_LOGIN_UNAVAILABLE` | 서버에 카카오 앱 ID(`K_DPP_KAKAO_APP_ID`)가 없음 — 로컬·CI 기본 | 서버 문구 |
+| 400 | `BAD_REQUEST` | `access_token` 이 비었거나(공백만 포함)·형식 오류, `nickname` 형식 오류(닉네임 문구는 가입과 같음) | 서버 문구 |
+| 429 | `TOO_MANY_ATTEMPTS` | 같은 IP 15분 30회 로그인 실패(이메일 로그인 실패와 합산 — 아래) | 서버 문구 그대로 |
+| 401 | `SOCIAL_TOKEN_INVALID` | 카카오가 토큰을 거부(만료·폐기·잘못된 형식), 또는 다른 앱이 받은 토큰(`app_id` 가 다름) | 카카오 로그인부터 다시 |
+| 502 | `SOCIAL_PROVIDER_UNAVAILABLE` | 카카오가 5초 안에 답하지 않음·카카오 일시 장애·예상 밖 응답 | 잠시 후 다시 |
+| 400 | `SOCIAL_NICKNAME_REQUIRED` | 새 계정인데 쓸 수 있는 닉네임이 없음 | 닉네임을 받아 **같은 `access_token`** + `nickname` 으로 다시 |
+
+- 이 401 은 `POST /auth/login` 의 401 처럼 **로그인 API 가 자격을 거부한 것**입니다(로그인 화면에서 안내). 세션 만료로 처리하는 401 은 `Authorization` 을 보낸 요청의 401 뿐입니다(`docs/SCAN_API_CONTRACT.md` 2-1).
+- 카카오 응답을 나누는 기준(카카오 문서의 오류 코드 — HTTP 상태가 아니라 본문 `code` 로 나눔. `-1` 은 일시 장애인데 HTTP 400 으로 옴):
+
+  | 카카오 응답 | 우리 응답 | 로그인 IP 기록 |
+  |---|---|---|
+  | `-401`(무효·만료 토큰)·`-2`(잘못된 형식), 또는 정상 응답인데 `app_id` 가 우리 앱이 아님 | 401 `SOCIAL_TOKEN_INVALID` | **남김** |
+  | `-1`(카카오 일시 장애)·HTTP 5xx·5초 초과·연결 실패·그 밖의 예상 밖 응답 | 502 `SOCIAL_PROVIDER_UNAVAILABLE` | 되돌림 |
+
+  `/v2/user/me` 도 같은 표로 나눕니다(토큰 정보와 회원번호가 다르면 502).
+- 횟수 제한: **`SOCIAL_TOKEN_INVALID` 만 로그인 IP 기록에 남습니다**(15분 30회, 이메일 로그인 실패와 같은 기록 — DECISIONS 139). 카카오에 묻기 전에 한 번을 세고,
+  성공·`SOCIAL_NICKNAME_REQUIRED`·502·서버 오류면 되돌립니다. IPv6 /64 묶기·공인 주소가 아니면 건너뛰기도 로그인과 같습니다.
+  **새 카카오 계정은 가입 IP 한도(1시간 20회, DECISIONS 142)에 세지 않습니다** — 계정마다 실제 카카오 계정이 필요하고, 한 와이파이에서 여럿이 처음 로그인하는 시연을 막지 않게.
+- 서버가 카카오에 묻는 것: `GET https://kapi.kakao.com/v1/user/access_token_info`(회원번호·`app_id` 확인), 새 계정이면 `GET https://kapi.kakao.com/v2/user/me`(닉네임).
+  호출마다 **연결부터 응답을 다 받을 때까지 5초**가 넘으면 끊고 502 — 최대 두 번이라 앱 대기(15초) 안에 끝납니다.
+- 카카오 토큰은 앱(Android·iOS)에서 12시간 유효합니다(카카오 문서). 닉네임을 받은 뒤 다시 보낼 때도 같은 토큰을 쓰고, 그사이 만료됐으면 401 → 카카오 로그인부터.
+
+### 앱 연동 메모 (카카오 로그인)
+
+- 버튼은 로그아웃 상태의 로그인 화면에만 둡니다. SDK 는 `kakao_flutter_sdk_user`(DECISIONS 140) — 카카오톡이 있으면 카카오톡으로, 없으면 카카오계정으로 로그인한 뒤
+  받은 `OAuthToken.accessToken` 을 `access_token` 으로 보냅니다. 사용자가 카카오 화면에서 취소하면 서버를 부르지 않습니다.
+- 성공하면 이메일 로그인과 똑같이 `access_token`·`user` 를 저장합니다. `is_new_user` 는 환영 안내 등에 쓸 수 있습니다(선택).
+- **지금 앱에서 바꿔야 하는 곳**(10-05 develop 기준 코드에서 찾은 것):
+  - `AuthUser.fromJson`(`FRONTEND/lib/services/auth_api_models.dart`)이 이메일이 비면 응답을 거부합니다 → `email` 이 `null` 인 응답을 받게.
+    로그인 응답뿐 아니라 시작 때 세션 확인·로그인 뒤 동기화(`/me/history` 의 `user`, `post_login_sync_service.dart`)도 같은 함수를 씁니다.
+  - **옷장의 주인을 이메일로만 정합니다**(`FRONTEND/lib/closet_provider.dart` — `setUserProfile` 은 이메일이 비면 주인을 바꾸지 않고, 그때 `_persist` 는
+    공용 `closet_items` 에 저장하며, 다음 실행에서 이메일 세션을 복원하면 그 공용 옷장을 이메일 계정 옷장에 합치고, `purgeAccountData` 는 주인 이메일이 비면 건너뜀).
+    `AuthUser.fromJson` 만 고치면 **카카오 사용자의 옷장이 같은 기기의 다음 이메일 사용자 옷장으로 넘어가고 탈퇴해도 남습니다.**
+    → 이메일 없는 계정의 옷장 키(예: 사용자 `id`)를 정하고 저장·복원·탈퇴 정리를 모두 그 키로, 공용 옷장 합치기는 이메일 계정만.
+    지금 기기에는 이름·이메일만 저장하므로(`closet_storage_service.dart`) 사용자 `id`·`login_methods` 를 세션과 함께 저장해야 합니다.
+  - 기기에 저장된 사용자 정보에 `login_methods` 가 없으면(이 판 이전에 로그인) `["password"]` 로 봅니다.
+  - 이메일이 비면 설정 화면에 기본값 `honggildong@kdpp.com` 이 보입니다(`closet_provider.dart` `_userEmail`) → 카카오 계정은 '카카오 계정' 등으로.
+  - `AuthApiException` 이 `error_code` 를 읽지 않습니다 — 이메일 인증 화면과 같은 파싱이 필요합니다.
+  - 탈퇴 대화상자는 400 이 아닌 오류를 모두 '결과를 모름'으로 봅니다(`settings_screen.dart` `_earlierAttemptUnresolved`) → 카카오 탈퇴의 502·503 은
+    삭제 전에 나므로 `error_code` 로 '진행되지 않음'으로 나눕니다(본문 없는 프록시 502 와 구분하려면 상태 코드가 아니라 `error_code`).
+- 로그아웃은 `POST /auth/logout` 그대로입니다. 기기의 카카오 SDK 토큰을 함께 지울지는 앱이 정합니다(서버는 로그인·탈퇴 확인 때 받은 토큰만 씀).
+- 설정 화면(비밀번호 변경 숨김)·카카오 계정 탈퇴는 `docs/SCAN_API_CONTRACT.md` 2-3.
+- 개인정보 안내 문구에 카카오에서 받는 정보(회원번호·닉네임)를 더합니다.
+- 등록 값: 앱 빌드엔 카카오 **네이티브 앱 키**, 서버엔 **앱 ID** 만(`K_DPP_KAKAO_APP_ID`, 비밀값 아님). 로컬 서버는 비어 있어 503 — 실기기로 시험할 때 로컬 `BACKEND/.env` 에 앱 ID 를 넣습니다.
+- 머지: 이 서버 변경은 기능을 더하기만 합니다(기존 요청 그대로, `user` 에 칸 하나). 그래서 **이메일 인증 서버·앱 PR(같은 날, DECISIONS 147)이 들어간 뒤라면**
+  카카오 서버 PR 이 카카오 앱 PR 보다 먼저 들어가도 그때의 앱은 그대로 동작합니다. 이 브랜치는 이메일 인증 위에 있어, 그 전에 들어가면 지금 앱의 가입이 422 입니다.
 
 ## POST /api/scan
 
@@ -640,3 +768,19 @@ Authorization: Bearer <token>
   "로그인이 만료되었습니다." — 그 세션의 토큰은 이미 지워짐). 그래서 비밀번호 찾기 뒤엔 옛 비밀번호로 만든 토큰이 남지 않습니다.
 - 로컬 서버 로그 예: `[email] user@example.com | [K-DPP] 가입 인증번호 | 인증번호 123456`(이미 가입된 이메일의 가입 요청은 `인증번호 없음`).
 - 알려진 한계: 남이 내 이메일로 번호를 하루 한도까지 요청하면 그날은 내가 번호를 못 받습니다(이메일 기준 한도의 본래 한계 — 로그인 이메일 잠금과 같은 성격).
+
+## 변경 이력 — 카카오 로그인 (DECISIONS 140·143·152)
+
+- 새 `POST /auth/kakao`(첫 로그인이 곧 가입). 모든 `user` 응답에 `login_methods`, 카카오 계정은 `email: null`.
+- `POST /auth/withdraw`: 카카오 계정은 `password` 대신 `kakao_access_token`, 성공하면 서버가 카카오 연결을 끊음. `POST /auth/password`: 카카오 계정은 400 `PASSWORD_NOT_SET`
+  (둘 다 `docs/SCAN_API_CONTRACT.md` 2-3). 이메일 계정의 요청·응답은 그대로입니다(`user` 칸 하나 추가).
+- 새 `error_code`: `SOCIAL_TOKEN_INVALID`·`SOCIAL_NICKNAME_REQUIRED`·`SOCIAL_ACCOUNT_MISMATCH`·`SOCIAL_PROVIDER_UNAVAILABLE`·`SOCIAL_LOGIN_UNAVAILABLE`·`PASSWORD_NOT_SET`.
+- 환경변수 `K_DPP_KAKAO_APP_ID`(카카오 앱 ID, 숫자 — 비우면 카카오 로그인이 꺼져 503, 숫자가 아니면 서버가 시작하지 않음). 서버에 두는 카카오 비밀값은 없습니다(어드민 키를 쓰지 않음).
+- DB: `users.email`·`password_hash` 를 비울 수 있게 하되 **둘은 같이 있거나 같이 없습니다**(이메일 계정은 둘 다, 카카오 계정은 둘 다 없음 — 이메일 로그인·비밀번호 찾기가
+  비밀번호 없는 행을 만나지 않게. 나중에 구글 계정에 이메일을 두기로 하면 그때 리비전으로 풂). 소셜 계정 연결 표(제공자·회원번호 → 사용자, 처음부터 구글도 받게)를 Alembic 리비전으로 더합니다.
+- 알려진 한계: 사용자가 카카오 설정에서 우리 앱과의 연결을 끊어도 서버 계정은 남습니다(카카오의 연결 끊기 알림을 받지 않음) — 지우려면 앱에서 탈퇴.
+  탈퇴 확인은 앱이 재인증 로그인(`Prompt.login`)으로 받은 토큰을 보내기로 했지만, 서버는 토큰이 방금 받은 것인지 알 수 없어 그 계정의 유효한 카카오 토큰이면 받습니다
+  — 우리 서버 토큰만 가진 사람은 막지만, 기기에 저장된 카카오 토큰까지 가진 사람은 못 막습니다.
+  카카오 계정에는 '모든 기기 로그아웃'이 없습니다 — 비밀번호 계정은 비밀번호 변경이 다른 기기 토큰을 모두 끊지만, 카카오 계정은 비밀번호 변경이 없고
+  카카오 설정에서 연결을 끊어도 우리 서버 토큰(30일)은 남습니다. 지금은 탈퇴만 모든 토큰을 지웁니다(따로 필요해지면 그때 API 를 더함).
+- 확인하지 못한 것: 연결을 끊었다 다시 이었을 때 카카오 회원번호가 같은지(같으면 예전 계정으로, 다르면 새 계정으로 로그인됨) · 닉네임 동의 항목을 비즈 앱 없이 쓸 수 있는지(카카오 앱 등록 때 확인).
