@@ -10,16 +10,16 @@ from __future__ import annotations
 
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from apps.text.ocr_candidates import (
     OcrCandidate, build_candidate, find_conflicting_parts, find_unpaired_ratio_parts,
-    score_candidate,
+    agreed_original_composition, find_rejected_composition_parts, rotated_layout_has_same_tokens, score_candidate,
 )
-from apps.text.ocr_cache import OcrCacheMissError, OcrTextCache
+from apps.text.ocr_cache import OcrCacheMissError, OcrTextCache, decode_layout_words
 from apps.text.ocr_errors import (
     ImageTooLargeError,
     InvalidImageError,
@@ -34,6 +34,7 @@ from apps.text.ocr_errors import (
     UnsupportedImageError,
 )
 from apps.text.ocr_image import (
+    ocr_coordinate_frame,
     MAX_IMAGE_ASPECT_RATIO,
     MAX_IMAGE_BYTES,
     MAX_IMAGE_PIXELS,
@@ -50,7 +51,10 @@ from apps.text.ocr_image import (
     read_image_bytes,
     validate_image_bytes,
 )
-from apps.text.ocr_layout import OcrWord, extract_response_layout_text, spatial_text_from_words
+from apps.text.ocr_layout import (
+    OcrWord, extract_response_layout_text, extract_response_words, spatial_text_from_words,
+)
+from apps.text.ocr_regions import find_material_region, material_region_options, prepare_material_region
 
 __all__ = [
     "ImageTooLargeError",
@@ -80,6 +84,7 @@ __all__ = [
     "preprocess_reflection_image_bytes",
     "read_image_bytes",
     "reflection_ocr_enabled",
+    "material_region_ocr_enabled",
     "run_ocr",
     "run_ocr_bytes",
     "run_ocr_with_metadata",
@@ -95,6 +100,8 @@ OCR_CANDIDATE_TIMEOUT_SECONDS = {
     "reflection": 7.0,
     "denoised": 5.0,
     "rotated": 5.0,
+    "material_crop": 5.0,
+    "material_crop_rotated": 5.0,
 }
 
 
@@ -119,6 +126,13 @@ def rotated_ocr_enabled(value: str | None = None) -> bool:
     return configured.strip().casefold() in {"1", "true", "yes", "on"}
 
 
+def material_region_ocr_enabled(value: str | None = None) -> bool:
+    """실패한 라벨의 좌표 기반 소재 영역 재인식을 기본으로 활성화한다."""
+
+    configured = os.getenv("KDPP_ENABLE_MATERIAL_REGION_OCR", "1") if value is None else value
+    return configured.strip().casefold() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class OcrMetadata:
     source: str
@@ -137,6 +151,7 @@ class OcrMetadata:
     rpc_attempt_count: int = 0
     conflicting_parts: tuple[str, ...] = ()
     unpaired_ratio_parts: tuple[str, ...] = ()
+    rejected_composition_parts: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -166,6 +181,16 @@ class OcrPayload:
     layout_text: str = ""
     retry_count: int = 0
     rpc_attempt_count: int | None = None
+    layout_words: tuple[OcrWord, ...] = ()
+
+
+@dataclass(frozen=True)
+class _CandidateDecision:
+    best: OcrCandidate
+    status: str
+    conflicting_parts: tuple[str, ...]
+    unpaired_ratio_parts: tuple[str, ...]
+    rejected_composition_parts: dict[str, tuple[str, ...]]
 
 
 def _parse_candidate(text: str) -> dict:
@@ -209,6 +234,57 @@ def _build_candidate(
         parse_candidate=_parse_candidate,
         layout_used=layout_used,
     )
+
+
+def _assess_candidates(candidates: list[OcrCandidate]) -> _CandidateDecision:
+    """후보 전체의 거절 근거를 최종 파서와 같은 기준으로 판단한다."""
+
+    best = max(candidates, key=lambda candidate: candidate.score)
+    conflicting_parts = find_conflicting_parts(candidates)
+    unpaired_ratio_parts = find_unpaired_ratio_parts(candidates)
+    rejected_composition_parts = find_rejected_composition_parts(
+        candidates, selected_part=best.selected_part,
+    )
+    status = best.parser_status
+    if conflicting_parts or unpaired_ratio_parts or rejected_composition_parts:
+        from apps.text.parse_label import parse_label
+
+        status = parse_label(
+            best.text,
+            conflicting_parts=conflicting_parts,
+            unpaired_ratio_parts=unpaired_ratio_parts,
+            rejected_composition_parts=rejected_composition_parts,
+        )["status"]
+    return _CandidateDecision(
+        best, status, conflicting_parts, unpaired_ratio_parts, rejected_composition_parts,
+    )
+
+
+def _needs_composition_retry(decision: _CandidateDecision) -> bool:
+    """최종 성공은 중단하고, 연결 누락을 복원할 기회가 남으면 재시도한다."""
+
+    if decision.status == "success":
+        return False
+    if decision.best.parser_status != "success":
+        return True
+    from apps.text.parse_label import PART_PRIORITY
+
+    selected = decision.best.selected_part
+    relevant_parts = set(
+        PART_PRIORITY[:PART_PRIORITY.index(selected) + 1]
+        if selected in PART_PRIORITY else PART_PRIORITY
+    )
+    # 이미 성공 문구가 있어도 확정된 상충·소재·수치 오류는 추가 OCR로
+    # 해소되지 않는다. 안감의 오류는 확인된 겉감 복원을 막지 않는다.
+    if relevant_parts.intersection(decision.conflicting_parts):
+        return False
+    if any(
+        set(reasons) - {"unpaired_material_rows"}
+        for part, reasons in decision.rejected_composition_parts.items()
+        if part in relevant_parts
+    ):
+        return False
+    return True
 
 
 def _extract_response_text(response: Any) -> str:
@@ -330,11 +406,14 @@ def _run_google_ocr(
             if time.monotonic() > deadline:
                 raise OcrTimeoutError("Google Vision OCR 요청 시간이 초과되었습니다.")
             break
+        words = extract_response_words(response)
         return OcrPayload(
             text=_extract_response_text(response).strip(),
-            layout_text=_extract_response_layout_text(response).strip(),
+            layout_text=(spatial_text_from_words(list(words)) if words
+                         else _extract_response_layout_text(response)).strip(),
             retry_count=max(0, rpc_attempt_count - 1),
             rpc_attempt_count=rpc_attempt_count,
+            layout_words=words,
         )
     except OcrServiceError as exc:
         exc.retry_count = max(0, rpc_attempt_count - 1)
@@ -396,12 +475,28 @@ def _coerce_ocr_payload(value: OcrPayload | str) -> OcrPayload:
 def _build_payload_candidates(
     source: str,
     payload: OcrPayload,
+    *,
+    image_key: str = "",
+    image_variant_key: str = "",
+    image_transform: tuple[float, ...] | None = None,
+    image_region: tuple[float, ...] = (),
 ) -> list[OcrCandidate]:
     candidates = [_build_candidate(source, payload.text)]
     if payload.layout_text and payload.layout_text != payload.text:
-        candidates.append(
-            _build_candidate(source, payload.layout_text, layout_used=True)
-        )
+        raw = candidates[0]
+        layout = _build_candidate(source, payload.layout_text, layout_used=True)
+        if not (
+            raw.parser_status == "success" and not raw.parser_warnings
+            and layout.parser_status != "success" and not layout.conflicting_parts
+            and rotated_layout_has_same_tokens(payload.text, payload.layout_text, payload.layout_words)
+        ):
+            candidates.append(layout)
+    if image_key and image_transform is not None and payload.layout_words:
+        from apps.text.ocr_corrections import transform_words
+
+        words = transform_words(payload.layout_words, image_transform)
+        candidates = [replace(candidate, image_key=image_key, image_variant_key=image_variant_key, image_words=words,
+                              image_region=image_region) for candidate in candidates]
     return candidates
 
 
@@ -439,6 +534,7 @@ def run_ocr_bytes(
     enable_reflection: bool | None = None,
     enable_denoised: bool | None = None,
     enable_rotated: bool | None = None,
+    enable_material_region: bool | None = None,
 ) -> OcrResult:
     """한 이미지에서 원본/전처리 OCR 후보 중 파서 관점의 최선 결과를 반환한다."""
 
@@ -447,6 +543,17 @@ def run_ocr_bytes(
         content,
         declared_content_type=declared_content_type,
     )
+    from apps.text.ocr_cache import image_sha256
+
+    image_key = image_sha256(validated.content)
+
+    def build_image_candidates(source: str, payload: OcrPayload, candidate_content: bytes) -> list[OcrCandidate]:
+        frame = ocr_coordinate_frame(validated.content, candidate_content, source) if payload.layout_words else None
+        return _build_payload_candidates(
+            source, payload, image_key=image_key, image_variant_key=image_sha256(candidate_content),
+            image_transform=frame[0] if frame else None,
+            image_region=frame[1] if frame else (),
+        )
     if offline and ocr_cache is None:
         raise OcrCacheMissError("오프라인 OCR 실행에는 캐시 파일이 필요합니다.")
     use_reflection = (
@@ -458,6 +565,9 @@ def run_ocr_bytes(
         denoised_ocr_enabled() if enable_denoised is None else enable_denoised
     )
     use_rotated = rotated_ocr_enabled() if enable_rotated is None else enable_rotated
+    use_material_region = (
+        material_region_ocr_enabled() if enable_material_region is None else enable_material_region
+    )
 
     client: Any | None = None
     external_call_count = 0
@@ -495,9 +605,12 @@ def run_ocr_bytes(
         if ocr_cache is not None and not refresh_ocr_cache:
             cached_entry = ocr_cache.get_entry(candidate_content)
             if cached_entry is not None:
+                words = decode_layout_words(cached_entry)
                 return OcrPayload(
                     text=cached_entry["text"],
-                    layout_text=str(cached_entry.get("layout_text", "")),
+                    layout_text=(spatial_text_from_words(list(words)) if words
+                                 else str(cached_entry.get("layout_text", ""))),
+                    layout_words=words,
                 )
 
         if offline:
@@ -537,6 +650,7 @@ def run_ocr_bytes(
                 file_name=cache_label,
                 source=source,
                 layout_text=payload.layout_text,
+                layout_words=payload.layout_words,
             )
         return payload
 
@@ -599,16 +713,22 @@ def run_ocr_bytes(
             )
             return payload
 
-    candidates = _build_payload_candidates(
+    candidates = build_image_candidates(
         "original",
         run_tracked_candidate("original", validated.content),
+        validated.content,
     )
     ocr_candidate_count = 1
 
-    # 원본 파싱이 충분히 신뢰할 만할 때는 전처리 OCR 호출을 생략한다.
-    # 어려운 사진만 재시도해 비용과 지연을 제한한다.
-    original = max(candidates, key=lambda candidate: candidate.score)
-    if original.parser_status != "success" or original.parser_confidence != "high":
+    # 같은 응답의 원문·좌표 조성이 확인됐으면 줄 연결의 중간 신뢰도만으로
+    # 재호출하지 않는다. 관측된 충돌·누락의 최종 안전 판정은 계속 우선한다.
+    decision = _assess_candidates(candidates)
+    original = decision.best
+    if (
+        original.parser_status != "success"
+        or (original.parser_confidence != "high" and not agreed_original_composition(candidates))
+        or _needs_composition_retry(decision)
+    ):
         try:
             if remaining_timeout_seconds() <= 0:
                 record_total_timeout("preprocessed")
@@ -618,9 +738,10 @@ def run_ocr_bytes(
                 record_total_timeout("preprocessed")
                 raise OcrTotalTimeoutError("전체 OCR 시간 제한을 초과했습니다.")
             candidates.extend(
-                _build_payload_candidates(
+                build_image_candidates(
                     "preprocessed",
                     run_tracked_candidate("preprocessed", preprocessed),
+                    preprocessed,
                 )
             )
             ocr_candidate_count += 1
@@ -636,11 +757,8 @@ def run_ocr_bytes(
                     "전처리 OCR에 실패하여 원본 OCR 결과를 유지했습니다."
                 )
         else:
-            # 기본 전처리까지 조성을 만들지 못한 경우에만 반사 보정 후보를
-            # 추가한다. 성공한 후보가 있으면 불필요한 Vision 호출을 하지 않는다.
-            if use_reflection and not any(
-                candidate.parser_status == "success" for candidate in candidates
-            ):
+            # 기본 전처리 후에도 최종 판단이 복원 가능한 실패이면 추가한다.
+            if use_reflection and _needs_composition_retry(_assess_candidates(candidates)):
                 try:
                     if remaining_timeout_seconds() <= 0:
                         record_total_timeout("reflection")
@@ -650,9 +768,10 @@ def run_ocr_bytes(
                         record_total_timeout("reflection")
                         raise OcrTotalTimeoutError("전체 OCR 시간 제한을 초과했습니다.")
                     candidates.extend(
-                        _build_payload_candidates(
+                        build_image_candidates(
                             "reflection",
                             run_tracked_candidate("reflection", reflection),
+                            reflection,
                         )
                     )
                     ocr_candidate_count += 1
@@ -678,9 +797,7 @@ def run_ocr_bytes(
             "미세 회전 OCR에 실패하여 기존 후보를 유지했습니다.",
         ),
     ):
-        if not enabled or any(
-            candidate.parser_status == "success" for candidate in candidates
-        ):
+        if not enabled or not _needs_composition_retry(_assess_candidates(candidates)):
             continue
         try:
             if remaining_timeout_seconds() <= 0:
@@ -691,9 +808,10 @@ def run_ocr_bytes(
                 record_total_timeout(source)
                 raise OcrTotalTimeoutError("전체 OCR 시간 제한을 초과했습니다.")
             candidates.extend(
-                _build_payload_candidates(
+                build_image_candidates(
                     source,
                     run_tracked_candidate(source, processed),
+                    processed,
                 )
             )
             ocr_candidate_count += 1
@@ -707,12 +825,60 @@ def run_ocr_bytes(
                 attempt_failures.append(f"{source}:{type(exc).__name__}")
                 processing_warnings.append(failure_warning)
 
-    best = max(candidates, key=lambda candidate: candidate.score)
-    conflicting_parts = find_conflicting_parts(candidates)
-    unpaired_ratio_parts = find_unpaired_ratio_parts(candidates)
+    if use_material_region and _assess_candidates(candidates).status != "success":
+        region = find_material_region(candidates, validated.width, validated.height)
+        if region is not None:
+            font_height, rotation_degrees = material_region_options(candidates, region)
+            for rotated in (False, True):
+                if _assess_candidates(candidates).status == "success":
+                    break
+                source = "material_crop_rotated" if rotated else "material_crop"
+                try:
+                    if remaining_timeout_seconds() <= 0:
+                        record_total_timeout(source)
+                        break
+                    cropped = prepare_material_region(
+                        validated.content, region, rotated=rotated,
+                        font_height=font_height, rotation_degrees=rotation_degrees,
+                        enhancement="adaptive" if rotated else "standard",
+                    )
+                    if remaining_timeout_seconds() <= 0:
+                        record_total_timeout(source)
+                        break
+                    if cropped.enhancement == "local_contrast":
+                        processing_warnings.append("소재 영역의 불균일한 밝기를 보정한 재인식을 시도했습니다.")
+                    payload = run_tracked_candidate(source, cropped.content)
+                    candidates.extend(_build_payload_candidates(
+                        source, payload, image_key=image_key,
+                        image_variant_key=image_sha256(cropped.content),
+                        image_transform=cropped.transform, image_region=cropped.region,
+                    ))
+                    ocr_candidate_count += 1
+                except (
+                    InvalidImageError,
+                    OcrCacheMissError,
+                    OcrServiceError,
+                    MemoryError,
+                ) as exc:
+                    if isinstance(exc, OcrTotalTimeoutError):
+                        break
+                    attempt_failures.append(f"{source}:{type(exc).__name__}")
+                    processing_warnings.append(
+                        "소재 영역 재인식에 실패하여 기존 후보를 유지했습니다."
+                    )
+
+    decision = _assess_candidates(candidates)
+    best = decision.best
+    conflicting_parts = decision.conflicting_parts
+    unpaired_ratio_parts = decision.unpaired_ratio_parts
+    rejected_composition_parts = decision.rejected_composition_parts
+    rejected_representative = decision.status != "success" and bool(
+        conflicting_parts or unpaired_ratio_parts or rejected_composition_parts
+    )
     ocr_confidence = (
         "low"
-        if best.selected_part in (*conflicting_parts, *unpaired_ratio_parts)
+        if rejected_representative
+        or best.selected_part in (*conflicting_parts, *unpaired_ratio_parts)
         or ((conflicting_parts or unpaired_ratio_parts) and best.parser_status != "success")
         else "high"
         if best.parser_status == "success" and best.parser_confidence == "high"
@@ -728,6 +894,8 @@ def run_ocr_bytes(
             result_warnings.append("노이즈를 완화한 이미지의 OCR 결과를 사용했습니다.")
         elif best.source == "rotated":
             result_warnings.append("미세 회전한 이미지의 OCR 결과를 사용했습니다.")
+        elif best.source.startswith("material_crop"):
+            result_warnings.append("확대한 소재 영역의 OCR 결과를 사용했습니다.")
         else:
             result_warnings.append("전처리된 이미지의 OCR 결과를 사용했습니다.")
     if best.layout_used:
@@ -754,6 +922,7 @@ def run_ocr_bytes(
             rpc_attempt_count=sum(attempt.rpc_attempt_count for attempt in attempts),
             conflicting_parts=conflicting_parts,
             unpaired_ratio_parts=unpaired_ratio_parts,
+            rejected_composition_parts=rejected_composition_parts,
         ),
     )
 
@@ -775,13 +944,17 @@ def run_ocr(
     """문자열 전용 연동에서도 대표 부위가 충돌하면 성공 텍스트로 넘기지 않는다."""
 
     result = run_ocr_with_metadata(image_path, credential_path)
-    if result.metadata.conflicting_parts or result.metadata.unpaired_ratio_parts:
+    if (
+        result.metadata.conflicting_parts or result.metadata.unpaired_ratio_parts
+        or result.metadata.rejected_composition_parts
+    ):
         from apps.text.parse_label import parse_label
 
         parsed = parse_label(
             result.text,
             conflicting_parts=result.metadata.conflicting_parts,
             unpaired_ratio_parts=result.metadata.unpaired_ratio_parts,
+            rejected_composition_parts=result.metadata.rejected_composition_parts,
         )
         if parsed["status"] != "success":
             raise OcrCompositionError(parsed["message"])

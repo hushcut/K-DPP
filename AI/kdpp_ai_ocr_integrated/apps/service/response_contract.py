@@ -11,7 +11,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
-from apps.text.composition_candidates import EXACT_RATIO_TOLERANCE
+from apps.text.ratio_contract import has_exact_total
 
 
 def _require_json_number(value: Any) -> int | float:
@@ -72,13 +72,13 @@ class LabelResponseContract(BaseModel):
         """성공 조성의 합계와 대표 부위가 파서의 확정 기준에 맞는지 검사한다."""
 
         for part, materials in self.parts.items():
-            if not materials or abs(sum(materials.values()) - 100) > EXACT_RATIO_TOLERANCE:
+            if not has_exact_total(materials.values()):
                 raise ValueError(f"parts.{part}의 혼용률 합계는 100이어야 합니다.")
         if self.status == "failed":
             if self.materials or self.parts or self.selected_part:
                 raise ValueError("실패 응답에는 확정 소재나 선택 부위를 포함할 수 없습니다.")
         else:
-            if not self.materials or abs(sum(self.materials.values()) - 100) > EXACT_RATIO_TOLERANCE:
+            if not has_exact_total(self.materials.values()):
                 raise ValueError("성공 응답 materials의 혼용률 합계는 100이어야 합니다.")
             if self.parts or self.selected_part:
                 if self.parts.get(self.selected_part) != self.materials:

@@ -339,17 +339,17 @@ def test_chinese_fiber_aliases_are_resolved() -> None:
 
 def test_multilingual_label_repeating_one_composition_is_not_ambiguous() -> None:
     result = parse_label(
-        "SHELL : COTTON 98% POLYURETHANE 2%\n"
+        "SHELL : COTTON 98% ELASTANE 2%\n"
         "LINING: POLYESTER 80% COTTON 20%\n"
         "面料:棉 98% 氨纶 2%\n"
         "里料:聚酯纤维 80% 棉 20%\n"
-        "겉감\n면 98% 폴리우레탄 2%\n"
+        "겉감\n면 98% 스판덱스 2%\n"
         "안감 : 폴리에스터 80% 면 20%"
     )
 
     assert result["status"] == "success"
     assert result["selected_part"] == "outer"
-    assert result["materials"] == {"cotton": 98, "polyurethane": 2}
+    assert result["materials"] == {"cotton": 98, "spandex": 2}
     assert result["parts"]["lining"] == {"polyester": 80, "cotton": 20}
 
 

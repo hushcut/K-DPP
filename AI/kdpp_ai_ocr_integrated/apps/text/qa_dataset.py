@@ -8,14 +8,14 @@
 from __future__ import annotations
 
 import csv
-import math
 from collections import Counter
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 from apps.text.qa_comparison import QaComparisonError, canonical_material_name
-from apps.text.parse_label import normalize_percentages
+from apps.text.ratio_contract import has_exact_total, sum_ratios
 from apps.text.rules import MATERIAL_ALIASES
 
 # 이 세 열만으로도 정답 구성비 비교는 가능하다.
@@ -75,14 +75,14 @@ class QaDatasetAudit:
         }
 
 
-def _parse_ratio(value: str, *, row_number: int) -> float:
+def _parse_ratio(value: str, *, row_number: int) -> Decimal:
     try:
-        ratio = float(value.strip())
-    except ValueError as exc:
+        ratio = Decimal(value.strip())
+    except InvalidOperation as exc:
         raise QaDatasetError(
             f"{row_number}행에 숫자가 아닌 혼용률이 있습니다: {value!r}"
         ) from exc
-    if not math.isfinite(ratio) or not 0 < ratio <= 100:
+    if not ratio.is_finite() or not 0 < ratio <= 100:
         raise QaDatasetError(
             f"{row_number}행 혼용률은 0 초과 100 이하여야 합니다: {ratio}"
         )
@@ -101,19 +101,21 @@ def _canonical_material(value: str, *, row_number: int) -> str:
 
 
 def _normalize_evaluation_materials(
-    materials: dict[str, float],
+    materials: dict[str, Decimal | float],
     *,
     row_number: int,
 ) -> dict[str, float]:
     """Accept only the parser's exact, confirmed 100% compositions."""
 
-    normalized = normalize_percentages(materials)
-    if not normalized:
-        total = sum(materials.values())
+    if not has_exact_total(materials.values()):
+        total = sum_ratios(materials.values())
         raise QaDatasetError(
             f"{row_number}행 정확도 비교용 혼용률 합계는 정확히 100이어야 합니다: {total:g}"
         )
-    return {material: float(ratio) for material, ratio in normalized.items()}
+    normalized = {material: float(ratio) for material, ratio in materials.items()}
+    if not has_exact_total(normalized.values()):
+        raise QaDatasetError(f"{row_number}행 혼용률의 숫자 변환 과정에서 정밀도가 손실됩니다.")
+    return normalized
 
 
 def parse_answer_materials(
@@ -124,14 +126,14 @@ def parse_answer_materials(
     """정답지 한 행을 표준 소재 키와 혼용률 딕셔너리로 변환한다.
 
     `cotton;polyester` + `80;20` 또는 `cotton:80;polyester:20`을 지원한다.
-    합계가 100에서 0.01보다 많이 벗어나면 비교 대상에서 제외하지 않고 오류로 막는다.
+    원문 수치의 합계가 정확히 100이 아니면 정답지 오류로 막는다.
     """
 
     direct = (row.get("answer_materials") or "").strip()
     if not direct:
         raise QaDatasetError(f"{row_number}행 answer_materials가 비어 있습니다.")
 
-    materials: dict[str, float] = {}
+    materials: dict[str, Decimal] = {}
     if ":" in direct:
         items = [item.strip() for item in direct.split(";") if item.strip()]
         for item in items:
@@ -177,7 +179,7 @@ def _parse_annotation_materials(
     ratios_column: str,
     row_number: int,
     require_total: bool,
-) -> dict[str, float]:
+) -> dict[str, Decimal | float]:
     """Parse one material/ratio column pair, optionally allowing multi-part totals."""
 
     materials_text = (row.get(materials_column) or "").strip()
@@ -296,8 +298,8 @@ def load_qa_answer_key(path: str | Path) -> dict[str, QaAnswer]:
 
             answers[file_name] = QaAnswer(
                 file_name=file_name,
-                materials=materials,
-                original_materials=original_materials,
+                materials={material: float(ratio) for material, ratio in materials.items()},
+                original_materials={material: float(ratio) for material, ratio in original_materials.items()},
                 include_in_accuracy=include_in_accuracy,
                 split=split,
                 source_group=_optional_value(row, "source_group"),

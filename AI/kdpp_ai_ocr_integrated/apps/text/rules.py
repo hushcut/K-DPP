@@ -9,6 +9,7 @@ sentences.
 MATERIAL_ALIASES = {
     "cotton": [
         "cotton",
+        "mercerized cotton",
         "pimacotton",
         "coton",
         "baumwolle",
@@ -26,6 +27,8 @@ MATERIAL_ALIASES = {
         "bavlna",
         "cotone",
         "puuvilla",
+        "puuvill",
+        "хлопок",
         "pamut",
         "medvilne",
         "kokvilna",
@@ -135,10 +138,13 @@ MATERIAL_ALIASES = {
     ],
     "spandex": [
         "spandex",
+        "span",
         "elastane",
         "elastan",
         "elasthan",
         "elastano",
+        "élasthanne",
+        "elasthanne",
         "lycra",
         "스판덱스",
         "스판",
@@ -153,6 +159,7 @@ MATERIAL_ALIASES = {
         "彈性纖維",
         "ポリウレタン弾性繊維",
         "スパンデックス",
+        "エラスタン",
     ],
     "linen": [
         "linen",
@@ -274,13 +281,10 @@ MATERIAL_ALIASES = {
 }
 
 
-# Multilingual labels name one elastic fiber differently per language
-# (``polyurethane`` / ``폴리우레탄`` / ``氨纶``), and the carbon factors match,
-# so a label mixing them still declares a single composition. Only the
-# ambiguity check uses this; each name still reports under its own key.
-EQUIVALENT_MATERIALS = {
-    "polyurethane": "spandex",
-}
+# Canonical aliases already resolve within MATERIAL_ALIASES. Distinct keys,
+# including polyurethane and spandex, must remain distinct when checking
+# contradictory declarations; matching carbon factors do not imply identity.
+EQUIVALENT_MATERIALS: dict[str, str] = {}
 
 
 MATERIAL_KOREAN = {
@@ -316,6 +320,8 @@ MATERIAL_KOREAN = {
 # Only unambiguous OCR errors belong here. Correct spellings live only in
 # MATERIAL_ALIASES so the two tables cannot drift apart.
 OCR_CORRECTIONS = {
+    "xлопок": "хлопок",
+    "포리": "폴리",
     "polyster": "polyester",
     "polyestcr": "polyester",
     "polyestet": "polyester",

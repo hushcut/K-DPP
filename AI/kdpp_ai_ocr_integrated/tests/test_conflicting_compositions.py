@@ -15,7 +15,6 @@ from apps.text.parse_label import parse_label, parse_materials
         "MATERIAL: COTTON 100%\nPOLYESTER 100%",
         "COTTON 100%\nMATERIAL: POLYESTER 100%",
         "COTTON 100\nPOLYESTER 100%",
-        "COTTON 50% WOOL 50%\nCOTTON 49.995% WOOL 50%",
         "COTTON 100%\nWOOL 100%\nCOTTON 80% POLYESTER 20%",
         "OUTER COTTON 98% SPANDEX 2%\n겉감 면 70% 폴리에스터 25% 폴리우레탄 5%",
         "OUTER COTTON 100%\nOUTER WOOL 80% NYLON 20%\nLINING POLYESTER 100%",
@@ -35,7 +34,7 @@ def test_conflict_is_rejected_despite_candidate_rank(text):
         ("MATERIAL: COTTON 100%\n면 100%", {"cotton": 100}),
         ("COTTON 100%\nCOTTON\n100%", {"cotton": 100}),
         ("COTTON 100\n면 100%", {"cotton": 100}),
-        ("COTTON 98% POLYURETHANE 2%\n棉 98% 氨纶 2%", {"cotton": 98, "polyurethane": 2}),
+        ("COTTON 98% ELASTANE 2%\n棉 98% 氨纶 2%", {"cotton": 98, "spandex": 2}),
         ("OUTER COTTON 100%\nLINING POLYESTER 80% WOOL 20%", {"cotton": 100}),
         ("OUTER COTTON 100%\nLINING POLYESTER 100%\nLINING WOOL 100%", {"cotton": 100}),
         ("COTTON 100%\nSILK TOUCH 100%", {"cotton": 100}),
@@ -45,6 +44,20 @@ def test_equivalent_declarations_and_separate_parts_remain_valid(text, expected)
     result = parse_label(text)
     assert result["status"] == "success"
     assert result["materials"] == expected
+
+
+def test_near_total_is_incomplete_evidence_not_a_complete_conflicting_candidate():
+    result = parse_label("COTTON 50% WOOL 50%\nCOTTON 49.995% WOOL 50%")
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
+    assert "generic:unpaired_material_rows" in result["warnings"]
+
+
+def test_spandex_and_polyurethane_are_distinct_conflicting_declarations():
+    result = parse_label("COTTON 98% POLYURETHANE 2%\n棉 98% 氨纶 2%")
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
+    assert "generic:ambiguous_composition_candidates" in result["warnings"]
 
 
 @pytest.mark.parametrize(
@@ -78,13 +91,21 @@ def test_heading_does_not_hide_invalid_ratio(ratio):
     [
         "OUTER COTTON 100%\nLINING 混用率 57% 38% 5%",
         "COTTON 100%\n호칭 57% 38% 5%",
-        "COTTON 100%\nIMMATERIAL 57% 38% 5%",
         "COTTON 100%\nSILK TOUCH 100%",
         "COTTON 100%\nMACHINE WASH 30°C",
     ],
 )
 def test_heading_ratio_guard_preserves_other_parts_and_non_composition_text(text):
     assert parse_label(text)["materials"] == {"cotton": 100}
+
+
+def test_unclassified_percentage_text_is_not_silently_discarded():
+    # A word that is not a composition heading does not make its percentages
+    # safe to ignore. Only explicit metadata or care text can establish that.
+    result = parse_label("COTTON 100%\nIMMATERIAL 57% 38% 5%")
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
+    assert "generic:unresolved_material_token" in result["warnings"]
 
 
 def test_outer_heading_residual_cannot_be_replaced_by_complete_lining():

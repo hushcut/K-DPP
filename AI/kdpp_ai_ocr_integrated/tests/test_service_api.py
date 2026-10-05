@@ -3,7 +3,7 @@ import threading
 from io import BytesIO
 
 import pytest
-from fastapi import FastAPI, UploadFile
+from fastapi import UploadFile
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -24,33 +24,6 @@ from apps.text.ocr_text import (
 
 
 client = TestClient(service_main.app)
-
-
-def symbol_client() -> TestClient:
-    application = FastAPI()
-    service_main.register_symbol_api(application, enabled=True)
-    return TestClient(application)
-
-
-def test_symbol_api_registration_is_opt_in() -> None:
-    text_only_app = FastAPI()
-    symbol_app = FastAPI()
-
-    assert service_main.register_symbol_api(text_only_app, enabled=False) is False
-    assert "/v1/analyze-symbol" not in text_only_app.openapi()["paths"]
-
-    assert service_main.register_symbol_api(symbol_app, enabled=True) is True
-    assert "/v1/analyze-symbol" in symbol_app.openapi()["paths"]
-
-
-@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
-def test_symbol_api_accepts_explicit_enable_values(value) -> None:
-    assert service_main.symbol_api_enabled(value) is True
-
-
-@pytest.mark.parametrize("value", ["", "0", "false", "off", "unexpected"])
-def test_symbol_api_rejects_other_values(value) -> None:
-    assert service_main.symbol_api_enabled(value) is False
 
 
 def image_bytes() -> bytes:
@@ -301,6 +274,7 @@ def test_ocr_attempt_diagnostics_are_safe_and_serialized() -> None:
         "candidate_count": 2,
         "conflicting_parts": [],
         "unpaired_ratio_parts": [],
+        "rejected_composition_parts": {},
         "image_format": "JPEG",
         "width": 1200,
         "height": 800,
@@ -374,133 +348,3 @@ def test_analyze_label_maps_specific_ocr_failures(
     assert response.status_code == status_code
     assert response.json()["error_code"] == error_code
     assert str(error) not in response.json()["message"]
-
-
-def test_analyze_symbol_returns_versioned_success_contract(monkeypatch) -> None:
-    class InvalidCheckpointError(Exception):
-        pass
-
-    monkeypatch.setattr(
-        service_main,
-        "load_symbol_runtime",
-        lambda: (
-            InvalidCheckpointError,
-            "models/symbol.pt",
-            lambda *_args, **_kwargs: {
-                "symbols": [
-                    {
-                        "class": "wash_30",
-                        "label_ko": "30도 세탁",
-                        "confidence": 0.91,
-                    }
-                ],
-                "model_scope": "cropped_care_symbol_only",
-            },
-        ),
-    )
-
-    response = symbol_client().post(
-        "/v1/analyze-symbol",
-        files={"file": ("symbol.png", image_bytes(), "image/png")},
-    )
-
-    assert response.status_code == 200
-    assert response.json()["api_version"] == service_main.API_VERSION
-    assert response.json()["model_scope"] == "cropped_care_symbol_only"
-
-
-@pytest.mark.parametrize("blocked_stage", ["runtime", "prediction"])
-def test_analyze_symbol_keeps_event_loop_responsive(monkeypatch, blocked_stage) -> None:
-    class InvalidCheckpointError(Exception):
-        pass
-
-    started = threading.Event()
-    release = threading.Event()
-
-    async def read_upload_stub(_file):
-        return image_bytes()
-
-    def wait_if_selected(stage):
-        if blocked_stage == stage:
-            started.set()
-            release.wait(0.8)
-
-    def load_runtime_stub():
-        wait_if_selected("runtime")
-
-        def predict_stub(*_args, **_kwargs):
-            wait_if_selected("prediction")
-            return {"status": "success", "symbols": []}
-
-        return InvalidCheckpointError, "models/symbol.pt", predict_stub
-
-    monkeypatch.setattr(service_main, "read_upload", read_upload_stub)
-    monkeypatch.setattr(service_main, "load_symbol_runtime", load_runtime_stub)
-    response = run_with_event_loop_probe(
-        lambda: service_main.analyze_symbol(
-            UploadFile(filename="symbol.png", file=BytesIO(b"image"))
-        ),
-        started,
-        release,
-    )
-
-    assert response.status_code == 200
-
-
-def test_analyze_symbol_maps_invalid_checkpoint_to_503(monkeypatch) -> None:
-    class InvalidCheckpointError(Exception):
-        pass
-
-    def fail(*_args, **_kwargs):
-        raise InvalidCheckpointError("checkpoint architecture mismatch")
-
-    monkeypatch.setattr(
-        service_main,
-        "load_symbol_runtime",
-        lambda: (InvalidCheckpointError, "models/symbol.pt", fail),
-    )
-    response = symbol_client().post(
-        "/v1/analyze-symbol",
-        files={"file": ("symbol.png", image_bytes(), "image/png")},
-    )
-
-    assert response.status_code == 503
-    assert response.json()["error_code"] == "symbol_model_invalid"
-    assert "architecture mismatch" not in response.text
-
-
-def test_analyze_symbol_hides_missing_model_path(monkeypatch) -> None:
-    class InvalidCheckpointError(Exception):
-        pass
-
-    def fail(*_args, **_kwargs):
-        raise FileNotFoundError("C:/models/private/symbol.pt")
-
-    monkeypatch.setattr(
-        service_main,
-        "load_symbol_runtime",
-        lambda: (InvalidCheckpointError, "models/symbol.pt", fail),
-    )
-    response = symbol_client().post(
-        "/v1/analyze-symbol",
-        files={"file": ("symbol.png", image_bytes(), "image/png")},
-    )
-
-    assert response.status_code == 503
-    assert response.json()["error_code"] == "symbol_model_not_configured"
-    assert "C:/models/private" not in response.text
-
-
-def test_analyze_symbol_isolated_when_optional_runtime_is_missing(monkeypatch) -> None:
-    def unavailable_runtime():
-        raise ModuleNotFoundError("No module named 'torchvision'", name="torchvision")
-
-    monkeypatch.setattr(service_main, "load_symbol_runtime", unavailable_runtime)
-    response = symbol_client().post(
-        "/v1/analyze-symbol",
-        files={"file": ("symbol.png", image_bytes(), "image/png")},
-    )
-
-    assert response.status_code == 503
-    assert response.json()["error_code"] == "symbol_feature_unavailable"
-    assert "torchvision" not in response.text

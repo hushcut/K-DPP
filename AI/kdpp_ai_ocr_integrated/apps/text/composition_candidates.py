@@ -4,10 +4,15 @@ The collectors run in the original order so candidate tie-breaking remains stabl
 """
 
 from dataclasses import dataclass
+from decimal import Decimal
+import re
 
 from apps.text.rules import EQUIVALENT_MATERIALS
+from apps.text.material_extraction import _TOKEN_PATTERN, find_material_key
 
-EXACT_RATIO_TOLERANCE = 0.01
+from apps.text.ratio_contract import EXACT_RATIO_TOTAL, has_exact_total, sum_ratios
+
+EXACT_RATIO_TOLERANCE = 0.0
 
 
 def equivalent_composition(
@@ -30,10 +35,13 @@ class LineInfo:
     normalized: str
     part: str
     materials: tuple[str, ...]
-    numbers: tuple[float, ...]
+    numbers: tuple[Decimal, ...]
     explicit_percent: bool
     unresolved_materials: tuple[str, ...] = ()
     marker_part: str | None = None
+    invalid_evidence: bool = False
+    is_metadata: bool = False
+    inferred_metadata: bool = False
 
     @property
     def is_standalone_marker(self) -> bool:
@@ -43,15 +51,15 @@ class LineInfo:
 @dataclass(frozen=True)
 class CompositionCandidate:
     part: str
-    materials: dict[str, float]
+    materials: dict[str, Decimal]
     source: str
     explicit_percent: bool
     start_index: int
     row_indices: tuple[int, ...] = ()
 
     @property
-    def total(self) -> float:
-        return sum(self.materials.values())
+    def total(self) -> Decimal:
+        return sum_ratios(self.materials.values())
 
     @property
     def score(self) -> tuple[int, float, int, int]:
@@ -61,13 +69,15 @@ class CompositionCandidate:
             "alternating_lines": 2,
             "stacked_columns": 2,
             "mixed_lines": 2,
+            "translated_lines": 2,
+            "ratio_first_lines": 2,
             "adjacent_lines": 1,
             "leading_ratio": 1,
             "enclosing_ratios": 1,
         }.get(self.source, 0)
         return (
             1 if self.explicit_percent else 0,
-            -abs(100.0 - self.total),
+            -abs(EXACT_RATIO_TOTAL - self.total),
             len(self.materials),
             source_rank,
         )
@@ -90,12 +100,11 @@ def _pair_values(
     for material, number in zip(materials, numbers):
         if material in paired or not (0 < number <= 100):
             return None
-        paired[material] = float(number)
+        paired[material] = Decimal(str(number))
 
-    total = sum(paired.values())
     # A partial or misread OCR result must not be rescaled into a valid-looking
     # composition. Every supplied ratio needs to form one complete 100% block.
-    if abs(total - 100.0) > EXACT_RATIO_TOLERANCE:
+    if not has_exact_total(paired.values()):
         return None
 
     return CompositionCandidate(
@@ -111,7 +120,7 @@ def _pair_values(
 def _is_standalone_composition(info: LineInfo) -> bool:
     """Whether a row's own ratios already form one complete composition."""
 
-    return abs(sum(info.numbers) - 100.0) <= EXACT_RATIO_TOLERANCE
+    return has_exact_total(info.numbers)
 
 
 def _same_line_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
@@ -457,6 +466,129 @@ def _leading_ratio_candidates(infos: list[LineInfo]) -> list[CompositionCandidat
     return candidates
 
 
+def _has_translation_context(info: LineInfo) -> bool:
+    return (
+        "/" in info.normalized or "-" in info.normalized
+        or sum(find_material_key(token) is not None
+               for token in _TOKEN_PATTERN.findall(info.normalized)) >= 2
+        or any(find_material_key(token) is not None
+               and re.search(r"[Ѐ-ԯ぀-ヿ㐀-鿿가-힯]", token)
+               for token in _TOKEN_PATTERN.findall(info.normalized))
+    )
+
+
+def _translated_component(infos: list[LineInfo], position: int, part: str):
+    """Read one explicit ratio and its contiguous, fully known translations."""
+    first = infos[position]
+    if first.part != part or first.invalid_evidence or first.unresolved_materials or first.is_metadata:
+        return None
+    rows = [first.index]
+    cursor = position + 1
+    ratio_first = not first.materials
+    if ratio_first:
+        if (len(first.numbers) != 1 or not first.explicit_percent
+                or _TOKEN_PATTERN.search(first.normalized) or cursor >= len(infos)):
+            return None
+        primary = infos[cursor]
+        if (primary.part != part or primary.index != first.index + 1
+                or len(primary.materials) != 1 or primary.numbers
+                or primary.invalid_evidence or primary.unresolved_materials
+                or primary.is_metadata or primary.marker_part is not None):
+            return None
+        ratio = first.numbers[0]
+        rows.append(primary.index)
+        cursor += 1
+    else:
+        primary = first
+        if len(primary.materials) != 1:
+            return None
+        if primary.numbers and (len(primary.numbers) != 1 or not primary.explicit_percent):
+            return None
+        ratio = primary.numbers[0] if primary.numbers else None
+    material = primary.materials[0]
+    translated = False
+    context = _has_translation_context(primary)
+
+    def take_alias_rows():
+        nonlocal cursor, translated, context
+        while cursor < len(infos):
+            current = infos[cursor]
+            if (current.part != part or current.index != rows[-1] + 1
+                    or current.materials != (material,) or current.numbers
+                    or current.invalid_evidence or current.unresolved_materials
+                    or current.is_metadata or current.marker_part is not None
+                    or not (context or _has_translation_context(current))):
+                break
+            rows.append(current.index)
+            context = True
+            translated = True
+            cursor += 1
+
+    take_alias_rows()
+    if ratio is None:
+        if cursor >= len(infos):
+            return None
+        ratio_row = infos[cursor]
+        if (ratio_row.part != part or ratio_row.index != rows[-1] + 1
+                or ratio_row.materials or len(ratio_row.numbers) != 1
+                or not ratio_row.explicit_percent or ratio_row.invalid_evidence
+                or ratio_row.unresolved_materials or ratio_row.is_metadata
+                or ratio_row.marker_part is not None or _TOKEN_PATTERN.search(ratio_row.normalized)):
+            return None
+        ratio = ratio_row.numbers[0]
+        rows.append(ratio_row.index)
+        cursor += 1
+        take_alias_rows()
+    # A leading percentage cannot borrow a name with its own following ratio.
+    # A different next name is required to delimit a ratio-first column.
+    if ratio_first and cursor < len(infos):
+        following = infos[cursor]
+        if following.part == part and following.numbers and not following.materials:
+            if cursor + 1 >= len(infos):
+                return None
+            next_name = infos[cursor + 1]
+            if (next_name.index != following.index + 1 or next_name.part != part
+                    or len(next_name.materials) != 1 or next_name.materials == (material,)
+                    or next_name.numbers or next_name.invalid_evidence or next_name.unresolved_materials
+                    or next_name.marker_part is not None or next_name.is_metadata):
+                return None
+    return material, ratio, cursor, rows, translated, ratio_first
+
+
+def _translated_line_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
+    candidates = []
+    for position, first in enumerate(infos):
+        materials, numbers, row_indices = [], [], []
+        cursor = position
+        translated = False
+        any_ratio_first = False
+        while cursor < len(infos) and len(materials) < 6:
+            if row_indices and infos[cursor].index != row_indices[-1] + 1:
+                break
+            component = _translated_component(infos, cursor, first.part)
+            if component is None:
+                break
+            material, number, following, rows, has_translation, ratio_first = component
+            if material in materials:
+                break
+            materials.append(material)
+            numbers.append(number)
+            row_indices.extend(rows)
+            translated |= has_translation
+            any_ratio_first |= ratio_first
+            cursor = following
+        if not translated and not (any_ratio_first and len(materials) > 1):
+            continue
+        candidate = _pair_values(
+            first.part, materials, numbers,
+            source="translated_lines" if translated else "ratio_first_lines",
+            explicit_percent=True, start_index=first.index, row_indices=tuple(row_indices),
+        )
+        if candidate:
+            candidates.append(candidate)
+    return candidates
+
+
 def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
     """Collect candidates from rows already filtered for metadata."""
 
@@ -469,6 +601,7 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
         _stacked_column_candidates,
         _adjacent_line_candidates,
         _leading_ratio_candidates,
+        _translated_line_candidates,
     ):
         candidates.extend(collector(infos))
     return candidates

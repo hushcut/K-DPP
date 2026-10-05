@@ -1,12 +1,19 @@
 """OCR 문자열 정규화와 소재·의류 파트 토큰 추출."""
 
 import re
+from dataclasses import dataclass
 import unicodedata
 
 from apps.text.rules import MATERIAL_ALIASES, OCR_CORRECTIONS
 
 
 PART_PATTERNS = {
+    # Match the full numbered heading before the unnumbered outer aliases.
+    "outer_2": [
+        "outshell2", "outshell 2", "cutshell2", "cutshell 2",
+        "shell2", "shell 2", "outer2", "outer 2",
+        "겉감2", "겉감 2", "겉 감2", "겉 감 2",
+    ],
     "outer": [
         "겉감",
         "겉 감",
@@ -17,6 +24,10 @@ PART_PATTERNS = {
         "본피",
         "shell",
         "outshell",
+        "cutshell",
+        "outshell1", "outshell 1", "cutshell1", "cutshell 1",
+        "shell1", "shell 1", "outer1", "outer 1",
+        "겉감1", "겉감 1", "겉 감1", "겉 감 1",
         "outer",
         "face",
         "main fabric",
@@ -104,7 +115,7 @@ EXCLUDED_SEGMENT_WORDS = {
 }
 
 _TOKEN_PATTERN = re.compile(
-    r"[a-zà-ÿ]+|[가-힣]+|[一-龥]+|[ぁ-んァ-ンー]+",
+    r"[^\W\d_]+",
     re.IGNORECASE,
 )
 
@@ -131,6 +142,60 @@ MULTIWORD_ALIASES = sorted(
 )
 
 
+_HAN_ALIAS_NAMES = sorted(
+    (alias for alias in ALIAS_TO_MATERIAL if re.fullmatch(r"[\u4e00-\u9fff]{2,}", alias)),
+    key=len,
+    reverse=True,
+)
+_HAN_PART_PREFIX = "|".join(
+    re.escape(alias)
+    for alias in sorted(
+        {alias for aliases in PART_PATTERNS.values() for alias in aliases
+         if re.fullmatch(r"[\u4e00-\u9fff]+", alias)},
+        key=len,
+        reverse=True,
+    )
+)
+_HAN_ALIAS_PATTERNS = {
+    allow_newlines: re.compile(
+        r"(?<![^\W\d_])"
+        rf"(?P<prefix>(?:(?:{_HAN_PART_PREFIX})[ \t]*)?)"
+        + "(?P<alias>"
+        + "|".join(gap.join(map(re.escape, alias)) for alias in _HAN_ALIAS_NAMES)
+        + r")(?![^\W\d_])"
+    )
+    for allow_newlines, gap in ((False, r"[ \t]*"), (True, r"[ \t\n]*"))
+}
+_HAN_GAP_PATTERNS = {
+    False: re.compile(r"[\u4e00-\u9fff][ \t]+[\u4e00-\u9fff]"),
+    True: re.compile(r"[\u4e00-\u9fff][ \t\n]+[\u4e00-\u9fff]"),
+}
+
+
+def restore_registered_han_aliases(text: str, *, allow_newlines: bool = False) -> str:
+    """Restore whitespace only inside a complete registered Han fiber name."""
+
+    if not _HAN_GAP_PATTERNS[allow_newlines].search(text):
+        return text
+
+    def restore(match: re.Match[str]) -> str:
+        body = match.group("alias")
+        alias = re.sub(r"[ \t\n]+", "", body)
+        if "\n" in body:
+            # A wrapped prefix may already name this same fiber (聚酯), but
+            # never turn two different fibers into one compound: polyurethane
+            # (聚氨酯) and elastane (弹性纤维) must retain their row boundary.
+            rows = body.split("\n")
+            for index in range(1, len(rows)):
+                for fragment in ("".join(rows[:index]), "".join(rows[index:])):
+                    material = ALIAS_TO_MATERIAL.get(re.sub(r"[ \t]+", "", fragment))
+                    if material and material != ALIAS_TO_MATERIAL[alias]:
+                        return match.group()
+        return match.group("prefix") + alias
+
+    return _HAN_ALIAS_PATTERNS[allow_newlines].sub(restore, text)
+
+
 def _replace_token(text: str, wrong: str, correct: str) -> str:
     if wrong.isascii():
         pattern = rf"(?<![a-z]){re.escape(wrong)}(?![a-z])"
@@ -152,6 +217,8 @@ def normalize_text(text: str) -> str:
 
     for wrong, correct in OCR_CORRECTIONS.items():
         normalized = _replace_token(normalized, wrong.casefold(), correct.casefold())
+
+    normalized = restore_registered_han_aliases(normalized)
 
     lines = [re.sub(r"[ \t]+", " ", line).strip() for line in normalized.split("\n")]
     return "\n".join(line for line in lines if line)
@@ -229,19 +296,7 @@ def _mask_multiword_aliases(text: str) -> tuple[str, list[tuple[int, str]]]:
 
 
 def extract_materials(line: str) -> list[str]:
-    cleaned = _strip_excluded_segments(normalize_text(line))
-    if not cleaned:
-        return []
-
-    tokenizable, found_by_position = _mask_multiword_aliases(cleaned)
-    for match in _TOKEN_PATTERN.finditer(tokenizable):
-        material = find_material_key(match.group())
-        if material:
-            found_by_position.append((match.start(), material))
-
-    return list(
-        dict.fromkeys(material for _, material in sorted(found_by_position))
-    )
+    return [evidence.material for evidence in _material_evidence(line)]
 
 
 _PART_MARKER_PATTERNS = {
@@ -263,6 +318,14 @@ _SHORT_PART_MARKERS = {"솜", "립", "袖", "표면"}
 
 def is_part_marker_match(text: str, match: re.Match[str]) -> bool:
     """Reject short markers embedded in words, but keep joined marker+fiber OCR."""
+    marker = match.group().casefold()
+    if marker in {*PART_PATTERNS["outer"], *PART_PATTERNS["outer_2"]}:
+        suffix = text[match.end():]
+        if marker[-1].isdigit():
+            if suffix[:1].isdigit() or suffix.lstrip().startswith(("%", ".", ",")):
+                return False
+        elif re.match(r"[12]", suffix) and not re.match(r"(?:100(?!\d)|[0-9]+(?:\.[0-9]+)?\s*%)", suffix):
+            return False
     if match.group().casefold() not in _SHORT_PART_MARKERS:
         return True
     if match.start() > 0 and text[match.start() - 1].isalpha():
@@ -359,3 +422,66 @@ def unresolved_material_tokens(line: str) -> list[str]:
         if _is_unresolved_material_token(token)
         and (has_known_material or token not in NEGATING_MODIFIERS)
     ]
+
+
+_ALIAS_SEPARATOR_PATTERN = re.compile(r"[\s/|,;:\"'()\[\]{}\-]*")
+
+@dataclass(frozen=True)
+class MaterialEvidence:
+    material: str
+    start: int
+    end: int
+
+def _material_evidence(line: str) -> tuple[MaterialEvidence, ...]:
+    cleaned = _strip_excluded_segments(normalize_text(line))
+    if not cleaned:
+        return ()
+
+    occurrences: list[MaterialEvidence] = []
+    occupied_spans: list[tuple[int, int]] = []
+    for alias, material in MULTIWORD_ALIASES:
+        for match in re.finditer(
+            rf"(?<![a-z]){re.escape(alias)}(?![a-z])",
+            cleaned,
+        ):
+            if any(
+                match.start() < end and match.end() > start
+                for start, end in occupied_spans
+            ):
+                continue
+            occurrences.append(
+                MaterialEvidence(material, match.start(), match.end())
+            )
+            occupied_spans.append(match.span())
+
+    for match in _TOKEN_PATTERN.finditer(cleaned):
+        if any(
+            match.start() < end and match.end() > start
+            for start, end in occupied_spans
+        ):
+            continue
+        material = find_material_key(match.group())
+        if material:
+            occurrences.append(
+                MaterialEvidence(material, match.start(), match.end())
+            )
+
+    ordered: list[MaterialEvidence] = []
+    for evidence in sorted(occurrences, key=lambda item: (item.start, item.end)):
+        # 인접한 동일 소재의 병기는 전체 위치를 보존한 하나의 근거로 묶는다.
+        # 숫자나 다른 단어를 사이에 둔 반복 표기는 별도 근거로 남겨 검증한다.
+        if (
+            ordered
+            and ordered[-1].material == evidence.material
+            and _ALIAS_SEPARATOR_PATTERN.fullmatch(
+                cleaned[ordered[-1].end : evidence.start]
+            )
+        ):
+            ordered[-1] = MaterialEvidence(
+                evidence.material,
+                ordered[-1].start,
+                evidence.end,
+            )
+            continue
+        ordered.append(evidence)
+    return tuple(ordered)

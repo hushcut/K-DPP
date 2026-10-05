@@ -6,37 +6,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from tqdm import tqdm
-
 from apps.service.label_analysis import analyze_label_image
 from apps.text.ocr_text import OcrError
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = BASE_DIR / "outputs"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
-
-
-def load_symbol_runtime():
-    """Load the optional classifier only for cropped-symbol batch runs."""
-
-    from apps.symbol.predict_symbol import DEFAULT_MODEL_PATH, predict_symbol
-
-    return DEFAULT_MODEL_PATH, predict_symbol
-
-
-def configure_symbol_runtime(
-    *,
-    include_symbol_crops: bool,
-    requested_model_path: str,
-) -> tuple[Any | None, str]:
-    """Return no symbol dependency unless the explicit symbol option is enabled."""
-
-    if not include_symbol_crops:
-        return None, ""
-    default_model_path, predict_symbol = load_symbol_runtime()
-    return predict_symbol, requested_model_path or str(default_model_path)
 
 
 def image_files(folder: Path) -> list[Path]:
@@ -63,10 +39,8 @@ def flatten_result(
     image_path: Path,
     input_dir: Path,
     parsed: dict[str, Any],
-    symbol: dict[str, Any],
     *,
     label_error: str = "",
-    symbol_error: str = "",
 ) -> dict[str, Any]:
     confidence = parsed.get("confidence", {})
     ocr = parsed.get("ocr", {})
@@ -98,12 +72,6 @@ def flatten_result(
         ),
         "raw_ocr_preview": parsed.get("raw_ocr_preview", ""),
         "label_exception": label_error,
-        "symbol_status": symbol.get("status", "not_run"),
-        "symbols": json.dumps(
-            symbol.get("symbols", []),
-            ensure_ascii=False,
-        ),
-        "symbol_exception": symbol_error,
     }
 
 
@@ -112,15 +80,9 @@ def main() -> None:
         description="Run the AI label pipeline over an image folder."
     )
     parser.add_argument(
-        "--split",
-        default="valid",
-        choices=["train", "valid", "test"],
-        help="Used only when --image-dir is omitted.",
-    )
-    parser.add_argument(
         "--image-dir",
-        default="",
-        help="Optional image folder. Defaults to data/<split>.",
+        required=True,
+        help="OCR로 분석할 라벨 이미지 폴더.",
     )
     parser.add_argument(
         "--credentials",
@@ -135,37 +97,13 @@ def main() -> None:
         default="",
         help="Output CSV path.",
     )
-    parser.add_argument(
-        "--include-symbol-crops",
-        action="store_true",
-        help=(
-            "Also run the symbol classifier. Enable this only when every "
-            "input image is an already-cropped single care-symbol image."
-        ),
-    )
-    parser.add_argument(
-        "--symbol-model",
-        default="",
-        help="Optional checkpoint path. Used only with --include-symbol-crops.",
-    )
     args = parser.parse_args()
 
-    # A full care label follows the OCR path only. Importing Torch here would
-    # make that path depend on an unrelated experimental classifier.
-    predict_symbol, symbol_model_path = configure_symbol_runtime(
-        include_symbol_crops=args.include_symbol_crops,
-        requested_model_path=args.symbol_model,
-    )
-
-    input_dir = (
-        Path(args.image_dir).expanduser().resolve()
-        if args.image_dir
-        else (DATA_DIR / args.split).resolve()
-    )
+    input_dir = Path(args.image_dir).expanduser().resolve()
     output_path = (
         Path(args.output).expanduser().resolve()
         if args.output
-        else OUTPUT_DIR / f"{args.split}_combined_results.csv"
+        else OUTPUT_DIR / "label_batch_results.csv"
     )
     paths = image_files(input_dir)
     if not paths:
@@ -173,7 +111,7 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     rows: list[dict[str, Any]] = []
-    for image_path in tqdm(paths, desc="AI label analysis"):
+    for image_path in paths:
         parsed: dict[str, Any] = {
             "status": "failed",
             "error_code": "pipeline_exception",
@@ -196,18 +134,6 @@ def main() -> None:
             parsed["message"] = "예상하지 못한 AI 파이프라인 오류"
             label_error = f"{type(exc).__name__}: {exc}"
 
-        symbol: dict[str, Any] = {"status": "not_run", "symbols": []}
-        symbol_error = ""
-        if predict_symbol is not None:
-            try:
-                symbol = predict_symbol(
-                    str(image_path),
-                    model_path=symbol_model_path,
-                )
-            except Exception as exc:
-                symbol = {"status": "failed", "symbols": []}
-                symbol_error = f"{type(exc).__name__}: {exc}"
-
         rows.append(
             {
                 key: csv_safe(value)
@@ -215,9 +141,7 @@ def main() -> None:
                     image_path,
                     input_dir,
                     parsed,
-                    symbol,
                     label_error=label_error,
-                    symbol_error=symbol_error,
                 ).items()
             }
         )
@@ -232,12 +156,6 @@ def main() -> None:
     print(f"Saved: {output_path}")
     print(f"Images: {len(rows)}")
     print(f"Parser success: {successful}/{len(rows)}")
-    if not args.include_symbol_crops:
-        print(
-            "Symbol classification: not run "
-            "(full-label photos are outside the classifier input contract)"
-        )
-
 
 if __name__ == "__main__":
     main()

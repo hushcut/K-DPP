@@ -84,8 +84,17 @@ def make_upload(content_type="image/jpeg"):
 
 def test_backend_imports_the_repository_ai_modules(backend_main) -> None:
     assert backend_main.AI_MODULE_PATH == REPOSITORY_ROOT / "AI" / "kdpp_ai_ocr_integrated"
-    assert backend_main.run_ocr is ocr_text.run_ocr
+    assert backend_main.run_ocr is ocr_text.run_ocr_with_metadata
     assert backend_main.parse_label is parse_label
+
+
+def test_runtime_wiring_check_requires_metadata_service(backend_main, monkeypatch, capsys) -> None:
+    check = importlib.import_module("check_ai_wiring")
+    assert check.main() == 0
+    capsys.readouterr()
+    monkeypatch.setattr(backend_main, "analyze_ocr_result", None)
+    assert check.main() == 1
+    assert "analyze_ocr_result" in capsys.readouterr().err
 
 
 def test_scan_label_uses_ai_parser_and_returns_analysis_response(backend_main, scan_db) -> None:
@@ -160,8 +169,65 @@ def test_scan_rejects_conflicting_ocr_candidates_without_saving(
             current_user=SimpleNamespace(id=1),
         )
 
-    # 기존 백엔드의 OCR 예외 매핑은 502다. AI 영역에서 성공·저장은 먼저 차단한다.
-    assert raised.value.status_code == 502
+    assert raised.value.status_code == 422
+    assert raised.value.detail["error_code"] == "MATERIAL_EXTRACTION_FAILED"
+    assert raised.value.detail["ocr"]["conflicting_parts"] == ["generic"]
+    assert raised.value.detail["confidence"]["ocr"] == "low"
+    assert scan_db.saved == []
+    assert scan_db.committed is False
+
+
+def test_scan_preserves_successful_ocr_metadata_without_saving(
+    backend_main, scan_db, monkeypatch,
+) -> None:
+    monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_args: object())
+    monkeypatch.setattr(
+        ocr_text, "_run_google_ocr",
+        lambda *_args, **_kwargs: ocr_text.OcrPayload(
+            "COTTON 80% POLYESTER 20%", "POLYESTER 20% COTTON 80%",
+        ),
+    )
+    response = backend_main.scan_label(
+        image=make_upload(), raw_ocr_text=None, db=scan_db,
+        current_user=SimpleNamespace(id=1),
+    )
+
+    assert response["materials"] == {"cotton": 80, "polyester": 20}
+    assert response["parse_evidence"]["composition_status"] == "confirmed"
+    assert response["confidence"]["ocr"] == "high"
+    assert response["ocr"]["source"] == "original"
+    assert response["ocr"]["candidate_count"] == 1
+    assert response["ocr"]["attempt_count"] == 1
+    assert response["ocr"]["conflicting_parts"] == []
+    assert response["ocr"]["unpaired_ratio_parts"] == []
+    assert response["ocr"]["width"] == response["ocr"]["height"] == 4
+    assert scan_db.saved == []
+    assert scan_db.committed is False
+
+
+@pytest.mark.parametrize("ratio_row", ["100%", "100", "50"])
+def test_scan_keeps_unpaired_ratio_evidence_on_material_failure(
+    backend_main, scan_db, monkeypatch, ratio_row,
+) -> None:
+    monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_args: object())
+    monkeypatch.setattr(
+        ocr_text, "_run_google_ocr",
+        lambda *_args, **_kwargs: ocr_text.OcrPayload(
+            f"COTTON 100%\n{ratio_row}", "COTTON 100%",
+        ),
+    )
+    with pytest.raises(HTTPException) as raised:
+        backend_main.scan_label(
+            image=make_upload(), raw_ocr_text=None, db=scan_db,
+            current_user=SimpleNamespace(id=1),
+        )
+
+    assert raised.value.status_code == 422
+    detail = raised.value.detail
+    assert detail["error_code"] == "MATERIAL_EXTRACTION_FAILED"
+    assert detail["materials"] == detail["partial_materials"] == {}
+    assert detail["ocr"]["unpaired_ratio_parts"] == ["generic"]
+    assert detail["parse_evidence"]["unpaired_ratio_parts"] == ["generic"]
     assert scan_db.saved == []
     assert scan_db.committed is False
 

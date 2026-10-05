@@ -7,7 +7,6 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_DATA_DIR = BASE_DIR / "data"
 
 
 def run_check(label: str, command: list[str]) -> None:
@@ -21,20 +20,10 @@ def run_check(label: str, command: list[str]) -> None:
         raise SystemExit(completed.returncode)
 
 
-def available_splits(data_dir: Path) -> list[str]:
-    return [
-        split
-        for split in ("train", "valid", "test")
-        if (data_dir / split / "_classes.csv").is_file()
-    ]
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run compile, regression, and data-leakage checks for AI only."
+        description="AI 문법·회귀 테스트·OCR QA 정답지 검사를 실행합니다."
     )
-    parser.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR))
-    parser.add_argument("--skip-leakage", action="store_true")
     parser.add_argument("--skip-tests", action="store_true")
     parser.add_argument(
         "--qa-image-dir",
@@ -70,33 +59,6 @@ def main() -> None:
                 "--strict",
             ],
         )
-    data_dir = Path(args.data_dir).expanduser().resolve()
-    splits = available_splits(data_dir)
-    if not splits:
-        print(
-            "\n[Split leakage]\n"
-            f"SKIP: no _classes.csv files were found under {data_dir}.",
-            flush=True,
-        )
-        return
-    if "train" not in splits or "valid" not in splits:
-        raise SystemExit(
-            "Dataset is incomplete: train and valid _classes.csv are required."
-        )
-
-    dataset_audit_command = [
-        sys.executable,
-        "-m",
-        "scripts.audit_symbol_dataset",
-        "--data-dir",
-        str(data_dir),
-        "--splits",
-        *splits,
-    ]
-    if args.skip_leakage:
-        dataset_audit_command.append("--skip-leakage")
-    run_check("Dataset audit", dataset_audit_command)
-
 
 if __name__ == "__main__":
     main()
