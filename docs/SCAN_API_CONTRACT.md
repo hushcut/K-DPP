@@ -303,16 +303,15 @@ Authorization: Bearer <token>
 
 ### 알려진 한계 (탈퇴 동시성)
 
-SQLite 연결에 `PRAGMA foreign_keys`가 켜져 있지 않고 `users.id`·`analysis_results.id`가
-`AUTOINCREMENT` 없는 rowid 별칭이라, 다음 경합이 이론적으로 가능합니다.
+기기 A의 `/api/carbon/calculate`가 토큰 검증을 통과한 직후 기기 B에서 탈퇴가 커밋되면,
+A의 이력 INSERT가 외래키 위반(`fk_analysis_results_user_id_users`)으로 실패하고 **A는 500을 받습니다**.
+탈퇴가 아직 커밋 전이면 A의 INSERT는 탈퇴 커밋까지 기다렸다가 같은 이유로 실패합니다.
+계정이 이미 없으니 저장하지 않는 것은 맞고, 응답 코드를 401로 바꿀지는 정하지 않았습니다.
+두 요청이 거의 동시에 겹쳐야 일어납니다.
 
-1. 기기 A의 `/api/carbon/calculate`가 토큰 검증을 통과한 직후 기기 B에서 탈퇴가 커밋되면,
-   A의 INSERT가 이미 삭제된 `user_id`로 들어가 고아 행이 남습니다.
-2. 탈퇴자가 마지막 가입자였다면 이후 가입자가 같은 `users.id`를 배정받아,
-   `/me/history`(user_id 단일 필터)가 이전 계정의 이력을 보여 줄 수 있습니다.
-
-근본 해결은 외래키 강제 + `AUTOINCREMENT` 마이그레이션이라 이번 작업 범위에서 제외했습니다.
-개발 단계에서 실제로 재현하려면 두 기기가 1초 이내로 겹쳐야 합니다.
+SQLite 때 있던 두 경합 — 지워진 `user_id`로 고아 행이 남는 것, 마지막 가입자가 탈퇴한 뒤
+새 가입자가 같은 `users.id`를 받아 `/me/history`에 이전 계정 이력이 보이는 것 — 은 PostgreSQL에서
+생기지 않습니다. 외래키가 강제되고, `id`는 시퀀스라 지운 번호를 다시 주지 않습니다.
 
 ## 2-4. 입력 상한과 조회 상한
 

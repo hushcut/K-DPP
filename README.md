@@ -18,7 +18,7 @@ AI 기반 의류 수명 예측 및 탄소 발자국 추적 앱.
 | 폴더 | 내용 | 문서 |
 | --- | --- | --- |
 | `FRONTEND/` | Flutter 앱 (Android·iOS) | [README](FRONTEND/README.md) |
-| `BACKEND/` | FastAPI 서버 + SQLite | [README](BACKEND/README.md) · [API 계약](BACKEND/API_CONTRACT.md) |
+| `BACKEND/` | FastAPI 서버 + PostgreSQL | [README](BACKEND/README.md) · [API 계약](BACKEND/API_CONTRACT.md) |
 | `AI/` | OCR·심볼 인식 모듈 | [README](AI/kdpp_ai_ocr_integrated/README.md) |
 | `QA/` | 라벨 데이터셋 배치 검증 도구 | [README](QA/README.md) |
 | `docs/` | 파트 간 협업 문서 | [스캔 API 계약](docs/SCAN_API_CONTRACT.md) |
@@ -28,7 +28,7 @@ AI 기반 의류 수명 예측 및 탄소 발자국 추적 앱.
 | 파트 | 스택 |
 | --- | --- |
 | 프론트엔드 | Flutter (Dart SDK `^3.11.3`) |
-| 백엔드 | FastAPI · SQLAlchemy · SQLite (Python 3.10+, 3.12 검증) |
+| 백엔드 | FastAPI · SQLAlchemy · PostgreSQL 18 · Alembic (Python 3.10+, 3.12 검증) |
 | AI | Google Cloud Vision OCR · 심볼 분류 모델 |
 | CI | GitHub Actions ([ci.yml](.github/workflows/ci.yml)) |
 
@@ -42,9 +42,12 @@ AI 기반 의류 수명 예측 및 탄소 발자국 추적 앱.
 cd BACKEND
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt
-.venv/Scripts/python.exe init_data.py
+docker compose up -d --wait
+.venv/Scripts/alembic.exe upgrade head
 .venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
+
+DB 는 Docker Desktop 으로 띄우는 로컬 PostgreSQL 입니다. 자세한 것은 [BACKEND/README.md](BACKEND/README.md).
 
 API 문서는 `http://127.0.0.1:8000/docs` 에서 확인합니다.
 
