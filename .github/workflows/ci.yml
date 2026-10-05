@@ -1,5 +1,7 @@
-# push·PR마다 프론트엔드·백엔드 분석·테스트를 자동 실행해 회귀를 조기에 잡습니다.
-# 두 잡 모두 필수입니다(2026-09-07 백엔드 continue-on-error 제거).
+# push·PR마다 프론트엔드·백엔드 분석·테스트와 배포 이미지 빌드를 자동 실행해 회귀를 조기에 잡습니다.
+# 세 잡 모두 필수입니다(2026-09-07 백엔드 continue-on-error 제거, 2026-10-04 배포 이미지 잡 추가).
+# 러너는 ubuntu-24.04 로 고정합니다(2026-10-05) — ubuntu-latest 가 Ubuntu 26 으로 넘어가는 때가
+# 10-19 develop 머지·로컬 Compose 시연과 겹쳐, CI 가 깨졌을 때 원인을 가리기 어렵기 때문입니다. 11-12 뒤 다시 봅니다.
 name: CI
 
 on:
@@ -9,7 +11,7 @@ on:
 jobs:
   frontend:
     name: Frontend (analyze + test)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: FRONTEND
@@ -33,7 +35,7 @@ jobs:
 
   backend:
     name: Backend (pytest)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # pytest 는 PostgreSQL 테스트 DB 를 씁니다. 이미지·계정은 BACKEND/compose.yaml 과
     # 같고, tests/conftest.py 의 기본 주소(127.0.0.1:5432/k_dpp_test)로 접속합니다.
     services:
@@ -77,3 +79,46 @@ jobs:
       - name: Test
         working-directory: BACKEND
         run: pytest
+
+  image:
+    name: Backend image (docker build)
+    runs-on: ubuntu-24.04
+    # 배포 이미지(BACKEND/Dockerfile)를 배포 서버(Lightsail)와 같은 x86_64 에서 빌드하고, 그 이미지로
+    # migrate·앱 시작까지 해 봅니다. 맥(arm64) 빌드로는 대신할 수 없습니다. 빌드 중에는
+    # check_ai_wiring.py 가 돌아 AI 모듈·Pillow·google-cloud-vision 결합이 끊긴 이미지는 만들어지지 않습니다.
+    services:
+      postgres:
+        image: postgres:18-trixie
+        env:
+          POSTGRES_USER: kdpp
+          POSTGRES_PASSWORD: kdpp
+          POSTGRES_DB: k_dpp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U kdpp -d k_dpp"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      K_DPP_DATABASE_URL: postgresql+psycopg://kdpp:kdpp@127.0.0.1:5432/k_dpp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: docker build -f BACKEND/Dockerfile -t k-dpp-app:ci .
+
+      # deploy/compose.yaml 의 migrate → app 순서입니다. Dockerfile.dockerignore 는 허용 목록이라
+      # 이미지에 빠진 파일(migrations 등)이 있으면 배포 날이 아니라 여기서 드러납니다.
+      - name: Migrate
+        run: docker run --rm --network host -e K_DPP_DATABASE_URL k-dpp-app:ci alembic upgrade head
+
+      - name: Start app
+        run: |
+          docker run -d --name app --network host -e K_DPP_DATABASE_URL k-dpp-app:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/; then exit 0; fi
+            sleep 1
+          done
+          docker logs app
+          exit 1

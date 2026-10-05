@@ -381,6 +381,9 @@ BACKEND/__pycache__/
 AI/**/key.json
 **/key.json
 venv/
+# 배포 비밀값(Vision 키 등). deploy/.env 는 위의 .env 규칙으로 빠집니다.
+deploy/secrets/
+deploy/backups/
 
 # 파트별 전달용 협업 문서 (커밋하지 않고 직접 공유)
 docs/BACKEND_REQUESTS.md

@@ -1,0 +1,16 @@
+# K-DPP 배포 앞단. K_DPP_DOMAIN(deploy/.env)으로 HTTPS 인증서를 자동으로 받고,
+# http:// 로 온 요청은 https:// 로 넘깁니다. localhost 면 Caddy 자체 인증서를 씁니다.
+{$K_DPP_DOMAIN} {
+	encode zstd gzip
+
+	# 앱 상한(main.py MAX_REQUEST_BYTES = 스캔 10MB + 1MB)과 같게 둡니다.
+	# 넘는 요청은 앱에 닿기 전에 413 으로 끊깁니다.
+	request_body {
+		max_size 11MiB
+	}
+
+	reverse_proxy app:8000
+
+	# 접속 기록(접속 주소 포함)을 컨테이너 로그로 남깁니다.
+	log
+}
