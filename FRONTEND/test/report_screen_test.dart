@@ -4,7 +4,9 @@ import 'package:k_dpp/closet_provider.dart';
 import 'package:k_dpp/material_name_display_provider.dart';
 import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/report_screen.dart';
+import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:provider/provider.dart';
+import 'helpers/app_banner_expect.dart';
 import 'helpers/fake_closet_storage.dart';
 
 void main() {
@@ -30,7 +32,10 @@ void main() {
           ChangeNotifierProvider.value(value: provider),
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
         ],
-        child: const MaterialApp(home: Scaffold(body: ReportScreen())),
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: Scaffold(body: ReportScreen()),
+        ),
       ),
     );
 
@@ -75,7 +80,10 @@ void main() {
           ChangeNotifierProvider.value(value: provider),
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
         ],
-        child: const MaterialApp(home: Scaffold(body: ReportScreen())),
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: Scaffold(body: ReportScreen()),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -107,7 +115,10 @@ void main() {
           ChangeNotifierProvider.value(value: provider),
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
         ],
-        child: const MaterialApp(home: Scaffold(body: ReportScreen())),
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: Scaffold(body: ReportScreen()),
+        ),
       ),
     );
 
@@ -125,7 +136,7 @@ void main() {
     expect(provider.items.single.title, '수정 후 셔츠');
     expect(provider.items.single.careInstruction, '찬물 손세탁');
     expect(find.text('수정 후 셔츠'), findsOneWidget);
-    expect(find.text('의류 정보가 수정되었습니다.'), findsOneWidget);
+    expectAppBanner(tester, '의류 정보가 수정됐어요.', AppBannerKind.success);
   });
 
   testWidgets('내장 리포트에서 의류를 삭제하면 콜백으로 옷장 화면 복귀를 요청한다', (tester) async {
@@ -149,6 +160,7 @@ void main() {
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
         ],
         child: MaterialApp(
+          builder: AppBannerHost.builder,
           home: Scaffold(
             body: ReportScreen(
               onDeleted: () {
@@ -176,6 +188,11 @@ void main() {
 
     expect(provider.items, isEmpty);
     expect(deleteCallbackCount, 1);
+    expectAppBanner(
+      tester,
+      '"삭제 테스트 셔츠"이(가) 삭제됐어요.',
+      AppBannerKind.success,
+    );
   });
 
   testWidgets('긴 소재명과 큰 글자에서도 리포트 요약 카드가 넘치지 않는다', (tester) async {
@@ -205,6 +222,7 @@ void main() {
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
         ],
         child: const MaterialApp(
+          builder: AppBannerHost.builder,
           home: MediaQuery(
             data: MediaQueryData(textScaler: TextScaler.linear(1.6)),
             child: Scaffold(body: ReportScreen()),
@@ -245,7 +263,10 @@ void main() {
           ChangeNotifierProvider.value(value: provider),
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
         ],
-        child: const MaterialApp(home: Scaffold(body: ReportScreen())),
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: Scaffold(body: ReportScreen()),
+        ),
       ),
     );
     await tester.pumpAndSettle();

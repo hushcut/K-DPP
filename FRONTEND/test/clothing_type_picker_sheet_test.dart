@@ -221,6 +221,69 @@ void main() {
     );
   });
 
+  // DECISIONS 96: 분석이 실패하면 고른 뒤 띄우던 배너 대신 시트 맨 위에서 이유를 알린다.
+  // 시트가 열리면 VoiceOver 가 첫 칸부터 읽으므로 이유가 낭독 순서의 맨 앞이어야 한다.
+  group('분석 실패 이유 줄', () {
+    const failureMessage = '라벨을 읽지 못했어요. 직접 입력해 주세요.';
+
+    testWidgets(
+      '실패 이유를 주면 제목 위에 빨간 느낌표와 함께 보이고, 시트에서 가장 먼저 읽힌다',
+      (tester) async {
+        final semantics = tester.ensureSemantics();
+        _usePhoneView(tester);
+        await _openSheet(
+          tester,
+          discardPrompt: ClothingTypePickerDiscardPrompt.manualAfterFailure,
+          failureMessage: failureMessage,
+        );
+
+        final reason = find.descendant(
+          of: find.byType(BottomSheet),
+          matching: find.text(failureMessage),
+        );
+        expect(reason, findsOneWidget);
+        expect(
+          tester.getRect(reason).top,
+          lessThan(tester.getRect(find.text('의류 종류 선택')).top),
+        );
+
+        final icon = find.descendant(
+          of: find.byType(BottomSheet),
+          matching: find.byIcon(Icons.error_outline),
+        );
+        expect(icon, findsOneWidget);
+        expect(tester.widget<Icon>(icon).color, Colors.redAccent);
+
+        expect(_traversalLabels(tester).first, failureMessage);
+        semantics.dispose();
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+
+    testWidgets(
+      '실패 이유가 없으면(분석 성공·결과 화면의 유형 변경) 이유 줄 없이 제목부터 읽힌다',
+      (tester) async {
+        final semantics = tester.ensureSemantics();
+        _usePhoneView(tester);
+        await _openSheet(
+          tester,
+          discardPrompt: ClothingTypePickerDiscardPrompt.analysisResult,
+        );
+
+        expect(
+          find.descendant(
+            of: find.byType(BottomSheet),
+            matching: find.byIcon(Icons.error_outline),
+          ),
+          findsNothing,
+        );
+        expect(_traversalLabels(tester).first, '의류 종류 선택');
+        semantics.dispose();
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+  });
+
   group('결과 화면의 유형 변경(닫기 허용)', () {
     testWidgets("손잡이를 끌어내리면 지금처럼 null로 닫히고 '다시 촬영' 버튼은 없다", (tester) async {
       _usePhoneView(tester);
@@ -281,9 +344,19 @@ void _usePhoneView(WidgetTester tester, {double bottomInset = 0}) {
   addTearDown(tester.view.reset);
 }
 
+/// 읽기 프로그램이 오른쪽으로 쓸어 넘기며 읽는 순서대로 이름(없으면 툴팁)을 모은다.
+List<String> _traversalLabels(WidgetTester tester) {
+  return tester.semantics
+      .simulatedAccessibilityTraversal()
+      .map((node) => node.label.isEmpty ? node.tooltip : node.label)
+      .where((label) => label.isNotEmpty)
+      .toList();
+}
+
 Future<_SheetResult> _openSheet(
   WidgetTester tester, {
   ClothingTypePickerDiscardPrompt? discardPrompt,
+  String? failureMessage,
 }) async {
   final sheet = _SheetResult();
 
@@ -299,6 +372,7 @@ Future<_SheetResult> _openSheet(
                   options: ClothingTypeCatalog.options,
                   initialSelection: ClothingTypeCatalog.defaultOption,
                   discardPrompt: discardPrompt,
+                  failureMessage: failureMessage,
                 ).then((value) {
                   sheet
                     ..completed = true

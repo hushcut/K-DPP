@@ -10,6 +10,7 @@ import 'services/post_login_sync_service.dart';
 import 'signup_screen.dart';
 import 'theme/app_palette.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/app_banner.dart';
 
 /// 로그인 요청의 진행 상태와 비밀번호 표시 상태를 관리하는 이메일 로그인 화면입니다.
 class EmailLoginScreen extends StatefulWidget {
@@ -133,17 +134,16 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     } on AuthApiException catch (error) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.userMessage)));
+      AppBanner.of(context).show(error.userMessage, kind: AppBannerKind.failure);
     } catch (error, stackTrace) {
       debugPrint('로그인 세션 저장 중 오류가 발생했습니다: $error');
       debugPrintStack(stackTrace: stackTrace);
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('로그인 정보를 안전하게 저장하지 못했습니다. 다시 시도해 주세요.')),
+      AppBanner.of(context).show(
+        '로그인 정보를 안전하게 저장하지 못했어요. 다시 시도해 주세요.',
+        kind: AppBannerKind.failure,
       );
     } finally {
       if (mounted) {

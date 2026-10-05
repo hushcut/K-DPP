@@ -25,6 +25,7 @@ import 'theme/app_palette.dart';
 import 'utils/clothing_type_catalog.dart';
 import 'utils/scan_form_validator.dart';
 import 'utils/session_expiry_handler.dart';
+import 'widgets/app_banner.dart';
 import 'widgets/clothing_type_picker_sheet.dart';
 import 'widgets/material_input_collection.dart';
 import 'widgets/scan_camera_view.dart';

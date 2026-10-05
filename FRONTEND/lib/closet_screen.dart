@@ -11,6 +11,7 @@ import 'models/clothes.dart';
 import 'navigation_bar_opacity_provider.dart';
 import 'theme/app_palette.dart';
 import 'utils/material_name.dart';
+import 'widgets/app_banner.dart';
 import 'widgets/bottom_navigation_metrics.dart';
 import 'widgets/frosted_surface.dart';
 import 'widgets/reorder_bump_haptics.dart';

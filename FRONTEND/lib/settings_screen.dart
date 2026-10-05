@@ -11,6 +11,7 @@ import 'theme/app_palette.dart';
 import 'theme_provider.dart';
 import 'utils/session_expiry_handler.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/app_banner.dart';
 
 /// 사용자·테마 상태를 읽어 설정 메뉴를 구성하고 각 설정 동작을 실행합니다.
 class SettingsScreen extends StatelessWidget {
@@ -50,17 +51,19 @@ class SettingsScreen extends StatelessWidget {
       // 저장 실패 시 Provider가 이전 닉네임으로 되돌리므로 재시도만 안내합니다.
       if (!context.mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('닉네임을 저장하지 못했어요. 다시 시도해 주세요.')),
+      AppBanner.of(context).show(
+        '닉네임을 저장하지 못했어요. 다시 시도해 주세요.',
+        kind: AppBannerKind.failure,
       );
       return;
     }
 
     if (!context.mounted) return;
 
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('이 기기에 표시되는 닉네임이 변경되었습니다.')));
+    AppBanner.of(context).show(
+      '이 기기에 표시되는 닉네임이 바뀌었어요.',
+      kind: AppBannerKind.success,
+    );
   }
 
   /// 서버 로그아웃을 시도한 뒤 성공 여부와 관계없이 기기의 세션·사용자 상태를 정리합니다.
@@ -94,7 +97,7 @@ class SettingsScreen extends StatelessWidget {
 
     final provider = context.read<ClosetProvider>();
     final accessToken = provider.accessToken;
-    String? serverLogoutError;
+    bool serverLogoutFailed = false;
     bool localLogoutStorageFailed = false;
 
     // 서버 로그아웃은 최대 15초까지 걸립니다. 그동안 설정 화면이 그대로 눌리면
@@ -126,8 +129,8 @@ class SettingsScreen extends StatelessWidget {
         await (authApiService ?? AuthApiService()).logout(
           accessToken: accessToken,
         );
-      } on AuthApiException catch (error) {
-        serverLogoutError = error.userMessage;
+      } on AuthApiException {
+        serverLogoutFailed = true;
       }
     }
 
@@ -145,14 +148,14 @@ class SettingsScreen extends StatelessWidget {
 
     Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
 
-    if (serverLogoutError != null || localLogoutStorageFailed) {
+    if (serverLogoutFailed || localLogoutStorageFailed) {
+      // 서버 오류 안내를 이어 붙이면 세 문장까지 길어져 붙이지 않는다(DECISIONS 98).
       final message = localLogoutStorageFailed
-          ? '기기에서는 로그아웃되었지만 저장된 로그인 정보 정리를 완료하지 못했습니다.'
-          : '기기에서는 로그아웃되었지만 서버 연결에 실패했습니다. $serverLogoutError';
+          ? '로그아웃했어요. 일부 정보는 정리하지 못했어요.'
+          : '로그아웃했어요. 서버에는 연결하지 못했어요.';
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      // 로그아웃은 됐지만 일부가 안 됐으므로 실패로 알린다.
+      AppBanner.of(context).show(message, kind: AppBannerKind.failure);
     }
   }
 
@@ -187,7 +190,7 @@ class SettingsScreen extends StatelessWidget {
       return;
     }
 
-    final messenger = ScaffoldMessenger.of(context);
+    final banner = AppBanner.of(context);
     final result = outcome.authResult;
     final newAccessToken = result?.accessToken;
     final expiresInSeconds = result?.expiresInSeconds;
@@ -196,7 +199,7 @@ class SettingsScreen extends StatelessWidget {
       // 서버가 기존 토큰을 이미 폐기했으므로 이 기기 세션도 더는 쓸 수 없습니다.
       await SessionExpiryHandler.handle(
         context,
-        message: '비밀번호는 변경됐지만 새 로그인 정보를 받지 못했습니다. 다시 로그인해 주세요.',
+        message: '비밀번호는 바뀌었어요. 다시 로그인해 주세요.',
       );
       return;
     }
@@ -215,15 +218,16 @@ class SettingsScreen extends StatelessWidget {
       if (!context.mounted) return;
       await SessionExpiryHandler.handle(
         context,
-        message: '비밀번호는 변경됐지만 로그인 정보를 저장하지 못했습니다. 다시 로그인해 주세요.',
+        message: '비밀번호는 바뀌었어요. 다시 로그인해 주세요.',
       );
       return;
     }
 
     if (!context.mounted) return;
 
-    messenger.showSnackBar(
-      const SnackBar(content: Text('비밀번호가 변경되었습니다. 다른 기기에서는 다시 로그인해야 합니다.')),
+    banner.show(
+      '비밀번호가 바뀌었어요. 다른 기기에서는 다시 로그인해야 해요.',
+      kind: AppBannerKind.success,
     );
   }
 
@@ -279,7 +283,10 @@ class SettingsScreen extends StatelessWidget {
       message = '회원 탈퇴가 완료되었습니다.';
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    AppBanner.of(context).show(
+      message,
+      kind: localPurgeFailed ? AppBannerKind.failure : AppBannerKind.success,
+    );
   }
 
   // 카메라·앨범 사진과 임시 파일이 어떻게 사용되는지 하단 시트로 안내합니다.

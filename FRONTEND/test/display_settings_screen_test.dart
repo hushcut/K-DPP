@@ -7,11 +7,13 @@ import 'package:k_dpp/models/material_name_display.dart';
 import 'package:k_dpp/navigation_bar_opacity_provider.dart';
 import 'package:k_dpp/settings_screen.dart';
 import 'package:k_dpp/theme_provider.dart';
+import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 
+import 'helpers/app_banner_expect.dart';
 import 'helpers/fake_auth_session_storage.dart';
 import 'helpers/fake_closet_storage.dart';
 
@@ -34,7 +36,10 @@ void main() {
             create: (_) => NavigationBarOpacityProvider(),
           ),
         ],
-        child: const MaterialApp(home: DisplaySettingsScreen()),
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: DisplaySettingsScreen(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -91,9 +96,10 @@ void main() {
 
     expect(provider.display, MaterialNameDisplay.korean);
     expect(selectedIconOf('한글'), findsOneWidget);
-    expect(
-      find.text('소재 이름 표시 설정을 저장하지 못했어요. 다시 시도해 주세요.'),
-      findsOneWidget,
+    expectAppBanner(
+      tester,
+      '소재 이름 표시 설정을 저장하지 못했어요. 다시 시도해 주세요.',
+      AppBannerKind.failure,
     );
   });
 
@@ -143,7 +149,10 @@ void main() {
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
           ChangeNotifierProvider.value(value: opacityProvider),
         ],
-        child: const MaterialApp(home: DisplaySettingsScreen()),
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: DisplaySettingsScreen(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -152,9 +161,10 @@ void main() {
     await tester.drag(find.byType(Slider), const Offset(400, 0));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('하단 메뉴 설정을 저장하지 못했어요. 다시 시도해 주세요.'),
-      findsOneWidget,
+    expectAppBanner(
+      tester,
+      '하단 메뉴 설정을 저장하지 못했어요. 다시 시도해 주세요.',
+      AppBannerKind.failure,
     );
     expect(opacityProvider.opacity, 0.85);
     expect(find.text('85%'), findsOneWidget);
@@ -174,7 +184,10 @@ void main() {
           ChangeNotifierProvider(create: (_) => ThemeProvider()),
           ChangeNotifierProvider.value(value: displayProvider),
         ],
-        child: const MaterialApp(home: SettingsScreen()),
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: SettingsScreen(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
