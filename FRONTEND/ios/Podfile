@@ -1,4 +1,4 @@
-platform :ios, '13.0'
+platform :ios, '15.0'
 
 # CocoaPods analytics sends network stats synchronously affecting Flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -46,5 +46,12 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+
+    # Flutter 3.41.5의 podhelper는 pod 배포 타깃을 13.0으로 되돌립니다
+    # (podhelper.rb의 `s.ios.deployment_target = '13.0'`).
+    # Xcode 27은 15.0 미만을 빌드하지 못하므로 여기서 다시 올립니다.
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+    end
   end
 end

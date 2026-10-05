@@ -14,6 +14,26 @@ void main() {
       expect(ScanFormValidator.validateMaterialName('cotton'), isNull);
     });
 
+    test('validateMaterialNameUnique flags a material already used in an earlier row', () {
+      const message = '이미 입력한 소재예요.';
+
+      // 글자가 아니라 표준명으로 본다: 면 = 코튼 = cotton.
+      expect(ScanFormValidator.validateMaterialNameUnique('코튼', ['면']), message);
+      expect(
+        ScanFormValidator.validateMaterialNameUnique(' COTTON ', ['울', '면']),
+        message,
+      );
+      expect(
+        ScanFormValidator.validateMaterialNameUnique('폴리에스터', ['면', '울']),
+        isNull,
+      );
+      // 부분 일치는 중복이 아니다 — '모'는 울의 별칭이지 모달이 아니다.
+      expect(ScanFormValidator.validateMaterialNameUnique('모달', ['모']), isNull);
+      // 빈 값은 validateMaterialName이 맡고, 빈 앞 줄과는 비교하지 않는다.
+      expect(ScanFormValidator.validateMaterialNameUnique('', ['면']), isNull);
+      expect(ScanFormValidator.validateMaterialNameUnique('면', ['', '  ']), isNull);
+    });
+
     test('validateMaterialValue accepts percentages from 0 to 100', () {
       expect(ScanFormValidator.validateMaterialValue(''), '필수');
       expect(ScanFormValidator.validateMaterialValue('abc'), '숫자만');

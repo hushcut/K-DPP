@@ -4,19 +4,17 @@ part of '../closet_screen.dart';
 extension _ClosetSortSheet on _ClosetScreenState {
   /// 정렬 기준 선택 시트를 열고 선택 결과를 화면 상태에 반영합니다.
   Future<void> _showSortBottomSheet() async {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final palette = AppPalette.of(context);
-    final primaryText = palette.textPrimary;
-    final sheetColor = isDark ? const Color(0xFF121212) : Colors.white;
-
+    // 배경색은 테마(AppTheme.bottomSheetTheme)에 맡기고 글자색은 builder 안에서 읽습니다.
+    // 여는 순간에 정하면 시트가 열린 채 시스템 밝기가 바뀔 때 따라오지 않습니다.
     final selected = await showModalBottomSheet<ClosetSortOption>(
       context: context,
       showDragHandle: true,
-      backgroundColor: sheetColor,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (context) {
+        final primaryText = AppPalette.of(context).textPrimary;
+
         return SafeArea(
           // 작은 화면이나 큰 글자 설정에서 옵션이 잘리지 않도록 스크롤을 허용합니다.
           child: SingleChildScrollView(
