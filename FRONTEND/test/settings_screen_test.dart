@@ -224,7 +224,37 @@ void main() {
     );
     expect(find.text('로그인 화면'), findsOneWidget);
     // 스택을 비우고 로그인 화면으로 넘어가도 알림은 남는다.
-    expectAppBanner(tester, '회원 탈퇴가 완료되었습니다.', AppBannerKind.success);
+    expectAppBanner(tester, '회원 탈퇴가 완료됐어요.', AppBannerKind.success);
+  });
+
+  testWidgets('회원 탈퇴 뒤 기기의 계정 옷장을 지우지 못하면 탈퇴는 알리되 실패로 띄운다', (tester) async {
+    final storage = FakeClosetStorage();
+    final harness = await _pumpSettings(
+      tester,
+      storage: storage,
+      client: MockClient((request) async {
+        return http.Response(
+          jsonEncode({'status': 'success', 'message': '회원 탈퇴가 완료되었습니다.'}),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }),
+    );
+    storage.clearClothesForError = Exception('저장소 쓰기 실패');
+
+    await _openAccountMenu(tester, '회원 탈퇴');
+    await tester.enterText(find.byType(TextField).first, 'password123');
+    await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
+    await tester.pumpAndSettle();
+
+    // 서버 계정은 지워졌으므로 로그아웃해 로그인 화면으로 보내고, 남은 기기 정보만 알린다.
+    expect(harness.isAuthenticated, isFalse);
+    expect(find.text('로그인 화면'), findsOneWidget);
+    expectAppBanner(
+      tester,
+      '회원 탈퇴가 완료됐어요. 이 기기의 일부 정보는 정리하지 못했어요.',
+      AppBannerKind.failure,
+    );
   });
 
   testWidgets('회원 탈퇴가 서버에서 거절되면 기기 데이터를 건드리지 않는다', (tester) async {
@@ -253,6 +283,111 @@ void main() {
       isTrue,
     );
     expect(find.text('로그인 화면'), findsNothing);
+  });
+
+  testWidgets('회원 탈퇴가 401을 받으면 탈퇴됐다고 안내하지 않고 기기 옷장을 남긴다', (tester) async {
+    final storage = FakeClosetStorage();
+    final harness = await _pumpSettings(
+      tester,
+      storage: storage,
+      // 다른 기기의 비밀번호 변경으로 이 토큰만 폐기된 경우. 계정과 분석 이력은
+      // 서버에 그대로 남아 있다(BACKEND/tests/test_withdraw_revoked_token.py).
+      client: MockClient((request) async => _withdrawUnauthorized()),
+    );
+
+    await _openAccountMenu(tester, '회원 탈퇴');
+    await tester.enterText(find.byType(TextField).first, 'password123');
+    await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
+    await tester.pumpAndSettle();
+
+    expect(harness.isAuthenticated, isFalse);
+    // 계정이 남아 있으므로 다시 로그인하면 쓸 옷장도 남긴다.
+    expect(
+      await storage.hasSavedClothesListFor('honggildong@example.com'),
+      isTrue,
+    );
+    expect(find.text('로그인 화면'), findsOneWidget);
+    expectAppBanner(
+      tester,
+      '로그인이 만료돼 탈퇴되지 않았어요. 다시 로그인한 뒤 탈퇴해 주세요.',
+      AppBannerKind.failure,
+    );
+  });
+
+  testWidgets('결과를 모르는 탈퇴 시도 뒤의 401은 처리 여부를 확인하지 못했다고 안내한다', (tester) async {
+    var requestCount = 0;
+    final storage = FakeClosetStorage();
+    await _pumpSettings(
+      tester,
+      storage: storage,
+      client: MockClient((request) async {
+        requestCount++;
+        // 서버가 삭제를 마친 뒤 응답만 잃으면, 다시 보낸 요청은 토큰이 지워져 401을 받는다.
+        if (requestCount == 1) {
+          throw http.ClientException('Connection reset by peer');
+        }
+        return _withdrawUnauthorized();
+      }),
+    );
+
+    await _openAccountMenu(tester, '회원 탈퇴');
+    await tester.enterText(find.byType(TextField).first, 'password123');
+    await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('인터넷에 연결할 수 없어요. Wi-Fi나 모바일 데이터를 확인해 주세요.'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
+    await tester.pumpAndSettle();
+
+    expect(requestCount, 2);
+    expect(
+      await storage.hasSavedClothesListFor('honggildong@example.com'),
+      isTrue,
+    );
+    expect(find.text('로그인 화면'), findsOneWidget);
+    expectAppBanner(
+      tester,
+      '로그인이 만료돼 탈퇴됐는지 확인하지 못했어요. 다시 로그인되면 탈퇴를 다시 해 주세요.',
+      AppBannerKind.failure,
+    );
+  });
+
+  testWidgets('비밀번호가 틀려 거절된 뒤의 401은 탈퇴가 진행되지 않았다고 안내한다', (tester) async {
+    var requestCount = 0;
+    await _pumpSettings(
+      tester,
+      client: MockClient((request) async {
+        requestCount++;
+        // 400은 서버가 삭제 전에 거절한 것이라 앞선 시도의 결과가 분명하다.
+        if (requestCount == 1) {
+          return http.Response(
+            jsonEncode({'status': 'error', 'message': '비밀번호가 올바르지 않습니다.'}),
+            400,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        return _withdrawUnauthorized();
+      }),
+    );
+
+    await _openAccountMenu(tester, '회원 탈퇴');
+    await tester.enterText(find.byType(TextField).first, 'wrongpassword');
+    await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'password123');
+    await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
+    await tester.pumpAndSettle();
+
+    expect(requestCount, 2);
+    expectAppBanner(
+      tester,
+      '로그인이 만료돼 탈퇴되지 않았어요. 다시 로그인한 뒤 탈퇴해 주세요.',
+      AppBannerKind.failure,
+    );
   });
 
   testWidgets('요청이 진행 중이면 버튼 연타로 중복 전송되지 않는다', (tester) async {
@@ -414,6 +549,21 @@ Future<ClosetProvider> _pumpSettings(
   );
 
   return provider;
+}
+
+/// 폐기·만료된 토큰으로 탈퇴를 요청했을 때 서버(main.py `get_current_access_token`)가
+/// 보내는 응답입니다. 이미 탈퇴해 토큰이 지워진 계정도 똑같은 응답을 받습니다.
+http.Response _withdrawUnauthorized() {
+  return http.Response(
+    jsonEncode({
+      'status': 'error',
+      'error_code': 'AUTH_REQUIRED',
+      'message': '로그인이 만료되었습니다.',
+      'detail': '로그인이 만료되었습니다.',
+    }),
+    401,
+    headers: {'content-type': 'application/json; charset=utf-8'},
+  );
 }
 
 /// '계정 관리' 섹션의 메뉴는 스크롤해야 보이므로 눌러 대화상자를 엽니다.
