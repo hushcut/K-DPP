@@ -853,6 +853,160 @@ def _joined_separator_recovery(candidate: OcrCandidate, alternative: OcrCandidat
             and len({item.source for item in supporters}) >= 2)
 
 
+def _percent_glyph_recovery(
+    candidate: OcrCandidate, alternative: OcrCandidate, part: str,
+    target_part: str, candidates: list[OcrCandidate],
+) -> bool:
+    """Prove an out-of-range integer's trailing 96 as a reread percent glyph.
+
+    This is a word-level proof, not invented character coordinates. Two actual
+    rereads must separately observe the unchanged integer prefix and percent
+    inside the source word, in the same complete physical material row.
+    """
+    from apps.text.ocr_candidates import _has_explicit_complete_pairs
+    from apps.text.parse_label import build_line_infos, _is_metadata_line
+
+    forbidden = NEGATING_MODIFIERS | UNPRICED_MATERIALS | {"unknown", "olefin", "未知繊維", "未知纤维"}
+
+    def complete(item):
+        return (bool(item.image_words) and len(set(item.image_words)) == len(item.image_words)
+                and not _has_unclassified_context(item)
+                and not any(token in forbidden for token in _tokens(item.text))
+                and _covers_row_tokens(_tokens(item.text), list(item.image_words)))
+
+    def composition_rows(item, selected_part):
+        infos = [info for info in build_line_infos(item.text) if not _is_metadata_line(info)
+                 and (info.materials or info.numbers or info.explicit_percent
+                      or info.invalid_evidence or info.unresolved_materials)]
+        if not 1 <= len(infos) <= 8 or any(info.part != selected_part for info in infos):
+            return []
+        rows = _locate_rows(infos, item.image_words, physical=True, allow_quantisation=True)
+        if len(rows) != len(infos) or any(
+            not all(len(word.vertices) == 4 for word in words)
+            or not _physical_row(info.raw, words, allow_quantisation=True) for info, words in rows
+        ):
+            return []
+        return rows
+
+    def components(info, words, *, source=False):
+        if (len(info.materials) != 1 or len(info.numbers) > 1 or info.unresolved_materials
+                or (not source and len(info.numbers) != 1)):
+            return None
+        names = [word for word in words if len(_tokens(word.text)) == 1
+                 and _tokens(word.text)[0].isalpha()
+                 and find_material_key(word.text) == info.materials[0]]
+        numbers = [word for word in words if re.fullmatch(r"[1-9]\d{0,4}", normalize_text(word.text).strip())]
+        percents = [word for word in words if normalize_text(word.text).strip() == "%"]
+        if len(names) != 1 or len(numbers) != 1 or len(percents) > 1:
+            return None
+        if set(words) != set(names + numbers + percents):
+            return None
+        # The parser deliberately excludes out-of-range values from numbers.
+        # Only the complete observed source integer can supply that evidence.
+        if not info.numbers and not (source and info.invalid_evidence
+                                     and int(normalize_text(numbers[0].text).strip()) > 100):
+            return None
+        return names[0], numbers[0], tuple(percents)
+
+    if (not candidate.image_key or not candidate.image_variant_key
+            or not candidate.image_variant_key.strip() or not candidate.source or not candidate.source.strip()
+            or len(candidate.image_region) != 4 or not complete(candidate)):
+        return False
+    source_rows = composition_rows(candidate, part)
+    expected = {}
+    sources = {}
+    changed = False
+    for info, words in source_rows:
+        parsed = components(info, words, source=True)
+        if parsed is None or info.materials[0] in expected:
+            return False
+        name, number, percents = parsed
+        value = normalize_text(number.text).strip()
+        if int(value) > 100:
+            suffix = re.fullmatch(r"([1-9]\d{0,2})96", value)
+            if not suffix or int(suffix.group(1)) > 100 or percents or info.explicit_percent:
+                return False
+            prefix = suffix.group(1)
+            changed = True
+        else:
+            if not percents or not info.explicit_percent or info.invalid_evidence:
+                return False
+            prefix = value
+        expected[info.materials[0]] = int(prefix)
+        sources[info.materials[0]] = (name, number, percents, prefix, words)
+    if not changed or sum(expected.values()) != 100:
+        return False
+
+    def inside(word, bounds):
+        left, top, right, bottom = bounds
+        return (left - 2 <= word.left and word.right <= right + 2
+                and top - 2 <= word.top and word.bottom <= bottom + 2)
+
+    def proves(item):
+        if (item.image_key != candidate.image_key or not item.image_variant_key
+                or not item.image_variant_key.strip() or not item.source or not item.source.strip()
+                or item.image_variant_key == candidate.image_variant_key or item.source == candidate.source
+                or item.parser_status != "success" or item.parts.get(target_part) != expected
+                or len(item.parts) != 1 or len(item.image_region) != 4
+                or len({word.page for word in candidate.image_words + item.image_words}) != 1
+                or not _has_explicit_complete_pairs(item) or not complete(item)):
+            return ()
+        target_rows = composition_rows(item, target_part)
+        if len(target_rows) != len(source_rows):
+            return ()
+        used_materials = set()
+        core = []
+        for info, words in target_rows:
+            parsed = components(info, words)
+            if parsed is None or not info.explicit_percent or info.invalid_evidence:
+                return ()
+            name, number, percents = parsed
+            key = info.materials[0]
+            if key not in sources or key in used_materials or len(percents) != 1:
+                return ()
+            old_name, old_number, old_percents, prefix, old_words = sources[key]
+            if (normalize_text(number.text).strip() != prefix or float(info.numbers[0]) != expected[key]
+                    or _tokens(name.text) != _tokens(old_name.text) or not _overlaps(old_name, name)
+                    or any(not inside(word, item.image_region) for word in old_words)):
+                return ()
+            if old_percents:
+                if not (_overlaps(old_number, number) and _overlaps(old_percents[0], percents[0])):
+                    return ()
+            else:
+                # Word bounds can differ between OCR inputs. Containment and
+                # the leading edge tie the complete target bundle to this
+                # source word; they do not claim 100% source-polygon coverage.
+                bounds = (old_number.left, old_number.top, old_number.right, old_number.bottom)
+                if (not all(inside(word, bounds) and _overlaps(old_number, word)
+                            for word in (number, percents[0]))
+                        or abs(number.left - old_number.left) > max(2, old_number.height / 4)
+                        or max(number.right, percents[0].right) - min(number.left, percents[0].left)
+                        < (old_number.right - old_number.left) / 2
+                        or max(number.bottom, percents[0].bottom) - min(number.top, percents[0].top)
+                        < old_number.height / 2):
+                    return ()
+            # Both rows must also have a common reading direction. Checking
+            # each row alone would accept an unrelated rotated reread.
+            if not _physical_row(info.raw, (old_name, number, percents[0]), allow_quantisation=True):
+                return ()
+            used_materials.add(key)
+            core.extend(words)
+        return tuple(core)
+
+    target_words = proves(alternative)
+    if not target_words:
+        return False
+    supporters = []
+    for item in candidates:
+        other_words = proves(item)
+        if (other_words and _aligned_reading(target_words, other_words)
+                and _aligned_reading(other_words, target_words)):
+            supporters.append(item)
+    # Raw and layout views of one OCR input cannot supply two confirmations.
+    return (len({item.image_variant_key for item in supporters}) >= 2
+            and len({item.source for item in supporters}) >= 2)
+
+
 def same_region_recovery(
     candidate: OcrCandidate, alternative: OcrCandidate, part: str,
     candidates: list[OcrCandidate] | None = None,
@@ -882,6 +1036,8 @@ def same_region_recovery(
     if ((_has_unclassified_context(candidate) and not _literal_raw_context(candidate, candidates or []))
             or (_has_unclassified_context(alternative) and not _literal_raw_context(alternative, candidates or []))):
         return False
+    if _percent_glyph_recovery(candidate, alternative, part, target_part, candidates or []):
+        return True
     rows = _evidence_rows(candidate, part)
     target_rows = _evidence_rows(alternative, target_part)
     literal_cjk = False
