@@ -5,9 +5,10 @@ The collectors run in the original order so candidate tie-breaking remains stabl
 
 from dataclasses import dataclass
 from decimal import Decimal
+import re
 
 from apps.text.rules import EQUIVALENT_MATERIALS
-from apps.text.material_extraction import _TOKEN_PATTERN, find_material_key
+from apps.text.material_extraction import ALIAS_TO_MATERIAL, _TOKEN_PATTERN, find_material_key
 
 from apps.text.ratio_contract import EXACT_RATIO_TOTAL, has_exact_total, sum_ratios
 
@@ -473,6 +474,41 @@ def _has_translation_context(info: LineInfo) -> bool:
     )
 
 
+def _consume_registered_translation_aliases(remainder: str) -> tuple[set[str], str]:
+    materials: set[str] = set()
+    for alias in sorted(ALIAS_TO_MATERIAL, key=len, reverse=True):
+        pattern = rf"(?<!\w){re.escape(alias)}(?!\w)"
+        if re.search(pattern, remainder):
+            materials.add(ALIAS_TO_MATERIAL[alias])
+            remainder = re.sub(pattern, " ", remainder)
+    return materials, remainder
+
+
+def _ratio_free_translation_row_is_complete(info: LineInfo, material: str) -> bool:
+    """A ratio-free alias may end in one printed translation hyphen."""
+    text = info.normalized.rstrip()
+    if text.endswith("-"):
+        text = text[:-1]
+    materials, remainder = _consume_registered_translation_aliases(text)
+    return materials == {material} and re.fullmatch(r"[\s/]*", remainder) is not None
+
+
+def _inline_translation_ratio_is_complete(info: LineInfo, material: str) -> bool:
+    """Consume one literal percent and exact aliases across the entire row."""
+    percentages = list(re.finditer(r"[0-9]+(?:[.,][0-9]+)?[ \t]*%", info.normalized))
+    if len(percentages) != 1:
+        return False
+    percent = percentages[0]
+    if Decimal(percent.group().rstrip("% \t").replace(",", ".")) != info.numbers[0]:
+        return False
+    remainder = (info.normalized[:percent.start()] + " " * (percent.end() - percent.start())
+                 + info.normalized[percent.end():])
+    materials, remainder = _consume_registered_translation_aliases(remainder)
+    # _read_numbers can intentionally ignore bare identifiers after an already
+    # complete percent. Such leftovers cannot belong to a shared translation.
+    return materials == {material} and re.fullmatch(r"[\s/]*", remainder) is not None
+
+
 def _translated_component(infos: list[LineInfo], position: int, part: str):
     """Read one explicit ratio and its contiguous, fully known translations."""
     first = infos[position]
@@ -502,11 +538,13 @@ def _translated_component(infos: list[LineInfo], position: int, part: str):
             return None
         ratio = primary.numbers[0] if primary.numbers else None
     material = primary.materials[0]
+    alias_infos = [primary]
     translated = False
     context = _has_translation_context(primary)
+    separator = "/" in primary.normalized or "-" in primary.normalized
 
     def take_alias_rows():
-        nonlocal cursor, translated, context
+        nonlocal cursor, translated, context, separator
         while cursor < len(infos):
             current = infos[cursor]
             if (current.part != part or current.index != rows[-1] + 1
@@ -516,7 +554,9 @@ def _translated_component(infos: list[LineInfo], position: int, part: str):
                     or not (context or _has_translation_context(current))):
                 break
             rows.append(current.index)
+            alias_infos.append(current)
             context = True
+            separator |= "/" in current.normalized or "-" in current.normalized
             translated = True
             cursor += 1
 
@@ -526,10 +566,22 @@ def _translated_component(infos: list[LineInfo], position: int, part: str):
             return None
         ratio_row = infos[cursor]
         if (ratio_row.part != part or ratio_row.index != rows[-1] + 1
-                or ratio_row.materials or len(ratio_row.numbers) != 1
+                or len(ratio_row.numbers) != 1
                 or not ratio_row.explicit_percent or ratio_row.invalid_evidence
                 or ratio_row.unresolved_materials or ratio_row.is_metadata
-                or ratio_row.marker_part is not None or _TOKEN_PATTERN.search(ratio_row.normalized)):
+                or ratio_row.marker_part is not None):
+            return None
+        if ratio_row.materials:
+            # A printed translation separator can place the shared explicit
+            # ratio on the final same-fiber alias, rather than on its own row.
+            # A different fiber or an unmarked repeated name owns another row.
+            if (ratio_row.materials != (material,) or not separator
+                    or not all(_ratio_free_translation_row_is_complete(info, material)
+                               for info in alias_infos)
+                    or not _inline_translation_ratio_is_complete(ratio_row, material)):
+                return None
+            translated = True
+        elif _TOKEN_PATTERN.search(ratio_row.normalized):
             return None
         ratio = ratio_row.numbers[0]
         rows.append(ratio_row.index)

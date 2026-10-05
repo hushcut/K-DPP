@@ -1,5 +1,4 @@
 import re
-from collections import Counter
 from dataclasses import replace, dataclass
 from decimal import Decimal, InvalidOperation
 
@@ -419,6 +418,82 @@ _LANGUAGE_RATIO_PREFIX_PATTERN = re.compile(
     r"(?<![\w])(?:en|uk|us|fr|de|es|es-mx|cat|pt|it|jp|cn|nl|cz|dk|fi|no|pl|"
     r"sk|se|si|hr|lt|lv|ee|kr|ru|tr|el)\s*:\s*(?=[0-9]+(?:[.,][0-9]+)?\s*%)"
 )
+_WRAPPED_ALIAS_WORD_PATTERN = re.compile(r"(?<!\w)[^\W\d_]+(?!\w)")
+_SINGLE_WORD_ALIASES = frozenset(alias for alias in ALIAS_TO_MATERIAL if alias.isalpha())
+_SINGLE_WORD_ALIAS_PREFIXES = frozenset(
+    alias[:length] for alias in _SINGLE_WORD_ALIASES for length in range(1, len(alias) + 1)
+)
+
+
+def _restore_multiline_alias_fragments(text: str) -> str:
+    """Join at most eight literal row fragments into a complete table entry."""
+
+    words = list(_WRAPPED_ALIAS_WORD_PATTERN.finditer(text))
+    replacements: list[tuple[int, int, str]] = []
+    consumed_until = -1
+    for position, first in enumerate(words):
+        joined = first.group()
+        if (
+            first.start() < consumed_until or joined in _SINGLE_WORD_ALIASES
+            or joined not in _SINGLE_WORD_ALIAS_PREFIXES
+        ):
+            continue
+        previous = first
+        for following in words[position + 1:position + 8]:
+            # A blank row, delimiter, number, or unknown intervening word is
+            # never removed to make the spelling fit the material table.
+            if re.fullmatch(r"[ \t]*\n[ \t]*", text[previous.end():following.start()]) is None:
+                break
+            joined += following.group()
+            if joined not in _SINGLE_WORD_ALIAS_PREFIXES:
+                break
+            if joined in _SINGLE_WORD_ALIASES:
+                replacements.append((first.start(), following.end(), joined))
+                consumed_until = following.end()
+                break
+            previous = following
+    for start, end, joined in reversed(replacements):
+        text = text[:start] + joined + text[end:]
+    return text
+
+
+def _registered_translation_row_material(row: str, *, allow_percent: bool) -> str | None:
+    """Require an entire row of registered aliases and optional explicit ratio."""
+
+    normalized = normalize_text(row)
+    if declared_part(normalized) or _classify_metadata_line(normalized, None)[0]:
+        return None
+    numbers, invalid, explicit, evidence = _read_numbers(normalized, allow_plain_numbers=True)
+    if invalid or len(numbers) > 1 or (numbers and (not allow_percent or not explicit)):
+        return None
+    remainder = normalized
+    for number in reversed(evidence):
+        remainder = remainder[:number.start] + " " * (number.end - number.start) + remainder[number.end:]
+    materials: set[str] = set()
+    for alias in sorted(ALIAS_TO_MATERIAL, key=len, reverse=True):
+        pattern = rf"(?<!\w){re.escape(alias)}(?!\w)"
+        if re.search(pattern, remainder):
+            materials.add(ALIAS_TO_MATERIAL[alias])
+            remainder = re.sub(pattern, " ", remainder)
+    if len(materials) != 1 or re.fullmatch(r"[\s/]*", remainder) is None:
+        return None
+    return next(iter(materials))
+
+
+def _attach_translation_separator_rows(text: str) -> str:
+    """Keep a standalone slash inside an adjacent, exact same-fiber group."""
+
+    rows = text.split("\n")
+    attached: set[int] = set()
+    for position in range(1, len(rows) - 1):
+        if rows[position].strip() != "/":
+            continue
+        previous = _registered_translation_row_material(rows[position - 1], allow_percent=True)
+        following = _registered_translation_row_material(rows[position + 1], allow_percent=False)
+        if previous is not None and previous == following:
+            rows[position - 1] = rows[position - 1].rstrip() + " /"
+            attached.add(position)
+    return "\n".join(row for position, row in enumerate(rows) if position not in attached)
 
 
 def _prepare_multilingual_rows(text: str) -> str:
@@ -439,6 +514,7 @@ def _prepare_multilingual_rows(text: str) -> str:
         if restored == text:
             break
         text = restored
+    text = _restore_multiline_alias_fragments(text)
     # Restore only complete registered multiword names, across OCR row breaks.
     for alias in ALIAS_TO_MATERIAL:
         if " " not in alias:
@@ -449,18 +525,47 @@ def _prepare_multilingual_rows(text: str) -> str:
     text = re.sub(r"(?m)^(.*[0-9])[ \t]*\n[ \t]*%[ \t]*$", r"\1%", text)
     # Each language's percentages remain independent; conflicting copies
     # must still produce conflicting candidates rather than being deduplicated.
-    return _LANGUAGE_RATIO_PREFIX_PATTERN.sub("\n", text)
+    return _attach_translation_separator_rows(_LANGUAGE_RATIO_PREFIX_PATTERN.sub("\n", text))
 
 
-def build_line_infos(text: str) -> list[LineInfo]:
+def _multilingual_restored_row_indices(original: str, prepared: str) -> set[int] | None:
+    """Map preserved characters in order to the source rows they came from."""
+
+    # Language tags are explicitly separated by the existing preparation rule;
+    # mask the same known tags without changing their original row identities.
+    original = _LANGUAGE_RATIO_PREFIX_PATTERN.sub(
+        lambda match: re.sub(r"[^\n]", " ", match.group()), original,
+    )
+    source = [(char, row) for row, line in enumerate(original.split("\n"))
+              for char in line if not char.isspace()]
+    destination = [(char, row) for row, line in enumerate(prepared.split("\n"))
+                   for char in line if not char.isspace()]
+    if [char for char, _ in source] != [char for char, _ in destination]:
+        # An unexpected character rewrite has no proven row correspondence.
+        return None
+    source_rows: dict[int, set[int]] = {}
+    destination_rows: dict[int, set[int]] = {}
+    for (_, origin), (_, target) in zip(source, destination, strict=True):
+        source_rows.setdefault(target, set()).add(origin)
+        destination_rows.setdefault(origin, set()).add(target)
+    return {
+        row for row, origins in source_rows.items()
+        if len(origins) > 1 or any(len(destination_rows[origin]) > 1 for origin in origins)
+    }
+
+
+def build_line_infos(text: str, *, restored_indices: set[int] | None = None) -> list[LineInfo]:
     infos: list[LineInfo] = []
     current_part = "generic"
     pending_metadata_kind = None
     original_prepared = _split_part_markers(normalize_text(text))
     prepared = _split_part_markers(_prepare_multilingual_rows(original_prepared))
-    original_rows = Counter(normalize_text(original_prepared).splitlines())
-    prepared_rows = Counter(normalize_text(prepared).splitlines())
-    restored_rows = {row for row, count in prepared_rows.items() if count > original_rows[row]}
+    restored_rows = _multilingual_restored_row_indices(original_prepared, prepared)
+    unproven_rewrite = restored_rows is None
+    if unproven_rewrite:
+        restored_rows = set(range(len(prepared.split("\n"))))
+    if restored_indices is not None:
+        restored_indices.update(restored_rows)
     raw_lines = prepared.split("\n")
     content_indices = [i for i, raw in enumerate(raw_lines) if normalize_text(raw)]
     last_content_index = content_indices[-1] if content_indices else -1
@@ -514,12 +619,26 @@ def build_line_infos(text: str) -> list[LineInfo]:
         )
         invalid_evidence |= bool(_IMITATION_LEATHER_PATTERN.search(composition_text))
         invalid_evidence |= storage_caption_invalid
-        if materials and normalized in restored_rows:
+        if materials and index in restored_rows:
             # Joining an alias must not move an unknown continuation into an
             # unchecked trailing suffix of a material/ratio row.
             invalid_evidence |= not _contains_only_known_phrases(
                 composition_text, _MATERIAL_ONLY_LINE_CONTEXTS,
             )
+            invalid_evidence |= unproven_rewrite
+            # The general reader may ignore bare identifiers after a complete
+            # explicit ratio. A restored row must account for every printed
+            # digit, percent and uncertainty sign instead of hiding one in
+            # the joined prefix or suffix.
+            numeric_remainder = composition_text
+            for number in reversed(number_evidence):
+                numeric_remainder = (
+                    numeric_remainder[:number.start]
+                    + " " * (number.end - number.start)
+                    + numeric_remainder[number.end:]
+                )
+            invalid_evidence |= re.search(r"[\d%]", numeric_remainder) is not None
+            invalid_evidence |= any(sign in numeric_remainder for sign in _INEXACT_SIGNS)
         if materials and not numbers:
             invalid_evidence |= not _contains_only_known_phrases(composition_text, _MATERIAL_ONLY_LINE_CONTEXTS)
         if materials and numbers and len(materials) == len(numbers):
@@ -761,6 +880,12 @@ def _restored_block_has_clear_boundaries(
             info = infos[position]
             if info.part != candidate.part:
                 break
+            if info.normalized and all(
+                char.isspace() or char in _INEXACT_SIGNS for char in info.normalized
+            ):
+                # A separate qualifier cannot be discarded as decoration
+                # when reconstructing a declaration from other rows.
+                return False
             if info.is_standalone_marker and _contains_only_known_phrases(
                 info.normalized, set(PART_PATTERNS.get(candidate.part, ())),
             ):
@@ -841,7 +966,8 @@ def _best_candidates_by_part(
     set[str],
     dict,
 ]:
-    infos = build_line_infos(text)
+    restored_indices: set[int] = set()
+    infos = build_line_infos(text, restored_indices=restored_indices)
     candidates = []
     segment = []
     body_measurement_block = False
@@ -858,9 +984,14 @@ def _best_candidates_by_part(
             if info.materials or info.numbers:
                 body_measurement_block = False
     candidates.extend(_collect_candidates(segment))
+    restored_material_indices = {
+        info.index for info in infos if info.materials
+        and info.index in restored_indices
+    }
     candidates = [
         candidate for candidate in candidates
-        if candidate.source not in {"translated_lines", "ratio_first_lines"}
+        if (candidate.source not in {"translated_lines", "ratio_first_lines"}
+            and not restored_material_indices.intersection(candidate.row_indices))
         or _restored_block_has_clear_boundaries(candidate, infos)
     ]
     heading_indices = _composition_heading_indices(infos)
