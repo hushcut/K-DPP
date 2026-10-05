@@ -6,6 +6,7 @@ import 'package:k_dpp/closet_screen.dart';
 import 'package:k_dpp/display_settings_screen.dart';
 import 'package:k_dpp/main_screen.dart';
 import 'package:k_dpp/material_name_display_provider.dart';
+import 'package:k_dpp/models/closet_sort_option.dart';
 import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/navigation_bar_opacity_provider.dart';
 import 'package:k_dpp/settings_screen.dart';
@@ -88,9 +89,20 @@ void main() {
       expect(find.text('반팔 티셔츠'), findsOneWidget);
       expect(findCoveredInk(tester), isEmpty);
 
-      // 길게 눌러 선택한 카드도 선택 색 위에 효과가 보여야 합니다.
-      await tester.longPress(find.text('반팔 티셔츠'));
+      // '선택' 모드에서 고른 카드도 선택 색 위에 효과가 보여야 합니다.
+      await tester.tap(find.text('선택'));
       await tester.pumpAndSettle();
+      await tester.tap(find.text('반팔 티셔츠'));
+      await tester.pumpAndSettle();
+      expect(find.text('1개 선택됨'), findsOneWidget);
+      expect(findCoveredInk(tester), isEmpty);
+
+      // 내 설정 순의 ≡ 손잡이가 붙은 카드도 마찬가지입니다.
+      await tester.tap(find.text('취소'));
+      await tester.pumpAndSettle();
+      await provider.setClosetSortOption(ClosetSortOption.custom);
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.drag_handle), findsNWidgets(2));
       expect(findCoveredInk(tester), isEmpty);
     });
 

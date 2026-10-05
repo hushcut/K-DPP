@@ -1,4 +1,6 @@
 // 등록 의류의 검색·정렬·다중 삭제·사용자 지정 순서를 제공하는 옷장 화면입니다.
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -6,8 +8,11 @@ import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'models/closet_sort_option.dart';
 import 'models/clothes.dart';
+import 'navigation_bar_opacity_provider.dart';
 import 'theme/app_palette.dart';
 import 'utils/material_name.dart';
+import 'widgets/bottom_navigation_metrics.dart';
+import 'widgets/frosted_surface.dart';
 import 'widgets/reorder_bump_haptics.dart';
 
 part 'closet/closet_actions.dart';
@@ -22,6 +27,7 @@ class ClosetScreen extends StatefulWidget {
     required this.onOpenReport,
     this.onStartScan,
     this.isActive = true,
+    this.selectionMode,
   });
 
   final ValueChanged<Clothes> onOpenReport;
@@ -31,6 +37,10 @@ class ClosetScreen extends StatefulWidget {
   /// 숨겨진 상태에서는 뒤로가기 처리에 관여하지 않습니다.
   final bool isActive;
 
+  /// 선택 모드인지 담는 값입니다. 메인 화면이 넘기면 같은 값을 보고 하단 메뉴를 숨깁니다.
+  /// 없으면(옷장만 띄운 경우) 화면이 직접 만듭니다. 이 화면만 값을 바꿉니다.
+  final ValueNotifier<bool>? selectionMode;
+
   @override
   State<ClosetScreen> createState() => _ClosetScreenState();
 }
@@ -38,15 +48,29 @@ class ClosetScreen extends StatefulWidget {
 /// 화면 상태만 소유하고 실제 동작과 렌더링은 역할별 part 파일에 위임합니다.
 class _ClosetScreenState extends State<ClosetScreen> {
   static const double _bottomNavigationOverlapPadding = 26;
+  // 헤더 오른쪽 버튼 자리 폭입니다. 제목을 가운데에 두려고 왼쪽도 같은 폭을 비웁니다.
+  // 평소 '선택'(TextButton 최소 64) + 정렬(48), 선택 모드 '취소'(64).
+  static const double _browseActionsWidth = 112;
+  static const double _selectionActionsWidth = 64;
 
-  // 다중 선택과 순서 변경은 충돌하지 않도록 서로 배타적으로 관리합니다.
-  bool _reorderMode = false;
+  // 선택 모드는 '선택' 버튼으로 0개부터 들어가므로 선택 집합과 따로 둡니다(2026-10-01).
+  // 선택 모드에서는 끌기가 꺼지고, 평소 내 설정 순에서는 ≡ 손잡이로 바로 끕니다.
+  ValueNotifier<bool>? _ownSelectionMode;
   final Set<Clothes> _selectedItems = {};
+  // 선택한 의류를 지우는 저장이 끝나기 전에는 취소·뒤로로 모드를 끝내지 않습니다.
+  bool _deleteInProgress = false;
+  // 옷이 모두 사라졌을 때 선택 모드를 끝내는 일을 다음 프레임에 한 번만 예약합니다.
+  bool _emptyExitScheduled = false;
+  // 옷장 위에 닿아 있는 손가락 수입니다. 모두 떨어지면 끌기 틱 추적을 멈춥니다.
+  int _pointersDown = 0;
   // 순서 바꾸기 중 끌고 있는 카드가 다른 카드를 밀어낼 때마다 가벼운 틱을 줍니다.
   final ReorderBumpTracker _reorderBumps = ReorderBumpTracker();
 
-  /// 선택 모드 여부는 선택 집합에서 파생해 별도 동기화가 필요 없게 합니다.
-  bool get _selectionMode => _selectedItems.isNotEmpty;
+  ValueNotifier<bool> get _selectionModeNotifier =>
+      widget.selectionMode ??
+      (_ownSelectionMode ??= ValueNotifier<bool>(false));
+
+  bool get _selectionMode => _selectionModeNotifier.value;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
@@ -68,6 +92,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
   @override
   void dispose() {
     _reorderBumps.stop();
+    _ownSelectionMode?.dispose();
     _searchController.removeListener(_handleSearchChanged);
     _searchController.dispose();
     super.dispose();
@@ -102,22 +127,37 @@ class _ClosetScreenState extends State<ClosetScreen> {
       ..addAll(replacement);
   }
 
-  // 선택·순서 변경 모드에서는 시스템 뒤로가기가 앱을 닫는 대신 모드를 끝냅니다.
+  /// 선택 중 옷이 모두 사라지면(다른 화면에서 지움 등) 다음 프레임에 선택 모드를 끝냅니다.
+  /// 빌드 중에는 메인 화면과 함께 보는 값을 바꿀 수 없어 미룹니다. 삭제 저장 중에는 목록이 먼저
+  /// 비었다가 실패하면 되돌아오므로 끝내지 않습니다.
+  void _exitSelectionWhenClosetEmpty(List<Clothes> items) {
+    if (!_selectionMode || items.isNotEmpty || _deleteInProgress) return;
+    if (_emptyExitScheduled) return;
+
+    _emptyExitScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _emptyExitScheduled = false;
+      if (!mounted || _deleteInProgress) return;
+      if (context.read<ClosetProvider>().items.isNotEmpty) return;
+
+      _setSelectionMode(false);
+    });
+  }
+
+  // 선택 모드에서는 시스템 뒤로가기가 앱을 닫는 대신 모드를 끝냅니다(삭제 저장 중에는 그대로).
   // 선택 집합 정리는 canPop 계산보다 먼저 수행해 상태가 어긋나지 않게 합니다.
   @override
   Widget build(BuildContext context) {
-    _syncSelectionWithItems(context.watch<ClosetProvider>().items);
+    final items = context.watch<ClosetProvider>().items;
+    _syncSelectionWithItems(items);
+    _exitSelectionWhenClosetEmpty(items);
 
     return PopScope(
-      canPop: !widget.isActive || (!_selectionMode && !_reorderMode),
+      canPop: !widget.isActive || !_selectionMode,
       onPopInvokedWithResult: (didPop, _) {
-        if (didPop || !widget.isActive) return;
+        if (didPop || !widget.isActive || _deleteInProgress) return;
 
-        if (_selectionMode) {
-          _exitSelectionMode();
-        } else if (_reorderMode) {
-          _toggleReorderMode();
-        }
+        _setSelectionMode(false);
       },
       child: _buildClosetBody(context),
     );
