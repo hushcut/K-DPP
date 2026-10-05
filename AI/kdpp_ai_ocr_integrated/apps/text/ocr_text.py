@@ -55,7 +55,8 @@ from apps.text.ocr_layout import (
     OcrWord, extract_response_layout_text, extract_response_words, spatial_text_from_words,
 )
 from apps.text.ocr_regions import (
-    find_complete_material_region, find_material_region, material_region_options, prepare_material_region,
+    find_complete_material_region, find_material_region, material_region_options,
+    material_region_word_boxes, prepare_material_region,
 )
 
 __all__ = [
@@ -746,6 +747,7 @@ def run_ocr_bytes(
                 cropped = prepare_material_region(
                     validated.content, early_region, rotated=True,
                     font_height=font_height, rotation_degrees=rotation_degrees,
+                    word_boxes=material_region_word_boxes(candidates, early_region),
                 )
                 payload = run_tracked_candidate(source, cropped.content)
                 candidates.extend(_build_payload_candidates(
@@ -867,6 +869,7 @@ def run_ocr_bytes(
             if complete_region is not None:
                 region = complete_region
             font_height, rotation_degrees = material_region_options(candidates, region)
+            word_boxes = material_region_word_boxes(candidates, region)
             # A clipped heading can manufacture opaque OCR characters. Use
             # the complete crop's rotated reading first, then the plain crop
             # only if its independent response is still needed.
@@ -883,6 +886,7 @@ def run_ocr_bytes(
                     cropped = prepare_material_region(
                         validated.content, region, rotated=rotated,
                         font_height=font_height, rotation_degrees=rotation_degrees,
+                        word_boxes=word_boxes,
                     )
                     if remaining_timeout_seconds() <= 0:
                         record_total_timeout(source)

@@ -140,6 +140,85 @@ def material_region_options(
     return font_height, angle
 
 
+def material_region_word_boxes(
+    candidates: list[OcrCandidate], box: tuple[int, int, int, int],
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Return observed complete word boxes for pixel quality checks only."""
+    left, top, right, bottom = box
+    framed = [candidate for candidate in candidates
+              if candidate.image_key and candidate.image_variant_key and len(candidate.image_region) == 4]
+    if len({candidate.image_key for candidate in framed}) != 1:
+        return ()
+    return tuple(dict.fromkeys((word.left, word.top, word.right, word.bottom)
+                 for candidate in framed for word in candidate.image_words if word.page == 0
+                 and left <= word.left < word.right <= right and top <= word.top < word.bottom <= bottom))
+
+
+def _material_ink_threshold(
+    crop: Image.Image, box: tuple[int, int, int, int],
+    word_boxes: tuple[tuple[int, int, int, int], ...],
+) -> int | None:
+    """Use Otsu only when every complete observed word keeps ink and clear margins.
+
+    This selects an image filter, never validates text or repairs percentages.
+    Words already clipped by the existing region are not quality observations.
+    """
+    if not isinstance(word_boxes, (tuple, list)) or not 2 <= len(word_boxes) <= 256:
+        return None
+    left, top, right, bottom = box
+    if crop.mode != 'L' or crop.size != (right-left, bottom-top):
+        return None
+    unique = []
+    for bounds in word_boxes:
+        if (not isinstance(bounds, (tuple, list)) or len(bounds) != 4 or any(type(value) is not int for value in bounds)
+                or not (left <= bounds[0] < bounds[2] <= right and top <= bounds[1] < bounds[3] <= bottom)):
+            return None
+        x, y, r, b = bounds
+        if not any(abs((x+r-ox-oright)/2) < 0.4 * min(r-x, oright-ox)
+                   and abs((y+b-oy-obottom)/2) < 0.4 * min(b-y, obottom-oy)
+                   for ox, oy, oright, obottom in unique):
+            unique.append(bounds)
+    if len(unique) < 2:
+        return None
+    checks = []
+    inspected_pixels = crop.width * crop.height
+    for x, y, r, b in word_boxes:
+        padding = max(1, math.ceil(0.12 * (b-y)))
+        outer = (x-left-padding, y-top-padding, r-left+padding, b-top+padding)
+        if not (0 <= outer[0] < outer[2] <= crop.width and 0 <= outer[1] < outer[3] <= crop.height):
+            return None
+        area = (r-x)*(b-y)
+        outer_area = (outer[2]-outer[0])*(outer[3]-outer[1])
+        inspected_pixels += area + outer_area
+        if inspected_pixels > MAX_PREPROCESSED_PIXELS:
+            return None
+        checks.append(((x-left, y-top, r-left, b-top), outer, area, outer_area-area))
+    histogram = crop.histogram()
+    total = sum(histogram)
+    total_sum = sum(index*count for index, count in enumerate(histogram))
+    weight = partial_sum = 0
+    best_variance, threshold = 0.0, None
+    for index, count in enumerate(histogram[:-1]):
+        weight += count
+        partial_sum += index*count
+        if not weight or weight == total:
+            continue
+        variance = weight*(total-weight)*(partial_sum/weight-(total_sum-partial_sum)/(total-weight))**2
+        if variance > best_variance:
+            best_variance, threshold = variance, index
+    if threshold is None:
+        return None
+    mask = crop.point(lambda value: 255 if value > threshold else 0)
+    # Check all observations, including numeric, punctuation and unknown words;
+    # physical-box deduplication supplies only the minimum observation count.
+    for inner, outer, area, ring_area in checks:
+        ink = mask.crop(inner).histogram()[0]
+        outer_ink = mask.crop(outer).histogram()[0]
+        if not 0.05 <= ink/area <= 0.55 or (outer_ink-ink)/ring_area > 0.10:
+            return None
+    return threshold
+
+
 def find_material_region(candidates: list[OcrCandidate], width: int, height: int) -> tuple[int, int, int, int] | None:
     """Locate observed material/unknown percentage rows in original geometry."""
 
@@ -252,6 +331,7 @@ def find_complete_material_region(candidates: list[OcrCandidate], region: tuple[
 def prepare_material_region(
     content: bytes, box: tuple[int, int, int, int], *, rotated: bool = False,
     font_height: float | None = None, rotation_degrees: float | None = None,
+    word_boxes: tuple[tuple[int, int, int, int], ...] = (),
 ) -> RegionImage:
     """Crop and enhance, returning an inverse affine map to original pixels."""
 
@@ -277,6 +357,9 @@ def prepare_material_region(
                 raise InvalidImageError('방향이 확인되지 않은 이미지의 소재 영역은 자르지 않습니다.')
             crop = image.crop(box).convert('L')
         width, height = crop.size
+        threshold = _material_ink_threshold(crop, box, word_boxes) if rotated else None
+        if threshold is not None:
+            crop = crop.point(lambda value: 255 if value > threshold else 0)
         # 작은 글자는 목표 48픽셀 높이까지 확대하되 기존 픽셀·크기 한도를 유지한다.
         font_scale = 48.0 / font_height if font_height is not None else 1.0
         scale = min(max(1.0, MIN_OCR_WIDTH / width, font_scale), MAX_OCR_WIDTH / width,
@@ -292,7 +375,9 @@ def prepare_material_region(
         if final_scale < 1:
             crop = crop.resize((max(1, int(canvas_width*final_scale)), max(1, int(canvas_height*final_scale))), Image.Resampling.LANCZOS)
         output_width, output_height = crop.size
-        crop = ImageOps.autocontrast(crop).filter(ImageFilter.UnsharpMask(radius=1.4, percent=150, threshold=3))
+        crop = ImageOps.autocontrast(crop)
+        if threshold is None:
+            crop = crop.filter(ImageFilter.UnsharpMask(radius=1.4, percent=150, threshold=3))
         encoded = _encode_preprocessed_image(crop, image_format='JPEG')
         if len(encoded) > MAX_IMAGE_BYTES:
             raise ImageTooLargeError('소재 영역 이미지의 용량이 안전한 범위를 넘습니다.')
