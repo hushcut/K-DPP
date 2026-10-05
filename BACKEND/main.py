@@ -370,24 +370,36 @@ def get_db():
         db.close()
 
 # 3. 데이터 규격 정의 (Pydantic: 프런트엔드와 주고받을 형식)
+# 인증 입력의 길이 상한. 상한이 없으면 본문 상한(11MB)만큼의 문자열이 가입 때 그대로
+# 저장·응답되고, 로그인 실패 기록(최대 1만 칸)의 키로 메모리에 남습니다. 실제 사용자가
+# 닿지 않는 안전선이라 다른 입력 상한처럼 422 로 거부합니다(계약 2-4절).
+MAX_EMAIL_LENGTH = 254  # 주소 표준의 최대 길이
+MAX_PASSWORD_LENGTH = 128
+MAX_NICKNAME_LENGTH = 50
+
+EmailInput = Annotated[str, StringConstraints(max_length=MAX_EMAIL_LENGTH)]
+PasswordInput = Annotated[str, StringConstraints(max_length=MAX_PASSWORD_LENGTH)]
+NicknameInput = Annotated[str, StringConstraints(max_length=MAX_NICKNAME_LENGTH)]
+
+
 class SignupRequest(BaseModel):
-    email: str
-    password: str
-    nickname: str
+    email: EmailInput
+    password: PasswordInput
+    nickname: NicknameInput
 
 
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    email: EmailInput
+    password: PasswordInput
 
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
+    current_password: PasswordInput
+    new_password: PasswordInput
 
 
 class WithdrawRequest(BaseModel):
-    password: str
+    password: PasswordInput
 
 
 # 소재 계산은 입력 소재 수에 비례해 반복되므로 개수·길이를 제한하지 않으면
@@ -1347,7 +1359,8 @@ def analyze_clothes(
 @app.post("/api/scan", tags=["v1-scan"])
 def scan_label(
     image: UploadFile = File(...),
-    raw_ocr_text: str | None = Form(default=None),
+    # JSON 요청의 RawOcrText 와 같은 상한입니다. 폼 필드라 Form 에 직접 겁니다.
+    raw_ocr_text: str | None = Form(default=None, max_length=MAX_RAW_OCR_TEXT_LENGTH),
     db: Session = Depends(get_db),
     # 스캔 1회가 곧 외부 OCR 호출 비용이므로 로그인 사용자만 허용합니다.
     current_user: database.User = Depends(get_current_user),
