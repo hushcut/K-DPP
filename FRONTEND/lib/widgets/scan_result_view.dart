@@ -193,36 +193,46 @@ class ScanResultView extends StatelessWidget {
                       label:
                           '무게 기준, ${selectedClothingType.label}, ${selectedClothingType.weightDisplayText}',
                       button: true,
-                      child: InkWell(
-                        onTap: isSaving ? null : onSelectClothingType,
-                        borderRadius: BorderRadius.circular(10),
-                        child: InputDecorator(
-                          decoration: InputDecoration(
-                            filled: true,
-                            fillColor: inputFillColor,
-                            labelText: '무게 기준',
-                            labelStyle: TextStyle(color: secondaryText),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(10),
+                      // 입력칸 채움색이 누름 효과를 덮으므로 효과는 칸 위에 겹쳐 그립니다.
+                      child: Stack(
+                        children: [
+                          InputDecorator(
+                            decoration: InputDecoration(
+                              filled: true,
+                              fillColor: inputFillColor,
+                              labelText: '무게 기준',
+                              labelStyle: TextStyle(color: secondaryText),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              prefixIcon: const Icon(Icons.scale_outlined),
+                              suffixIcon: Icon(
+                                Icons.keyboard_arrow_down,
+                                color: secondaryText,
+                              ),
                             ),
-                            prefixIcon: const Icon(Icons.scale_outlined),
-                            suffixIcon: Icon(
-                              Icons.keyboard_arrow_down,
-                              color: secondaryText,
-                            ),
-                          ),
-                          child: ExcludeSemantics(
-                            child: Text(
-                              '${selectedClothingType.label} · ${selectedClothingType.weightDisplayText}',
-                              softWrap: true,
-                              style: TextStyle(
-                                color: primaryText,
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
+                            child: ExcludeSemantics(
+                              child: Text(
+                                '${selectedClothingType.label} · ${selectedClothingType.weightDisplayText}',
+                                softWrap: true,
+                                style: TextStyle(
+                                  color: primaryText,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
                           ),
-                        ),
+                          Positioned.fill(
+                            child: Material(
+                              type: MaterialType.transparency,
+                              child: InkWell(
+                                onTap: isSaving ? null : onSelectClothingType,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],

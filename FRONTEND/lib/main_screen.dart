@@ -1,4 +1,4 @@
-// 홈·스캔·옷장 탭과 상세 리포트 전환을 한 화면에서 관리하는 앱의 메인 셸입니다.
+// 홈·옷장 탭을 한 화면에서 관리하고, 스캔·상세 리포트를 그 위에 쌓아 여는 앱의 메인 셸입니다.
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -7,12 +7,15 @@ import 'closet_screen.dart';
 import 'home_screen.dart';
 import 'models/clothes.dart';
 import 'models/main_screen_arguments.dart';
+import 'navigation_bar_opacity_provider.dart';
 import 'report_screen.dart';
 import 'scan_screen.dart';
 import 'theme/app_palette.dart';
+import 'widgets/app_back_button.dart';
+import 'widgets/frosted_surface.dart';
 import 'widgets/kdpp_logo_mark.dart';
 
-/// 하단 내비게이션의 선택 상태와 리포트 오버레이 표시 상태를 관리합니다.
+/// 하단 내비게이션의 선택 상태를 관리하고 스캔·상세 리포트·설정을 위에 쌓아 엽니다.
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key, this.initialArguments});
 
@@ -27,17 +30,21 @@ class _MainScreenState extends State<MainScreen>
   static const int _tabCount = 3;
   static const Duration _transitionDuration = Duration(milliseconds: 260);
 
+  // 탭 번호는 0 홈 · 2 옷장입니다. 1(스캔)은 탭이 아니라 위에 쌓아 여는 화면이라 여기에 들어오지 않습니다.
   int _selectedIndex = 0;
   bool _didReadInitialArgs = false;
-  bool _isShowingReport = false;
-  // 설정 같은 라우트가 위에 열리는 동안 스캔 카메라를 멈추기 위한 표시입니다.
-  bool _isCoveredByRoute = false;
+  // 스캔 저장 직후처럼 진입하자마자 스캔 화면·리포트를 쌓아 열어야 하는지 나타냅니다.
+  bool _shouldOpenInitialScan = false;
+  bool _shouldOpenInitialReport = false;
+  // 이 화면이 위에 쌓은 스캔·리포트·설정 라우트 수입니다. 스캔 저장 직후에는 스캔 화면과
+  // 리포트가 함께 쌓이므로, 둘 다 닫혀야 덮이지 않은 것으로 봅니다.
+  int _coveringRouteCount = 0;
 
   // 탭을 바꿀 때마다 새 화면이 부드럽게 나타나도록 재생하는 전환 애니메이션입니다.
   late final AnimationController _tabTransitionController;
   late final Animation<double> _tabTransition;
-  // 이동 방향에 맞춰 새 화면이 들어오는 쪽을 정합니다.
-  double _tabSlideDirection = 1;
+  // 새 화면이 들어오는 쪽(본문 크기 대비 비율)입니다. 가는 방향 쪽 옆에서 들어옵니다.
+  Offset _tabSlideBegin = const Offset(0.06, 0);
 
   @override
   void initState() {
@@ -59,18 +66,20 @@ class _MainScreenState extends State<MainScreen>
     super.dispose();
   }
 
-  // 탭을 바꾸면 열려 있던 상세 리포트도 함께 닫습니다.
   void _selectTab(int index) {
     if (index < 0 || index >= _tabCount) return;
 
-    final isSameView = index == _selectedIndex && !_isShowingReport;
-    // 오른쪽 탭으로 가면 오른쪽에서, 왼쪽 탭으로 가면 왼쪽에서 들어옵니다.
-    final direction = index >= _selectedIndex ? 1.0 : -1.0;
+    if (index == 1) {
+      _openScan();
+      return;
+    }
+
+    final isSameView = index == _selectedIndex;
+    final slideBegin = Offset(index >= _selectedIndex ? 0.06 : -0.06, 0);
 
     setState(() {
       _selectedIndex = index;
-      _isShowingReport = false;
-      _tabSlideDirection = direction;
+      _tabSlideBegin = slideBegin;
     });
 
     // 같은 탭을 다시 누른 경우에는 굳이 다시 재생하지 않습니다.
@@ -79,196 +88,144 @@ class _MainScreenState extends State<MainScreen>
     }
   }
 
-  /// 촬영에 집중할 수 있도록 하단 내비게이션을 감추는 스캔 화면 상태입니다.
-  bool get _isScanTabActive => _selectedIndex == 1 && !_isShowingReport;
+  bool get _isCoveredByRoute => _coveringRouteCount > 0;
 
-  // 선택 의류를 Provider에 기록한 뒤 탭 위에 상세 리포트를 표시합니다.
+  // 스캔 화면을 탭 위에 쌓아 엽니다. 리포트·설정처럼 라우트라서 iOS 에서 왼쪽 끝을 밀어 닫을 수 있고,
+  // 하단 메뉴까지 덮으며, 닫으면 들어왔던 탭으로 돌아갑니다(2026-09-26 사용자 결정 A안).
+  void _openScan() {
+    // 설정과 같은 방어입니다. 쌓이는 동안엔 라우트 장벽이 아래 탭을 막아 보통은 걸리지 않습니다.
+    if (_isCoveredByRoute) return;
+
+    // 탭 트리가 유지되므로, 검색창 등에 남은 포커스와 키보드를 먼저 정리합니다.
+    FocusManager.instance.primaryFocus?.unfocus();
+    _pushScan();
+  }
+
+  Future<void> _pushScan() {
+    return _pushCoveringRoute(
+      () => Navigator.push<void>(
+        context,
+        MaterialPageRoute<void>(builder: (_) => const _ScanPage()),
+      ),
+    );
+  }
+
+  // 선택 의류를 Provider에 기록한 뒤 상세 리포트를 탭 위에 쌓아 엽니다.
+  // 설정처럼 라우트로 열어야 iOS 에서 왼쪽 끝을 밀어 닫을 수 있습니다(2026-09-24 사용자 결정).
   void _openReport(Clothes item) {
+    // 설정과 같은 방어입니다. 쌓이는 동안엔 라우트 장벽이 아래 탭을 막아 보통은 걸리지 않습니다.
+    if (_isCoveredByRoute) return;
+
     // 탭 트리가 유지되므로, 검색창 등에 남은 포커스와 키보드를 먼저 정리합니다.
     FocusManager.instance.primaryFocus?.unfocus();
     context.read<ClosetProvider>().selectClothes(item);
-
-    setState(() {
-      _isShowingReport = true;
-    });
+    _pushReport();
   }
 
-  void _closeReport() {
-    setState(() {
-      _isShowingReport = false;
-    });
+  Future<void> _pushReport() {
+    return _pushCoveringRoute(
+      () => Navigator.push<void>(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => _ReportPage(onDeleted: _handleReportDeleted),
+        ),
+      ),
+    );
   }
 
+  // 리포트에서 의류를 지우면 리포트가 닫히면서 옷장 탭이 보이게 합니다.
+  // 스캔 저장 직후처럼 스캔 화면 위에 열린 리포트였다면 스캔 화면도 함께 닫습니다.
   void _handleReportDeleted() {
+    final mainRoute = ModalRoute.of(context);
+    if (mainRoute != null) {
+      Navigator.popUntil(context, (route) => route == mainRoute);
+    }
+
     setState(() {
       _selectedIndex = 2;
-      _isShowingReport = false;
+    });
+  }
+
+  // 위에 쌓은 라우트가 닫힐 때까지 옷장 탭이 비활성이도록 열림 상태를 추적합니다.
+  Future<void> _pushCoveringRoute(Future<Object?> Function() push) async {
+    setState(() {
+      _coveringRouteCount++;
+    });
+
+    await push();
+
+    if (!mounted) return;
+
+    setState(() {
+      _coveringRouteCount--;
     });
   }
 
   int _normalizeInitialIndex(int index) {
     if (index == 3) return 2;
 
-    if (index >= 0 && index < _tabCount) {
+    // 스캔(1)은 홈 위에 쌓아 열므로 아래에는 홈을 둡니다.
+    if (index == 0 || index == 2) {
       return index;
     }
 
     return 0;
   }
 
-  /// 외부 경로에서 전달된 초기 탭과 리포트 표시 요청을 한 번만 적용합니다.
+  /// 외부 경로에서 전달된 초기 탭과 스캔·리포트 표시 요청을 한 번만 적용합니다.
   void _applyInitialArguments(Object? args) {
+    final int requestedIndex;
     if (args is MainScreenArguments) {
-      _selectedIndex = _normalizeInitialIndex(args.initialIndex);
-      _isShowingReport =
+      requestedIndex = args.initialIndex;
+      _shouldOpenInitialReport =
           args.showReport &&
           context.read<ClosetProvider>().currentReportItem != null;
-      return;
+    } else {
+      requestedIndex = args is int ? args : 0;
     }
 
-    _selectedIndex = _normalizeInitialIndex(args is int ? args : 0);
+    _shouldOpenInitialScan = requestedIndex == 1;
+    _selectedIndex = _normalizeInitialIndex(requestedIndex);
   }
 
-  // 설정 화면이 닫힐 때까지 카메라가 꺼지도록 열림 상태를 추적합니다.
   Future<void> _openSettings() async {
     // 빠른 연속 탭으로 설정 화면이 두 번 쌓이지 않게 합니다.
     if (_isCoveredByRoute) return;
 
-    setState(() {
-      _isCoveredByRoute = true;
-    });
-
-    await Navigator.pushNamed(context, '/settings');
-
-    if (!mounted) return;
-
-    setState(() {
-      _isCoveredByRoute = false;
-    });
+    await _pushCoveringRoute(() => Navigator.pushNamed(context, '/settings'));
   }
 
   List<Widget> _buildTabScreens() {
     return [
       HomeScreen(
-        onStartScan: () => _selectTab(1),
+        onStartScan: _openScan,
         onOpenReport: _openReport,
         onOpenCloset: () => _selectTab(2),
       ),
-      ScanScreen(
-        isActive:
-            _selectedIndex == 1 && !_isShowingReport && !_isCoveredByRoute,
-      ),
       ClosetScreen(
-        isActive:
-            _selectedIndex == 2 && !_isShowingReport && !_isCoveredByRoute,
+        isActive: _selectedIndex == 2 && !_isCoveredByRoute,
         onOpenReport: _openReport,
-        onStartScan: () => _selectTab(1),
+        onStartScan: _openScan,
       ),
     ];
   }
 
-  // 리포트가 열려도 탭 트리는 Offstage로 유지해 작성 중 상태를 보존하고,
-  // 리포트 층만 AnimatedSwitcher로 위에 얹거나 걷어냅니다.
+  // 탭을 유지한 채(작성 중인 내용 보존) 화면만 부드럽게 나타나게 합니다.
+  // 스캔·리포트·설정은 이 화면 위에 라우트로 쌓이므로 탭 트리는 그대로 남습니다.
   Widget _buildBody() {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        Offstage(
-          offstage: _isShowingReport,
-          child: TickerMode(
-            enabled: !_isShowingReport,
-            // 탭을 유지한 채(작성 중인 내용 보존) 화면만 부드럽게 나타나게 합니다.
-            child: FadeTransition(
-              opacity: _tabTransition,
-              child: SlideTransition(
-                position: Tween<Offset>(
-                  begin: Offset(0.06 * _tabSlideDirection, 0),
-                  end: Offset.zero,
-                ).animate(_tabTransition),
-                child: IndexedStack(
-                  index: _selectedIndex,
-                  children: _buildTabScreens(),
-                ),
-              ),
-            ),
-          ),
+    return FadeTransition(
+      opacity: _tabTransition,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: _tabSlideBegin,
+          end: Offset.zero,
+        ).animate(_tabTransition),
+        child: IndexedStack(
+          // 탭 번호(0 홈 · 2 옷장)를 스택 위치로 바꿉니다.
+          index: _selectedIndex == 2 ? 1 : 0,
+          children: _buildTabScreens(),
         ),
-        AnimatedSwitcher(
-          duration: _transitionDuration,
-          switchInCurve: Curves.easeOutCubic,
-          switchOutCurve: Curves.easeInCubic,
-          transitionBuilder: (child, animation) {
-            final slideAnimation = Tween<Offset>(
-              begin: const Offset(0.04, 0),
-              end: Offset.zero,
-            ).animate(animation);
-
-            return FadeTransition(
-              opacity: animation,
-              child: SlideTransition(position: slideAnimation, child: child),
-            );
-          },
-          child: _isShowingReport
-              ? ReportScreen(
-                  key: const ValueKey('report'),
-                  onDeleted: _handleReportDeleted,
-                )
-              : const SizedBox.shrink(key: ValueKey('report-hidden')),
-        ),
-      ],
-    );
-  }
-
-  PreferredSizeWidget _buildAppBar(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final appBarIconColor = isDark ? Colors.white : const Color(0xFF1A1A1A);
-
-    if (_isShowingReport) {
-      return AppBar(
-        toolbarHeight: 44,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        leading: IconButton(
-          onPressed: _closeReport,
-          tooltip: '리포트 닫기',
-          icon: Icon(Icons.arrow_back, color: appBarIconColor),
-        ),
-        title: Text(
-          '상세 리포트',
-          style: TextStyle(
-            color: appBarIconColor,
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      );
-    }
-
-    return AppBar(
-      toolbarHeight: 56,
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      scrolledUnderElevation: 0,
-      automaticallyImplyLeading: false,
-      centerTitle: true,
-      // 스캔 화면에서는 하단 내비게이션이 없으므로 나가는 버튼을 제공합니다.
-      leading: _isScanTabActive
-          ? IconButton(
-              onPressed: () => _selectTab(0),
-              tooltip: '스캔 화면 닫기',
-              icon: Icon(Icons.arrow_back, color: appBarIconColor),
-            )
-          : null,
-      title: const KdppLogoMark(size: 34),
-      actions: [
-        IconButton(
-          onPressed: _openSettings,
-          tooltip: '설정',
-          icon: Icon(Icons.settings_outlined, color: appBarIconColor),
-        ),
-        const SizedBox(width: 8),
-      ],
+      ),
     );
   }
 
@@ -279,45 +236,147 @@ class _MainScreenState extends State<MainScreen>
           widget.initialArguments ?? ModalRoute.of(context)?.settings.arguments;
       _applyInitialArguments(args);
       _didReadInitialArgs = true;
+
+      if (_shouldOpenInitialScan || _shouldOpenInitialReport) {
+        // 빌드 중에는 라우트를 쌓을 수 없으므로 첫 프레임 뒤에 엽니다. 스캔 저장 직후에는 새 스캔 화면
+        // 위에 리포트를 쌓아, 리포트를 닫으면 바로 다음 옷을 찍을 수 있게 합니다.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+
+          if (_shouldOpenInitialScan) _pushScan();
+          if (_shouldOpenInitialReport) _pushReport();
+        });
+      }
     }
 
     final palette = AppPalette.of(context);
     final scaffoldBg = palette.background;
 
-    // '/main'은 스택의 유일한 라우트라서, 리포트가 열려 있거나 스캔 화면일 때
-    // 시스템 뒤로가기가 앱을 종료하지 않고 이전 화면으로 돌아가게 합니다.
-    return PopScope(
-      canPop: !_isShowingReport && !_isScanTabActive,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
+    return Scaffold(
+      backgroundColor: scaffoldBg,
+      extendBody: true,
+      appBar: _buildMainAppBar(context, onOpenSettings: _openSettings),
+      body: _buildBody(),
+      bottomNavigationBar: _KDppBottomNavigationBar(
+        selectedIndex: _selectedIndex,
+        onSelect: _selectTab,
+      ),
+    );
+  }
+}
 
-        if (_isShowingReport) {
-          _closeReport();
-          return;
-        }
+// 위 막대 아이콘 색입니다. 설정 아이콘과 스캔 화면의 "<" 가 같은 색을 씁니다.
+Color _appBarIconColor(BuildContext context) {
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+  return isDark ? Colors.white : const Color(0xFF1A1A1A);
+}
 
-        if (_isScanTabActive) {
-          _selectTab(0);
-        }
-      },
-      child: Scaffold(
-        backgroundColor: scaffoldBg,
-        extendBody: true,
-        appBar: _buildAppBar(context),
-        body: _buildBody(),
-        // 촬영 중에는 하단 내비게이션을 감춰 화면을 넓게 사용하고,
-        // 사라지고 나타날 때는 아래로 밀려나듯 부드럽게 전환합니다.
-        bottomNavigationBar: AnimatedSize(
-          duration: _transitionDuration,
-          curve: Curves.easeOutCubic,
-          alignment: Alignment.topCenter,
-          child: _isScanTabActive
-              ? const SizedBox(width: double.infinity)
-              : _KDppBottomNavigationBar(
-                  selectedIndex: _selectedIndex,
-                  onSelect: _selectTab,
-                ),
+/// 메인 화면과 스캔 화면이 함께 쓰는 위 막대(가운데 로고, 오른쪽 설정)입니다.
+PreferredSizeWidget _buildMainAppBar(
+  BuildContext context, {
+  required VoidCallback onOpenSettings,
+  Widget? leading,
+}) {
+  return AppBar(
+    toolbarHeight: 56,
+    backgroundColor: Colors.transparent,
+    elevation: 0,
+    scrolledUnderElevation: 0,
+    automaticallyImplyLeading: false,
+    centerTitle: true,
+    leadingWidth: 52,
+    leading: leading,
+    title: const KdppLogoMark(size: 34),
+    actions: [
+      IconButton(
+        onPressed: onOpenSettings,
+        tooltip: '설정',
+        icon: Icon(Icons.settings_outlined, color: _appBarIconColor(context)),
+      ),
+      const SizedBox(width: 8),
+    ],
+  );
+}
+
+/// 탭 위에 쌓아 여는 스캔 화면입니다.
+///
+/// 라우트라서 "<"·시스템 뒤로가기·iOS 왼쪽 끝 밀기로 닫히고, 하단 메뉴까지 덮습니다.
+/// 결과를 입력하는 동안에는 [ScanScreen] 이 곧바로 닫히지 않게 막고 버릴지 묻습니다.
+class _ScanPage extends StatelessWidget {
+  const _ScanPage();
+
+  @override
+  Widget build(BuildContext context) {
+    final route = ModalRoute.of(context);
+    // 설정·리포트·시트처럼 다른 라우트가 위에 쌓이면 카메라를 끕니다. 이 화면이 닫히는 중(밀어서 닫기
+    // 포함)에는 isActive 가 false 라 덮인 것으로 보지 않고, 카메라가 화면과 함께 사라지게 둡니다.
+    final isCovered = route != null && route.isActive && !route.isCurrent;
+
+    return Scaffold(
+      backgroundColor: AppPalette.of(context).background,
+      appBar: _buildMainAppBar(
+        context,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 8),
+          child: AppBackButton(
+            // pop 이 아니라 maybePop 이라야 결과 입력 중 확인(ScanScreen 의 PopScope)을 거칩니다.
+            onPressed: () => Navigator.maybePop(context),
+            tooltip: '스캔 화면 닫기',
+            color: _appBarIconColor(context),
+          ),
         ),
+        onOpenSettings: () {
+          // 빠른 연속 탭으로 설정 화면이 두 번 쌓이지 않게 합니다.
+          if (ModalRoute.of(context)?.isCurrent == false) return;
+
+          Navigator.pushNamed(context, '/settings');
+        },
+      ),
+      body: ScanScreen(isActive: !isCovered),
+    );
+  }
+}
+
+/// 탭 위에 쌓아 여는 상세 리포트 화면입니다.
+///
+/// 라우트라서 "<"·시스템 뒤로가기·iOS 왼쪽 끝 밀기로 닫히고, 하단 메뉴까지 덮습니다.
+class _ReportPage extends StatelessWidget {
+  const _ReportPage({required this.onDeleted});
+
+  /// 의류를 지워 리포트가 닫힌 뒤 메인 화면이 할 일입니다.
+  final VoidCallback onDeleted;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final appBarIconColor = isDark ? Colors.white : const Color(0xFF1A1A1A);
+
+    return Scaffold(
+      backgroundColor: AppPalette.of(context).background,
+      appBar: AppBar(
+        toolbarHeight: 44,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        leadingWidth: 52,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 8),
+          child: AppBackButton(tooltip: '리포트 닫기', color: appBarIconColor),
+        ),
+        title: Text(
+          '상세 리포트',
+          style: TextStyle(
+            color: appBarIconColor,
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      body: ReportScreen(
+        onDeleted: () {
+          Navigator.pop(context);
+          onDeleted();
+        },
       ),
     );
   }
@@ -337,6 +396,8 @@ class _KDppBottomNavigationBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final palette = AppPalette.of(context);
+    // 화면 설정에서 고른 값(60~100%). 100% 미만이면 뒤로 스크롤되는 내용이 흐리게 비칩니다.
+    final opacity = context.watch<NavigationBarOpacityProvider>().opacity;
 
     final pageBg = palette.background;
     final barColor = palette.card;
@@ -359,20 +420,19 @@ class _KDppBottomNavigationBar extends StatelessWidget {
                 left: 0,
                 right: 0,
                 bottom: 0,
-                child: Container(
-                  height: 70,
-                  decoration: BoxDecoration(
-                    color: barColor,
-                    borderRadius: BorderRadius.circular(26),
-                    border: Border.all(color: borderColor),
-                    boxShadow: [
-                      BoxShadow(
-                        color: shadowColor,
-                        blurRadius: 22,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
+                height: 70,
+                child: FrostedSurface(
+                  opacity: opacity,
+                  color: barColor,
+                  borderRadius: BorderRadius.circular(26),
+                  border: Border.all(color: borderColor),
+                  boxShadow: [
+                    BoxShadow(
+                      color: shadowColor,
+                      blurRadius: 22,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
                   child: Row(
                     children: [
                       Expanded(
@@ -402,7 +462,6 @@ class _KDppBottomNavigationBar extends StatelessWidget {
                 top: 0,
                 child: _CenterScanButton(
                   pageBg: pageBg,
-                  selected: selectedIndex == 1,
                   onTap: () => onSelect(1),
                 ),
               ),
@@ -414,28 +473,21 @@ class _KDppBottomNavigationBar extends StatelessWidget {
   }
 }
 
-// 스캔 탭을 강조하는 가운데 원형 카메라 버튼입니다.
+// 스캔 화면을 여는 가운데 원형 카메라 버튼입니다. 스캔은 위에 쌓는 화면이라 선택 상태가 없습니다.
 class _CenterScanButton extends StatelessWidget {
-  const _CenterScanButton({
-    required this.pageBg,
-    required this.selected,
-    required this.onTap,
-  });
+  const _CenterScanButton({required this.pageBg, required this.onTap});
 
   final Color pageBg;
-  final bool selected;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
     const activeColor = AppPalette.accent;
-    final labelColor = selected ? activeColor : palette.textSecondary;
 
     return Semantics(
       label: '스캔',
       button: true,
-      selected: selected,
       child: GestureDetector(
         onTap: onTap,
         behavior: HitTestBehavior.opaque,
@@ -454,9 +506,10 @@ class _CenterScanButton extends StatelessWidget {
                     color: pageBg,
                     shape: BoxShape.circle,
                   ),
-                  child: Container(
+                  // 누름 효과는 보이는 원에 그립니다. 원 밖(글자·여백)을 누르면
+                  // 바깥 GestureDetector 가 받습니다.
+                  child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: selected ? AppPalette.accentPressed : activeColor,
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
@@ -466,10 +519,24 @@ class _CenterScanButton extends StatelessWidget {
                         ),
                       ],
                     ),
-                    child: const Icon(
-                      Icons.camera_alt,
-                      color: Colors.white,
-                      size: 30,
+                    child: Material(
+                      color: activeColor,
+                      shape: const CircleBorder(),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: onTap,
+                        // 누르는 동안 진한 파랑으로 어두워집니다. 짧은 탭은 강조가
+                        // 칠해지기 전에 끝나 물결만 보이므로 물결도 같은 색으로 칠하고,
+                        // Android 도 반짝이 대신 iOS 와 같은 원형 물결을 씁니다.
+                        highlightColor: AppPalette.accentPressed,
+                        splashColor: AppPalette.accentPressed,
+                        splashFactory: InkRipple.splashFactory,
+                        child: const Icon(
+                          Icons.camera_alt,
+                          color: Colors.white,
+                          size: 30,
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -480,12 +547,10 @@ class _CenterScanButton extends StatelessWidget {
                     child: Text(
                       '스캔',
                       style: TextStyle(
-                        color: labelColor,
+                        color: palette.textSecondary,
                         fontSize: 12,
                         height: 1.1,
-                        fontWeight: selected
-                            ? FontWeight.w700
-                            : FontWeight.w500,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
                   ),

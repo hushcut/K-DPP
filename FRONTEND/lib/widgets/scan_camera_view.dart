@@ -102,9 +102,11 @@ class ScanCameraView extends StatelessWidget {
                 height: availableHeight,
                 child: Column(
                   children: [
-                    // 남는 여백을 위쪽에 더 두어 촬영 UI가 화면 아래쪽에
-                    // 자리 잡도록 합니다.
-                    const Spacer(flex: 3),
+                    // 남는 높이를 위 2 : 아래 3으로 나눠 라벨 틀과 촬영 버튼을 화면 가운데보다
+                    // 위에 둡니다. 이전 3 : 1은 남는 높이가 큰 긴 화면(iPhone 16 Pro Max)에서
+                    // 촬영 UI가 지나치게 아래로 내려갔고, 3 : 2로는 달라진 것을 못 느꼈습니다
+                    // (2026-09-23 폰 확인 2회). 기종별 값 대신 비율로 두어 어느 화면이든 같은 인상을 줍니다.
+                    const Spacer(flex: 2),
                     const Text(
                       '케어 라벨을 프레임 안에 맞춰 촬영해 주세요',
                       textAlign: TextAlign.center,
@@ -199,27 +201,37 @@ class ScanCameraView extends StatelessWidget {
                                   height: 74,
                                   child: Align(
                                     alignment: Alignment.bottomCenter,
+                                    // 누름 효과는 보이는 네모에 그립니다. 네모 밖 여백을
+                                    // 누르면 바깥 GestureDetector 가 받습니다.
                                     child: ExcludeSemantics(
-                                      child: Container(
-                                        width: 54,
-                                        height: 54,
-                                        decoration: BoxDecoration(
-                                          color: Colors.white.withValues(
-                                            alpha: 0.14,
-                                          ),
+                                      child: Material(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.14,
+                                        ),
+                                        shape: RoundedRectangleBorder(
                                           borderRadius: BorderRadius.circular(
                                             14,
                                           ),
-                                          border: Border.all(
+                                          side: BorderSide(
                                             color: Colors.white.withValues(
                                               alpha: 0.45,
                                             ),
                                           ),
                                         ),
-                                        child: const Icon(
-                                          Icons.photo_library_outlined,
-                                          color: Colors.white,
-                                          size: 25,
+                                        clipBehavior: Clip.antiAlias,
+                                        child: InkWell(
+                                          onTap: isScanning
+                                              ? null
+                                              : onPickFromGallery,
+                                          child: const SizedBox(
+                                            width: 54,
+                                            height: 54,
+                                            child: Icon(
+                                              Icons.photo_library_outlined,
+                                              color: Colors.white,
+                                              size: 25,
+                                            ),
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -240,19 +252,12 @@ class ScanCameraView extends StatelessWidget {
                                 child: GestureDetector(
                                   behavior: HitTestBehavior.opaque,
                                   onTap: isScanning ? null : onTakePicture,
+                                  // 누름 효과는 원에 그리고, 원 밖 모서리를 누르면
+                                  // 바깥 GestureDetector 가 받습니다.
                                   child: ExcludeSemantics(
-                                    child: Container(
-                                      width: 74,
-                                      height: 74,
+                                    child: DecoratedBox(
                                       decoration: BoxDecoration(
-                                        color: isScanning
-                                            ? const Color(0xFF6B6B6B)
-                                            : AppPalette.accent,
                                         shape: BoxShape.circle,
-                                        border: Border.all(
-                                          color: Colors.white,
-                                          width: 4,
-                                        ),
                                         boxShadow: [
                                           BoxShadow(
                                             color: AppPalette.accent
@@ -262,10 +267,39 @@ class ScanCameraView extends StatelessWidget {
                                           ),
                                         ],
                                       ),
-                                      child: const Icon(
-                                        Icons.camera_alt,
-                                        color: Colors.white,
-                                        size: 30,
+                                      child: Material(
+                                        color: isScanning
+                                            ? const Color(0xFF6B6B6B)
+                                            : AppPalette.accent,
+                                        shape: const CircleBorder(
+                                          side: BorderSide(
+                                            color: Colors.white,
+                                            width: 4,
+                                          ),
+                                        ),
+                                        clipBehavior: Clip.antiAlias,
+                                        child: InkWell(
+                                          onTap: isScanning
+                                              ? null
+                                              : onTakePicture,
+                                          // 가운데 스캔 원과 같이 누름 강조·물결을
+                                          // 모두 진한 파랑으로 칠합니다
+                                          // (이유는 main_screen.dart).
+                                          highlightColor:
+                                              AppPalette.accentPressed,
+                                          splashColor: AppPalette.accentPressed,
+                                          splashFactory:
+                                              InkRipple.splashFactory,
+                                          child: const SizedBox(
+                                            width: 74,
+                                            height: 74,
+                                            child: Icon(
+                                              Icons.camera_alt,
+                                              color: Colors.white,
+                                              size: 30,
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -276,7 +310,7 @@ class ScanCameraView extends StatelessWidget {
                         ],
                       ),
                     ),
-                    const Spacer(),
+                    const Spacer(flex: 3),
                   ],
                 ),
               ),
