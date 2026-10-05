@@ -20,12 +20,16 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, StringConstraints
+import asyncio
+import certifi
+import httpx
 import ipaddress
 import json
 import math
 import os
 import re
 import shutil
+import ssl
 import sys
 import threading
 import tempfile
@@ -424,8 +428,18 @@ class ChangePasswordRequest(BaseModel):
     new_password: PasswordInput
 
 
+class KakaoLoginRequest(BaseModel):
+    # 카카오 SDK 로그인으로 받은 OAuthToken.accessToken.
+    access_token: str
+    # 새 계정일 때만 씁니다(없으면 카카오 닉네임). 이미 있는 계정이면 무시합니다.
+    nickname: str | None = None
+
+
 class WithdrawRequest(BaseModel):
-    password: PasswordInput
+    # 계정에 맞는 칸 하나만 봅니다 — 비밀번호 계정은 password, 카카오 계정은 kakao_access_token
+    # (탈퇴 확인 단계에서 앱이 재인증 로그인으로 받은 토큰). 맞지 않는 칸은 무시합니다.
+    password: PasswordInput | None = None
+    kakao_access_token: str | None = None
 
 
 # 소재 계산은 입력 소재 수에 비례해 반복되므로 개수·길이를 제한하지 않으면
@@ -480,6 +494,22 @@ def ensure_password_rules(password: str) -> None:
     # 제어 문자·짝 없는 서로게이트는 해시(UTF-8 인코딩)·저장에서 500 을 내므로 형식 오류로 막습니다.
     if not password.isprintable():
         raise HTTPException(status_code=400, detail="비밀번호에 쓸 수 없는 문자가 있습니다.")
+
+
+def nickname_rule_error(nickname: str) -> str | None:
+    """닉네임(앞뒤 공백을 지운 값)이 규칙에 맞지 않으면 그 이유, 맞으면 None.
+    가입·카카오 로그인(요청 닉네임과 카카오 닉네임)이 같은 규칙을 씁니다."""
+    if len(nickname) < 2:
+        return "닉네임은 2자 이상 입력해 주세요."
+    if not nickname.isprintable():
+        return "닉네임에 쓸 수 없는 문자가 있습니다."
+    return None
+
+
+def ensure_nickname_rules(nickname: str) -> None:
+    error = nickname_rule_error(nickname)
+    if error is not None:
+        raise HTTPException(status_code=400, detail=error)
 
 
 # PBKDF2-SHA256 반복 수(OWASP 권장값). 저장 형식에 반복 수가 들어 있어 값을 올려도
@@ -1083,11 +1113,249 @@ def send_email_code_message(email: str, purpose: str, code: str) -> None:
         print(f"[email] 인증 메일 처리 실패({purpose}): {exc!r}", file=sys.stderr, flush=True)
 
 
-def auth_user_response(user: database.User) -> dict:
+# --- 카카오 로그인 (DECISIONS 140·143·152·153) ------------------------------------------
+# 앱이 카카오 SDK 로그인으로 받은 액세스 토큰을 보내면, 카카오에 그 토큰이 우리 앱이 받은
+# 것인지(app_id) 묻고 회원번호로 계정을 찾습니다. 서버는 회원번호만 저장하고 카카오 토큰은
+# 저장하지 않으며, 로그·예외 문구에도 남기지 않습니다.
+KAKAO_PROVIDER = "kakao"
+KAKAO_API_BASE = "https://kapi.kakao.com"
+# 카카오 호출 한 번의 전체 시간(연결부터 응답을 다 받을 때까지). 한 요청에서 최대 두 번 부르므로
+# 앱의 대기(15초) 안에 끝납니다.
+KAKAO_CALL_TIMEOUT_SECONDS = 5.0
+# 공백이 아닌 출력 가능한 ASCII 1,024자까지. 아니면 카카오에 묻지 않고 400(횟수 제한에도 안 셈).
+KAKAO_TOKEN_PATTERN = re.compile(r"[!-~]{1,1024}")
+# 카카오 오류 본문의 code. -401(무효·만료 토큰)·-2(잘못된 형식)는 토큰 거부, 그 밖(-1 일시 장애 등)은 502.
+KAKAO_TOKEN_REJECTED_CODES = (-401, -2)
+# 서버 전체의 카카오 동시 호출 상한(DECISIONS 156). 카카오가 느려지면 호출마다 스레드 풀(기본 40)의
+# 작업자를 최대 5초 붙잡으므로, 넘치면 묻지 않고 곧바로 502 — 스캔·이메일 로그인·상태 확인 몫을 남깁니다.
+KAKAO_MAX_CONCURRENT_CALLS = 10
+_kakao_call_slots = threading.BoundedSemaphore(KAKAO_MAX_CONCURRENT_CALLS)
+
+
+def parse_kakao_app_id(value: str | None) -> int | None:
+    """K_DPP_KAKAO_APP_ID 를 읽는다. 비어 있으면 None(카카오 로그인 꺼짐 — 503), 1 이상의 정수면 그 값.
+    그 밖의 값이면 시작하지 않는다 — 앱 키(문자열)를 잘못 넣으면 모든 토큰이 '다른 앱 것'으로 거부돼서."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    if re.fullmatch(r"[0-9]+", text) and int(text) > 0:
+        return int(text)
+    raise ValueError(f"K_DPP_KAKAO_APP_ID 는 카카오 앱 ID(숫자)여야 합니다: {value!r}")
+
+
+# 카카오 개발자 콘솔의 앱 ID(비밀값 아님). 서버에 두는 카카오 비밀값은 없습니다(어드민 키를 쓰지 않음).
+# 로컬·CI 는 비워 두어 카카오 로그인이 꺼진 채(503) 시작합니다.
+KAKAO_APP_ID = parse_kakao_app_id(os.getenv("K_DPP_KAKAO_APP_ID"))
+
+
+class KakaoTokenRejected(Exception):
+    """카카오가 토큰을 거부했거나(-401·-2) 다른 앱이 받은 토큰 → SOCIAL_TOKEN_INVALID."""
+
+
+class KakaoUnavailable(Exception):
+    """카카오 일시 장애·5xx·시간 초과·연결 실패·예상 밖 응답 → 502. 문구에 토큰을 넣지 않는다."""
+
+
+@dataclass
+class KakaoTokenInfo:
+    subject: str  # 카카오 회원번호(Long)를 문자열로
+    app_id: int
+
+
+# 호출마다 CA 묶음을 다시 읽지 않게 한 번만 만듭니다(httpx 기본값과 같은 certifi 묶음).
+_KAKAO_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+
+
+async def _send_kakao_request(
+    method: str, path: str, access_token: str, form: bool
+) -> httpx.Response:
+    headers = {"Authorization": f"Bearer {access_token}"}
+    if form:
+        # 카카오 문서가 이 헤더를 요구하는 API(사용자 정보·연결 끊기). 보내는 본문은 없습니다.
+        headers["Content-Type"] = "application/x-www-form-urlencoded;charset=utf-8"
+    async with httpx.AsyncClient(
+        # 연결(TCP·TLS) 단계 제한을 전체 마감보다 짧게 둡니다. TLS 핸드셰이크가 멈춘 채 전체 마감의
+        # 취소에 걸리면 httpcore 가 소켓을 닫지 않고 GC 를 기다리기 때문입니다(단계 제한은 닫음).
+        timeout=httpx.Timeout(
+            KAKAO_CALL_TIMEOUT_SECONDS, connect=KAKAO_CALL_TIMEOUT_SECONDS * 0.6
+        ),
+        verify=_KAKAO_SSL_CONTEXT,
+        # 환경변수의 프록시·.netrc 를 따르지 않습니다 — 잘못된 프록시 값이 502 가 아닌 500 이 되지 않게.
+        trust_env=False,
+    ) as client:
+        return await client.request(method, KAKAO_API_BASE + path, headers=headers)
+
+
+def _call_kakao(method: str, path: str, access_token: str, form: bool = False) -> dict:
+    """카카오 API 를 한 번 부르고 성공 본문(JSON 객체)을 돌려준다.
+
+    연결부터 응답을 다 받을 때까지 KAKAO_CALL_TIMEOUT_SECONDS 를 넘으면 끊는다. httpx 의 timeout 은
+    연결·읽기·쓰기·풀 단계마다 따로라 조금씩 오는 응답은 그것만으로 끝나지 않으므로, 이 호출만의
+    이벤트 루프에서 전체에 마감을 건다(asyncio.run 과 달리 닫을 때 끝나지 않은 DNS 조회를 기다리지 않음).
+    오류는 HTTP 상태가 아니라 본문 code 로 나눈다 — 일시 장애(-1)도 HTTP 400 으로 온다.
+    """
+    if not _kakao_call_slots.acquire(blocking=False):
+        raise KakaoUnavailable(f"{path}: 동시 호출 상한({KAKAO_MAX_CONCURRENT_CALLS}건)")
+    try:
+        loop = asyncio.new_event_loop()
+        try:
+            response = loop.run_until_complete(
+                asyncio.wait_for(
+                    _send_kakao_request(method, path, access_token, form),
+                    KAKAO_CALL_TIMEOUT_SECONDS,
+                )
+            )
+        except (httpx.HTTPError, OSError) as exc:
+            # OSError 에는 전체 마감의 TimeoutError 와, 응답을 읽는 중의 TLS 오류(ssl.SSLError —
+            # httpcore 가 httpx 예외로 바꾸지 않음)가 들어 있습니다.
+            raise KakaoUnavailable(f"{path}: {type(exc).__name__}") from None
+        finally:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
+    finally:
+        _kakao_call_slots.release()
+
+    try:
+        body = response.json()
+    except (ValueError, RecursionError):  # 깨진 JSON·UTF-8 아님 / 아주 깊게 중첩된 JSON
+        body = None
+    if response.status_code == 200 and isinstance(body, dict):
+        return body
+    code = body.get("code") if isinstance(body, dict) else None
+    code = code if type(code) is int else None
+    if code in KAKAO_TOKEN_REJECTED_CODES:
+        raise KakaoTokenRejected(f"{path}: code {code}")
+    raise KakaoUnavailable(f"{path}: HTTP {response.status_code}, code {code}")
+
+
+def _kakao_member_id(body: dict, path: str) -> str:
+    member_id = body.get("id")
+    # bool 은 int 의 하위 형이라 type 으로 봅니다.
+    if type(member_id) is not int or member_id <= 0:
+        raise KakaoUnavailable(f"{path}: 회원번호가 없는 응답")
+    return str(member_id)
+
+
+def kakao_token_info(access_token: str) -> KakaoTokenInfo:
+    """GET /v1/user/access_token_info — 토큰의 회원번호와 토큰을 받은 앱 ID. (테스트가 바꿔 끼움)"""
+    path = "/v1/user/access_token_info"
+    body = _call_kakao("GET", path, access_token)
+    app_id = body.get("app_id")
+    if type(app_id) is not int:
+        raise KakaoUnavailable(f"{path}: 앱 ID 가 없는 응답")
+    return KakaoTokenInfo(subject=_kakao_member_id(body, path), app_id=app_id)
+
+
+def kakao_profile_nickname(access_token: str, subject: str) -> str | None:
+    """GET /v2/user/me — 새 계정일 때만 부른다. 카카오 닉네임(동의 항목 '닉네임'), 없으면 None.
+    토큰 정보와 회원번호가 다르면 예상 밖 응답(502). (테스트가 바꿔 끼움)"""
+    path = "/v2/user/me"
+    body = _call_kakao("GET", path, access_token, form=True)
+    if _kakao_member_id(body, path) != subject:
+        raise KakaoUnavailable(f"{path}: 토큰 정보와 회원번호가 다른 응답")
+    account = body.get("kakao_account")
+    profile = account.get("profile") if isinstance(account, dict) else None
+    if not isinstance(profile, dict):
+        return None
+    # 카카오 운영 정책에 맞지 않는 닉네임은 카카오가 기본 닉네임("닉네임을 등록해주세요")으로 바꿔 줍니다.
+    if profile.get("is_default_nickname") is True:
+        return None
+    nickname = profile.get("nickname")
+    return nickname if isinstance(nickname, str) else None
+
+
+def kakao_unlink(access_token: str) -> None:
+    """POST /v1/user/unlink — 이 토큰의 사용자와 우리 앱의 연결을 끊는다(탈퇴 커밋 뒤). (테스트가 바꿔 끼움)"""
+    _call_kakao("POST", "/v1/user/unlink", access_token, form=True)
+
+
+def log_kakao_failure(action: str, exc: Exception) -> None:
+    # 우리 예외의 문구엔 경로·응답 코드만 있습니다. 그 밖의 예외는 문구에 무엇이 들었는지 모르니 이름만.
+    reason = str(exc) if isinstance(exc, (KakaoTokenRejected, KakaoUnavailable)) else type(exc).__name__
+    print(f"[kakao] {action}: {reason}", file=sys.stderr, flush=True)
+
+
+def ensure_kakao_login_enabled() -> None:
+    if KAKAO_APP_ID is None:
+        raise HTTPException(
+            status_code=503,
+            # 503 의 기본 error_code 는 AI_MODULE_FAILED 라 직접 넣습니다.
+            detail=build_error_detail(
+                "이 서버에서는 카카오 로그인을 쓸 수 없습니다.", "SOCIAL_LOGIN_UNAVAILABLE"
+            ),
+        )
+
+
+def ensure_kakao_token_format(access_token: str) -> str:
+    access_token = access_token.strip()
+    if not KAKAO_TOKEN_PATTERN.fullmatch(access_token):
+        raise HTTPException(
+            status_code=400,
+            detail="카카오 로그인 정보가 올바르지 않습니다. 카카오 로그인을 다시 해 주세요.",
+        )
+    return access_token
+
+
+def verify_kakao_token(access_token: str) -> str:
+    """카카오에 토큰을 물어 우리 앱이 받은 토큰이면 회원번호를 돌려준다."""
+    info = kakao_token_info(access_token)
+    if info.app_id != KAKAO_APP_ID:
+        raise KakaoTokenRejected("다른 앱이 받은 토큰")
+    return info.subject
+
+
+def social_token_invalid(status_code: int) -> HTTPException:
+    # 로그인(/auth/kakao)은 401(자격 거부), 탈퇴 확인은 400(로그인한 요청의 401 은 세션 만료 전용).
+    return HTTPException(
+        status_code=status_code,
+        detail=build_error_detail(
+            "카카오 로그인을 확인하지 못했습니다. 카카오 로그인을 다시 해 주세요.",
+            "SOCIAL_TOKEN_INVALID",
+        ),
+    )
+
+
+def social_provider_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=502,
+        detail=build_error_detail(
+            "카카오 서버가 응답하지 않습니다. 잠시 후 다시 시도해 주세요.",
+            "SOCIAL_PROVIDER_UNAVAILABLE",
+        ),
+    )
+
+
+def resolve_kakao_nickname(access_token: str, subject: str) -> str:
+    """새 카카오 계정의 닉네임 — 카카오 닉네임이 없거나 가입 규칙에 맞지 않으면 400 SOCIAL_NICKNAME_REQUIRED."""
+    nickname = (kakao_profile_nickname(access_token, subject) or "").strip()
+    if nickname_rule_error(nickname) is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=build_error_detail("사용할 닉네임을 입력해 주세요.", "SOCIAL_NICKNAME_REQUIRED"),
+        )
+    return nickname
+
+
+def user_login_methods(user: database.User, db: Session) -> list[str]:
+    """이 계정으로 로그인하는 방법(DECISIONS 152 ③). 비밀번호가 있으면 password, 그리고 연결된 소셜 계정."""
+    methods = ["password"] if user.password_hash is not None else []
+    providers = (
+        db.query(database.SocialAccount.provider)
+        .filter(database.SocialAccount.user_id == user.id)
+        .order_by(database.SocialAccount.provider)
+        .all()
+    )
+    methods.extend(provider for (provider,) in providers)
+    return methods
+
+
+def auth_user_response(user: database.User, db: Session) -> dict:
     return {
         "id": user.id,
+        # 카카오 계정은 None(카카오 이메일은 받지 않음 — DECISIONS 143).
         "email": user.email,
         "nickname": user.nickname,
+        "login_methods": user_login_methods(user, db),
     }
 
 
@@ -1124,6 +1392,28 @@ def lock_user_if_password_unchanged(db: Session, user_id: int, verified_hash: st
         .scalar()
     )
     return current_hash is not None and current_hash == verified_hash
+
+
+def lock_user_row(db: Session, user_id: int) -> bool:
+    """비밀번호와 무관하게 users 행을 잠근다(카카오 계정 — 위 함수는 해시가 NULL 이면 늘 False).
+    행이 없으면(탈퇴가 먼저 커밋됨) False. 잠그는 순서는 위와 같다(users → access_tokens)."""
+    return (
+        db.query(database.User.id)
+        .filter(database.User.id == user_id)
+        .with_for_update()
+        .scalar()
+        is not None
+    )
+
+
+def delete_user_rows(db: Session, user_id: int) -> None:
+    """탈퇴: 계정과 그 토큰·분석 이력·소셜 연결을 지운다(커밋은 부르는 쪽, users 행을 잠근 뒤).
+    외래 키에 ON DELETE 가 없어 users 를 마지막에 지운다."""
+    for model in (database.AnalysisResult, database.AccessToken, database.SocialAccount):
+        db.query(model).filter(model.user_id == user_id).delete(synchronize_session=False)
+    db.query(database.User).filter(database.User.id == user_id).delete(
+        synchronize_session=False
+    )
 
 
 def read_bearer_token(authorization: str | None) -> str | None:
@@ -1702,10 +1992,7 @@ def signup(request: SignupRequest, http_request: Request, db: Session = Depends(
     password = request.password
 
     ensure_email_format(email)
-    if len(nickname) < 2:
-        raise HTTPException(status_code=400, detail="닉네임은 2자 이상 입력해 주세요.")
-    if not nickname.isprintable():
-        raise HTTPException(status_code=400, detail="닉네임에 쓸 수 없는 문자가 있습니다.")
+    ensure_nickname_rules(nickname)
     ensure_password_rules(password)
     code = ensure_email_code_format(request.code)
     # 형식을 통과한 시도부터 DB 조회·해시 전에 셉니다(번호 틀림·409 도 셈, 접속 주소는 로그인과 같음).
@@ -1739,7 +2026,7 @@ def signup(request: SignupRequest, http_request: Request, db: Session = Depends(
     return {
         "status": "success",
         "message": "회원가입이 완료되었습니다.",
-        "user": auth_user_response(user),
+        "user": auth_user_response(user, db),
     }
 
 
@@ -1834,11 +2121,124 @@ def login(request: LoginRequest, http_request: Request, db: Session = Depends(ge
     return {
         "status": "success",
         "message": "로그인되었습니다.",
-        "user": auth_user_response(user),
+        "user": auth_user_response(user, db),
         "access_token": raw_token,
         "token_type": "bearer",
         "expires_in": ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
     }
+
+
+@app.post("/auth/kakao", tags=["auth"])
+def kakao_login(request: KakaoLoginRequest, http_request: Request, db: Session = Depends(get_db)):
+    """카카오 로그인 — 첫 로그인이 곧 가입(DECISIONS 152 ②). 검사 순서는 API_CONTRACT.md 와 같다.
+
+    로그인 IP 기록(이메일 로그인 실패와 같은 기록)에 카카오에 묻기 전에 한 번을 세고,
+    SOCIAL_TOKEN_INVALID 일 때만 남긴다. 새 카카오 계정은 가입 IP 한도에 세지 않는다(152 ⑥).
+    """
+    ensure_kakao_login_enabled()
+    access_token = ensure_kakao_token_format(request.access_token)
+    nickname = None
+    if request.nickname is not None:
+        nickname = request.nickname.strip()
+        ensure_nickname_rules(nickname)
+    ip_key = client_ip_key(http_request.client.host if http_request.client else None)
+    reserve_login_attempt_for_ip(ip_key)
+
+    token_rejected = False
+    try:
+        subject = verify_kakao_token(access_token)
+        user_payload, raw_token, is_new_user = sign_in_kakao_account(
+            db, subject, access_token, nickname
+        )
+    except KakaoTokenRejected:
+        token_rejected = True
+        raise social_token_invalid(401) from None
+    except KakaoUnavailable as exc:
+        log_kakao_failure("로그인 실패", exc)
+        raise social_provider_unavailable() from None
+    finally:
+        # 성공·SOCIAL_NICKNAME_REQUIRED·502·서버 오류는 미리 센 한 번을 되돌립니다.
+        if not token_rejected:
+            release_login_attempt_for_ip(ip_key)
+
+    return {
+        "status": "success",
+        "message": "카카오 계정으로 가입했습니다." if is_new_user else "로그인되었습니다.",
+        "user": user_payload,
+        "access_token": raw_token,
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        "is_new_user": is_new_user,
+    }
+
+
+def _integrity_constraint_name(error: IntegrityError) -> str | None:
+    diag = getattr(error.orig, "diag", None)
+    return getattr(diag, "constraint_name", None)
+
+
+def sign_in_kakao_account(
+    db: Session, subject: str, access_token: str, nickname: str | None
+) -> tuple[dict, str, bool]:
+    """회원번호로 계정을 찾아 토큰을 만든다. 없으면 users·social_accounts·토큰을 한 커밋으로 만든다.
+    (user 응답, 토큰 원문, 새 계정인지)를 돌려준다.
+
+    - 같은 카카오 계정의 첫 로그인이 동시에 둘 오면 늦은 쪽은 UNIQUE(provider, subject) 에 걸려
+      롤백한 뒤 다시 찾아 로그인한다(is_new_user false).
+    - 찾은 계정이 잠그기 전에 탈퇴로 사라졌으면 다시 찾는다(그때는 새 계정).
+    - user 응답은 행을 쥔 채 만든다 — 커밋 뒤 다시 읽는 사이에 탈퇴가 끼면 없는 행을 읽게 된다.
+    """
+    for _ in range(3):
+        user_id = (
+            db.query(database.SocialAccount.user_id)
+            .filter(
+                database.SocialAccount.provider == KAKAO_PROVIDER,
+                database.SocialAccount.subject == subject,
+            )
+            .scalar()
+        )
+        if user_id is not None:
+            user = (
+                db.query(database.User)
+                .filter(database.User.id == user_id)
+                .with_for_update()
+                .first()
+            )
+            if user is None:
+                # 찾은 뒤 잠그기 전에 탈퇴가 커밋됐습니다(소셜 연결도 같이 지워짐) — 다시 찾습니다.
+                db.rollback()
+                continue
+            raw_token = add_access_token(user.id, db)
+            user_payload = auth_user_response(user, db)
+            db.commit()
+            return user_payload, raw_token, False
+
+        # 새 계정. 닉네임을 정하는 동안(카카오 호출) DB 연결을 쥐지 않게 읽기 트랜잭션을 끝냅니다.
+        db.rollback()
+        if nickname is None:
+            nickname = resolve_kakao_nickname(access_token, subject)
+        user = database.User(email=None, password_hash=None, nickname=nickname)
+        try:
+            db.add(user)
+            db.flush()
+            db.add(
+                database.SocialAccount(
+                    user_id=user.id, provider=KAKAO_PROVIDER, subject=subject
+                )
+            )
+            raw_token = add_access_token(user.id, db)
+            db.flush()
+        except IntegrityError as error:
+            db.rollback()
+            if _integrity_constraint_name(error) != "uq_social_accounts_provider_subject":
+                raise
+            # 같은 카카오 계정의 첫 로그인이 먼저 커밋됐습니다 — 다시 찾으면 그 계정으로 로그인합니다.
+            continue
+        user_payload = auth_user_response(user, db)
+        db.commit()
+        return user_payload, raw_token, True
+
+    raise RuntimeError("카카오 계정을 찾지도 만들지도 못했습니다(경합이 세 번 이어짐).")
 
 
 @app.post("/auth/logout", tags=["auth"])
@@ -1870,6 +2270,14 @@ def change_password(
         db.delete(access_token)
         db.commit()
         raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
+
+    if user.password_hash is None:
+        # 카카오 계정 — 확인할 비밀번호가 없습니다. 이메일도 없어(None) 아래 로그인 잠금 함수를 부르지
+        # 않습니다(None 하나를 모든 카카오 계정이 키로 나눠 쓰게 됨). 앱은 이 버튼을 숨깁니다.
+        raise HTTPException(
+            status_code=400,
+            detail=build_error_detail("비밀번호로 가입한 계정이 아닙니다.", "PASSWORD_NOT_SET"),
+        )
 
     # 재인증도 로그인과 같은 잠금 카운터를 쓴다. 토큰만 탈취한 공격자가 이 경로로
     # 비밀번호를 무제한 추측하면 로그인 잠금이 무의미해지고, 맞히는 순간 다른 세션이
@@ -1911,7 +2319,7 @@ def change_password(
     return {
         "status": "success",
         "message": "비밀번호가 변경되었습니다.",
-        "user": auth_user_response(user),
+        "user": auth_user_response(user, db),
         "access_token": raw_token,
         "token_type": "bearer",
         "expires_in": ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
@@ -1921,10 +2329,12 @@ def change_password(
 @app.post("/auth/withdraw", tags=["auth"])
 def withdraw(
     request: WithdrawRequest,
+    http_request: Request,
     access_token: database.AccessToken = Depends(get_current_access_token),
     db: Session = Depends(get_db),
 ):
-    """비밀번호를 확인한 뒤 계정·토큰·분석 이력을 한 트랜잭션에서 지운다.
+    """재인증(비밀번호 계정은 비밀번호, 카카오 계정은 카카오 로그인)한 뒤 계정·토큰·분석 이력·
+    소셜 연결을 한 트랜잭션에서 지운다.
 
     DELETE 메서드 대신 POST를 쓰는 이유는 프론트 공용 HTTP 헬퍼가
     GET/POST만 지원하기 때문이다(docs/SCAN_API_CONTRACT.md 참조).
@@ -1935,6 +2345,12 @@ def withdraw(
         db.delete(access_token)
         db.commit()
         raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
+
+    if user.password_hash is None:
+        return withdraw_kakao_account(request, http_request, user.id, db)
+
+    if request.password is None:
+        raise HTTPException(status_code=400, detail="비밀번호를 입력해 주세요.")
 
     check_login_lockout(user.email)
     verified_hash = user.password_hash
@@ -1951,18 +2367,74 @@ def withdraw(
 
     clear_login_failures(user.email)
 
-    user_id = user.id
-
-    # users 행만 지우면 analysis_results·access_tokens에 고아 행이 남는다.
-    # 외래키 ON DELETE가 걸려 있지 않으므로 애플리케이션에서 함께 지운다.
-    db.query(database.AnalysisResult).filter(
-        database.AnalysisResult.user_id == user_id
-    ).delete(synchronize_session=False)
-    db.query(database.AccessToken).filter(
-        database.AccessToken.user_id == user_id
-    ).delete(synchronize_session=False)
-    db.delete(user)
+    delete_user_rows(db, user.id)
     db.commit()
+
+    return {"status": "success", "message": "회원 탈퇴가 완료되었습니다."}
+
+
+def withdraw_kakao_account(
+    request: WithdrawRequest, http_request: Request, user_id: int, db: Session
+) -> dict:
+    """카카오 계정 탈퇴(DECISIONS 152 ④·153 ①): 카카오 토큰 확인 → users 행 잠금 → 이 계정의 회원번호와
+    대조 → 삭제 커밋 → 그 토큰으로 카카오 연결 끊기(실패해도 탈퇴는 성공, 로그만).
+
+    비밀번호와 달리 추측할 수 없어 이메일 로그인 잠금(5회/60초)은 쓰지 않는다 — 이메일이 None 이라
+    쓰면 모든 카카오 계정이 한 칸을 나눠 쓴다. 로그인 IP 기록에 묻기 전에 한 번을 세고
+    SOCIAL_TOKEN_INVALID 일 때만 남긴다.
+    """
+    if request.kakao_access_token is None:
+        raise HTTPException(status_code=400, detail="카카오 로그인으로 탈퇴를 확인해 주세요.")
+    ensure_kakao_login_enabled()
+    kakao_token = ensure_kakao_token_format(request.kakao_access_token)
+    ip_key = client_ip_key(http_request.client.host if http_request.client else None)
+    reserve_login_attempt_for_ip(ip_key)
+
+    # 카카오에 묻는 동안(최대 5초) DB 연결을 쥐지 않게 지금까지의 읽기 트랜잭션을 끝냅니다.
+    db.rollback()
+    token_rejected = False
+    try:
+        try:
+            subject = verify_kakao_token(kakao_token)
+        except KakaoTokenRejected:
+            token_rejected = True
+            raise social_token_invalid(400) from None
+        except KakaoUnavailable as exc:
+            log_kakao_failure("탈퇴 확인 실패", exc)
+            raise social_provider_unavailable() from None
+
+        if not lock_user_row(db, user_id):
+            # 카카오에 묻는 동안 다른 기기에서 탈퇴가 먼저 끝났습니다(이 세션의 토큰도 지워짐).
+            db.rollback()
+            raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
+        linked_subject = (
+            db.query(database.SocialAccount.subject)
+            .filter(
+                database.SocialAccount.user_id == user_id,
+                database.SocialAccount.provider == KAKAO_PROVIDER,
+            )
+            .scalar()
+        )
+        if linked_subject != subject:
+            db.rollback()
+            raise HTTPException(
+                status_code=400,
+                detail=build_error_detail(
+                    "이 계정에 연결된 카카오 계정이 아닙니다. 가입한 카카오 계정으로 다시 로그인해 주세요.",
+                    "SOCIAL_ACCOUNT_MISMATCH",
+                ),
+            )
+        delete_user_rows(db, user_id)
+        db.commit()
+    finally:
+        if not token_rejected:
+            release_login_attempt_for_ip(ip_key)
+
+    try:
+        kakao_unlink(kakao_token)
+    except Exception as exc:  # noqa: BLE001 — 계정은 이미 지워졌으므로 응답은 성공 그대로입니다.
+        # 카카오 쪽 연결이 남습니다. 같은 카카오 계정의 다음 로그인은 새 계정입니다.
+        log_kakao_failure(f"탈퇴한 사용자 {user_id} 의 카카오 연결 끊기 실패", exc)
 
     return {"status": "success", "message": "회원 탈퇴가 완료되었습니다."}
 
@@ -2180,7 +2652,7 @@ def get_user_history_response(
 
     return {
         "status": "success",
-        "user": auth_user_response(current_user),
+        "user": auth_user_response(current_user, db),
         "history": [serialize_analysis_result(result) for result in results],
         "has_more": has_more,
     }

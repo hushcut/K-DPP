@@ -32,6 +32,8 @@ os.environ["K_DPP_SCAN_DAILY_MAX"] = ""
 # 인증 메일도 기본값(log 모드·하루 상한 없음)으로 시험합니다. 다른 값은 별도 프로세스로 봅니다.
 os.environ["K_DPP_EMAIL_DELIVERY"] = ""
 os.environ["K_DPP_EMAIL_DAILY_MAX"] = ""
+# 카카오 로그인도 기본값(앱 ID 없음 — 꺼짐, 503)으로 시험합니다. 켠 경우는 테스트가 main.KAKAO_APP_ID 를 바꿉니다.
+os.environ["K_DPP_KAKAO_APP_ID"] = ""
 
 import auth_helpers  # noqa: E402
 import database  # noqa: E402
@@ -50,7 +52,7 @@ import main  # noqa: E402
 
 # 테스트마다 비우는 표. 소재(materials)는 마이그레이션이 넣은 값을 그대로 쓴다
 # — 소재를 바꾸는 API·테스트가 없다.
-PER_TEST_TABLES = ("analysis_results", "access_tokens", "users")
+PER_TEST_TABLES = ("analysis_results", "access_tokens", "social_accounts", "users")
 
 
 def make_alembic_config() -> Config:

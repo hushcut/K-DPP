@@ -281,7 +281,7 @@ Authorization: Bearer <token>
 
 - `access_token`: 필수. 앞뒤 공백을 지우고 봅니다. 비었거나, 1,024자를 넘거나, 공백이 아닌 출력 가능한 ASCII 밖의 문자(가운데 공백·제어 문자·한글 등)가 있으면
   400 `BAD_REQUEST` — 카카오에 묻지 않고 횟수 제한에도 세지 않습니다. 탈퇴의 `kakao_access_token` 도 같은 규칙입니다.
-- `nickname`: 선택. **새 계정일 때만** 씁니다(이미 있는 계정이면 무시 — 닉네임 바꾸기가 아님). 보내면 가입과 같은 규칙(앞뒤 공백을 지우고 2자 이상, 쓸 수 없는 문자 없음)으로 늘 봅니다.
+- `nickname`: 선택(`null` 은 보내지 않은 것과 같음). **새 계정일 때만** 씁니다(이미 있는 계정이면 무시 — 닉네임 바꾸기가 아님). 보내면 가입과 같은 규칙(앞뒤 공백을 지우고 2자 이상, 쓸 수 없는 문자 없음)으로 늘 봅니다.
 - `Authorization` 헤더는 보지 않습니다. 로그인한 상태에서 계정을 잇는 API 가 아니라, 늘 그 카카오 계정으로 로그인합니다.
 
 ### Success Response
@@ -306,6 +306,7 @@ Authorization: Bearer <token>
 - 이미 있는 계정이면 `"message": "로그인되었습니다."`, `"is_new_user": false`. 나머지는 `POST /auth/login` 응답과 같습니다(토큰 30일).
 - 새 계정의 닉네임: 요청의 `nickname` → 없으면 카카오 닉네임(`kakao_account.profile.nickname`, 동의 항목 '닉네임'). 카카오 닉네임은 첫 로그인 때 한 번만 가져오며,
   나중에 카카오에서 바꿔도 따라가지 않습니다. 둘 다 없거나 카카오 닉네임이 규칙(2자 이상 등)에 맞지 않으면 `SOCIAL_NICKNAME_REQUIRED`.
+  카카오가 기본 닉네임(`is_default_nickname: true` — 닉네임이 카카오 운영 정책에 맞지 않아 카카오가 "닉네임을 등록해주세요"로 바꾼 것)을 주면 없는 것으로 봅니다(DECISIONS 155).
 - 같은 카카오 계정으로 동시에 두 번 보내도 계정은 하나입니다(늦은 쪽은 `is_new_user: false`).
 - 이메일 계정과 카카오 계정은 서로 다른 계정입니다 — 같은 사람이라도 자동으로 합치지 않습니다(DECISIONS 143).
 - 서버는 카카오 회원번호만 저장하고 카카오 토큰은 저장하지 않습니다.
@@ -316,12 +317,12 @@ Authorization: Bearer <token>
 
 | 상태 | `error_code` | 언제 | 앱 처리 |
 |---|---|---|---|
-| 422 | `VALIDATION_ERROR` | `access_token` 이 빠졌거나 문자열이 아님, `nickname` 이 문자열이 아님(가장 먼저 — 앱 버그) | 서버 문구 |
+| 422 | `VALIDATION_ERROR` | `access_token` 이 빠졌거나 문자열이 아님, `nickname` 이 문자열·`null` 이 아님(가장 먼저 — 앱 버그) | 서버 문구 |
 | 503 | `SOCIAL_LOGIN_UNAVAILABLE` | 서버에 카카오 앱 ID(`K_DPP_KAKAO_APP_ID`)가 없음 — 로컬·CI 기본 | 서버 문구 |
 | 400 | `BAD_REQUEST` | `access_token` 이 비었거나(공백만 포함)·형식 오류, `nickname` 형식 오류(닉네임 문구는 가입과 같음) | 서버 문구 |
 | 429 | `TOO_MANY_ATTEMPTS` | 같은 IP 15분 30회 로그인 실패(이메일 로그인 실패와 합산 — 아래) | 서버 문구 그대로 |
 | 401 | `SOCIAL_TOKEN_INVALID` | 카카오가 토큰을 거부(만료·폐기·잘못된 형식), 또는 다른 앱이 받은 토큰(`app_id` 가 다름) | 카카오 로그인부터 다시 |
-| 502 | `SOCIAL_PROVIDER_UNAVAILABLE` | 카카오가 5초 안에 답하지 않음·카카오 일시 장애·예상 밖 응답 | 잠시 후 다시 |
+| 502 | `SOCIAL_PROVIDER_UNAVAILABLE` | 카카오가 5초 안에 답하지 않음·카카오 일시 장애·예상 밖 응답, 또는 카카오 호출이 몰려 서버의 동시 호출 상한(10건)에 닿음 | 잠시 후 다시 |
 | 400 | `SOCIAL_NICKNAME_REQUIRED` | 새 계정인데 쓸 수 있는 닉네임이 없음 | 닉네임을 받아 **같은 `access_token`** + `nickname` 으로 다시 |
 
 - 이 401 은 `POST /auth/login` 의 401 처럼 **로그인 API 가 자격을 거부한 것**입니다(로그인 화면에서 안내). 세션 만료로 처리하는 401 은 `Authorization` 을 보낸 요청의 401 뿐입니다(`docs/SCAN_API_CONTRACT.md` 2-1).
@@ -330,11 +331,12 @@ Authorization: Bearer <token>
   | 카카오 응답 | 우리 응답 | 로그인 IP 기록 |
   |---|---|---|
   | `-401`(무효·만료 토큰)·`-2`(잘못된 형식), 또는 정상 응답인데 `app_id` 가 우리 앱이 아님 | 401 `SOCIAL_TOKEN_INVALID` | **남김** |
-  | `-1`(카카오 일시 장애)·HTTP 5xx·5초 초과·연결 실패·그 밖의 예상 밖 응답 | 502 `SOCIAL_PROVIDER_UNAVAILABLE` | 되돌림 |
+  | `-1`(카카오 일시 장애)·HTTP 5xx·5초 초과·연결 실패·그 밖의 예상 밖 응답·서버의 동시 호출 상한(10건, DECISIONS 156) | 502 `SOCIAL_PROVIDER_UNAVAILABLE` | 되돌림 |
 
   `/v2/user/me` 도 같은 표로 나눕니다(토큰 정보와 회원번호가 다르면 502).
 - 횟수 제한: **`SOCIAL_TOKEN_INVALID` 만 로그인 IP 기록에 남습니다**(15분 30회, 이메일 로그인 실패와 같은 기록 — DECISIONS 139). 카카오에 묻기 전에 한 번을 세고,
   성공·`SOCIAL_NICKNAME_REQUIRED`·502·서버 오류면 되돌립니다. IPv6 /64 묶기·공인 주소가 아니면 건너뛰기도 로그인과 같습니다.
+  카카오 응답을 기다리는 동안(최대 10초)은 그 요청이 한 번으로 세어져 있어, 같은 IP 에서 30건이 동시에 기다리면 31번째는 실패가 없어도 429 입니다(받아들인 한계).
   **새 카카오 계정은 가입 IP 한도(1시간 20회, DECISIONS 142)에 세지 않습니다** — 계정마다 실제 카카오 계정이 필요하고, 한 와이파이에서 여럿이 처음 로그인하는 시연을 막지 않게.
 - 서버가 카카오에 묻는 것: `GET https://kapi.kakao.com/v1/user/access_token_info`(회원번호·`app_id` 확인), 새 계정이면 `GET https://kapi.kakao.com/v2/user/me`(닉네임).
   호출마다 **연결부터 응답을 다 받을 때까지 5초**가 넘으면 끊고 502 — 최대 두 번이라 앱 대기(15초) 안에 끝납니다.
@@ -773,11 +775,13 @@ Authorization: Bearer <token>
 
 - 새 `POST /auth/kakao`(첫 로그인이 곧 가입). 모든 `user` 응답에 `login_methods`, 카카오 계정은 `email: null`.
 - `POST /auth/withdraw`: 카카오 계정은 `password` 대신 `kakao_access_token`, 성공하면 서버가 카카오 연결을 끊음. `POST /auth/password`: 카카오 계정은 400 `PASSWORD_NOT_SET`
-  (둘 다 `docs/SCAN_API_CONTRACT.md` 2-3). 이메일 계정의 요청·응답은 그대로입니다(`user` 칸 하나 추가).
+  (둘 다 `docs/SCAN_API_CONTRACT.md` 2-3). 이메일 계정의 요청·응답은 그대로입니다(`user` 칸 하나 추가) — 하나만 바뀝니다:
+  탈퇴 본문에 `password` 가 없거나 `null` 이면 422 대신 400 `BAD_REQUEST`("비밀번호를 입력해 주세요."). 지금 앱은 늘 보내므로 영향이 없습니다.
 - 새 `error_code`: `SOCIAL_TOKEN_INVALID`·`SOCIAL_NICKNAME_REQUIRED`·`SOCIAL_ACCOUNT_MISMATCH`·`SOCIAL_PROVIDER_UNAVAILABLE`·`SOCIAL_LOGIN_UNAVAILABLE`·`PASSWORD_NOT_SET`.
 - 환경변수 `K_DPP_KAKAO_APP_ID`(카카오 앱 ID, 숫자 — 비우면 카카오 로그인이 꺼져 503, 숫자가 아니면 서버가 시작하지 않음). 서버에 두는 카카오 비밀값은 없습니다(어드민 키를 쓰지 않음).
 - DB: `users.email`·`password_hash` 를 비울 수 있게 하되 **둘은 같이 있거나 같이 없습니다**(이메일 계정은 둘 다, 카카오 계정은 둘 다 없음 — 이메일 로그인·비밀번호 찾기가
-  비밀번호 없는 행을 만나지 않게. 나중에 구글 계정에 이메일을 두기로 하면 그때 리비전으로 풂). 소셜 계정 연결 표(제공자·회원번호 → 사용자, 처음부터 구글도 받게)를 Alembic 리비전으로 더합니다.
+  비밀번호 없는 행을 만나지 않게. 나중에 구글 계정에 이메일을 두기로 하면 그때 리비전으로 풂). 소셜 계정 연결 표(제공자·회원번호 → 사용자, 처음부터 구글도 받게)를 Alembic 리비전(`19b7eee3b75c`)으로 더합니다.
+  이 리비전의 downgrade 는 이메일이 없는 사용자(카카오 계정)가 있으면 멈춥니다 — 그 계정을 지울지는 사람이 정합니다.
 - 알려진 한계: 사용자가 카카오 설정에서 우리 앱과의 연결을 끊어도 서버 계정은 남습니다(카카오의 연결 끊기 알림을 받지 않음) — 지우려면 앱에서 탈퇴.
   탈퇴 확인은 앱이 재인증 로그인(`Prompt.login`)으로 받은 토큰을 보내기로 했지만, 서버는 토큰이 방금 받은 것인지 알 수 없어 그 계정의 유효한 카카오 토큰이면 받습니다
   — 우리 서버 토큰만 가진 사람은 막지만, 기기에 저장된 카카오 토큰까지 가진 사람은 못 막습니다.

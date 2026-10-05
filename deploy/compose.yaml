@@ -121,6 +121,8 @@ services:
       K_DPP_SCAN_DAILY_MAX: ${K_DPP_SCAN_DAILY_MAX:?deploy/.env 에 K_DPP_SCAN_DAILY_MAX 를 넣으세요}
       # /docs·/redoc·/openapi.json 을 끕니다(로컬 기본은 켬, DECISIONS 142).
       K_DPP_API_DOCS: "off"
+      # 카카오 로그인용 카카오 앱 ID(숫자, 비밀값 아님 — DECISIONS 152 ⑦). 비우면 카카오 로그인이 꺼져 503.
+      K_DPP_KAKAO_APP_ID: ${K_DPP_KAKAO_APP_ID:-}
     secrets:
       - vision_key
     depends_on:

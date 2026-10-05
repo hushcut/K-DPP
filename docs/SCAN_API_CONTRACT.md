@@ -282,7 +282,7 @@ Authorization: Bearer <token>
 
 응답은 로그인과 같은 형태입니다(`user`, `access_token`, `token_type`, `expires_in`).
 
-비밀번호가 없는 카카오 계정이면 비밀번호를 보지 않고 **400 `PASSWORD_NOT_SET`**("비밀번호로 가입한 계정이 아닙니다.")을
+비밀번호가 없는 카카오 계정이면(본문 모양이 맞을 때 — 칸이 빠지거나 문자열이 아니면 계정과 무관하게 422) 비밀번호를 보지 않고 **400 `PASSWORD_NOT_SET`**("비밀번호로 가입한 계정이 아닙니다.")을
 냅니다. 로그인 잠금 카운터에도 남지 않습니다. 앱은 이 버튼을 숨기므로 평소엔 오지 않습니다.
 
 ### POST /auth/withdraw
@@ -305,7 +305,8 @@ Authorization: Bearer <token>
 { "kakao_access_token": "..." }
 ```
 
-- 계정에 맞는 칸(비밀번호 계정 `password`, 카카오 계정 `kakao_access_token`)이 없으면 400 `BAD_REQUEST` 이고, 맞지 않는 칸은 무시합니다.
+- 계정에 맞는 칸(비밀번호 계정 `password`, 카카오 계정 `kakao_access_token`)이 없거나 `null` 이면 400 `BAD_REQUEST` 이고, 맞지 않는 칸은 무시합니다
+  (두 칸 모두 문자열이나 `null` 이어야 합니다 — 다른 타입이면 계정과 무관하게 422).
   지금 앱이 보내는 `{ "password": ... }` 는 그대로 동작합니다.
 - `kakao_access_token`: 탈퇴 확인 단계에서 앱이 **재인증을 강제한 카카오 로그인** —
   `UserApi.instance.loginWithKakaoAccount(prompts: [Prompt.login])`(카카오 Flutter 문서: 기존 로그인 여부와 상관없이 재인증 요청) — 으로 받은
@@ -315,6 +316,7 @@ Authorization: Bearer <token>
   `BACKEND/API_CONTRACT.md` 의 `POST /auth/kakao` 와 같습니다.
 - 카카오 계정의 검사 순서: 세션(401) → 본문 모양(422) → `kakao_access_token` 칸 없음(400) → 카카오 로그인 설정(503) → 형식(400) → 로그인 IP 한도(429)
   → 카카오 토큰 확인(400 `SOCIAL_TOKEN_INVALID`·502) → 회원번호 대조(400 `SOCIAL_ACCOUNT_MISMATCH`) → 삭제 커밋 → 연결 끊기.
+  카카오에 묻는 사이 다른 기기에서 탈퇴가 먼저 끝났으면 대조 전에 401(비밀번호 계정과 같음). 본문이 JSON 으로 읽히지 않으면 FastAPI 가 세션보다 먼저 422 를 냅니다(모든 API 같음).
 - 횟수 제한: 비밀번호와 달리 추측할 수 없어 **이메일 로그인 잠금 카운터(5회/60초)는 쓰지 않습니다**. 카카오에 묻기 전에 로그인 IP 기록에 한 번을 세고,
   `SOCIAL_TOKEN_INVALID` 일 때만 남기고 나머지(성공·`SOCIAL_ACCOUNT_MISMATCH`·502·서버 오류)는 되돌립니다(2-2절).
 - 카카오 계정은 확인 → 계정 삭제 커밋 → 그 토큰으로 **서버가 카카오 연결 끊기**(`POST https://kapi.kakao.com/v1/user/unlink`) 순서입니다.
