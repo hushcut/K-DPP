@@ -23,6 +23,10 @@ if not (make_url(TEST_DATABASE_URL).database or "").endswith("_test"):
         returncode=4,
     )
 os.environ["K_DPP_DATABASE_URL"] = TEST_DATABASE_URL
+# CORS 는 기본값(허용 출처 없음)으로 시험합니다. BACKEND/.env 는 이미 있는 값을 덮지 않습니다.
+os.environ["K_DPP_CORS_ORIGINS"] = ""
+# API 문서도 기본값(켬)으로 시험합니다. 끈 경우는 별도 프로세스로 봅니다(test_hardening).
+os.environ["K_DPP_API_DOCS"] = ""
 
 import database  # noqa: E402
 
@@ -84,8 +88,10 @@ def client():
         connection.execute(
             text(f"TRUNCATE {', '.join(PER_TEST_TABLES)} RESTART IDENTITY")
         )
-    # 로그인 잠금 카운터는 프로세스 메모리에 남으므로 테스트마다 초기화합니다.
+    # 로그인 잠금·가입 IP 카운터는 프로세스 메모리에 남으므로 테스트마다 초기화합니다.
     main._login_failures.clear()
+    main._login_ip_failures.clear()
+    main._signup_ip_attempts.clear()
 
     with TestClient(main.app) as test_client:
         yield test_client
