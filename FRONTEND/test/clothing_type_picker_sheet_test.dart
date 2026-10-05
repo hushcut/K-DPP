@@ -198,6 +198,32 @@ void main() {
       expect(_isSheetOpen(), isTrue);
       expect(sheet.completed, isFalse);
     });
+
+    testWidgets('직접 입력의 분류는 세그먼트로 고르고, 고른 분류로 닫힌다(결정 134)', (tester) async {
+      _usePhoneView(tester);
+      final sheet = await _openSheet(tester, discardPrompt: prompt);
+
+      await tester.scrollUntilVisible(find.text('직접 입력'), 100);
+      await tester.tap(find.text('직접 입력'));
+      await tester.pumpAndSettle();
+
+      final control = find.byType(SegmentedButton<String>);
+      expect(control, findsOneWidget);
+      expect(tester.widget<SegmentedButton<String>>(control).selected, {
+        ClothingTypeCatalog.defaultOption.category,
+      });
+
+      await tester.enterText(find.byType(TextField).at(0), '조끼');
+      await tester.enterText(find.byType(TextField).at(1), '300');
+      await tester.tap(find.descendant(of: control, matching: find.text('하의')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('적용하기'));
+      await tester.pumpAndSettle();
+
+      expect(sheet.completed, isTrue);
+      expect(sheet.result?.label, '조끼');
+      expect(sheet.result?.category, '하의');
+    });
   });
 
   testWidgets('분석 실패 후 직접 입력 시트는 실패 경로 문구로 확인한다', (tester) async {
