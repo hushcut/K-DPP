@@ -1,8 +1,19 @@
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -20,6 +31,7 @@ import threading
 import tempfile
 from pathlib import Path
 import hashlib
+import hmac
 import secrets
 import database
 
@@ -387,6 +399,19 @@ class SignupRequest(BaseModel):
     email: EmailInput
     password: PasswordInput
     nickname: NicknameInput
+    # POST /auth/email-code(purpose signup)로 받은 번호. 인증번호 단계가 없는 앱 빌드는 422.
+    code: str
+
+
+class EmailCodeRequest(BaseModel):
+    email: str
+    purpose: Literal["signup", "password_reset"]
+
+
+class PasswordResetRequest(BaseModel):
+    email: str
+    code: str
+    new_password: str
 
 
 class LoginRequest(BaseModel):
@@ -452,6 +477,9 @@ def ensure_password_rules(password: str) -> None:
         raise HTTPException(status_code=400, detail="비밀번호 앞뒤에는 공백을 사용할 수 없습니다.")
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="비밀번호는 8자 이상 입력해 주세요.")
+    # 제어 문자·짝 없는 서로게이트는 해시(UTF-8 인코딩)·저장에서 500 을 내므로 형식 오류로 막습니다.
+    if not password.isprintable():
+        raise HTTPException(status_code=400, detail="비밀번호에 쓸 수 없는 문자가 있습니다.")
 
 
 # PBKDF2-SHA256 반복 수(OWASP 권장값). 저장 형식에 반복 수가 들어 있어 값을 올려도
@@ -488,9 +516,14 @@ def verify_password(password: str, stored_hash: str) -> bool:
     except ValueError:
         return False
 
+    try:
+        encoded_password = password.encode("utf-8")
+    except UnicodeEncodeError:
+        # 짝 없는 서로게이트 등 — 이런 비밀번호로는 가입할 수 없으므로 틀린 비밀번호입니다.
+        return False
     digest = hashlib.pbkdf2_hmac(
         "sha256",
-        password.encode("utf-8"),
+        encoded_password,
         salt.encode("utf-8"),
         iterations,
     ).hex()
@@ -501,10 +534,26 @@ def verify_password(password: str, stored_hash: str) -> bool:
 DUMMY_PASSWORD_HASH = hash_password("k-dpp-timing-guard")
 # 최소한의 이메일 형식 검사: 공백 없는 로컬@도메인.최상위 형태만 허용.
 EMAIL_PATTERN = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+# 메일 주소의 실제 길이 상한(RFC 5321). 인증번호 기록은 이메일을 키로 메모리에 두므로,
+# 본문 상한(11MB)만큼 긴 '이메일'이 그대로 쌓이지 않게 형식 검사에서 함께 막습니다.
+EMAIL_MAX_LENGTH = 254
+
+
+def ensure_email_format(email: str) -> None:
+    """가입·인증번호 요청·비밀번호 찾기의 이메일 형식 검사(정규화한 뒤의 값). 제어 문자·짝 없는
+    서로게이트도 막습니다 — 각각 DB 저장·HMAC(UTF-8 인코딩)에서 500 이 나고 서버 로그 줄을 흐트러뜨려서."""
+    if (
+        len(email) > EMAIL_MAX_LENGTH
+        or not email.isprintable()
+        or not EMAIL_PATTERN.fullmatch(email)
+    ):
+        raise HTTPException(status_code=400, detail="올바른 이메일을 입력해 주세요.")
+
 
 # 로그인 무차별 대입 방어: 같은 이메일로 연속 실패하면 잠시 잠급니다.
 # 실패 기록(아래 로그인·가입 IP 기준도)은 프로세스 메모리에 둡니다 — 서버 1대·uvicorn 워커
 # 1개 전제(DECISIONS 139). 재시작하면 지워지고, 워커를 늘리면 한도가 워커 수만큼 늘어납니다.
+# 아래 이메일 인증번호도 같은 전제라, 워커를 늘리면 맞는 번호도 틀렸다고 나옵니다(DECISIONS 147).
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_LOCKOUT_SECONDS = 60
 # 저횟수(1~4회) 실패 기록이 영구히 남으면 임의 이메일 반복 전송으로 메모리를
@@ -659,6 +708,382 @@ def release_login_attempt_for_ip(ip_key: str | None) -> None:
             _login_ip_failures[ip_key] = (count - 1, window_start)
 
 
+# --- 이메일 인증번호 (DECISIONS 144·147·148) ----------------------------------------
+# 가입 전 이메일 확인과 비밀번호 찾기에 같은 6자리 번호를 씁니다. 번호·틀린 수·발송 한도는
+# 위 로그인 기록처럼 프로세스 메모리에 둡니다 — 서버가 다시 켜지면 받아 둔 번호는 쓸 수 없습니다.
+EMAIL_CODE_LENGTH = 6
+EMAIL_CODE_PATTERN = re.compile(r"[0-9]{6}")
+EMAIL_CODE_TTL_SECONDS = 10 * 60
+# 번호 하나당 틀릴 수 있는 횟수. 이만큼 틀리면 그 번호를 버리고 다시 받게 합니다.
+EMAIL_CODE_MAX_FAILURES = 5
+# 같은 이메일로 다시 요청하기까지 기다리는 시간(두 용도 합산).
+EMAIL_CODE_RESEND_SECONDS = 60
+# 발송 한도(두 용도 합산). 창은 가입 IP 기준(142)처럼 그 창의 첫 요청부터 잽니다. 이메일당
+# 하루 10번 × 번호당 5번이라 한 계정에 하루 50번까지만 추측할 수 있습니다(100만 가지 중).
+EMAIL_CODE_EMAIL_HOURLY_MAX = 5
+EMAIL_CODE_EMAIL_DAILY_MAX = 10
+EMAIL_CODE_IP_HOURLY_MAX = 20
+EMAIL_CODE_HOUR_SECONDS = 60 * 60
+EMAIL_CODE_DAY_SECONDS = 24 * 60 * 60
+# 발송 기록을 둘 이메일 수 상한. 넘치면 오래된 것을 지우지 않고(지우면 그 이메일의 한도가 풀림)
+# 새 이메일의 요청을 503 으로 받지 않습니다 — IP 를 알 수 없고 하루 상한도 없는 서버에서 메모리를 묶습니다.
+EMAIL_CODE_RECORDS_MAX_ENTRIES = 10_000
+
+
+def parse_email_delivery(value: str | None) -> str:
+    """K_DPP_EMAIL_DELIVERY 를 읽는다. 비우거나 log 면 메일을 보내지 않고 번호를 서버 로그에 찍는다.
+    실제 발송 서비스는 학생 팩 도메인이 정해진 뒤 고르므로(DECISIONS 144·147) 아직 받는 이름이 없다.
+    그 밖의 값이면 시작하지 않는다 — 서비스 이름 오타로 메일이 안 나가고 번호가 로그로만 남지 않게."""
+    normalized = (value or "").strip().lower()
+    if normalized in ("", "log"):
+        return "log"
+    raise ValueError(
+        "K_DPP_EMAIL_DELIVERY 는 비우거나 log 여야 합니다(실제 발송 서비스는 아직 없음): "
+        f"{value!r}"
+    )
+
+
+def parse_email_daily_max(value: str | None) -> int | None:
+    """K_DPP_EMAIL_DAILY_MAX 를 읽는다. 비어 있으면 상한 없음, 1 이상의 정수면 그 값.
+    그 밖의 값이면 시작하지 않는다. 실제 발송을 붙일 때 이 값을 필수로 한다(발송 서비스 무료 한도)."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    if re.fullmatch(r"[0-9]+", text) and int(text) > 0:
+        return int(text)
+    raise ValueError(f"K_DPP_EMAIL_DAILY_MAX 는 1 이상의 정수여야 합니다: {value!r}")
+
+
+EMAIL_DELIVERY = parse_email_delivery(os.getenv("K_DPP_EMAIL_DELIVERY"))
+# 서버 전체 하루 상한(DECISIONS 147 ④). 넘으면 503. 하루는 UTC 날짜(한국 시각 오전 9시에 바뀜).
+# 메일을 실제로 보내지 않는 요청(가입 안 된 이메일의 비밀번호 찾기)도 셉니다 — 실제 발송만 세면
+# 상한 근처에서 남은 칸이 줄었는지로 그 이메일의 가입 여부를 알아낼 수 있어서.
+EMAIL_DAILY_MAX = parse_email_daily_max(os.getenv("K_DPP_EMAIL_DAILY_MAX"))
+
+# 번호는 HMAC-SHA256 값으로만 둡니다(DECISIONS 147 ⑦). 6자리는 100만 가지뿐이라 보통 해시는
+# 대입으로 바로 풀리므로, 서버가 켜질 때 만든 비밀 키를 섞습니다(키도 메모리에만 있음).
+_EMAIL_CODE_KEY = secrets.token_bytes(32)
+
+
+@dataclass
+class _EmailCode:
+    digest: bytes
+    expires_at: datetime
+    failures: int = 0
+
+
+@dataclass
+class _EmailCodeSendWindow:
+    last_requested_at: datetime
+    hour_start: datetime
+    hour_count: int
+    day_start: datetime
+    day_count: int
+
+
+# 확인·틀린 수 증가·소모와 한도 확인·증가를 각각 한 번의 잠금 안에서 해, 동시에 몰아친
+# 요청으로 틀린 횟수나 발송 한도를 넘어서지 못하게 합니다.
+_email_code_lock = threading.Lock()
+# (용도, 이메일) → 살아 있는 번호 하나. 새 번호를 받으면 이전 번호를 갈아 끼웁니다.
+_email_codes: dict[tuple[str, str], _EmailCode] = {}
+# 이메일 → 재요청 간격·1시간·24시간 창(두 용도 합산)
+_email_code_senders: dict[str, _EmailCodeSendWindow] = {}
+# IP(키) → (이번 1시간 창의 요청 수, 창 시작 시각)
+_email_code_ip_requests: dict[str, tuple[int, datetime]] = {}
+# UTC 날짜 → 그날 받아들인 요청 수(오늘 것만 남김)
+_email_daily_requests: dict[date, int] = {}
+
+
+def generate_email_code() -> str:
+    return f"{secrets.randbelow(10 ** EMAIL_CODE_LENGTH):0{EMAIL_CODE_LENGTH}d}"
+
+
+def _email_code_digest(purpose: str, email: str, code: str) -> bytes:
+    # 용도·이메일을 함께 묶어, 다른 이메일이나 다른 용도의 번호로는 맞지 않게 합니다.
+    message = f"{purpose}\n{email}\n{code}".encode("utf-8")
+    return hmac.new(_EMAIL_CODE_KEY, message, hashlib.sha256).digest()
+
+
+def _seconds_until(moment: datetime, now: datetime) -> int:
+    return max(1, math.ceil((moment - now).total_seconds()))
+
+
+def _wait_text(seconds: int) -> str:
+    minutes = math.ceil(seconds / 60)
+    if minutes < 60:
+        return f"{minutes}분"
+    return f"{math.ceil(seconds / 3600)}시간"
+
+
+def _prune_email_code_records_locked(now: datetime) -> None:
+    """만료된 번호·지난 창을 지운다. 반드시 _email_code_lock 안에서 호출.
+
+    기록은 한도를 통과한 요청만 만들고, 발송 기록 수는 EMAIL_CODE_RECORDS_MAX_ENTRIES 로 묶습니다.
+    """
+    for key in [k for k, record in _email_codes.items() if record.expires_at <= now]:
+        del _email_codes[key]
+    day = timedelta(seconds=EMAIL_CODE_DAY_SECONDS)
+    hour = timedelta(seconds=EMAIL_CODE_HOUR_SECONDS)
+    resend = timedelta(seconds=EMAIL_CODE_RESEND_SECONDS)
+    # 세 창(24시간·1시간·재요청 간격)이 모두 끝난 기록만 지웁니다. 24시간 창이 끝나는 순간에도
+    # 그 사이 새로 시작한 1시간 창은 살아 있을 수 있습니다.
+    for key in [
+        k
+        for k, window in _email_code_senders.items()
+        if window.day_start + day <= now
+        and window.hour_start + hour <= now
+        and window.last_requested_at + resend <= now
+    ]:
+        del _email_code_senders[key]
+    for key in [k for k, (_, start) in _email_code_ip_requests.items() if start + hour <= now]:
+        del _email_code_ip_requests[key]
+    for day_key in [d for d in _email_daily_requests if d != now.date()]:
+        del _email_daily_requests[day_key]
+
+
+def issue_email_code(email: str, purpose: str, ip_key: str | None) -> tuple[str, int]:
+    """한도를 모두 확인한 뒤 새 번호를 만들어 같은 이메일·용도의 이전 번호를 갈아 끼운다.
+    (번호, 다음 요청까지 기다릴 초)를 돌려준다.
+
+    어느 한도에라도 걸리면 아무것도 세지 않고 429·503 을 낸다. 가입 여부는 보지 않는다 —
+    가입된 이메일이든 아니든 번호 기록과 한도 계산이 똑같아야 이어지는 응답으로도 드러나지 않는다.
+    """
+    # 번호·HMAC 은 아무것도 세기 전에 만듭니다(여기서 실패하면 한도만 쓰고 번호는 없는 일이 없게).
+    code = generate_email_code()
+    digest = _email_code_digest(purpose, email, code)
+    now = utc_now()
+    hour = timedelta(seconds=EMAIL_CODE_HOUR_SECONDS)
+    day = timedelta(seconds=EMAIL_CODE_DAY_SECONDS)
+    with _email_code_lock:
+        _prune_email_code_records_locked(now)
+
+        window = _email_code_senders.get(email)
+        hour_start, hour_count, day_start, day_count = now, 0, now, 0
+        if window is not None:
+            resend_at = window.last_requested_at + timedelta(seconds=EMAIL_CODE_RESEND_SECONDS)
+            if now < resend_at:
+                retry_after = _seconds_until(resend_at, now)
+                raise HTTPException(
+                    status_code=429,
+                    detail=build_error_detail(
+                        f"인증번호는 {retry_after}초 후 다시 요청할 수 있습니다.",
+                        "EMAIL_CODE_RESEND_TOO_SOON",
+                        retry_after=retry_after,
+                    ),
+                )
+            if now < window.hour_start + hour:
+                hour_start, hour_count = window.hour_start, window.hour_count
+            if now < window.day_start + day:
+                day_start, day_count = window.day_start, window.day_count
+
+        ip_count, ip_start = 0, now
+        if ip_key is not None:
+            ip_count, ip_start = _email_code_ip_requests.get(ip_key, (0, now))
+
+        # 여러 한도에 함께 걸렸으면 모두 풀리는 때를 알려 줍니다(그 전에 다시 하면 또 막힘).
+        blocked_until = []
+        if hour_count >= EMAIL_CODE_EMAIL_HOURLY_MAX:
+            blocked_until.append(hour_start + hour)
+        if day_count >= EMAIL_CODE_EMAIL_DAILY_MAX:
+            blocked_until.append(day_start + day)
+        if ip_key is not None and ip_count >= EMAIL_CODE_IP_HOURLY_MAX:
+            blocked_until.append(ip_start + hour)
+        if blocked_until:
+            retry_after = _seconds_until(max(blocked_until), now)
+            raise HTTPException(
+                status_code=429,
+                detail=build_error_detail(
+                    f"인증번호 요청이 너무 많습니다. {_wait_text(retry_after)} 후 다시 시도해 주세요.",
+                    "TOO_MANY_ATTEMPTS",
+                    retry_after=retry_after,
+                ),
+            )
+
+        today = now.date()
+        requests_today = _email_daily_requests.get(today, 0)
+        records_full = (
+            window is None and len(_email_code_senders) >= EMAIL_CODE_RECORDS_MAX_ENTRIES
+        )
+        if records_full or (EMAIL_DAILY_MAX is not None and requests_today >= EMAIL_DAILY_MAX):
+            raise HTTPException(
+                status_code=503,
+                # 503 의 기본 error_code 는 AI_MODULE_FAILED 라 직접 넣습니다.
+                detail=build_error_detail(
+                    "지금은 인증 메일을 보낼 수 없습니다. 나중에 다시 시도해 주세요.",
+                    "EMAIL_SEND_UNAVAILABLE",
+                ),
+            )
+
+        _email_code_senders[email] = _EmailCodeSendWindow(
+            last_requested_at=now,
+            hour_start=hour_start,
+            hour_count=hour_count + 1,
+            day_start=day_start,
+            day_count=day_count + 1,
+        )
+        if ip_key is not None:
+            _email_code_ip_requests[ip_key] = (ip_count + 1, ip_start)
+        _email_daily_requests[today] = requests_today + 1
+        _email_codes[(purpose, email)] = _EmailCode(
+            digest=digest, expires_at=now + timedelta(seconds=EMAIL_CODE_TTL_SECONDS)
+        )
+
+        # 이번 요청으로 1시간·24시간·IP 한도에 닿았으면 '다시 받기'는 그 창이 풀릴 때까지 기다려야 합니다.
+        next_allowed = [now + timedelta(seconds=EMAIL_CODE_RESEND_SECONDS)]
+        if hour_count + 1 >= EMAIL_CODE_EMAIL_HOURLY_MAX:
+            next_allowed.append(hour_start + hour)
+        if day_count + 1 >= EMAIL_CODE_EMAIL_DAILY_MAX:
+            next_allowed.append(day_start + day)
+        if ip_key is not None and ip_count + 1 >= EMAIL_CODE_IP_HOURLY_MAX:
+            next_allowed.append(ip_start + hour)
+    return code, _seconds_until(max(next_allowed), now)
+
+
+def ensure_email_code_format(code: str) -> str:
+    """번호가 숫자 6자리인지 본다. 아니면 400 이고 틀린 횟수에 넣지 않는다(오타로 기회를 잃지 않게)."""
+    code = code.strip()
+    if not EMAIL_CODE_PATTERN.fullmatch(code):
+        raise HTTPException(status_code=400, detail="인증번호 6자리를 입력해 주세요.")
+    return code
+
+
+def check_email_code(
+    email: str, purpose: str, code: str, consume: bool = False
+) -> _EmailCode:
+    """번호를 확인한다. 틀리면 틀린 수를 늘리고 400(5번째면 번호를 버림). 맞으면 그 기록을
+    돌려준다. consume=True 면 맞는 순간 같은 잠금 안에서 지워 같은 번호로 두 번 쓰지 못하게 하고,
+    아니면 다 쓴 뒤 consume_email_code 로 지운다(가입은 성공했을 때만 사라짐)."""
+    key = (purpose, email)
+    resend_required = HTTPException(
+        status_code=400,
+        detail=build_error_detail(
+            "인증번호가 없거나 만료되었습니다. 인증번호를 다시 받아 주세요.",
+            "VERIFICATION_CODE_RESEND_REQUIRED",
+        ),
+    )
+    with _email_code_lock:
+        record = _email_codes.get(key)
+        if record is not None and record.expires_at <= utc_now():
+            del _email_codes[key]
+            record = None
+        if record is None:
+            raise resend_required
+        if hmac.compare_digest(record.digest, _email_code_digest(purpose, email, code)):
+            if consume:
+                del _email_codes[key]
+            return record
+        record.failures += 1
+        remaining_attempts = EMAIL_CODE_MAX_FAILURES - record.failures
+        if remaining_attempts <= 0:
+            del _email_codes[key]
+            raise resend_required
+    raise HTTPException(
+        status_code=400,
+        detail=build_error_detail(
+            f"인증번호가 올바르지 않습니다. {remaining_attempts}번 더 입력할 수 있습니다.",
+            "VERIFICATION_CODE_INVALID",
+            remaining_attempts=remaining_attempts,
+        ),
+    )
+
+
+def consume_email_code(email: str, purpose: str, record: _EmailCode) -> None:
+    """확인한 번호를 지운다. 그 사이 새 번호를 받았으면 새 번호는 그대로 둔다."""
+    with _email_code_lock:
+        if _email_codes.get((purpose, email)) is record:
+            del _email_codes[(purpose, email)]
+
+
+@dataclass
+class OutgoingEmail:
+    to: str
+    purpose: str
+    subject: str
+    body: str
+    code: str | None  # 이미 가입된 이메일로 가는 안내 메일은 번호가 없습니다.
+
+
+def compose_email_code_message(
+    email: str, purpose: str, code: str, registered: bool
+) -> OutgoingEmail | None:
+    """가입 여부에 따라 보낼 메일을 고른다. 가입 안 된 이메일의 비밀번호 찾기는 None(보내지 않음)."""
+    ignore_line = "직접 요청하지 않았다면 이 메일은 무시해 주세요."
+    if purpose == "signup" and registered:
+        return OutgoingEmail(
+            to=email,
+            purpose=purpose,
+            subject="[K-DPP] 이미 가입된 이메일입니다",
+            body=(
+                "이 이메일로 K-DPP 가입 인증번호 요청이 있었지만 이미 가입된 계정이 있어 번호를 "
+                "보내지 않았습니다.\n비밀번호가 기억나지 않으면 앱 로그인 화면의 '비밀번호 찾기'를 "
+                f"이용해 주세요.\n{ignore_line}"
+            ),
+            code=None,
+        )
+    if purpose == "signup":
+        return OutgoingEmail(
+            to=email,
+            purpose=purpose,
+            subject="[K-DPP] 가입 인증번호",
+            body=(
+                f"K-DPP 가입 인증번호는 {code} 입니다.\n10분 안에 앱에 입력해 주세요.\n{ignore_line}"
+            ),
+            code=code,
+        )
+    if registered:
+        return OutgoingEmail(
+            to=email,
+            purpose=purpose,
+            subject="[K-DPP] 비밀번호 재설정 인증번호",
+            body=(
+                f"K-DPP 비밀번호 재설정 인증번호는 {code} 입니다.\n10분 안에 앱에 입력해 주세요.\n"
+                f"{ignore_line} 비밀번호는 바뀌지 않습니다."
+            ),
+            code=code,
+        )
+    return None
+
+
+def log_email(message: OutgoingEmail) -> None:
+    """log 모드: 메일 대신 서버 로그에 찍는다(로컬·CI·시연은 여기서 번호를 본다)."""
+    print(
+        f"[email] {message.to} | {message.subject} | 인증번호 {message.code or '없음'}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def deliver_email(message: OutgoingEmail) -> None:
+    # 실제 발송(도메인 인증된 서비스의 HTTPS API)은 서비스를 고른 뒤 EMAIL_DELIVERY 로 나눠 붙입니다.
+    log_email(message)
+
+
+def send_email_code_message(email: str, purpose: str, code: str) -> None:
+    """응답을 보낸 뒤(BackgroundTasks) 가입 여부를 보고 메일을 고른다. 가입 여부 조회와 발송
+    시간이 응답에 섞이지 않도록 DB 는 여기서만 본다. 응답은 이미 나갔으므로 실패는 로그로만."""
+    try:
+        db = database.SessionLocal()
+        try:
+            registered = (
+                db.query(database.User.id).filter(database.User.email == email).first()
+                is not None
+            )
+        finally:
+            db.close()
+        message = compose_email_code_message(email, purpose, code, registered)
+        if message is None:
+            if EMAIL_DELIVERY == "log":
+                print(
+                    f"[email] {email} | 가입되지 않은 이메일이라 비밀번호 찾기 메일을 보내지 않습니다.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return
+        deliver_email(message)
+    except Exception as exc:  # noqa: BLE001 — 백그라운드 작업이라 올려 보낼 곳이 없습니다.
+        print(f"[email] 인증 메일 처리 실패({purpose}): {exc!r}", file=sys.stderr, flush=True)
+
+
 def auth_user_response(user: database.User) -> dict:
     return {
         "id": user.id,
@@ -672,17 +1097,34 @@ def hash_access_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def create_access_token(user: database.User, db: Session) -> tuple[str, database.AccessToken]:
-    """토큰 원문은 응답으로만 전달하고 DB에는 해시를 저장한다."""
+def add_access_token(user_id: int, db: Session) -> str:
+    """토큰 행을 세션에 넣고 원문을 돌려준다(커밋은 부르는 쪽). 원문은 응답으로만, DB 엔 해시만."""
     raw_token = secrets.token_urlsafe(32)
-    access_token = database.AccessToken(
-        token=hash_access_token(raw_token),
-        user_id=user.id,
-        expires_at=utc_now() + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS),
+    db.add(
+        database.AccessToken(
+            token=hash_access_token(raw_token),
+            user_id=user_id,
+            expires_at=utc_now() + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS),
+        )
     )
-    db.add(access_token)
-    db.commit()
-    return raw_token, access_token
+    return raw_token
+
+
+def lock_user_if_password_unchanged(db: Session, user_id: int, verified_hash: str) -> bool:
+    """users 행을 잠그고(SELECT … FOR UPDATE) 비밀번호 해시가 방금 검증한 값 그대로인지 본다.
+
+    비밀번호 확인(해시, 수백 ms)과 쓰기 사이에 비밀번호 찾기·변경이 끼어들면, 옛 비밀번호로 확인한
+    요청이 새 비밀번호를 덮어쓰거나 재설정 뒤에도 살아 있는 토큰을 받는다. 그래서 토큰을 만들거나
+    비밀번호·계정을 바꾸는 경로는 모두 이 잠금을 먼저 잡고 다시 본다 — 잠그는 순서도 users →
+    access_tokens 로 같아져 서로 교착하지 않는다. 잠금은 그 요청의 commit·rollback 까지 간다.
+    """
+    current_hash = (
+        db.query(database.User.password_hash)
+        .filter(database.User.id == user_id)
+        .with_for_update()
+        .scalar()
+    )
+    return current_hash is not None and current_hash == verified_hash
 
 
 def read_bearer_token(authorization: str | None) -> str | None:
@@ -1223,21 +1665,57 @@ def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
 
 # --- API 엔드포인트 시작 ---
 
+EMAIL_CODE_SENT_MESSAGES = {
+    "signup": "인증번호를 보냈습니다. 메일이 오지 않으면 주소를 확인해 주세요.",
+    "password_reset": "가입된 이메일이면 인증번호를 보냈습니다. 메일이 오지 않으면 주소를 확인해 주세요.",
+}
+
+
+@app.post("/auth/email-code", tags=["auth"])
+def request_email_code(
+    request: EmailCodeRequest, http_request: Request, background_tasks: BackgroundTasks
+):
+    """가입·비밀번호 찾기 인증번호를 요청한다(DECISIONS 144·147·148).
+
+    가입 여부와 상관없이 같은 용도면 늘 같은 응답이다. 이 함수는 DB 를 보지 않고, 어떤 메일을
+    보낼지(번호·이미 가입 안내·보내지 않음)는 응답을 보낸 뒤 send_email_code_message 가 정한다.
+    """
+    email = normalize_email(request.email)
+    ensure_email_format(email)
+    code, resend_after = issue_email_code(
+        email,
+        request.purpose,
+        client_ip_key(http_request.client.host if http_request.client else None),
+    )
+    background_tasks.add_task(send_email_code_message, email, request.purpose, code)
+    return {
+        "status": "success",
+        "message": EMAIL_CODE_SENT_MESSAGES[request.purpose],
+        "expires_in": EMAIL_CODE_TTL_SECONDS,
+        "resend_after": resend_after,
+    }
+
+
 @app.post("/auth/signup", tags=["auth"])
 def signup(request: SignupRequest, http_request: Request, db: Session = Depends(get_db)):
     email = normalize_email(request.email)
     nickname = request.nickname.strip()
     password = request.password
 
-    if not EMAIL_PATTERN.fullmatch(email or ""):
-        raise HTTPException(status_code=400, detail="올바른 이메일을 입력해 주세요.")
+    ensure_email_format(email)
     if len(nickname) < 2:
         raise HTTPException(status_code=400, detail="닉네임은 2자 이상 입력해 주세요.")
+    if not nickname.isprintable():
+        raise HTTPException(status_code=400, detail="닉네임에 쓸 수 없는 문자가 있습니다.")
     ensure_password_rules(password)
-    # 형식을 통과한 시도부터 DB 조회·해시 전에 셉니다(409 도 셈, 접속 주소는 로그인과 같음).
+    code = ensure_email_code_format(request.code)
+    # 형식을 통과한 시도부터 DB 조회·해시 전에 셉니다(번호 틀림·409 도 셈, 접속 주소는 로그인과 같음).
     reserve_signup_attempt_for_ip(
         client_ip_key(http_request.client.host if http_request.client else None)
     )
+    # 번호를 409 보다 먼저 봅니다. 가입된 이메일엔 번호 대신 안내 메일이 가므로, '이미 가입'은
+    # 맞는 번호를 가진 사람(메일함 주인)만 보게 됩니다(관찰 ⓖ).
+    email_code = check_email_code(email, "signup", code)
 
     existing_user = db.query(database.User).filter(database.User.email == email).first()
     if existing_user is not None:
@@ -1257,11 +1735,53 @@ def signup(request: SignupRequest, http_request: Request, db: Session = Depends(
         db.rollback()
         raise HTTPException(status_code=409, detail="이미 가입된 이메일입니다.")
     db.refresh(user)
+    consume_email_code(email, "signup", email_code)
 
     return {
         "status": "success",
         "message": "회원가입이 완료되었습니다.",
         "user": auth_user_response(user),
+    }
+
+
+@app.post("/auth/password-reset", tags=["auth"])
+def reset_password(request: PasswordResetRequest, db: Session = Depends(get_db)):
+    """비밀번호 찾기: 인증번호와 새 비밀번호를 한 번에 받아 바꾼다(DECISIONS 147·148).
+
+    성공하면 그 계정의 토큰을 모두 지우고(찾는 흔한 이유가 도용 의심 — /auth/password 와 같음)
+    이메일 로그인 잠금을 푼다. 새 토큰은 주지 않는다(앱은 로그인 화면으로).
+    """
+    email = normalize_email(request.email)
+    ensure_email_format(email)
+    ensure_password_rules(request.new_password)
+    code = ensure_email_code_format(request.code)
+    # 맞는 순간 번호를 지워, 같은 번호로 동시에 두 번 재설정하지 못하게 합니다(뒤에서 500 이 나면 다시 받기).
+    check_email_code(email, "password_reset", code, consume=True)
+
+    # 번호가 맞을 때만 해시합니다. 첫 DB 조회 전에 해시해 그동안 DB 연결을 쥐지 않습니다.
+    new_password_hash = hash_password(request.new_password)
+    # users 행을 먼저 잠급니다 — 로그인·비밀번호 변경·탈퇴와 같은 순서(users → access_tokens).
+    user_id = (
+        db.query(database.User.id)
+        .filter(database.User.email == email)
+        .with_for_update()
+        .scalar()
+    )
+    if user_id is not None:
+        db.query(database.User).filter(database.User.id == user_id).update(
+            {"password_hash": new_password_hash}, synchronize_session=False
+        )
+        db.query(database.AccessToken).filter(
+            database.AccessToken.user_id == user_id
+        ).delete(synchronize_session=False)
+        db.commit()
+    # 가입 안 된 이메일엔 번호 메일이 가지 않아, 여기까지 오려면 번호를 맞혀야 합니다(번호당 5번).
+    # 그때도 해시까지 하고 같은 응답을 내 가입 여부를 드러내지 않습니다.
+    clear_login_failures(email)
+
+    return {
+        "status": "success",
+        "message": "비밀번호를 다시 설정했습니다. 새 비밀번호로 로그인해 주세요.",
     }
 
 
@@ -1287,22 +1807,30 @@ def login(request: LoginRequest, http_request: Request, db: Session = Depends(ge
         record_login_failure(email)
         raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다.")
 
+    # 반복 수를 올리기 전에 만든 해시는 원문을 아는 지금 새로 저장합니다(토큰 발급과 한 커밋).
+    # 해시는 행을 잠그기 전에 해 둡니다.
+    upgraded_hash = (
+        hash_password(request.password) if password_needs_rehash(user.password_hash) else None
+    )
+
+    if not lock_user_if_password_unchanged(db, user.id, user.password_hash):
+        # 확인하는 동안 비밀번호가 바뀌었습니다(비밀번호 찾기·변경). 옛 비밀번호로는 토큰을 주지 않고,
+        # 같은 순간 먼저 커밋된 새 비밀번호를 옛 비밀번호의 재해시로 되돌리지도 않습니다.
+        db.rollback()
+        record_login_failure(email)
+        raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다.")
+
     clear_login_failures(email)
     release_login_attempt_for_ip(ip_key)
 
-    if password_needs_rehash(user.password_hash):
-        # 반복 수를 올리기 전에 만든 해시는 원문을 아는 지금 새로 저장합니다(토큰 발급과
-        # 한 커밋). 같은 순간 비밀번호 변경이 먼저 커밋됐다면 그 값을 되돌리지 않도록
-        # 저장된 값이 방금 검증한 옛 해시일 때만 바꿉니다.
-        db.query(database.User).filter(
-            database.User.id == user.id,
-            database.User.password_hash == user.password_hash,
-        ).update(
-            {"password_hash": hash_password(request.password)},
-            synchronize_session=False,
+    if upgraded_hash is not None:
+        db.query(database.User).filter(database.User.id == user.id).update(
+            {"password_hash": upgraded_hash}, synchronize_session=False
         )
 
-    raw_token, _access_token = create_access_token(user, db)
+    # 잠근 행을 그대로 쥔 채 토큰을 만들고 한 번에 커밋합니다.
+    raw_token = add_access_token(user.id, db)
+    db.commit()
 
     return {
         "status": "success",
@@ -1348,11 +1876,12 @@ def change_password(
     # 비밀번호를 무제한 추측하면 로그인 잠금이 무의미해지고, 맞히는 순간 다른 세션이
     # 모두 끊겨 계정을 통째로 빼앗기기 때문이다.
     check_login_lockout(user.email)
+    verified_hash = user.password_hash
 
     # 401은 "이 세션이 더 이상 유효하지 않다"는 뜻으로만 쓴다. 프론트가 401을
     # 세션 만료로 보고 강제 로그아웃시키므로(session_expiry_handler), 비밀번호를
     # 한 번 잘못 친 것만으로 로그아웃되면 안 된다. 재인증 실패는 400으로 낸다.
-    if not verify_password(request.current_password, user.password_hash):
+    if not verify_password(request.current_password, verified_hash):
         record_login_failure(user.email)
         raise HTTPException(status_code=400, detail="현재 비밀번호가 올바르지 않습니다.")
 
@@ -1363,14 +1892,22 @@ def change_password(
     if request.new_password == request.current_password:
         raise HTTPException(status_code=400, detail="새 비밀번호가 기존 비밀번호와 같습니다.")
 
-    user.password_hash = hash_password(request.new_password)
+    new_password_hash = hash_password(request.new_password)
+    if not lock_user_if_password_unchanged(db, user.id, verified_hash):
+        # 확인하는 동안 비밀번호 찾기·다른 기기의 변경이 먼저 끝났습니다. 그쪽이 이 세션의 토큰도
+        # 지웠으므로 세션 만료로 냅니다 — 옛 비밀번호로 확인한 변경이 새 비밀번호를 덮지 않게.
+        db.rollback()
+        raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
+
+    # 비밀번호 저장·기존 토큰 삭제·새 토큰 발급을 한 커밋으로 — 새 토큰은 지운 뒤에 넣어야 함께 지워지지 않는다.
+    db.query(database.User).filter(database.User.id == user.id).update(
+        {"password_hash": new_password_hash}, synchronize_session=False
+    )
     db.query(database.AccessToken).filter(
         database.AccessToken.user_id == user.id
     ).delete(synchronize_session=False)
+    raw_token = add_access_token(user.id, db)
     db.commit()
-
-    # 기존 토큰을 모두 지운 뒤에 발급해야 새 토큰이 함께 삭제되지 않는다.
-    raw_token, _new_token = create_access_token(user, db)
 
     return {
         "status": "success",
@@ -1401,11 +1938,17 @@ def withdraw(
         raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
 
     check_login_lockout(user.email)
+    verified_hash = user.password_hash
 
     # 비밀번호 변경과 같은 이유로 재인증 실패는 400으로 낸다(401은 세션 만료 전용).
-    if not verify_password(request.password, user.password_hash):
+    if not verify_password(request.password, verified_hash):
         record_login_failure(user.email)
         raise HTTPException(status_code=400, detail="비밀번호가 올바르지 않습니다.")
+
+    if not lock_user_if_password_unchanged(db, user.id, verified_hash):
+        # 확인하는 동안 비밀번호가 바뀌었거나(비밀번호 찾기·변경 — 이 세션의 토큰도 지워짐) 계정이 없어졌습니다.
+        db.rollback()
+        raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
 
     clear_login_failures(user.email)
 
