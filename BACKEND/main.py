@@ -432,7 +432,7 @@ class KakaoLoginRequest(BaseModel):
     # 카카오 SDK 로그인으로 받은 OAuthToken.accessToken.
     access_token: str
     # 새 계정일 때만 씁니다(없으면 카카오 닉네임). 이미 있는 계정이면 무시합니다.
-    nickname: str | None = None
+    nickname: NicknameInput | None = None
 
 
 class WithdrawRequest(BaseModel):
@@ -498,9 +498,12 @@ def ensure_password_rules(password: str) -> None:
 
 def nickname_rule_error(nickname: str) -> str | None:
     """닉네임(앞뒤 공백을 지운 값)이 규칙에 맞지 않으면 그 이유, 맞으면 None.
-    가입·카카오 로그인(요청 닉네임과 카카오 닉네임)이 같은 규칙을 씁니다."""
+    가입·카카오 로그인(요청 닉네임과 카카오 닉네임)이 같은 규칙을 씁니다. 요청 닉네임의 상한은
+    요청 모델(NicknameInput)이 먼저 422 로 막고, 여기서는 카카오에서 받아 온 닉네임에 걸립니다."""
     if len(nickname) < 2:
         return "닉네임은 2자 이상 입력해 주세요."
+    if len(nickname) > MAX_NICKNAME_LENGTH:
+        return f"닉네임은 {MAX_NICKNAME_LENGTH}자 이하로 입력해 주세요."
     if not nickname.isprintable():
         return "닉네임에 쓸 수 없는 문자가 있습니다."
     return None

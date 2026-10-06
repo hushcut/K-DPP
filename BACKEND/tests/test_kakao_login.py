@@ -202,7 +202,9 @@ def test_null_nickname_is_the_same_as_not_sending_it(client, kakao):
     assert response.json()["user"]["nickname"] == "카카오 이름"
 
 
-@pytest.mark.parametrize("kakao_nickname", [None, "", "   ", "가", " 가 ", "줄\n바꿈"])
+@pytest.mark.parametrize(
+    "kakao_nickname", [None, "", "   ", "가", " 가 ", "줄\n바꿈", "가" * (main.MAX_NICKNAME_LENGTH + 1)]
+)
 def test_nickname_is_required_when_kakao_has_no_usable_one(client, kakao, kakao_nickname):
     kakao.add("tok", 9, nickname=kakao_nickname)
 
@@ -239,7 +241,34 @@ def test_bad_request_nickname_is_400_without_asking_kakao(client, kakao, nicknam
     assert ip_failures() == {}
 
 
-def test_lone_surrogate_nickname_is_400_not_500(client, kakao):
+def test_kakao_nickname_at_the_length_limit_is_used(client, kakao):
+    nickname = "가" * main.MAX_NICKNAME_LENGTH
+    kakao.add("tok", 2, nickname=f" {nickname} ")
+
+    response = kakao_login(client, "tok")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["user"]["nickname"] == nickname
+
+
+def test_overlong_request_nickname_is_422_without_asking_kakao(client, kakao):
+    kakao.add("tok", 3)
+
+    for nickname in ("가" * (main.MAX_NICKNAME_LENGTH + 1), "x" * 1_000_000):
+        response = kakao_login(client, "tok", nickname=nickname)
+
+        assert response.status_code == 422
+        assert response.json()["error_code"] == "VALIDATION_ERROR"
+        assert response.json()["detail"][0]["loc"] == ["body", "nickname"]
+        # 거부 응답은 입력을 되돌려주지 않습니다(증폭 방지).
+        assert len(response.content) < 2000
+
+    assert kakao.calls == []
+    assert ip_failures() == {}
+    assert count("users") == 0
+
+
+def test_lone_surrogate_nickname_is_422_not_500(client, kakao):
     kakao.add("tok", 1)
 
     response = client.post(
@@ -248,7 +277,9 @@ def test_lone_surrogate_nickname_is_400_not_500(client, kakao):
         headers={"Content-Type": "application/json"},
     )
 
-    assert response.status_code == 400
+    # 길이 상한(StringConstraints)이 붙은 칸이라 Pydantic 이 핸들러 전에 string_unicode 로 거부합니다.
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "VALIDATION_ERROR"
     assert kakao.calls == []
 
 

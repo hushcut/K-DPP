@@ -391,7 +391,7 @@ SQLite 때 있던 두 경합 — 지워진 `user_id`로 고아 행이 남는 것
 | `raw_ocr_text` 길이 | **4000자** | 라벨 OCR 원문이 넘을 이유가 없음. JSON 요청과 `/api/scan` 폼 필드 모두(2026-10-05부터 폼에도) |
 | `email` 길이 (가입·로그인·`/auth/email-code`·`/auth/password-reset`) | **254자** | 주소 표준의 최대 길이. 로그인 실패 기록·인증번호 기록의 키라 메모리 상한이기도 함 |
 | 비밀번호 길이 (가입·로그인·`/auth/password` 의 현재·새·`/auth/withdraw`·`/auth/password-reset` 의 새) | **128자** | 앱 입력이 닿지 않는 안전선 |
-| `nickname` 길이 (가입) | **50자** | 저장·응답에 그대로 실리는 값 |
+| `nickname` 길이 (가입·`/auth/kakao`) | **50자** | 저장·응답에 그대로 실리는 값. 카카오에서 받아 온 닉네임이 넘으면 422 대신 `SOCIAL_NICKNAME_REQUIRED` |
 | `/history`·`/me/history` 반환 건수 | **200건** | 전건 적재를 막음. 잘리면 `has_more: true` |
 
 인증 입력의 길이 상한(2026-10-05)은 앞뒤 공백을 지우기 전 글자 수로 셉니다. 실제 사용자가

@@ -282,6 +282,7 @@ Authorization: Bearer <token>
 - `access_token`: 필수. 앞뒤 공백을 지우고 봅니다. 비었거나, 1,024자를 넘거나, 공백이 아닌 출력 가능한 ASCII 밖의 문자(가운데 공백·제어 문자·한글 등)가 있으면
   400 `BAD_REQUEST` — 카카오에 묻지 않고 횟수 제한에도 세지 않습니다. 탈퇴의 `kakao_access_token` 도 같은 규칙입니다.
 - `nickname`: 선택(`null` 은 보내지 않은 것과 같음). **새 계정일 때만** 씁니다(이미 있는 계정이면 무시 — 닉네임 바꾸기가 아님). 보내면 가입과 같은 규칙(앞뒤 공백을 지우고 2자 이상, 쓸 수 없는 문자 없음)으로 늘 봅니다.
+  가입과 같이 50자를 넘으면 `422 VALIDATION_ERROR`(카카오에 묻지 않고 횟수 제한에도 세지 않음).
 - `Authorization` 헤더는 보지 않습니다. 로그인한 상태에서 계정을 잇는 API 가 아니라, 늘 그 카카오 계정으로 로그인합니다.
 
 ### Success Response
@@ -305,7 +306,7 @@ Authorization: Bearer <token>
 
 - 이미 있는 계정이면 `"message": "로그인되었습니다."`, `"is_new_user": false`. 나머지는 `POST /auth/login` 응답과 같습니다(토큰 30일).
 - 새 계정의 닉네임: 요청의 `nickname` → 없으면 카카오 닉네임(`kakao_account.profile.nickname`, 동의 항목 '닉네임'). 카카오 닉네임은 첫 로그인 때 한 번만 가져오며,
-  나중에 카카오에서 바꿔도 따라가지 않습니다. 둘 다 없거나 카카오 닉네임이 규칙(2자 이상 등)에 맞지 않으면 `SOCIAL_NICKNAME_REQUIRED`.
+  나중에 카카오에서 바꿔도 따라가지 않습니다. 둘 다 없거나 카카오 닉네임이 규칙(2자 이상·50자 이하 등)에 맞지 않으면 `SOCIAL_NICKNAME_REQUIRED`.
   카카오가 기본 닉네임(`is_default_nickname: true` — 닉네임이 카카오 운영 정책에 맞지 않아 카카오가 "닉네임을 등록해주세요"로 바꾼 것)을 주면 없는 것으로 봅니다(DECISIONS 155).
 - 같은 카카오 계정으로 동시에 두 번 보내도 계정은 하나입니다(늦은 쪽은 `is_new_user: false`).
 - 이메일 계정과 카카오 계정은 서로 다른 계정입니다 — 같은 사람이라도 자동으로 합치지 않습니다(DECISIONS 143).
