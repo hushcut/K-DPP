@@ -113,8 +113,12 @@ def test_email_code_rejects_bad_email_and_purpose(client):
     bad_email = _request(client, "not-an-email")
     assert bad_email.status_code == 400
     assert bad_email.json()["error_code"] == "BAD_REQUEST"
-    too_long = "a" * 243 + "@example.com"  # 255자
-    assert _request(client, too_long).status_code == 400
+    too_long = "a" * 243 + "@example.com"  # 255자 — 요청 모델의 상한(422)
+    assert _request(client, too_long).status_code == 422
+    # 원문은 254자지만 소문자로 바꾸면 256자(İ → i + 윗점)라 정규화한 값의 상한(400)에 걸립니다.
+    grows = "İİ" + "a" * 240 + "@example.com"
+    assert len(grows) == main.MAX_EMAIL_LENGTH
+    assert _request(client, grows).status_code == 400
     assert _request(client, "a" * 242 + "@example.com").status_code == 200  # 254자
 
     for body in (
@@ -532,6 +536,59 @@ def test_password_reset_checks_format_before_the_code(client):
     assert _reset(client, email, code).status_code == 200
 
 
+def _email_of_length(length):
+    domain = "@example.com"
+    return "a" * (length - len(domain)) + domain
+
+
+def test_email_code_rejects_overlong_emails_before_counting(client):
+    for email in (_email_of_length(main.MAX_EMAIL_LENGTH + 1), "x" * 1_000_000):
+        response = _request(client, email)
+
+        assert response.status_code == 422
+        assert response.json()["error_code"] == "VALIDATION_ERROR"
+        assert response.json()["detail"][0]["loc"] == ["body", "email"]
+        # 거부 응답은 입력을 되돌려주지 않습니다(증폭 방지).
+        assert len(response.content) < 2000
+
+    # 핸들러 전에 막혀 번호·이메일 한도·IP 한도·하루 발송 상한 어디에도 남지 않습니다.
+    assert main._email_codes == {}
+    assert main._email_code_senders == {}
+    assert main._email_code_ip_requests == {}
+    assert main._email_daily_requests == {}
+
+    # 상한 그대로는 받습니다(대조군).
+    at_limit = _email_of_length(main.MAX_EMAIL_LENGTH)
+    assert _request(client, at_limit).status_code == 200
+    assert list(main._email_code_senders) == [at_limit]
+
+
+def test_password_reset_rejects_overlong_inputs_without_using_the_code(client, monkeypatch):
+    email = "reset-limit@example.com"
+    signup(client, email)
+    with main._email_code_lock:
+        main._email_code_senders[email].last_requested_at -= timedelta(minutes=1)
+    code = request_code(client, email, "password_reset")
+    hashes = _count_hashes(monkeypatch)
+
+    for name, response in (
+        ("email", _reset(client, _email_of_length(main.MAX_EMAIL_LENGTH + 1), code)),
+        ("new_password", _reset(client, email, code, "p" * (main.MAX_PASSWORD_LENGTH + 1))),
+        ("new_password", _reset(client, email, code, "p" * 1_000_000)),
+    ):
+        assert response.status_code == 422, name
+        assert response.json()["error_code"] == "VALIDATION_ERROR", name
+        assert response.json()["detail"][0]["loc"] == ["body", name]
+        assert len(response.content) < 2000, name
+
+    # 해시도 틀린 횟수도 없었고, 같은 번호로 상한 그대로의 새 비밀번호를 정할 수 있습니다.
+    assert hashes == []
+    assert _reset(client, email, _wrong(code)).json()["detail"]["remaining_attempts"] == 4
+    at_limit = "p" * main.MAX_PASSWORD_LENGTH
+    assert _reset(client, email, code, at_limit).status_code == 200
+    assert client.post("/auth/login", json={"email": email, "password": at_limit}).status_code == 200
+
+
 def test_password_reset_hashes_only_after_a_correct_code(client, monkeypatch):
     email = "reset-hash@example.com"
     signup(client, email)
@@ -860,12 +917,18 @@ def _raw_post(client, path, body):
 
 
 def test_unprintable_emails_are_format_errors_and_count_nothing(client):
-    for raw_email in ("a\\ud800b@example.com", "a\\u0000b@example.com", "a\\u001b[31mb@example.com"):
+    # 짝 없는 서로게이트는 길이 상한(StringConstraints)이 붙은 칸이라 Pydantic 이 핸들러 전에
+    # 422 로 거부하고, 제어 문자는 형식 검사가 400 으로 거부합니다. 둘 다 아무것도 세지 않습니다.
+    for raw_email, status, error_code in (
+        ("a\\ud800b@example.com", 422, "VALIDATION_ERROR"),
+        ("a\\u0000b@example.com", 400, "BAD_REQUEST"),
+        ("a\\u001b[31mb@example.com", 400, "BAD_REQUEST"),
+    ):
         response = _raw_post(
             client, "/auth/email-code", f'{{"email":"{raw_email}","purpose":"signup"}}'
         )
-        assert response.status_code == 400, raw_email
-        assert response.json()["error_code"] == "BAD_REQUEST"
+        assert response.status_code == status, raw_email
+        assert response.json()["error_code"] == error_code
     assert main._email_code_senders == {}
     assert main._email_code_ip_requests == {}
     assert main._email_daily_requests == {}
@@ -904,7 +967,8 @@ def test_unprintable_nickname_or_password_is_400_not_500(client):
         '{"email":"odd-input@example.com","new_password":"new\\udc80password",'
         f'"code":"{reset_code}"}}',
     )
-    assert surrogate_reset.status_code == 400
+    assert surrogate_reset.status_code == 422
+    assert surrogate_reset.json()["error_code"] == "VALIDATION_ERROR"
     surrogate_login = _raw_post(
         server, "/auth/login", '{"email":"odd-input@example.com","password":"pass\\udc80word1"}'
     )

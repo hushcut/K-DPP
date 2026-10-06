@@ -897,11 +897,19 @@ def test_signup_rejects_overlong_inputs_before_hashing(client, monkeypatch):
     }
 
     for name, fields in cases.items():
-        body = {"email": email, "password": "password123", "nickname": "limit-user", **fields}
+        # 형식이 맞는 번호를 넣어, 422 가 '번호 칸 없음'이 아니라 길이 상한에서 나는지 봅니다.
+        body = {
+            "email": email,
+            "password": "password123",
+            "nickname": "limit-user",
+            "code": "123456",
+            **fields,
+        }
         response = client.post("/auth/signup", json=body)
 
         assert response.status_code == 422, name
         assert response.json()["error_code"] == "VALIDATION_ERROR", name
+        assert response.json()["detail"][0]["loc"] == ["body", next(iter(fields))], name
         # 거부 응답은 입력을 되돌려주지 않습니다(증폭 방지).
         assert len(response.content) < 2000, name
 

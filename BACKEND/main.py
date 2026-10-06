@@ -404,14 +404,14 @@ class SignupRequest(BaseModel):
 
 
 class EmailCodeRequest(BaseModel):
-    email: str
+    email: EmailInput
     purpose: Literal["signup", "password_reset"]
 
 
 class PasswordResetRequest(BaseModel):
-    email: str
+    email: EmailInput
     code: str
-    new_password: str
+    new_password: PasswordInput
 
 
 class LoginRequest(BaseModel):
@@ -534,16 +534,15 @@ def verify_password(password: str, stored_hash: str) -> bool:
 DUMMY_PASSWORD_HASH = hash_password("k-dpp-timing-guard")
 # 최소한의 이메일 형식 검사: 공백 없는 로컬@도메인.최상위 형태만 허용.
 EMAIL_PATTERN = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
-# 메일 주소의 실제 길이 상한(RFC 5321). 인증번호 기록은 이메일을 키로 메모리에 두므로,
-# 본문 상한(11MB)만큼 긴 '이메일'이 그대로 쌓이지 않게 형식 검사에서 함께 막습니다.
-EMAIL_MAX_LENGTH = 254
 
 
 def ensure_email_format(email: str) -> None:
     """가입·인증번호 요청·비밀번호 찾기의 이메일 형식 검사(정규화한 뒤의 값). 제어 문자·짝 없는
-    서로게이트도 막습니다 — 각각 DB 저장·HMAC(UTF-8 인코딩)에서 500 이 나고 서버 로그 줄을 흐트러뜨려서."""
+    서로게이트도 막습니다 — 각각 DB 저장·HMAC(UTF-8 인코딩)에서 500 이 나고 서버 로그 줄을 흐트러뜨려서.
+    길이는 요청 모델(EmailInput)이 원문을 먼저 막지만, 소문자로 바꾸면 길어지는 글자(İ 등)가 있어
+    인증번호 기록의 키가 되는 정규화한 값도 같은 상한으로 한 번 더 봅니다."""
     if (
-        len(email) > EMAIL_MAX_LENGTH
+        len(email) > MAX_EMAIL_LENGTH
         or not email.isprintable()
         or not EMAIL_PATTERN.fullmatch(email)
     ):
