@@ -20,6 +20,7 @@ JDK·Android SDK 버전은 프로젝트 설정에서 나옵니다. JDK 17은 Gra
 | --- | --- | --- |
 | Flutter | **3.41.5** (Dart 3.11.3) | 공식 zip (아래) |
 | Python | **3.12** | `brew install python@3.12` |
+| Docker Desktop | 최신 (PostgreSQL **18** 은 이미지로 받음) | `brew install --cask docker-desktop` |
 | JDK | **17** | `brew install openjdk@17` |
 | Android Studio | 최신 | `brew install --cask android-studio` |
 | Android SDK | API 36 / build-tools 36.0.0 | `sdkmanager` (아래) |
@@ -84,25 +85,41 @@ flutter config --jdk-dir "$JAVA_HOME"
 
 ## 5. 백엔드 실행 (맥 경로)
 
-README의 `.venv\Scripts\python.exe`를 `.venv/bin/python`으로 바꾸면 됩니다.
+순서는 `BACKEND/README.md`(Windows 기준)와 같고, `.venv\Scripts\`를 `.venv/bin/`으로 바꾸면 됩니다.
+DB는 PostgreSQL이고 로컬에서는 Docker Desktop으로 띄웁니다(SQLite는 더 지원하지 않습니다).
+
+Docker Desktop을 설치한 뒤 앱을 한 번 실행해 둡니다. 새 터미널에서 `docker compose version`이
+안 되면 Docker Desktop 설정 → Advanced에서 CLI 설치 위치를 고르고 터미널을 새로 엽니다
+('User'를 고르면 `~/.docker/bin`이 `~/.zprofile`의 `PATH`에 들어갑니다).
 
 ```bash
 cd BACKEND
 python3.12 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python init_data.py
+docker compose up -d --wait
+.venv/bin/alembic upgrade head
 .venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+- `docker compose up -d --wait`: 로컬 PostgreSQL(`compose.yaml`)을 띄웁니다. 처음 한 번은 이미지를 받습니다.
+  재시작 정책이 없어서 맥을 재부팅하거나 Docker Desktop을 껐다 켜면 **다시 실행**해야 합니다.
+- `.venv/bin/alembic upgrade head`: 표를 만들고 소재 시드를 넣습니다. develop을 받은 뒤 새 리비전이 있으면 다시 실행합니다.
+  빼먹으면 서버가 "DB 스키마가 최신이 아닙니다"라며 시작하지 않습니다.
+- 예전의 `init_data.py` 실행 단계는 없어졌습니다. 이 파일은 이제 소재 기대값 목록일 뿐이고, DB에는 마이그레이션이 넣습니다.
+- 5432 포트를 이미 쓰고 있으면(Homebrew PostgreSQL 등) `compose.yaml`의 주석대로 `K_DPP_DB_PORT`와 DB 주소의 포트를 함께 바꿉니다.
+
 확인: <http://127.0.0.1:8000/docs>
 
-테스트:
+테스트(PostgreSQL이 떠 있어야 합니다):
 
 ```bash
 cd BACKEND && .venv/bin/python -m pytest
 ```
 
-DB 초기화는 `.venv/bin/python reset_db.py`.
+테스트는 테스트 전용 DB `k_dpp_test`만 비우고 다시 만듭니다. 개발 DB `k_dpp`는 건드리지 않습니다.
+
+DB 초기화(사용자·토큰·분석 기록을 모두 지우고 처음 상태로)는 `docker compose down -v`로 볼륨째 지운 뒤
+위의 `up`·`alembic upgrade head`를 다시 합니다. **되돌릴 수 없습니다** — 절차는 `BACKEND/README.md`의 'DB 초기화'.
 
 ## 6. 프론트엔드 실행
 
