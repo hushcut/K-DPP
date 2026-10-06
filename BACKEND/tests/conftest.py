@@ -27,6 +27,8 @@ os.environ["K_DPP_DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["K_DPP_CORS_ORIGINS"] = ""
 # API 문서도 기본값(켬)으로 시험합니다. 끈 경우는 별도 프로세스로 봅니다(test_hardening).
 os.environ["K_DPP_API_DOCS"] = ""
+# 서버 전체 하루 스캔 상한도 기본값(없음)으로 시험합니다. 상한은 테스트가 main 값을 바꿔 봅니다.
+os.environ["K_DPP_SCAN_DAILY_MAX"] = ""
 
 import database  # noqa: E402
 
@@ -88,10 +90,11 @@ def client():
         connection.execute(
             text(f"TRUNCATE {', '.join(PER_TEST_TABLES)} RESTART IDENTITY")
         )
-    # 로그인 잠금·가입 IP 카운터는 프로세스 메모리에 남으므로 테스트마다 초기화합니다.
+    # 로그인 잠금·가입 IP·하루 스캔 카운터는 프로세스 메모리에 남으므로 테스트마다 초기화합니다.
     main._login_failures.clear()
     main._login_ip_failures.clear()
     main._signup_ip_attempts.clear()
+    main._vision_scan_counts.clear()
 
     with TestClient(main.app) as test_client:
         yield test_client

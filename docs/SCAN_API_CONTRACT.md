@@ -145,8 +145,9 @@ Authorization: Bearer <token>
 | 413 | `PAYLOAD_TOO_LARGE` | 사진 용량 초과 안내 (상한 10MB) |
 | 415 | `UNSUPPORTED_IMAGE_FORMAT` | 지원하지 않는 이미지 안내 (JPEG/PNG/WebP만 허용) ※ |
 | 422 | `MATERIAL_EXTRACTION_FAILED` | 소재 직접 입력 흐름 |
+| 429 | `SCAN_DAILY_LIMIT` | **전용 분기 없음** — '사진을 분석하지 못했어요. 직접 입력해 주세요.'(`unknown`) + 소재 직접 입력 흐름 (2-5절) |
 | 502 | `OCR_FAILED` | 소재 직접 입력 안내 + `다시 촬영` 버튼 제공 |
-| 503 | `AI_MODULE_FAILED` | **전용 분기 없음** — 아래 '그 외 5xx'와 같게 처리됨 |
+| 503 | `AI_MODULE_FAILED`·`SCAN_UNAVAILABLE` | **전용 분기 없음** — 아래 '그 외 5xx'와 같게 처리됨 (`SCAN_UNAVAILABLE` 은 2-5절) |
 | 504 | `OCR_TIMEOUT` | 시간 초과 안내 + 직접 입력 유도 (**백엔드 미구현, 프론트만 준비됨**) |
 | 500 · 그 외 5xx | — | 일시적 서버 문제 안내 (`statusCode >= 500` 폴백) |
 
@@ -154,9 +155,10 @@ Authorization: Bearer <token>
 500·504와 **똑같은 문구**가 나옵니다. 이전 판에 적혀 있던 "서버/AI 모듈 문제 안내"는
 구현되지 않은 내용이었습니다(2026-09-08 정정).
 
-**503이 실제로 나는 경우**: 서버 기동 시 `from apps.text...` import 실패 한 가지뿐입니다
-(`BACKEND/main.py:882`, `:938`). OCR 미설정·한도 초과·Vision 장애는 전부 **502 `OCR_FAILED`**로
-나갑니다(`:922-932`가 `run_ocr` 실행 중 모든 예외를 `except Exception`으로 잡음).
+**503이 실제로 나는 경우**: 서버 기동 시 `from apps.text...` import 실패(`BACKEND/main.py` 의
+`extract_label_text`·`ensure_label_parser`), 그리고 2026-10-07부터 서버 전체 하루 사진 분석 상한
+(`SCAN_UNAVAILABLE`, 2-5절) 두 가지입니다. OCR 미설정·Vision 쪽 한도 초과·Vision 장애는 전부 **502 `OCR_FAILED`**로
+나갑니다(`extract_label_text` 가 `run_ocr` 실행 중 모든 예외를 `except Exception`으로 잡음).
 
 **504는 현재 백엔드가 내지 않고, 프론트에만 처리 경로가 있습니다**(403과 같은 형태).
 AI 계층에는 타임아웃이 있으나(`ksw/ai-ocr-enhancement`의 `OCR_TIMEOUT_SECONDS = 20`)
@@ -220,7 +222,7 @@ develop에는 없고, 프론트 상한은 35초입니다.
 
 ## 2-2. 로그인·가입 시도 제한 (429)
 
-429는 **`POST /auth/login`·`POST /auth/signup`과 계정 관리의 재인증(2-3절)에서만** 발생합니다. 스캔·탄소 계산 API는 429를 내지 않습니다.
+이 절의 429는 **`POST /auth/login`·`POST /auth/signup`과 계정 관리의 재인증(2-3절)**에서 납니다. 스캔은 하루 상한에서만 429를 내고(2-5절) 탄소 계산 API는 429를 내지 않습니다.
 
 | 항목 | 값 |
 | --- | --- |
@@ -351,6 +353,30 @@ SQLite 때 있던 두 경합 — 지워진 `user_id`로 고아 행이 남는 것
 
 `/me/history` 응답에 `has_more`가 추가됐습니다. 프론트는 현재 이 값을 쓰지 않고
 전건을 받는 전제로 동작하며, 200건 상한에서는 화면 동작에 차이가 없습니다.
+
+## 2-5. 사진 분석 하루 상한 (429 / 503)
+
+스캔 한 번이 Google Vision 호출 1~4건이고 월 1,000건을 넘으면 요금이 나가므로(2026-10-07부터),
+**Vision 을 부르는 스캔**의 하루 횟수를 셉니다.
+
+| 항목 | 값 |
+| --- | --- |
+| 한 계정 | 하루 **20번** → 넘으면 `429 SCAN_DAILY_LIMIT` |
+| 서버 전체 | 하루 `K_DPP_SCAN_DAILY_MAX` 번(배포 서버 기본 100, 로컬은 비우면 없음) → 넘으면 `503 SCAN_UNAVAILABLE` |
+| 하루 | 한국 자정(00:00 KST)에 0 부터. 두 응답 모두 `detail.retry_after` = 다음 자정까지 초 |
+| 세는 것 | Vision 을 부르기 직전에 센다. 성공·422·502 모두 세고 되돌리지 않음(키가 없는 로컬·리허설 서버의 502 도 세므로 한 계정 21번째부터 429) |
+| 세지 않는 것 | `raw_ocr_text` 로 OCR 을 건너뛴 요청, 413·415, OCR·라벨 파서 모듈 없음(503 `AI_MODULE_FAILED` — Vision 전에 확인), 막힌 요청 |
+
+**프론트 처리(앱 변경 없음)**: 429 는 전용 case 가 없어 `ScanApiErrorType.unknown`
+('사진을 분석하지 못했어요. 직접 입력해 주세요.'), 503 은 '그 외 5xx'('분석 서비스에 일시적인
+문제가 생겼어요. 다시 시도하거나 직접 입력해 주세요.')로 종류 선택 시트 맨 위에 보이고 소재 직접
+입력으로 넘어갑니다. '오늘 횟수를 다 썼다'는 이유를 보이려면 `case 429:` 를 더하면 됩니다(선택).
+
+받아들인 한계: 한 사람이 계정을 여럿 만들어 서버 전체 상한을 다 쓰면 그날 자정까지 모든 사용자가 503
+(직접 입력)입니다. 청구 최악값은 지켜지고, 운영자가 app 을 다시 띄우면 풀립니다(`deploy/README.md` 'Vision 키').
+
+시연처럼 한 계정으로 하루 20번 넘게 찍을 날은 계정을 나눠 씁니다. 서버 전체 상한은 배포 서버의
+`deploy/.env` 에서 바꾸고 app 을 다시 띄웁니다(기록이 메모리라 다시 띄우면 그날 수가 0 부터).
 
 ## 3. 탄소 계산
 
