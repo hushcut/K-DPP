@@ -183,6 +183,20 @@ def test_next_login_signs_in_the_same_account_and_ignores_the_nickname(client, k
         assert client.get("/me/history", headers=auth(token)).status_code == 200
 
 
+def test_repeated_kakao_logins_keep_only_the_newest_tokens(client, kakao, monkeypatch):
+    # 카카오 토큰 하나로 /auth/kakao 를 되풀이해도 토큰 행은 상한까지만 남습니다(DECISIONS 160).
+    # 상한은 test_access_token_cap.py 처럼 3 으로 줄여 봅니다 — 첫 호출은 새 계정 경로, 나머지는 기존 계정 경로.
+    monkeypatch.setattr(main, "ACCESS_TOKENS_PER_USER_MAX", 3)
+    kakao.add("phone", 7070)
+
+    sessions = [kakao_login(client, "phone").json()["access_token"] for _ in range(4)]
+
+    assert count("access_tokens") == 3
+    assert client.get("/me/history", headers=auth(sessions[0])).status_code == 401
+    for token in sessions[1:]:
+        assert client.get("/me/history", headers=auth(token)).status_code == 200
+
+
 def test_request_nickname_is_used_without_asking_kakao(client, kakao):
     kakao.add("tok", 5, nickname="카카오 이름")
 
