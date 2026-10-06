@@ -54,6 +54,9 @@
 }
 ```
 
+길이 상한: `email` 254자, `password` 128자, `nickname` 50자 — 넘으면 `422 VALIDATION_ERROR`.
+로그인·비밀번호 변경·탈퇴의 이메일·비밀번호도 같은 상한입니다(아래 2026-10-05 변경 이력).
+
 ### Success Response
 
 ```json
@@ -122,7 +125,7 @@ Content-Type: `multipart/form-data`
 
 ```text
 image: care-label.jpg
-raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
+raw_ocr_text: COTTON 80% POLYESTER 20%  (optional, 4000자 이하)
 ```
 
 ### Success Response
@@ -434,3 +437,15 @@ Authorization: Bearer <token>
 - **API 문서를 환경변수로 끌 수 있게**(DECISIONS 142): `K_DPP_API_DOCS=off` 면
   `/docs`·`/redoc`·`/openapi.json` 이 404. 값이 없으면 켬(로컬 기본), on·off·true·false·1·0
   밖의 값이면 서버가 시작하지 않는다. 배포 서버(`deploy/compose.yaml`)는 끈다.
+
+## 변경 이력 — 2026-10-05 인증 입력 길이 상한
+
+- **가입·로그인·비밀번호 변경·탈퇴 입력에 길이 상한**: 이메일 254자, 비밀번호 128자
+  (변경의 현재·새 비밀번호, 탈퇴 비밀번호 포함), 닉네임 50자. 넘으면 `422 VALIDATION_ERROR`
+  ("요청 형식이 올바르지 않습니다.", 입력 원문은 돌려주지 않음). 앞뒤 공백을 지우기 전
+  글자 수로 센다. 이전에는 본문 상한(11MB)까지 받아 가입 때 그대로 저장·응답했고,
+  로그인에 실패한 이메일은 실패 기록(최대 1만 건)의 키로 메모리에 남았다.
+  422 는 핸들러 전에 나므로 해시·로그인 잠금·IP 한도에 닿지 않는다.
+- **`POST /api/scan` 의 `raw_ocr_text` 폼 필드에도 4000자 상한**: JSON 요청
+  (`/analyze`·`/api/carbon/calculate`)에만 걸려 있던 상한을 폼에도 건다. 넘으면 422
+  `VALIDATION_ERROR`. 앱은 이 필드를 보내지 않는다.

@@ -385,6 +385,30 @@ def test_carbon_calculate_rejects_overlong_raw_ocr_text(client):
     assert within_limit.status_code == 200
 
 
+def test_scan_rejects_overlong_raw_ocr_text(client):
+    # /api/scan 은 폼 필드라 JSON 요청의 RawOcrText 상한이 걸리지 않던 누락분입니다.
+    token = _login_token(client, "scanocrlimit@example.com")
+
+    def scan(raw_ocr_text):
+        return client.post(
+            "/api/scan",
+            files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+            data={"raw_ocr_text": raw_ocr_text},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    over_limit = scan("x" * (main.MAX_RAW_OCR_TEXT_LENGTH + 1))
+    # 상한은 앞뒤 공백을 지우기 전 길이로 셉니다.
+    label = "COTTON 100%"
+    within_limit = scan(label + " " * (main.MAX_RAW_OCR_TEXT_LENGTH - len(label)))
+
+    assert over_limit.status_code == 422
+    assert over_limit.json()["error_code"] == "VALIDATION_ERROR"
+    assert len(over_limit.content) < 2000
+    assert within_limit.status_code == 200
+    assert within_limit.json()["materials"] == {"cotton": 100}
+
+
 def test_normal_material_input_still_calculates(client):
     """상한을 넣으면서 정상 입력의 계산 결과가 달라지면 안 된다."""
     response = client.post(
@@ -835,6 +859,98 @@ def test_signup_ip_limit_uses_the_same_ip_key_as_login(client, monkeypatch):
     assert _try_signup(other, "v4-a@example.com").status_code == 200
     for i in range(3):
         assert _try_signup(gateway, f"gateway-{i}@example.com").status_code == 200
+
+
+# --- 인증 입력 길이 상한 (2026-10-05, 계약 2-4절) ----------------------------------
+
+
+def _email_of_length(length):
+    domain = "@example.com"
+    return "a" * (length - len(domain)) + domain
+
+
+def test_signup_accepts_inputs_at_the_length_limits(client):
+    email = _email_of_length(main.MAX_EMAIL_LENGTH)
+    password = "p" * main.MAX_PASSWORD_LENGTH
+    nickname = "가" * main.MAX_NICKNAME_LENGTH
+
+    signup = _try_signup(client, email, password, nickname)
+
+    assert signup.status_code == 200
+    assert signup.json()["user"]["nickname"] == nickname
+    assert _try_login(client, email, password).status_code == 200
+
+
+def test_signup_rejects_overlong_inputs_before_hashing(client, monkeypatch):
+    hashes = _count_signup_hashes(monkeypatch)
+    email = "signup-limit@example.com"
+    cases = {
+        "email": {"email": _email_of_length(main.MAX_EMAIL_LENGTH + 1)},
+        "password": {"password": "p" * (main.MAX_PASSWORD_LENGTH + 1)},
+        "nickname": {"nickname": "가" * (main.MAX_NICKNAME_LENGTH + 1)},
+        "1MB nickname": {"nickname": "x" * 1_000_000},
+    }
+
+    for name, fields in cases.items():
+        body = {"email": email, "password": "password123", "nickname": "limit-user", **fields}
+        response = client.post("/auth/signup", json=body)
+
+        assert response.status_code == 422, name
+        assert response.json()["error_code"] == "VALIDATION_ERROR", name
+        # 거부 응답은 입력을 되돌려주지 않습니다(증폭 방지).
+        assert len(response.content) < 2000, name
+
+    # 핸들러 전에 막혀 해시·계정 생성·가입 IP 카운트까지 가지 않습니다.
+    assert len(hashes) == 0
+    assert _stored_hash(email) is None
+    assert main._signup_ip_attempts == {}
+
+
+def test_login_rejects_overlong_inputs_without_keeping_them(client, monkeypatch):
+    # 상한이 없으면 긴 '이메일'로 실패할 때마다 그 문자열이 실패 기록의 키로 메모리에 남았습니다.
+    hashes = _count_hashes(monkeypatch)
+
+    for body in (
+        {"email": _email_of_length(main.MAX_EMAIL_LENGTH + 1), "password": "wrong-password"},
+        {"email": "x" * 1_000_000, "password": "wrong-password"},
+        {"email": "login-limit@example.com", "password": "p" * (main.MAX_PASSWORD_LENGTH + 1)},
+    ):
+        response = client.post("/auth/login", json=body)
+
+        assert response.status_code == 422
+        assert response.json()["error_code"] == "VALIDATION_ERROR"
+        assert len(response.content) < 2000
+
+    assert len(hashes) == 0
+    assert main._login_failures == {}
+    assert main._login_ip_failures == {}
+
+    # 상한 안의 실패는 그대로 셉니다(대조군).
+    at_limit = _email_of_length(main.MAX_EMAIL_LENGTH)
+    assert _try_login(client, at_limit).status_code == 401
+    assert list(main._login_failures) == [at_limit]
+
+
+def test_password_change_and_withdraw_reject_overlong_passwords(client):
+    email = "reauth-limit@example.com"
+    token = _login_token(client, email)
+    headers = {"Authorization": f"Bearer {token}"}
+    too_long = "p" * (main.MAX_PASSWORD_LENGTH + 1)
+
+    for path, body in (
+        ("/auth/password", {"current_password": too_long, "new_password": "new-password1"}),
+        ("/auth/password", {"current_password": "password123", "new_password": too_long}),
+        ("/auth/withdraw", {"password": too_long}),
+    ):
+        response = client.post(path, json=body, headers=headers)
+
+        assert response.status_code == 422, body
+        assert response.json()["error_code"] == "VALIDATION_ERROR", body
+
+    # 재인증 실패로 세지 않고, 비밀번호·계정·세션도 그대로입니다.
+    assert main._login_failures == {}
+    assert client.get("/me/history", headers=headers).status_code == 200
+    assert _try_login(client, email, "password123").status_code == 200
 
 
 # --- API 문서 끄기 (2026-10-04 보안 손질, DECISIONS 142) ----------------------------
