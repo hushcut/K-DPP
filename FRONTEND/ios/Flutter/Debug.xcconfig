@@ -1,2 +1,6 @@
 #include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"
 #include "Generated.xcconfig"
+// 카카오 네이티브 앱 키(FRONTEND/kakao.env, gitignore). 파일이 없으면 빈 값 대신 none 으로 둬
+// Info.plist 의 URL 스킴이 'kakao' 하나만 남지 않게 한다(DECISIONS 181).
+KAKAO_NATIVE_APP_KEY = none
+#include? "../../kakao.env"
