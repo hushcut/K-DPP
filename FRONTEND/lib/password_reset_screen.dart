@@ -1,4 +1,4 @@
-// 이메일 인증번호를 확인해 신규 계정을 서버에 등록하고 로그인 화면으로 연결하는 파일입니다.
+// 이메일로 받은 인증번호를 확인해 비밀번호를 새로 정하고 로그인 화면으로 돌려보내는 화면입니다.
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -12,16 +12,13 @@ import 'widgets/auth_form_widgets.dart';
 import 'widgets/email_code_section.dart';
 import 'widgets/number_keyboard_toolbar.dart';
 
-/// 이메일·인증번호·닉네임·비밀번호를 한 화면에서 입력받는 회원가입 폼 화면입니다.
+/// 로그인 화면의 '비밀번호를 잊으셨나요?'에서 여는 비밀번호 찾기 화면입니다.
 ///
-/// 서버에 번호만 확인하는 API 가 없어 번호는 가입 요청과 함께 확인됩니다. 그래서 두 단계로
-/// 나누지 않고, 틀린 번호는 이 화면의 번호 칸에 바로 보입니다(DECISIONS 170 ①).
-class SignupScreen extends StatefulWidget {
-  const SignupScreen({super.key, this.authApiService, this.now});
-
-  /// 이메일 로그인 화면에서 진입했음을 알리는 경로 인자입니다.
-  /// 이 값이 전달되면 로그인 화면을 새로 쌓지 않고 pop으로 되돌아갑니다.
-  static const String fromEmailLoginArgument = 'from-email-login';
+/// 경로 인자로 이메일 문자열을 받으면 이메일 칸에 채웁니다. 재설정에 성공하면 서버가 그
+/// 계정의 로그인을 모두 끊고 새 토큰은 주지 않으므로, 이메일을 들고 로그인 화면으로
+/// 돌아갑니다(DECISIONS 170 ⑦).
+class PasswordResetScreen extends StatefulWidget {
+  const PasswordResetScreen({super.key, this.authApiService, this.now});
 
   final AuthApiService? authApiService;
 
@@ -29,24 +26,22 @@ class SignupScreen extends StatefulWidget {
   final DateTime Function()? now;
 
   @override
-  State<SignupScreen> createState() => _SignupScreenState();
+  State<PasswordResetScreen> createState() => _PasswordResetScreenState();
 }
 
-class _SignupScreenState extends State<SignupScreen> {
+class _PasswordResetScreenState extends State<PasswordResetScreen> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final GlobalKey<FormFieldState<String>> _emailFieldKey =
       GlobalKey<FormFieldState<String>>();
   final GlobalKey<EmailCodeSectionState> _codeSectionKey =
       GlobalKey<EmailCodeSectionState>();
 
-  final TextEditingController _nicknameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _codeController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
       TextEditingController();
   final FocusNode _codeFocusNode = FocusNode();
-  final FocusNode _nicknameFocusNode = FocusNode();
   final FocusNode _passwordFocusNode = FocusNode();
   final FocusNode _confirmPasswordFocusNode = FocusNode();
   late final AuthApiService _authApiService;
@@ -54,6 +49,7 @@ class _SignupScreenState extends State<SignupScreen> {
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+  bool _didLoadInitialEmail = false;
 
   @override
   void initState() {
@@ -62,41 +58,34 @@ class _SignupScreenState extends State<SignupScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    if (_didLoadInitialEmail) return;
+    _didLoadInitialEmail = true;
+
+    // 로그인 화면에 적어 둔 이메일이 있으면 한 번만 채웁니다.
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is String && args.trim().isNotEmpty) {
+      _emailController.text = args.trim();
+    }
+  }
+
+  @override
   void dispose() {
-    _nicknameController.dispose();
     _emailController.dispose();
     _codeController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     _codeFocusNode.dispose();
-    _nicknameFocusNode.dispose();
     _passwordFocusNode.dispose();
     _confirmPasswordFocusNode.dispose();
     super.dispose();
   }
 
-  String? _validateNickname(String? value) {
-    final text = value?.trim() ?? '';
-
-    if (text.isEmpty) {
-      return '닉네임을 입력해 주세요';
-    }
-
-    if (text.length < 2) {
-      return '닉네임은 2자 이상 입력해 주세요';
-    }
-
-    return null;
-  }
-
-  /// 이메일 로그인에서 진입했으면 pop으로 되돌아가 화면이 중복으로 쌓이지 않게 하고,
-  /// 그 외 경로에서는 기존처럼 로그인 화면으로 교체 이동합니다.
-  void _navigateBackToEmailLogin({String? email}) {
-    final cameFromEmailLogin =
-        ModalRoute.of(context)?.settings.arguments ==
-        SignupScreen.fromEmailLoginArgument;
-
-    if (cameFromEmailLogin && Navigator.canPop(context)) {
+  /// 로그인 화면에서 왔으면 pop 으로 이메일을 돌려주고, 아니면 로그인 화면으로 바꿉니다.
+  void _returnToEmailLogin(String email) {
+    if (Navigator.canPop(context)) {
       Navigator.pop(context, email);
       return;
     }
@@ -104,8 +93,7 @@ class _SignupScreenState extends State<SignupScreen> {
     Navigator.pushReplacementNamed(context, '/email-login', arguments: email);
   }
 
-  /// 폼이 유효할 때 가입 API를 호출하고, 성공하면 이메일을 로그인 화면에 전달합니다.
-  Future<void> _handleSignup() async {
+  Future<void> _handleReset() async {
     final isValid = _formKey.currentState?.validate() ?? false;
     if (!isValid) return;
 
@@ -116,30 +104,29 @@ class _SignupScreenState extends State<SignupScreen> {
     });
 
     try {
-      await _authApiService.signup(
-        nickname: _nicknameController.text.trim(),
+      await _authApiService.resetPassword(
         email: email,
-        password: _passwordController.text,
         code: _codeController.text,
+        newPassword: _passwordController.text,
       );
 
       if (!mounted) return;
 
-      AppBanner.of(context).show(
-        '회원가입이 완료됐어요. 로그인해 주세요.',
-        kind: AppBannerKind.success,
-      );
+      AppBanner.of(
+        context,
+      ).show('비밀번호를 다시 설정했어요. 새 비밀번호로 로그인해 주세요.', kind: AppBannerKind.success);
 
-      _navigateBackToEmailLogin(email: email);
+      _returnToEmailLogin(email);
     } on AuthApiException catch (error) {
       if (!mounted) return;
 
-      // 번호 오류는 번호 칸에 붙이고, 그 밖의 거절·통신 실패는 배너로 알립니다.
       final shownOnCodeField =
           _codeSectionKey.currentState?.showSubmitError(error) ?? false;
       if (shownOnCodeField) return;
 
-      AppBanner.of(context).show(error.userMessage, kind: AppBannerKind.failure);
+      AppBanner.of(
+        context,
+      ).show(error.userMessage, kind: AppBannerKind.failure);
     } finally {
       if (mounted) {
         setState(() {
@@ -161,7 +148,7 @@ class _SignupScreenState extends State<SignupScreen> {
         if (!_codeFocusNode.hasFocus) return const SizedBox.shrink();
 
         return NumberKeyboardToolbar(
-          onNext: _nicknameFocusNode.requestFocus,
+          onNext: _passwordFocusNode.requestFocus,
           onDone: _codeFocusNode.unfocus,
         );
       },
@@ -195,7 +182,7 @@ class _SignupScreenState extends State<SignupScreen> {
           child: AppBackButton(),
         ),
         title: Text(
-          '회원가입',
+          '비밀번호 찾기',
           style: TextStyle(
             color: primaryText,
             fontSize: 20,
@@ -225,7 +212,7 @@ class _SignupScreenState extends State<SignupScreen> {
                             children: [
                               const SizedBox(height: 40),
                               Text(
-                                'K-DPP 계정을 만들어보세요',
+                                '비밀번호를 새로 정해요',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                   fontSize: 18,
@@ -235,7 +222,9 @@ class _SignupScreenState extends State<SignupScreen> {
                               ),
                               const SizedBox(height: 10),
                               Text(
-                                '이메일로 받은 인증번호와 계정 정보를 입력해 주세요.',
+                                // 한글은 글자 단위로 줄이 바뀌어 '다 / 른'처럼 끊기므로 문장마다 줄을 나눕니다.
+                                '가입한 이메일로 받은 인증번호를 넣어 주세요.\n'
+                                '다른 기기의 로그인도 모두 풀려요.',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                   fontSize: 14,
@@ -249,7 +238,10 @@ class _SignupScreenState extends State<SignupScreen> {
                                 controller: _emailController,
                                 keyboardType: TextInputType.emailAddress,
                                 textInputAction: TextInputAction.next,
-                                autofillHints: const [AutofillHints.email],
+                                autofillHints: const [
+                                  AutofillHints.username,
+                                  AutofillHints.email,
+                                ],
                                 autocorrect: false,
                                 validator: validateEmailInput,
                                 style: TextStyle(color: primaryText),
@@ -263,7 +255,7 @@ class _SignupScreenState extends State<SignupScreen> {
                               const SizedBox(height: 12),
                               EmailCodeSection(
                                 key: _codeSectionKey,
-                                purpose: EmailCodePurpose.signup,
+                                purpose: EmailCodePurpose.passwordReset,
                                 authApiService: _authApiService,
                                 emailFieldKey: _emailFieldKey,
                                 emailController: _emailController,
@@ -271,23 +263,8 @@ class _SignupScreenState extends State<SignupScreen> {
                                 codeFocusNode: _codeFocusNode,
                                 enabled: !_isLoading,
                                 onCodeSubmitted: (_) =>
-                                    _nicknameFocusNode.requestFocus(),
+                                    _passwordFocusNode.requestFocus(),
                                 now: widget.now ?? DateTime.now,
-                              ),
-                              const SizedBox(height: 16),
-                              TextFormField(
-                                controller: _nicknameController,
-                                focusNode: _nicknameFocusNode,
-                                textInputAction: TextInputAction.next,
-                                autofillHints: const [AutofillHints.nickname],
-                                validator: _validateNickname,
-                                style: TextStyle(color: primaryText),
-                                cursorColor: AppPalette.accent,
-                                decoration: authInputDecoration(
-                                  context,
-                                  labelText: '닉네임',
-                                  hintText: '예: 홍길동',
-                                ),
                               ),
                               const SizedBox(height: 16),
                               TextFormField(
@@ -308,7 +285,7 @@ class _SignupScreenState extends State<SignupScreen> {
                                 cursorColor: AppPalette.accent,
                                 decoration: authInputDecoration(
                                   context,
-                                  labelText: '비밀번호',
+                                  labelText: '새 비밀번호',
                                   hintText: '8자 이상 입력',
                                   suffixIcon: IconButton(
                                     onPressed: () {
@@ -317,8 +294,8 @@ class _SignupScreenState extends State<SignupScreen> {
                                       });
                                     },
                                     tooltip: _obscurePassword
-                                        ? '비밀번호 표시'
-                                        : '비밀번호 숨기기',
+                                        ? '새 비밀번호 표시'
+                                        : '새 비밀번호 숨기기',
                                     icon: Icon(
                                       _obscurePassword
                                           ? Icons.visibility_off_outlined
@@ -348,8 +325,8 @@ class _SignupScreenState extends State<SignupScreen> {
                                 cursorColor: AppPalette.accent,
                                 decoration: authInputDecoration(
                                   context,
-                                  labelText: '비밀번호 확인',
-                                  hintText: '비밀번호 다시 입력',
+                                  labelText: '새 비밀번호 확인',
+                                  hintText: '새 비밀번호 다시 입력',
                                   suffixIcon: IconButton(
                                     onPressed: () {
                                       setState(() {
@@ -358,8 +335,8 @@ class _SignupScreenState extends State<SignupScreen> {
                                       });
                                     },
                                     tooltip: _obscureConfirmPassword
-                                        ? '비밀번호 확인 표시'
-                                        : '비밀번호 확인 숨기기',
+                                        ? '새 비밀번호 확인 표시'
+                                        : '새 비밀번호 확인 숨기기',
                                     icon: Icon(
                                       _obscureConfirmPassword
                                           ? Icons.visibility_off_outlined
@@ -370,21 +347,16 @@ class _SignupScreenState extends State<SignupScreen> {
                                 ),
                                 onFieldSubmitted: (_) {
                                   if (!_isLoading) {
-                                    _handleSignup();
+                                    _handleReset();
                                   }
                                 },
                               ),
                               const SizedBox(height: 32),
                               AuthSubmitButton(
-                                label: '회원가입',
-                                loadingSemanticsLabel: '회원가입 처리 중',
+                                label: '비밀번호 다시 설정',
+                                loadingSemanticsLabel: '비밀번호 재설정 처리 중',
                                 isLoading: _isLoading,
-                                onPressed: _handleSignup,
-                              ),
-                              const SizedBox(height: 18),
-                              AuthLinkButton(
-                                label: '이미 계정이 있으신가요? 로그인',
-                                onPressed: () => _navigateBackToEmailLogin(),
+                                onPressed: _handleReset,
                               ),
                               const Spacer(),
                               const SizedBox(height: 24),

@@ -9,8 +9,10 @@ import 'services/auth_api_service.dart';
 import 'services/post_login_sync_service.dart';
 import 'signup_screen.dart';
 import 'theme/app_palette.dart';
+import 'utils/auth_form_validators.dart';
 import 'widgets/app_back_button.dart';
 import 'widgets/app_banner.dart';
+import 'widgets/auth_form_widgets.dart';
 
 /// 로그인 요청의 진행 상태와 비밀번호 표시 상태를 관리하는 이메일 로그인 화면입니다.
 class EmailLoginScreen extends StatefulWidget {
@@ -64,21 +66,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     super.dispose();
   }
 
-  // 제출 전에 네트워크 요청 없이 기본 입력 형식을 검사합니다.
-  String? _validateEmail(String? value) {
-    final text = value?.trim() ?? '';
-
-    if (text.isEmpty) {
-      return '이메일을 입력해 주세요';
-    }
-
-    if (!text.contains('@') || !text.contains('.')) {
-      return '올바른 이메일 형식을 입력해 주세요';
-    }
-
-    return null;
-  }
-
+  // 제출 전에 네트워크 요청 없이 기본 입력 형식을 검사합니다(이메일은 [validateEmailInput]).
   String? _validatePassword(String? value) {
     final text = value?.trim() ?? '';
 
@@ -154,56 +142,18 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     }
   }
 
-  // 이메일과 비밀번호 입력란에 공통으로 쓰는 테마별 스타일입니다.
-  InputDecoration _inputDecoration({
-    required String labelText,
-    required String hintText,
-    Widget? suffixIcon,
-  }) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final fillColor = isDark
-        ? const Color(0xFF1C1C1E)
-        : const Color(0xFFF1F1F4);
-    final hintColor = isDark
-        ? const Color(0xFF9A9A9A)
-        : const Color(0xFF9E9E9E);
-    final enabledBorderColor = isDark
-        ? const Color(0xFF2C2C2E)
-        : Colors.transparent;
-
-    return InputDecoration(
-      labelText: labelText,
-      hintText: hintText,
-      labelStyle: TextStyle(color: hintColor, fontSize: 15),
-      hintStyle: TextStyle(color: hintColor, fontSize: 15),
-      filled: true,
-      fillColor: fillColor,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 22),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(28),
-        borderSide: BorderSide.none,
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(28),
-        borderSide: BorderSide(
-          color: enabledBorderColor,
-          width: isDark ? 1 : 0,
-        ),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(28),
-        borderSide: const BorderSide(color: AppPalette.accent, width: 1.5),
-      ),
-      errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(28),
-        borderSide: const BorderSide(color: Colors.redAccent, width: 1.2),
-      ),
-      focusedErrorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(28),
-        borderSide: const BorderSide(color: Colors.redAccent, width: 1.5),
-      ),
-      suffixIcon: suffixIcon,
+  /// 비밀번호 찾기로 갔다가 재설정에 성공해 돌아오면 그 이메일을 채우고 옛 비밀번호를 지웁니다.
+  Future<void> _openPasswordReset() async {
+    final result = await Navigator.pushNamed(
+      context,
+      '/password-reset',
+      arguments: _emailController.text.trim(),
     );
+
+    if (!mounted || result is! String || result.trim().isEmpty) return;
+
+    _emailController.text = result.trim();
+    _passwordController.clear();
   }
 
   @override
@@ -287,10 +237,11 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                             AutofillHints.email,
                           ],
                           autocorrect: false,
-                          validator: _validateEmail,
+                          validator: validateEmailInput,
                           style: TextStyle(color: primaryText),
                           cursorColor: AppPalette.accent,
-                          decoration: _inputDecoration(
+                          decoration: authInputDecoration(
+                            context,
                             labelText: '이메일',
                             hintText: 'honggildong@example.com',
                           ),
@@ -306,7 +257,8 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                           validator: _validatePassword,
                           style: TextStyle(color: primaryText),
                           cursorColor: AppPalette.accent,
-                          decoration: _inputDecoration(
+                          decoration: authInputDecoration(
+                            context,
                             labelText: '비밀번호',
                             hintText: '8자 이상 입력',
                             suffixIcon: IconButton(
@@ -333,44 +285,20 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                           },
                         ),
                         const SizedBox(height: 32),
-                        SizedBox(
-                          width: double.infinity,
-                          height: 60,
-                          child: ElevatedButton(
-                            onPressed: _isLoading ? null : _handleLogin,
-                            style: ElevatedButton.styleFrom(
-                              elevation: 0,
-                              backgroundColor: AppPalette.accent,
-                              disabledBackgroundColor: const Color(0x8C4A4EFE),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(30),
-                              ),
-                            ),
-                            child: _isLoading
-                                ? Semantics(
-                                    label: '로그인 처리 중',
-                                    liveRegion: true,
-                                    child: const SizedBox(
-                                      width: 22,
-                                      height: 22,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.4,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  )
-                                : const Text(
-                                    '로그인',
-                                    style: TextStyle(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w700,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                          ),
+                        AuthSubmitButton(
+                          label: '로그인',
+                          loadingSemanticsLabel: '로그인 처리 중',
+                          isLoading: _isLoading,
+                          onPressed: _handleLogin,
                         ),
                         const SizedBox(height: 18),
-                        TextButton(
+                        AuthLinkButton(
+                          label: '비밀번호를 잊으셨나요?',
+                          onPressed: _openPasswordReset,
+                        ),
+                        const SizedBox(height: 4),
+                        AuthLinkButton(
+                          label: '계정이 없으신가요? 회원가입',
                           onPressed: () async {
                             // 회원가입이 pop으로 돌아오면 이 화면을 재사용하고,
                             // 전달된 이메일이 있으면 로그인 폼에 채웁니다.
@@ -388,19 +316,6 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
 
                             _emailController.text = result.trim();
                           },
-                          style: TextButton.styleFrom(
-                            minimumSize: const Size(48, 48),
-                          ),
-                          child: Text(
-                            '계정이 없으신가요? 회원가입',
-                            style: TextStyle(
-                              color: isDark
-                                  ? const Color(0xFFB8B8BE)
-                                  : const Color(0xFF5F6368),
-                              fontSize: 14,
-                              decoration: TextDecoration.underline,
-                            ),
-                          ),
                         ),
                         const Spacer(),
                         const SizedBox(height: 24),

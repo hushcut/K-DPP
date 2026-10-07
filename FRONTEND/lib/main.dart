@@ -8,6 +8,7 @@ import 'login_screen.dart';
 import 'main_screen.dart';
 import 'splash_screen.dart';
 import 'email_login_screen.dart';
+import 'password_reset_screen.dart';
 import 'signup_screen.dart';
 import 'settings_screen.dart';
 import 'theme/app_theme.dart';
@@ -72,6 +73,7 @@ class MyApp extends StatelessWidget {
             '/login': (context) => const LoginScreen(),
             '/email-login': (context) => const EmailLoginScreen(),
             '/signup': (context) => const SignupScreen(),
+            '/password-reset': (context) => const PasswordResetScreen(),
             '/settings': (context) => const SettingsScreen(),
             '/display-settings': (context) => const DisplaySettingsScreen(),
             '/main': (context) => const MainScreen(),
