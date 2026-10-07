@@ -347,6 +347,9 @@ Authorization: Bearer <token>
 
 - 버튼은 로그아웃 상태의 로그인 화면에만 둡니다. SDK 는 `kakao_flutter_sdk_user`(DECISIONS 140) — 카카오톡이 있으면 카카오톡으로, 없으면 카카오계정으로 로그인한 뒤
   받은 `OAuthToken.accessToken` 을 `access_token` 으로 보냅니다. 사용자가 카카오 화면에서 취소하면 서버를 부르지 않습니다.
+- **첫 요청에는 `nickname` 을 넣지 않습니다** — `SOCIAL_NICKNAME_REQUIRED` 를 받은 뒤에만 닉네임을 받아 같은 토큰으로 다시 보냅니다(DECISIONS 163).
+  서버는 새 계정이고 `nickname` 이 없을 때만 카카오 사용자 정보(`/v2/user/me`)를 묻는데, 카카오는 첫 로그인 뒤 24시간 안에 이 조회가 없던 연결을
+  '가입 미완료'로 보고 끊습니다. 처음부터 닉네임을 보내면 우리 계정은 그대로지만 카카오 쪽 연결만 끊겨, 다음 카카오 로그인에서 동의 화면이 다시 나옵니다(회원번호가 같아 같은 계정).
 - 성공하면 이메일 로그인과 똑같이 `access_token`·`user` 를 저장합니다. `is_new_user` 는 환영 안내 등에 쓸 수 있습니다(선택).
 - **지금 앱에서 바꿔야 하는 곳**(10-05 develop 기준 코드에서 찾은 것):
   - `AuthUser.fromJson`(`FRONTEND/lib/services/auth_api_models.dart`)이 이메일이 비면 응답을 거부합니다 → `email` 이 `null` 인 응답을 받게.
