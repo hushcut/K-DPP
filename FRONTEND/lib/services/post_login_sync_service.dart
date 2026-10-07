@@ -22,6 +22,8 @@ class PostLoginSyncService {
       await provider.setUserProfile(
         nickname: snapshot.user.nickname,
         email: snapshot.user.email,
+        userId: snapshot.user.id,
+        loginMethods: snapshot.user.loginMethods,
       );
       await provider.synchronizeServerHistory(snapshot.history);
     } on AuthApiException catch (error, stackTrace) {

@@ -208,6 +208,8 @@ class SettingsScreen extends StatelessWidget {
       await provider.setAuthenticatedUser(
         nickname: result.user.nickname,
         email: result.user.email,
+        userId: result.user.id,
+        loginMethods: result.user.loginMethods,
         accessToken: newAccessToken,
         expiresInSeconds: expiresInSeconds,
       );
@@ -470,7 +472,9 @@ class SettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     // 사용자와 테마 Provider를 구독해 변경된 닉네임·화면 모드를 즉시 표시합니다.
     final userName = context.watch<ClosetProvider>().userName;
-    final userEmail = context.watch<ClosetProvider>().userEmail;
+    // 이메일이 없는 계정(카카오)은 기본 이메일 대신 로그인 방법을 보여 줍니다.
+    final accountEmail = context.watch<ClosetProvider>().accountEmail;
+    final accountLabel = accountEmail ?? '카카오 계정';
     final themeMode = context.watch<ThemeProvider>().themeMode;
     final materialNameDisplay = context
         .watch<MaterialNameDisplayProvider>()
@@ -554,7 +558,7 @@ class SettingsScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        userEmail,
+                        accountLabel,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -584,9 +588,11 @@ class SettingsScreen extends StatelessWidget {
               ),
               Divider(height: 1, color: borderColor),
               _buildMenuTile(
-                icon: Icons.mail_outline,
-                title: '이메일',
-                subtitle: userEmail,
+                icon: accountEmail == null
+                    ? Icons.login_outlined
+                    : Icons.mail_outline,
+                title: accountEmail == null ? '로그인' : '이메일',
+                subtitle: accountLabel,
                 textColor: primaryText,
                 subtitleColor: secondaryText,
                 showChevron: false,

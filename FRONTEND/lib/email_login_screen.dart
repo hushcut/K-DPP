@@ -104,6 +104,8 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
       await provider.setAuthenticatedUser(
         nickname: result.user.nickname,
         email: result.user.email,
+        userId: result.user.id,
+        loginMethods: result.user.loginMethods,
         accessToken: accessToken,
         expiresInSeconds: result.expiresInSeconds!,
       );

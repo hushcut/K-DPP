@@ -447,4 +447,92 @@ void main() {
       }
     });
   });
+
+  group('user object (login_methods)', () {
+    Future<AuthUser> parseSessionUser(Map<String, dynamic> user) async {
+      final client = MockClient(
+        (_) async => http.Response(
+          jsonEncode({'status': 'success', 'user': user, 'history': []}),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        ),
+      );
+      final service = AuthApiService(client: client);
+
+      try {
+        final snapshot = await service.fetchSessionSnapshot(
+          accessToken: 'saved-access-token',
+        );
+        return snapshot.user;
+      } finally {
+        client.close();
+      }
+    }
+
+    test('accepts a kakao account whose email is null', () async {
+      final user = await parseSessionUser({
+        'id': 7,
+        'email': null,
+        'nickname': '카카오 사용자',
+        'login_methods': ['kakao'],
+      });
+
+      expect(user.id, 7);
+      expect(user.email, isNull);
+      expect(user.nickname, '카카오 사용자');
+      expect(user.loginMethods, ['kakao']);
+      expect(user.hasPasswordLogin, isFalse);
+    });
+
+    test('treats a user without login_methods as a password account', () async {
+      // login_methods 가 생기기 전 서버의 응답입니다.
+      final user = await parseSessionUser({
+        'id': 1,
+        'email': 'honggildong@example.com',
+        'nickname': '홍길동',
+      });
+
+      expect(user.loginMethods, ['password']);
+      expect(user.hasPasswordLogin, isTrue);
+    });
+
+    test('keeps unknown login methods but skips non-strings', () async {
+      final user = await parseSessionUser({
+        'id': 2,
+        'email': 'honggildong@example.com',
+        'nickname': '홍길동',
+        'login_methods': ['google', 3, 'password'],
+      });
+
+      expect(user.loginMethods, ['google', 'password']);
+      expect(user.hasPasswordLogin, isTrue);
+    });
+
+    test('still rejects a user without an id or a nickname', () async {
+      for (final user in <Map<String, dynamic>>[
+        {
+          'email': null,
+          'nickname': '카카오 사용자',
+          'login_methods': ['kakao'],
+        },
+        {
+          'id': 7,
+          'email': null,
+          'nickname': ' ',
+          'login_methods': ['kakao'],
+        },
+      ]) {
+        await expectLater(
+          parseSessionUser(user),
+          throwsA(
+            isA<AuthApiException>().having(
+              (error) => error.type,
+              'type',
+              AuthApiErrorType.invalidResponse,
+            ),
+          ),
+        );
+      }
+    });
+  });
 }

@@ -8,6 +8,8 @@ class FakeClosetStorage implements ClosetStorage {
   String? _savedUserName;
   bool _savedUserNameCustomized = false;
   String? _savedUserEmail;
+  int? _savedUserId;
+  List<String>? _savedLoginMethods;
 
   /// 옷장 저장 실패를 흉내 낼 때 던질 오류입니다.
   Object? saveClothesError;
@@ -27,12 +29,12 @@ class FakeClosetStorage implements ClosetStorage {
   }
 
   @override
-  Future<void> clearClothesListFor(String ownerEmail) async {
+  Future<void> clearClothesListFor(String ownerKey) async {
     if (clearClothesForError case final error?) {
       throw error;
     }
 
-    _accountItems.remove(_normalizeEmail(ownerEmail));
+    _accountItems.remove(_normalizeKey(ownerKey));
   }
 
   @override
@@ -51,8 +53,8 @@ class FakeClosetStorage implements ClosetStorage {
   }
 
   @override
-  Future<bool> hasSavedClothesListFor(String ownerEmail) async {
-    return _accountItems.containsKey(_normalizeEmail(ownerEmail));
+  Future<bool> hasSavedClothesListFor(String ownerKey) async {
+    return _accountItems.containsKey(_normalizeKey(ownerKey));
   }
 
   @override
@@ -67,13 +69,13 @@ class FakeClosetStorage implements ClosetStorage {
   }
 
   @override
-  Future<List<Clothes>> loadClothesListFor(String ownerEmail) async {
-    return List<Clothes>.from(_accountItems[_normalizeEmail(ownerEmail)] ?? []);
+  Future<List<Clothes>> loadClothesListFor(String ownerKey) async {
+    return List<Clothes>.from(_accountItems[_normalizeKey(ownerKey)] ?? []);
   }
 
   @override
-  Future<List<Clothes>?> loadClothesListOrNullFor(String ownerEmail) async {
-    final items = _accountItems[_normalizeEmail(ownerEmail)];
+  Future<List<Clothes>?> loadClothesListOrNullFor(String ownerKey) async {
+    final items = _accountItems[_normalizeKey(ownerKey)];
     return items == null ? null : List<Clothes>.from(items);
   }
 
@@ -97,15 +99,12 @@ class FakeClosetStorage implements ClosetStorage {
   }
 
   @override
-  Future<void> saveClothesListFor(
-    String ownerEmail,
-    List<Clothes> items,
-  ) async {
+  Future<void> saveClothesListFor(String ownerKey, List<Clothes> items) async {
     if (saveClothesError case final error?) {
       throw error;
     }
 
-    _accountItems[_normalizeEmail(ownerEmail)] = List<Clothes>.from(items);
+    _accountItems[_normalizeKey(ownerKey)] = List<Clothes>.from(items);
   }
 
   @override
@@ -134,6 +133,37 @@ class FakeClosetStorage implements ClosetStorage {
   }
 
   @override
+  Future<void> saveUserId(int userId) async {
+    _savedUserId = userId;
+  }
+
+  @override
+  Future<int?> loadUserId() async {
+    return _savedUserId;
+  }
+
+  @override
+  Future<void> clearUserId() async {
+    _savedUserId = null;
+  }
+
+  @override
+  Future<void> saveLoginMethods(List<String> loginMethods) async {
+    _savedLoginMethods = List<String>.from(loginMethods);
+  }
+
+  @override
+  Future<List<String>?> loadLoginMethods() async {
+    final methods = _savedLoginMethods;
+    return methods == null ? null : List<String>.from(methods);
+  }
+
+  @override
+  Future<void> clearLoginMethods() async {
+    _savedLoginMethods = null;
+  }
+
+  @override
   Future<void> saveClosetSortOption(ClosetSortOption option) async {
     if (saveSortOptionError case final error?) {
       throw error;
@@ -150,7 +180,10 @@ class FakeClosetStorage implements ClosetStorage {
   /// 저장된 원시 문자열입니다. enum 이름이 아니라 storageValue가 기록됐는지 확인할 때 씁니다.
   String? get savedSortOptionRaw => _savedSortOption;
 
-  String _normalizeEmail(String value) {
+  /// 계정별 옷장이 저장된 주인 키들입니다. 키 형식에 기대지 않고 저장·삭제 여부만 볼 때 씁니다.
+  Iterable<String> get savedAccountKeys => _accountItems.keys;
+
+  String _normalizeKey(String value) {
     return value.trim().toLowerCase();
   }
 }

@@ -61,6 +61,41 @@ void main() {
     expectAppBanner(tester, '이 기기에 표시되는 닉네임이 바뀌었어요.', AppBannerKind.success);
   });
 
+  testWidgets('이메일이 없는 카카오 계정은 기본 이메일 대신 카카오 계정으로 보인다', (tester) async {
+    final provider = ClosetProvider(
+      storage: FakeClosetStorage(),
+      authSessionStorage: FakeAuthSessionStorage(),
+    );
+    await provider.setAuthenticatedUser(
+      nickname: '카카오 사용자',
+      email: null,
+      userId: 7,
+      loginMethods: const ['kakao'],
+      accessToken: 'access-token',
+      expiresInSeconds: 3600,
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => ThemeProvider()),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: SettingsScreen(),
+        ),
+      ),
+    );
+
+    expect(find.text('honggildong@kdpp.com'), findsNothing);
+    expect(find.text('이메일'), findsNothing);
+    // 프로필 카드와 '내 정보'의 로그인 칸 두 곳입니다.
+    expect(find.text('카카오 계정'), findsNWidgets(2));
+    expect(find.text('로그인'), findsOneWidget);
+  });
+
   testWidgets('비밀번호 변경은 서버 규칙과 같은 기준으로 먼저 걸러 낸다', (tester) async {
     var requestCount = 0;
     await _pumpSettings(

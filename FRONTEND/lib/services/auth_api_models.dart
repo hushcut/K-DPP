@@ -32,6 +32,13 @@ abstract final class AuthErrorCode {
   static const tooManyAttempts = 'TOO_MANY_ATTEMPTS';
 }
 
+/// 사용자 객체의 `login_methods` 값입니다(`BACKEND/API_CONTRACT.md` '사용자 객체').
+/// 목록에 '들어 있는지'로만 판단하고, 모르는 값은 무시합니다.
+abstract final class LoginMethod {
+  static const password = 'password';
+  static const kakao = 'kakao';
+}
+
 /// 기다릴 시간을 줄여 씁니다. 60초까지는 초(다시 받기 대기가 '1분'에서 '59초'로 튀지 않게),
 /// 1시간 미만은 분, 그 이상은 시간으로 올려 씁니다(서버 대기 문구와 같은 올림).
 String formatAuthWait(int seconds) {
@@ -244,23 +251,46 @@ class AuthUser {
     required this.id,
     required this.email,
     required this.nickname,
+    this.loginMethods = const [LoginMethod.password],
   });
 
   final int id;
-  final String email;
+
+  /// 카카오 계정은 이메일이 없어 null 입니다.
+  final String? email;
   final String nickname;
 
-  /// 필수 필드가 빠진 응답은 [FormatException]으로 거부합니다.
+  /// 이 계정으로 로그인하는 방법(`login_methods`)입니다.
+  final List<String> loginMethods;
+
+  /// 비밀번호로 로그인하는 계정인지 — 비밀번호 변경·탈퇴 확인 방식을 고릅니다.
+  bool get hasPasswordLogin => loginMethods.contains(LoginMethod.password);
+
+  /// id·닉네임이 빠진 응답은 [FormatException]으로 거부합니다.
+  ///
+  /// `login_methods` 가 없으면(그 칸이 생기기 전 서버) 이메일이 있을 때 비밀번호 계정으로 봅니다.
   factory AuthUser.fromJson(Map<String, dynamic> json) {
     final id = _parseInt(json['id']);
     final email = json['email']?.toString().trim() ?? '';
     final nickname = json['nickname']?.toString().trim() ?? '';
 
-    if (id == null || email.isEmpty || nickname.isEmpty) {
+    if (id == null || nickname.isEmpty) {
       throw const FormatException('사용자 정보 응답이 올바르지 않습니다.');
     }
 
-    return AuthUser(id: id, email: email, nickname: nickname);
+    final rawLoginMethods = json['login_methods'];
+    final loginMethods = rawLoginMethods is List
+        ? List<String>.unmodifiable(rawLoginMethods.whereType<String>())
+        : email.isEmpty
+        ? const <String>[]
+        : const [LoginMethod.password];
+
+    return AuthUser(
+      id: id,
+      email: email.isEmpty ? null : email,
+      nickname: nickname,
+      loginMethods: loginMethods,
+    );
   }
 
   static int? _parseInt(dynamic value) {

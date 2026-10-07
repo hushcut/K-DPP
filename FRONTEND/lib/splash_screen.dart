@@ -80,6 +80,8 @@ class _SplashScreenState extends State<SplashScreen>
               await provider.setUserProfile(
                 nickname: user.nickname,
                 email: user.email,
+                userId: user.id,
+                loginMethods: user.loginMethods,
               );
               await provider.synchronizeServerHistory(history);
             } catch (error, stackTrace) {
