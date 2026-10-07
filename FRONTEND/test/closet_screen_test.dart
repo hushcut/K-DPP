@@ -702,6 +702,45 @@ void main() {
         expect(ticks(haptics), 2);
       });
 
+      // 2026-10-05 Android 확인(이슈 #18): 한 번 끈 카드는 그 뒤 밀려나도 틱이 나지 않았다.
+      // 끄는 동안 카드가 오버레이로 옮겨졌다 돌아오면서 목록을 다시 찾지 못했다.
+      // 윈도우 재현과 같이 맨 위 카드를 한 칸 내리기를 네 번 한다 — 두 번째부터는
+      // 밀려나는 카드가 바로 전에 끌었던 카드다.
+      testWidgets('한 번 끌었던 카드도 그 뒤 밀려날 때마다 틱이 울린다', (tester) async {
+        await tester.binding.setSurfaceSize(const Size(800, 1600));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final haptics = _recordHaptics(tester);
+        await pumpReorderMode(tester, titles: titles);
+
+        double top(String title) => tester.getTopLeft(find.text(title)).dy;
+        String topmost() => titles.reduce((a, b) => top(a) <= top(b) ? a : b);
+        final gap = top('홍길동 카드 3') - top('홍길동 카드 2');
+
+        var dragged = '홍길동 카드 1';
+        var pushed = '홍길동 카드 2';
+        for (var round = 1; round <= 4; round++) {
+          expect(topmost(), dragged, reason: '$round번째');
+          final before = ticks(haptics);
+          // 집어 들며 20 내렸으니 나머지만큼 내리면 한 장만 밀려난다.
+          final gesture = await liftFirstCard(tester, title: dragged);
+          for (var i = 0; i < 10; i++) {
+            await gesture.moveBy(Offset(0, (gap - 20) / 10));
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(
+            ticks(haptics) - before,
+            1,
+            reason: '$round번째: 밀려난 카드 $pushed',
+          );
+
+          await gesture.up();
+          await tester.pumpAndSettle();
+          expect(topmost(), pushed, reason: '$round번째: 한 칸 내려놓음');
+          (dragged, pushed) = (pushed, dragged);
+        }
+      });
+
       testWidgets('자동 스크롤 중에도 밀려나는 카드에만 울리고, 스크롤만으로는 울리지 않는다', (tester) async {
         await tester.binding.setSurfaceSize(const Size(800, 700));
         addTearDown(() => tester.binding.setSurfaceSize(null));

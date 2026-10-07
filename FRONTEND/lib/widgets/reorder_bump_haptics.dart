@@ -77,7 +77,6 @@ class ReorderBumpProbe extends StatefulWidget {
 }
 
 class _ReorderBumpProbeState extends State<ReorderBumpProbe> {
-  ScrollableState? _scrollable;
   double? _lastOffset;
   int _lastDirection = 0;
 
@@ -85,12 +84,6 @@ class _ReorderBumpProbeState extends State<ReorderBumpProbe> {
   void initState() {
     super.initState();
     widget.tracker._probes.add(this);
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _scrollable = Scrollable.maybeOf(context);
   }
 
   @override
@@ -115,8 +108,13 @@ class _ReorderBumpProbeState extends State<ReorderBumpProbe> {
   }
 
   // 목록 내용 기준 위치(스크롤로 움직인 만큼을 뺀 위치)입니다. 목록 밖이면 null.
+  //
+  // 목록은 매번 새로 찾습니다. 순서 바꾸기 목록은 끄는 동안 이 카드를 오버레이로 옮겼다가
+  // 놓으면 되돌리는데, 오버레이에서 `Scrollable.maybeOf` 가 목록을 못 찾으면 의존성이 남지 않아
+  // 되돌아와도 didChangeDependencies 가 다시 불리지 않습니다(framework.dart `Element.activate`).
+  // 그때 찾아 둔 값을 쓰면 한 번 끈 카드는 그 뒤 밀려나도 틱이 나지 않았습니다(2026-10-05 Android 확인).
   double? _contentOffset() {
-    final scrollable = _scrollable;
+    final scrollable = context.findAncestorStateOfType<ScrollableState>();
     final box = context.findRenderObject();
     if (scrollable == null ||
         !scrollable.position.hasPixels ||

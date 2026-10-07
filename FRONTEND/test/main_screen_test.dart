@@ -162,6 +162,50 @@ void main() {
     expect(find.byType(ScanScreen, skipOffstage: false), findsNothing);
   });
 
+  // 2026-10-05 Android 확인(이슈 #18 1차 5): 리포트 앱바만 44 라 "<" 가 6dp 위에 있었다.
+  testWidgets('리포트의 "<" 는 스캔 화면의 "<" 와 같은 높이에 있다', (tester) async {
+    final provider = ClosetProvider(storage: FakeClosetStorage());
+    await provider.addClothes(
+      Clothes(
+        title: '홍길동 코튼 셔츠',
+        category: '상의',
+        health: 88,
+        materials: {'cotton': 100},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: 4.2,
+      ),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+          ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
+        ],
+        child: MaterialApp(
+          builder: AppBannerHost.builder,
+          home: const MainScreen(
+            initialArguments: MainScreenArguments(
+              initialIndex: 1,
+              showReport: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final reportBack = tester.getCenter(find.byTooltip('리포트 닫기'));
+    await tester.tap(find.byTooltip('리포트 닫기'));
+    await tester.pump();
+    await tester.pump(routeTransition);
+    final scanBack = tester.getCenter(find.byTooltip('스캔 화면 닫기'));
+
+    expect(reportBack.dy, scanBack.dy);
+    expect(reportBack.dx, scanBack.dx);
+  });
+
   testWidgets('스캔 저장 직후 리포트에서 의류를 지우면 스캔 화면까지 닫히고 옷장 탭이 보인다', (tester) async {
     final provider = ClosetProvider(storage: FakeClosetStorage());
     await provider.addClothes(
