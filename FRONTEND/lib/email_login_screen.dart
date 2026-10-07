@@ -295,12 +295,13 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                         ),
                         const SizedBox(height: 18),
                         AuthLinkButton(
-                          label: '비밀번호를 잊으셨나요?',
+                          action: '비밀번호를 잊으셨나요?',
                           onPressed: _openPasswordReset,
                         ),
                         const SizedBox(height: 4),
                         AuthLinkButton(
-                          label: '계정이 없으신가요? 회원가입',
+                          prompt: '계정이 없으신가요?',
+                          action: '회원가입',
                           onPressed: () async {
                             // 회원가입이 pop으로 돌아오면 이 화면을 재사용하고,
                             // 전달된 이메일이 있으면 로그인 폼에 채웁니다.

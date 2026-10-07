@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -11,11 +12,13 @@ import 'package:k_dpp/services/auth_api_service.dart';
 import 'package:k_dpp/settings_screen.dart';
 import 'package:k_dpp/theme_provider.dart';
 import 'package:k_dpp/widgets/app_banner.dart';
+import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
 import 'package:provider/provider.dart';
 
 import 'helpers/app_banner_expect.dart';
 import 'helpers/fake_auth_session_storage.dart';
 import 'helpers/fake_closet_storage.dart';
+import 'helpers/fake_kakao_sdk.dart';
 
 void main() {
   testWidgets('닉네임 수정은 2자 이상만 기기 표시값으로 저장한다', (tester) async {
@@ -536,6 +539,340 @@ void main() {
     expect(find.text('카메라는 스캔 화면에서만 켜지고, 다른 화면에서는 사용하지 않습니다.'), findsOneWidget);
     expect(find.text('카메라로 새로 촬영한 임시 파일은 분석이 끝난 뒤 정리합니다.'), findsOneWidget);
   });
+
+  group('카카오 계정', () {
+    testWidgets('비밀번호가 없는 카카오 계정은 비밀번호 변경을 숨긴다', (tester) async {
+      await _pumpSettings(
+        tester,
+        client: MockClient((_) async => http.Response('{}', 200)),
+        account: _kakaoAccount,
+        kakao: FakeKakaoSdk(),
+      );
+
+      await tester.scrollUntilVisible(
+        find.text('회원 탈퇴'),
+        220,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('비밀번호 변경'), findsNothing);
+      expect(find.text('로그아웃'), findsOneWidget);
+    });
+
+    testWidgets('탈퇴는 카카오계정으로 다시 로그인해 받은 새 토큰으로 확인하고, 기기의 카카오 토큰도 지운다', (
+      tester,
+    ) async {
+      late http.Request captured;
+      final storage = FakeClosetStorage();
+      final kakao = FakeKakaoSdk()..nextAccountLogin = 'fresh-kakao-token';
+      final harness = await _pumpSettings(
+        tester,
+        storage: storage,
+        account: _kakaoAccount,
+        kakao: kakao,
+        client: MockClient((request) async {
+          captured = request;
+          return http.Response(
+            jsonEncode({'status': 'success', 'message': '회원 탈퇴가 완료되었습니다.'}),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }),
+      );
+
+      expect(await storage.hasSavedClothesListFor('user:7'), isTrue);
+
+      await _openAccountMenu(tester, '회원 탈퇴');
+
+      // 비밀번호 칸 대신 카카오로 확인하는 버튼 하나다.
+      expect(find.byType(TextField), findsNothing);
+
+      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.pumpAndSettle();
+
+      // 로그인 때 저장된 토큰이 아니라, 카카오계정 로그인 화면에서 다시 받은 토큰이다.
+      expect(kakao.accountLoginPrompts, [
+        [Prompt.login],
+      ]);
+      expect(captured.url.path, '/auth/withdraw');
+      expect(captured.headers['Authorization'], 'Bearer access-token');
+      expect(jsonDecode(captured.body), {
+        'kakao_access_token': 'fresh-kakao-token',
+      });
+      expect(harness.isAuthenticated, isFalse);
+      expect(await storage.hasSavedClothesListFor('user:7'), isFalse);
+      expect(kakao.logoutCount, 1);
+      expect(find.text('로그인 화면'), findsOneWidget);
+      expectAppBanner(tester, '회원 탈퇴가 완료됐어요.', AppBannerKind.success);
+    });
+
+    testWidgets('카카오 재로그인을 취소하면 탈퇴 요청 없이 대화상자를 그대로 둔다', (tester) async {
+      var requestCount = 0;
+      final kakao = FakeKakaoSdk()..nextAccountLogin = FakeKakaoSdk.cancelled();
+      final harness = await _pumpSettings(
+        tester,
+        account: _kakaoAccount,
+        kakao: kakao,
+        client: MockClient((_) async {
+          requestCount++;
+          return http.Response('{}', 200);
+        }),
+      );
+
+      await _openAccountMenu(tester, '회원 탈퇴');
+      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.pumpAndSettle();
+
+      expect(requestCount, 0);
+      expect(harness.isAuthenticated, isTrue);
+      expect(find.text('카카오로 확인하고 탈퇴'), findsOneWidget);
+      expect(find.byType(AppBannerView), findsNothing);
+
+      // 다시 누를 수 있다.
+      kakao.nextAccountLogin = FakeKakaoSdk.cancelled();
+      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.pumpAndSettle();
+
+      expect(kakao.accountLoginPrompts, hasLength(2));
+    });
+
+    testWidgets('카카오 재로그인이 취소가 아닌 이유로 실패하면 서버를 부르지 않고 대화상자에 알린다', (
+      tester,
+    ) async {
+      var requestCount = 0;
+      await _pumpSettings(
+        tester,
+        account: _kakaoAccount,
+        kakao: FakeKakaoSdk()
+          ..nextAccountLogin = PlatformException(code: 'NetworkError'),
+        client: MockClient((_) async {
+          requestCount++;
+          return http.Response('{}', 200);
+        }),
+      );
+
+      await _openAccountMenu(tester, '회원 탈퇴');
+      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.pumpAndSettle();
+
+      expect(requestCount, 0);
+      expect(find.text('카카오 로그인을 마치지 못했어요. 잠시 후 다시 시도해 주세요.'), findsOneWidget);
+      expect(find.text('카카오로 확인하고 탈퇴'), findsOneWidget);
+    });
+
+    testWidgets('가입한 카카오 계정이 아니면 대화상자에 알리고 기기 데이터를 건드리지 않는다', (tester) async {
+      final storage = FakeClosetStorage();
+      final kakao = FakeKakaoSdk();
+      final harness = await _pumpSettings(
+        tester,
+        storage: storage,
+        account: _kakaoAccount,
+        kakao: kakao,
+        client: MockClient(
+          (_) async => _kakaoWithdrawError(
+            400,
+            'SOCIAL_ACCOUNT_MISMATCH',
+            '이 계정에 연결된 카카오 계정이 아닙니다. 가입한 카카오 계정으로 다시 로그인해 주세요.',
+          ),
+        ),
+      );
+
+      await _openAccountMenu(tester, '회원 탈퇴');
+      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('가입한 카카오 계정이 아니에요. 가입한 카카오 계정으로 다시 확인해 주세요.'),
+        findsOneWidget,
+      );
+      expect(find.text('카카오로 확인하고 탈퇴'), findsOneWidget);
+      expect(harness.isAuthenticated, isTrue);
+      expect(await storage.hasSavedClothesListFor('user:7'), isTrue);
+      expect(kakao.logoutCount, 0);
+    });
+
+    testWidgets('카카오가 응답하지 않아 거절된 뒤의 401은 탈퇴가 진행되지 않았다고 안내한다', (tester) async {
+      // 502·503 은 계정을 지우기 전에 나므로(SCAN_API_CONTRACT 2-3) '결과 모름'으로 치지 않는다.
+      var requestCount = 0;
+      final storage = FakeClosetStorage();
+      await _pumpSettings(
+        tester,
+        storage: storage,
+        account: _kakaoAccount,
+        kakao: FakeKakaoSdk(),
+        client: MockClient((_) async {
+          requestCount++;
+          if (requestCount == 1) {
+            return _kakaoWithdrawError(
+              502,
+              'SOCIAL_PROVIDER_UNAVAILABLE',
+              '카카오 서버가 응답하지 않습니다. 잠시 후 다시 시도해 주세요.',
+            );
+          }
+          return _withdrawUnauthorized();
+        }),
+      );
+
+      await _openAccountMenu(tester, '회원 탈퇴');
+      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('카카오가 응답하지 않아 탈퇴되지 않았어요. 잠시 후 다시 시도해 주세요.'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.pumpAndSettle();
+
+      expect(requestCount, 2);
+      expect(await storage.hasSavedClothesListFor('user:7'), isTrue);
+      expect(find.text('로그인 화면'), findsOneWidget);
+      expectAppBanner(
+        tester,
+        '로그인이 만료돼 탈퇴되지 않았어요. 다시 로그인한 뒤 탈퇴해 주세요.',
+        AppBannerKind.failure,
+      );
+    });
+
+    testWidgets('서버에 카카오 설정이 없으면 탈퇴되지 않았다고 대화상자에 알린다', (tester) async {
+      await _pumpSettings(
+        tester,
+        account: _kakaoAccount,
+        kakao: FakeKakaoSdk(),
+        client: MockClient(
+          (_) async => _kakaoWithdrawError(
+            503,
+            'SOCIAL_LOGIN_UNAVAILABLE',
+            '이 서버에서는 카카오 로그인을 쓸 수 없습니다.',
+          ),
+        ),
+      );
+
+      await _openAccountMenu(tester, '회원 탈퇴');
+      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('지금은 카카오로 확인할 수 없어 탈퇴되지 않았어요.'), findsOneWidget);
+    });
+
+    testWidgets('카카오 재로그인 중에는 대화상자를 닫거나 다시 누를 수 없다', (tester) async {
+      final kakao = FakeKakaoSdk();
+      final pendingLogin = Completer<String>();
+      kakao.nextAccountLogin = pendingLogin;
+      await _pumpSettings(
+        tester,
+        account: _kakaoAccount,
+        kakao: kakao,
+        client: MockClient((_) async => http.Response('{}', 200)),
+      );
+
+      await _openAccountMenu(tester, '회원 탈퇴');
+      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.pump();
+
+      await tester.tap(find.text('취소'));
+      await tester.pump();
+
+      expect(find.text('회원 탈퇴'), findsWidgets);
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(kakao.accountLoginPrompts, hasLength(1));
+
+      pendingLogin.completeError(FakeKakaoSdk.cancelled());
+      await tester.pumpAndSettle();
+
+      expect(find.text('카카오로 확인하고 탈퇴'), findsOneWidget);
+    });
+
+    testWidgets('카카오 계정 로그아웃은 기기의 카카오 토큰도 지운다', (tester) async {
+      final kakao = FakeKakaoSdk();
+      final harness = await _pumpSettings(
+        tester,
+        account: _kakaoAccount,
+        kakao: kakao,
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({'status': 'success', 'message': '로그아웃되었습니다.'}),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          ),
+        ),
+      );
+
+      await _openAccountMenu(tester, '로그아웃');
+      await tester.tap(find.widgetWithText(ElevatedButton, '로그아웃'));
+      await tester.pumpAndSettle();
+
+      expect(kakao.logoutCount, 1);
+      expect(harness.isAuthenticated, isFalse);
+      expect(find.text('로그인 화면'), findsOneWidget);
+      expect(find.byType(AppBannerView), findsNothing);
+    });
+  });
+
+  testWidgets('이메일 계정 로그아웃은 카카오 SDK 를 부르지 않는다', (tester) async {
+    final kakao = FakeKakaoSdk();
+    await _pumpSettings(
+      tester,
+      kakao: kakao,
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({'status': 'success', 'message': '로그아웃되었습니다.'}),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        ),
+      ),
+    );
+
+    await _openAccountMenu(tester, '로그아웃');
+    await tester.tap(find.widgetWithText(ElevatedButton, '로그아웃'));
+    await tester.pumpAndSettle();
+
+    expect(kakao.logoutCount, 0);
+    expect(find.text('로그인 화면'), findsOneWidget);
+  });
+}
+
+/// 설정 화면 테스트의 로그인 계정입니다. 옷장 주인 키는 이메일 계정이면 이메일, 카카오 계정이면
+/// `user:<id>` 입니다(`ClosetProvider._closetOwnerKeyFor`).
+typedef _Account = ({
+  String? email,
+  int? userId,
+  List<String>? loginMethods,
+  String closetOwnerKey,
+});
+
+const _Account _emailAccount = (
+  email: 'honggildong@example.com',
+  userId: null,
+  loginMethods: null,
+  closetOwnerKey: 'honggildong@example.com',
+);
+
+const _Account _kakaoAccount = (
+  email: null,
+  userId: 7,
+  loginMethods: ['kakao'],
+  closetOwnerKey: 'user:7',
+);
+
+/// 카카오 계정 탈퇴에만 있는 오류 응답(SCAN_API_CONTRACT 2-3)입니다.
+http.Response _kakaoWithdrawError(
+  int statusCode,
+  String errorCode,
+  String message,
+) {
+  return http.Response(
+    jsonEncode({
+      'status': 'error',
+      'error_code': errorCode,
+      'message': message,
+      'detail': {'message': message, 'error_code': errorCode},
+    }),
+    statusCode,
+    headers: {'content-type': 'application/json; charset=utf-8'},
+  );
 }
 
 
@@ -546,6 +883,8 @@ Future<ClosetProvider> _pumpSettings(
   WidgetTester tester, {
   required MockClient client,
   FakeClosetStorage? storage,
+  _Account account = _emailAccount,
+  FakeKakaoSdk? kakao,
 }) async {
   final resolvedStorage = storage ?? FakeClosetStorage();
   final provider = ClosetProvider(
@@ -554,12 +893,14 @@ Future<ClosetProvider> _pumpSettings(
   );
   await provider.setAuthenticatedUser(
     nickname: '홍길동',
-    email: 'honggildong@example.com',
+    email: account.email,
+    userId: account.userId,
+    loginMethods: account.loginMethods,
     accessToken: 'access-token',
     expiresInSeconds: 3600,
   );
   // 탈퇴가 계정 전용 옷장까지 지우는지 보려면 저장된 옷장 키가 먼저 있어야 합니다.
-  await resolvedStorage.saveClothesListFor('honggildong@example.com', const []);
+  await resolvedStorage.saveClothesListFor(account.closetOwnerKey, const []);
 
   await tester.pumpWidget(
     MultiProvider(
@@ -575,6 +916,7 @@ Future<ClosetProvider> _pumpSettings(
             baseUrl: 'https://example.test',
             client: client,
           ),
+          kakaoLoginService: kakao?.service(),
         ),
         routes: {
           '/login': (_) => const Scaffold(body: Text('로그인 화면')),

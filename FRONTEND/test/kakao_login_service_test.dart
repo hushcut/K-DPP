@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/services/kakao_login_service.dart';
@@ -25,6 +27,8 @@ class _FakeKakaoSdk {
     this.talkError,
     this.accountResult,
     this.accountError,
+    this.logoutError,
+    this.logoutCompleter,
   });
 
   final bool talkInstalled;
@@ -32,11 +36,15 @@ class _FakeKakaoSdk {
   final Object? talkError;
   final OAuthToken? accountResult;
   final Object? accountError;
+  final Object? logoutError;
+  final Completer<void>? logoutCompleter;
 
   final calls = <String>[];
   List<Prompt>? lastPrompts;
 
-  KakaoLoginService service() {
+  KakaoLoginService service({
+    Duration signOutTimeout = const Duration(seconds: 5),
+  }) {
     return KakaoLoginService(
       isKakaoTalkInstalled: () async => talkInstalled,
       loginWithKakaoTalk: () async {
@@ -50,6 +58,12 @@ class _FakeKakaoSdk {
         if (accountError case final error?) throw error;
         return accountResult!;
       },
+      logout: () async {
+        calls.add('logout');
+        if (logoutError case final error?) throw error;
+        await logoutCompleter?.future;
+      },
+      signOutTimeout: signOutTimeout,
     );
   }
 }
@@ -150,6 +164,44 @@ void main() {
       final sdk = _FakeKakaoSdk(accountError: _cancelled());
 
       expect(await sdk.service().reauthenticate(), isNull);
+    });
+  });
+
+  group('signOut', () {
+    test('기기에 저장된 카카오 토큰을 지우도록 SDK 로그아웃을 부른다', () async {
+      final sdk = _FakeKakaoSdk();
+
+      await sdk.service().signOut();
+
+      expect(sdk.calls, ['logout']);
+    });
+
+    test('카카오 서버 요청이 실패해도 예외를 밖으로 내지 않는다', () async {
+      // SDK 는 요청이 실패해도 끝날 때 기기 토큰을 지운다(UserApi.logout 의 finally).
+      // 이미 연결이 끊긴 탈퇴 뒤에는 늘 실패한다.
+      final sdk = _FakeKakaoSdk(
+        logoutError: KakaoApiException(
+          ApiErrorCause.invalidToken,
+          'this access token does not exist',
+        ),
+      );
+
+      await sdk.service().signOut();
+
+      expect(sdk.calls, ['logout']);
+    });
+
+    test('카카오가 답하지 않아도 정한 시간만 기다리고 끝난다', () async {
+      // SDK 요청에는 시간 제한이 없어, 로그아웃 화면이 카카오를 기다리며 멈추지 않게 한다.
+      final sdk = _FakeKakaoSdk(logoutCompleter: Completer<void>());
+      final stopwatch = Stopwatch()..start();
+
+      await sdk
+          .service(signOutTimeout: const Duration(milliseconds: 50))
+          .signOut();
+
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 2)));
+      expect(sdk.calls, ['logout']);
     });
   });
 }

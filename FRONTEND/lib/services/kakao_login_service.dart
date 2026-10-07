@@ -25,15 +25,22 @@ class KakaoLoginService {
     Future<bool> Function()? isKakaoTalkInstalled,
     Future<OAuthToken> Function()? loginWithKakaoTalk,
     Future<OAuthToken> Function({List<Prompt>? prompts})? loginWithKakaoAccount,
+    Future<void> Function()? logout,
+    this.signOutTimeout = const Duration(seconds: 5),
   }) : _isKakaoTalkInstalled = isKakaoTalkInstalled ?? _sdkIsKakaoTalkInstalled,
        _loginWithKakaoTalk = loginWithKakaoTalk ?? _sdkLoginWithKakaoTalk,
        _loginWithKakaoAccount =
-           loginWithKakaoAccount ?? _sdkLoginWithKakaoAccount;
+           loginWithKakaoAccount ?? _sdkLoginWithKakaoAccount,
+       _logout = logout ?? _sdkLogout;
 
   final Future<bool> Function() _isKakaoTalkInstalled;
   final Future<OAuthToken> Function() _loginWithKakaoTalk;
   final Future<OAuthToken> Function({List<Prompt>? prompts})
   _loginWithKakaoAccount;
+  final Future<void> Function() _logout;
+
+  /// [signOut] 이 카카오 서버 응답을 기다리는 최대 시간입니다. SDK 요청에는 시간 제한이 없습니다.
+  final Duration signOutTimeout;
 
   /// 카카오톡이 있으면 카카오톡으로, 없으면 카카오계정으로 로그인한다(카카오 문서의 기본 흐름).
   ///
@@ -59,6 +66,20 @@ class KakaoLoginService {
   /// (`docs/SCAN_API_CONTRACT.md` 2-3).
   Future<String?> reauthenticate() {
     return _loginWithAccount(prompts: const [Prompt.login]);
+  }
+
+  /// 카카오 계정의 로그아웃·탈퇴 뒤 기기에 저장된 카카오 토큰을 지운다(DECISIONS 183 ⑤).
+  ///
+  /// 앱은 저장된 카카오 토큰을 다시 쓰지 않지만 남겨 둘 이유도 없다. SDK 는 카카오 서버 요청이
+  /// 실패해도 요청이 끝날 때 기기 토큰을 지우므로(`UserApi.logout` 의 finally) 실패는 기록만
+  /// 하고, [signOutTimeout] 이 지나면 기다리지 않는다 — 그 뒤 요청이 끝나도 SDK 가 지운다.
+  /// 브라우저의 카카오계정 로그인 상태는 이것으로 지워지지 않는다.
+  Future<void> signOut() async {
+    try {
+      await _logout().timeout(signOutTimeout);
+    } catch (error) {
+      debugPrint('카카오 SDK 로그아웃을 마치지 못했습니다: $error');
+    }
   }
 
   Future<String?> _loginWithAccount({List<Prompt>? prompts}) async {
@@ -88,5 +109,9 @@ class KakaoLoginService {
 
   static Future<OAuthToken> _sdkLoginWithKakaoAccount({List<Prompt>? prompts}) {
     return UserApi.instance.loginWithKakaoAccount(prompts: prompts);
+  }
+
+  static Future<void> _sdkLogout() async {
+    await UserApi.instance.logout();
   }
 }

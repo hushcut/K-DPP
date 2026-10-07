@@ -7,17 +7,35 @@ import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'material_name_display_provider.dart';
 import 'services/auth_api_service.dart';
+import 'services/kakao_login_service.dart';
 import 'theme/app_palette.dart';
 import 'theme_provider.dart';
+import 'utils/accessibility_announcer.dart';
 import 'utils/session_expiry_handler.dart';
 import 'widgets/app_back_button.dart';
 import 'widgets/app_banner.dart';
 
 /// 사용자·테마 상태를 읽어 설정 메뉴를 구성하고 각 설정 동작을 실행합니다.
 class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({super.key, this.authApiService});
+  const SettingsScreen({
+    super.key,
+    this.authApiService,
+    this.kakaoLoginService,
+  });
 
   final AuthApiService? authApiService;
+
+  /// 카카오 계정의 탈퇴 확인(재로그인)과 로그아웃·탈퇴 뒤 기기의 카카오 토큰 지우기에 씁니다.
+  final KakaoLoginService? kakaoLoginService;
+
+  /// 카카오 계정이면 기기에 저장된 카카오 SDK 토큰을 지웁니다(DECISIONS 183 ⑤).
+  ///
+  /// 기다리지 않습니다 — 카카오가 늦어도 로그아웃·탈퇴 화면이 멈추지 않게. SDK 는 요청이
+  /// 끝날 때 토큰을 지우고, [KakaoLoginService.signOut] 은 실패를 밖으로 내지 않습니다.
+  void _signOutKakaoIfNeeded(bool isKakaoAccount) {
+    if (!isKakaoAccount) return;
+    unawaited((kakaoLoginService ?? KakaoLoginService()).signOut());
+  }
 
   String _themeModeLabel(ThemeMode mode) {
     switch (mode) {
@@ -97,6 +115,7 @@ class SettingsScreen extends StatelessWidget {
 
     final provider = context.read<ClosetProvider>();
     final accessToken = provider.accessToken;
+    final isKakaoAccount = provider.loginMethods.contains(LoginMethod.kakao);
     bool serverLogoutFailed = false;
     bool localLogoutStorageFailed = false;
 
@@ -133,6 +152,8 @@ class SettingsScreen extends StatelessWidget {
         serverLogoutFailed = true;
       }
     }
+
+    _signOutKakaoIfNeeded(isKakaoAccount);
 
     try {
       await provider.logout();
@@ -243,12 +264,18 @@ class SettingsScreen extends StatelessWidget {
       return;
     }
 
+    final isKakaoAccount = provider.loginMethods.contains(LoginMethod.kakao);
+
     final outcome = await showDialog<_AccountActionResult>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => _WithdrawDialog(
         service: authApiService ?? AuthApiService(),
         accessToken: accessToken,
+        // 비밀번호가 없는 계정(카카오)은 비밀번호 대신 카카오 재로그인으로 확인합니다.
+        kakaoLoginService: provider.hasPasswordLogin
+            ? null
+            : kakaoLoginService ?? KakaoLoginService(),
       ),
     );
 
@@ -268,6 +295,9 @@ class SettingsScreen extends StatelessWidget {
     }
 
     bool localPurgeFailed = false;
+
+    // 서버가 카카오 연결을 이미 끊었으니 기기에 남은 카카오 토큰도 쓸모가 없습니다.
+    _signOutKakaoIfNeeded(isKakaoAccount);
 
     try {
       await provider.purgeAccountData();
@@ -475,6 +505,8 @@ class SettingsScreen extends StatelessWidget {
     // 이메일이 없는 계정(카카오)은 기본 이메일 대신 로그인 방법을 보여 줍니다.
     final accountEmail = context.watch<ClosetProvider>().accountEmail;
     final accountLabel = accountEmail ?? '카카오 계정';
+    // 비밀번호가 없는 계정(카카오)은 바꿀 비밀번호가 없습니다(서버도 400 PASSWORD_NOT_SET).
+    final hasPasswordLogin = context.watch<ClosetProvider>().hasPasswordLogin;
     final themeMode = context.watch<ThemeProvider>().themeMode;
     final materialNameDisplay = context
         .watch<MaterialNameDisplayProvider>()
@@ -643,15 +675,17 @@ class SettingsScreen extends StatelessWidget {
           _buildSectionTitle('계정 관리', sectionText),
           _buildCard(
             [
-              _buildMenuTile(
-                icon: Icons.lock_outline,
-                title: '비밀번호 변경',
-                subtitle: '비밀번호를 다시 설정합니다.',
-                textColor: primaryText,
-                subtitleColor: secondaryText,
-                onTap: () => _changePassword(context),
-              ),
-              Divider(height: 1, color: borderColor),
+              if (hasPasswordLogin) ...[
+                _buildMenuTile(
+                  icon: Icons.lock_outline,
+                  title: '비밀번호 변경',
+                  subtitle: '비밀번호를 다시 설정합니다.',
+                  textColor: primaryText,
+                  subtitleColor: secondaryText,
+                  onTap: () => _changePassword(context),
+                ),
+                Divider(height: 1, color: borderColor),
+              ],
               _buildMenuTile(
                 icon: Icons.logout,
                 title: '로그아웃',
@@ -801,9 +835,11 @@ mixin _AccountActionRunner<T extends StatefulWidget> on State<T> {
   /// 요청을 한 번만 실행하고, 실패 메시지를 대화상자에 표시하도록 돌려줍니다.
   ///
   /// 401만 상위 화면으로 올려 세션 만료로 처리하고 나머지 오류는 여기서 보여 줍니다.
+  /// [describeFailure] 를 주면 서버 오류의 문구를 그 대화상자에 맞게 고릅니다.
   Future<void> runAccountAction({
     required Future<_AccountActionResult> Function() action,
     required void Function(String message) onFailure,
+    String Function(AuthApiException error)? describeFailure,
   }) async {
     if (_isSubmitting) return;
 
@@ -829,7 +865,7 @@ mixin _AccountActionRunner<T extends StatefulWidget> on State<T> {
       setState(() {
         _isSubmitting = false;
       });
-      onFailure(error.userMessage);
+      onFailure(describeFailure?.call(error) ?? error.userMessage);
     } catch (error) {
       if (!mounted) return;
 
@@ -1000,10 +1036,17 @@ class _PasswordChangeDialogState extends State<_PasswordChangeDialog>
 
 /// 되돌릴 수 없는 작업임을 알리고 비밀번호를 확인받아 탈퇴를 수행하는 대화상자입니다.
 class _WithdrawDialog extends StatefulWidget {
-  const _WithdrawDialog({required this.service, required this.accessToken});
+  const _WithdrawDialog({
+    required this.service,
+    required this.accessToken,
+    this.kakaoLoginService,
+  });
 
   final AuthApiService service;
   final String accessToken;
+
+  /// 있으면 비밀번호 대신 카카오계정 재로그인으로 확인합니다(비밀번호가 없는 카카오 계정).
+  final KakaoLoginService? kakaoLoginService;
 
   @override
   State<_WithdrawDialog> createState() => _WithdrawDialogState();
@@ -1016,9 +1059,17 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
 
   /// 앞선 탈퇴 요청이 서버에서 처리됐는지 모르는 채 끝난 적이 있는지 여부입니다.
   ///
-  /// 400 계열(비밀번호 불일치·잠금)은 서버가 삭제 전에 거절한 것이지만, 네트워크·
-  /// 시간 초과·서버 오류는 삭제를 마친 뒤 응답만 잃었을 수도 있습니다.
+  /// 400 계열(비밀번호 불일치·잠금·카카오 확인 실패)과 카카오의 502·503 은 서버가 삭제 전에
+  /// 거절한 것이지만, 네트워크·시간 초과·그 밖의 서버 오류는 삭제를 마친 뒤 응답만 잃었을
+  /// 수도 있습니다.
   bool _earlierAttemptUnresolved = false;
+
+  /// 카카오계정 재로그인 화면이 떠 있는지입니다. 그동안도 대화상자를 닫거나 다시 누를 수 없습니다.
+  bool _isKakaoSigningIn = false;
+
+  bool get _isBusy => isSubmitting || _isKakaoSigningIn;
+
+  bool get _usesKakao => widget.kakaoLoginService != null;
 
   @override
   void dispose() {
@@ -1027,7 +1078,7 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
   }
 
   Future<void> _submit() async {
-    if (isSubmitting) return;
+    if (_isBusy) return;
 
     final password = _passwordController.text;
 
@@ -1036,13 +1087,82 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
       return;
     }
 
+    await _withdraw(
+      () => widget.service.withdraw(
+        accessToken: widget.accessToken,
+        password: password,
+      ),
+    );
+  }
+
+  /// 카카오계정 로그인을 다시 해 받은 새 토큰으로 탈퇴를 확인합니다. 로그인 때 받아 SDK 에
+  /// 저장된 토큰을 쓰면 사용자 입력 없이 탈퇴되므로 늘 새로 받습니다(SCAN_API_CONTRACT 2-3).
+  Future<void> _submitWithKakao() async {
+    if (_isBusy) return;
+
+    setState(() {
+      _isKakaoSigningIn = true;
+      _errorText = null;
+    });
+
+    final String? kakaoAccessToken;
+
+    try {
+      kakaoAccessToken = await widget.kakaoLoginService!.reauthenticate();
+    } on KakaoLoginException catch (error) {
+      debugPrint('탈퇴 확인용 카카오 로그인을 마치지 못했습니다: ${error.cause}');
+
+      if (!mounted) return;
+
+      setState(() => _isKakaoSigningIn = false);
+      _showKakaoError(error.userMessage);
+      return;
+    }
+
+    if (!mounted) return;
+
+    setState(() => _isKakaoSigningIn = false);
+
+    // 카카오 화면에서 취소하면 대화상자를 그대로 둡니다.
+    if (kakaoAccessToken == null) return;
+
+    await _withdraw(
+      () => widget.service.withdrawWithKakao(
+        accessToken: widget.accessToken,
+        kakaoAccessToken: kakaoAccessToken!,
+      ),
+    );
+  }
+
+  /// 카카오 확인에는 입력란이 없어 오류 문장을 따로 읽어 줍니다(입력란 오류처럼).
+  void _showKakaoError(String message) {
+    setState(() => _errorText = message);
+    announceFieldError(context, message);
+  }
+
+  /// 삭제 전에 서버가 거절한 오류인지 — 그러면 다음 401 은 '진행되지 않음'입니다.
+  static bool _rejectedBeforeDeletion(AuthApiException error) {
+    // 카카오 502·503 은 상태 코드가 아니라 error_code 로 봅니다. 본문 없는 프록시 502 는
+    // 결과를 모르는 서버 오류입니다.
+    return error.type == AuthApiErrorType.badRequest ||
+        error.errorCode == AuthErrorCode.socialProviderUnavailable ||
+        error.errorCode == AuthErrorCode.socialLoginUnavailable;
+  }
+
+  static String _describeFailure(AuthApiException error) {
+    return switch (error.errorCode) {
+      AuthErrorCode.socialProviderUnavailable =>
+        '카카오가 응답하지 않아 탈퇴되지 않았어요. 잠시 후 다시 시도해 주세요.',
+      AuthErrorCode.socialLoginUnavailable => '지금은 카카오로 확인할 수 없어 탈퇴되지 않았어요.',
+      _ => error.userMessage,
+    };
+  }
+
+  Future<void> _withdraw(Future<void> Function() request) async {
     await runAccountAction(
       action: () async {
         try {
-          await widget.service.withdraw(
-            accessToken: widget.accessToken,
-            password: password,
-          );
+          await request();
         } on AuthApiException catch (error) {
           // 401은 이 토큰이 서버에 없다는 것만 알려 줍니다. 다른 기기의 비밀번호
           // 변경·만료로 폐기된 토큰도, 탈퇴로 토큰까지 지워진 계정도 같은 응답을
@@ -1057,21 +1177,28 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
             );
           }
 
-          if (error.type != AuthApiErrorType.badRequest) {
+          if (!_rejectedBeforeDeletion(error)) {
             _earlierAttemptUnresolved = true;
           }
           rethrow;
         }
         return const _AccountActionResult();
       },
-      onFailure: (message) => setState(() => _errorText = message),
+      describeFailure: _describeFailure,
+      onFailure: (message) {
+        if (_usesKakao) {
+          _showKakaoError(message);
+        } else {
+          setState(() => _errorText = message);
+        }
+      },
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: !isSubmitting,
+      canPop: !_isBusy,
       child: AlertDialog(
         title: const Text('회원 탈퇴'),
         content: SingleChildScrollView(
@@ -1085,38 +1212,69 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
                 style: TextStyle(height: 1.5),
               ),
               const SizedBox(height: 16),
-              _PasswordField(
-                controller: _passwordController,
-                label: '비밀번호 확인',
-                errorText: _errorText,
-                autofocus: true,
-                enabled: !isSubmitting,
-                autofillHints: const [AutofillHints.password],
-                textInputAction: TextInputAction.done,
-                onSubmitted: _submit,
-                onChanged: () {
-                  if (_errorText == null) return;
-                  setState(() => _errorText = null);
-                },
-              ),
+              if (_usesKakao)
+                ..._buildKakaoConfirmation(context)
+              else
+                _PasswordField(
+                  controller: _passwordController,
+                  label: '비밀번호 확인',
+                  errorText: _errorText,
+                  autofocus: true,
+                  enabled: !isSubmitting,
+                  autofillHints: const [AutofillHints.password],
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: _submit,
+                  onChanged: () {
+                    if (_errorText == null) return;
+                    setState(() => _errorText = null);
+                  },
+                ),
             ],
           ),
         ),
         actions: [
           TextButton(
-            onPressed: isSubmitting ? null : () => Navigator.pop(context),
+            onPressed: _isBusy ? null : () => Navigator.pop(context),
             child: const Text('취소'),
           ),
           ElevatedButton(
-            onPressed: isSubmitting ? null : _submit,
+            onPressed: _isBusy
+                ? null
+                : _usesKakao
+                ? _submitWithKakao
+                : _submit,
             style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-            child: isSubmitting
+            child: _isBusy
                 ? const _SubmitProgress()
-                : const Text('탈퇴', style: TextStyle(color: Colors.white)),
+                : Text(
+                    _usesKakao ? '카카오로 확인하고 탈퇴' : '탈퇴',
+                    style: const TextStyle(color: Colors.white),
+                  ),
           ),
         ],
       ),
     );
+  }
+
+  /// 비밀번호 칸 대신 보이는 카카오 확인 안내와, 확인이 실패했을 때의 이유입니다.
+  List<Widget> _buildKakaoConfirmation(BuildContext context) {
+    return [
+      const Text('카카오계정으로 한 번 더 로그인하면 탈퇴돼요.', style: TextStyle(height: 1.5)),
+      if (_errorText case final message?) ...[
+        const SizedBox(height: 12),
+        // Android 는 live region 이라 스스로 읽고, iOS 는 [announceFieldError] 로 읽습니다.
+        Semantics(
+          liveRegion: true,
+          child: Text(
+            message,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.error,
+              height: 1.5,
+            ),
+          ),
+        ),
+      ],
+    ];
   }
 }
 
