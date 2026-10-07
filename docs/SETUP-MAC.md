@@ -92,6 +92,10 @@ Docker Desktop을 설치한 뒤 앱을 한 번 실행해 둡니다. 새 터미�
 안 되면 Docker Desktop 설정 → Advanced에서 CLI 설치 위치를 고르고 터미널을 새로 엽니다
 ('User'를 고르면 `~/.docker/bin`이 `~/.zprofile`의 `PATH`에 들어갑니다).
 
+Docker Desktop 대신 OrbStack(`brew install --cask orbstack`, 개인 사용 무료)을 써도 명령은 같습니다. Docker Desktop에서
+옮길 때는 `orb docker migrate` 뒤 `docker compose up -d --wait --force-recreate`로 컨테이너를 한 번 다시 만들고
+(옮긴 컨테이너에 Docker Desktop 경로가 남음, 데이터는 볼륨에 그대로), 5432가 겹치지 않게 둘을 함께 켜 두지 않습니다.
+
 ```bash
 cd BACKEND
 python3.12 -m venv .venv
