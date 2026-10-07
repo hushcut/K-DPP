@@ -719,8 +719,8 @@ class ScanResultView extends StatelessWidget {
     return names;
   }
 
-  // iOS 숫자 키패드에는 확인 키가 없어, 함유율 칸에 포커스가 있는 동안 [다음]·[완료] 버튼을
-  // 그립니다. 포커스가 바뀔 때마다 FocusManager가 알려 주므로 이 부분만 다시 그립니다.
+  // 함유율 칸에 포커스가 있는 동안 키보드 위에 ∧·∨·[완료] 막대를 그립니다(DECISIONS 177).
+  // 포커스가 바뀔 때마다 FocusManager가 알려 주므로 이 부분만 다시 그립니다.
   Widget _buildNumberKeyboardToolbar(BuildContext context) {
     if (!NumberKeyboardToolbar.isNeeded(context)) return const SizedBox.shrink();
 
@@ -731,6 +731,7 @@ class ScanResultView extends StatelessWidget {
         if (index == null) return const SizedBox.shrink();
 
         return NumberKeyboardToolbar(
+          onPrevious: _focusRowName(materialInputs[index]),
           onNext: _focusNextRowName(index),
           onDone: () => FocusManager.instance.primaryFocus?.unfocus(),
         );
@@ -749,10 +750,14 @@ class ScanResultView extends StatelessWidget {
   VoidCallback? _focusNextRowName(int index) {
     if (index >= materialInputs.length - 1) return null;
 
-    final next = materialInputs[index + 1];
+    return _focusRowName(materialInputs[index + 1]);
+  }
+
+  // [row] 의 소재명으로 포커스를 옮깁니다. 함유율의 앞 차례는 같은 행 소재명입니다(DECISIONS 23).
+  VoidCallback _focusRowName(MaterialEditController row) {
     return () {
       // 그사이 그 행이 지워졌다면 포커스 노드가 이미 해제됐으므로 건드리지 않습니다.
-      if (materialInputs.contains(next)) next.nameFocusNode.requestFocus();
+      if (materialInputs.contains(row)) row.nameFocusNode.requestFocus();
     };
   }
 

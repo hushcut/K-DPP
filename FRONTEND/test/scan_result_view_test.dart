@@ -579,10 +579,11 @@ void main() {
     expect(_addMaterialButton(tester).onPressed, isNotNull);
   });
 
-  testWidgets('iOS 함유율 칸에는 키보드 위 막대가 뜨고, 다음은 다음 행 소재명으로·완료는 키보드를 닫는다', (
+  testWidgets('iOS 함유율 칸에는 키보드 위 막대가 뜨고, ∧ 는 같은 행·∨ 는 다음 행 소재명으로, 완료는 키보드를 닫는다', (
     tester,
   ) async {
     // 2026-09-22 폰 확인: iOS 숫자 키패드에 확인 키가 없어 키보드를 끌어내려야 했다.
+    // 2026-10-07: 떠 있는 둥근 [다음][완료] 대신 키보드 액세서리 모양 막대(DECISIONS 177).
     _usePhoneView(tester);
     _stopCursorBlink();
     final materialInputs = MaterialInputCollection()
@@ -593,38 +594,103 @@ void main() {
     expect(find.byType(NumberKeyboardToolbar), findsNothing);
 
     await _tapField(tester, '60');
-    expect(_toolbarButton('다음'), findsOneWidget);
+    expect(find.byType(NumberKeyboardToolbar), findsOneWidget);
 
-    // 떠 있는 둥근 버튼이라도 손가락으로 누를 수 있는 높이(44pt)는 지킨다.
-    for (final label in ['다음', '완료']) {
+    // 막대도 버튼도 손가락으로 누를 수 있는 높이(44pt)를 지킨다.
+    expect(
+      tester.getSize(find.byType(NumberKeyboardToolbar)).height,
+      greaterThanOrEqualTo(NumberKeyboardToolbar.buttonHeight),
+    );
+    for (final label in ['이전 칸', '다음 칸', '완료']) {
+      final size = tester.getSize(_toolbarButtonBox(label));
       expect(
-        tester.getSize(_toolbarButtonBox(label)).height,
+        size.height,
         greaterThanOrEqualTo(NumberKeyboardToolbar.buttonHeight),
         reason: '[$label] 버튼 높이',
+      );
+      expect(
+        size.width,
+        greaterThanOrEqualTo(NumberKeyboardToolbar.buttonHeight),
+        reason: '[$label] 버튼 너비',
       );
     }
 
     // 버튼을 누르는 순간에도 함유율 칸이 포커스를 잃지 않아야 키보드가 내려갔다 다시 올라오지 않는다.
     final gesture = await tester.startGesture(
-      tester.getCenter(_toolbarButton('다음')),
+      tester.getCenter(_toolbarButton('다음 칸')),
     );
     await tester.pump();
     expect(materialInputs[0].percentFocusNode.hasFocus, isTrue);
     await gesture.up();
     await tester.pumpAndSettle();
     expect(materialInputs[1].nameFocusNode.hasFocus, isTrue);
+    // 소재명은 글자 칸이라 키보드에 '다음' 키가 있어 막대를 그리지 않는다.
     expect(find.byType(NumberKeyboardToolbar), findsNothing);
 
-    // 마지막 행은 옮길 곳이 없어 [완료]만 있다.
+    // 마지막 행은 ∨ 로 옮길 곳이 없어 흐리고(눌러도 그대로), ∧ 는 같은 행 소재명으로 간다.
     await _tapField(tester, '40');
-    expect(_toolbarButton('다음'), findsNothing);
+    expect(_toolbarIconButton('다음 칸').onPressed, isNull);
+    await tester.tap(_toolbarButton('다음 칸'), warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(materialInputs[1].percentFocusNode.hasFocus, isTrue);
+
+    await tester.tap(_toolbarButton('이전 칸'));
+    await tester.pumpAndSettle();
+    expect(materialInputs[1].nameFocusNode.hasFocus, isTrue);
+
+    await _tapField(tester, '40');
     await tester.tap(_toolbarButton('완료'));
     await tester.pumpAndSettle();
     expect(materialInputs[1].percentFocusNode.hasFocus, isFalse);
     expect(find.byType(NumberKeyboardToolbar), findsNothing);
   }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
-  testWidgets('Android는 막대 없이 키보드 동작 키가 소재명 → 함유율 → 다음 행 순서를 따른다', (
+  testWidgets('키보드 위 막대는 낭독기에서 이전 칸·다음 칸·완료로 읽히고, 갈 곳 없는 화살표는 사용 불가다', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    _usePhoneView(tester);
+    _stopCursorBlink();
+    final materialInputs = MaterialInputCollection()
+      ..setFromMaterials({'면': 60, '폴리에스터': 40});
+    addTearDown(materialInputs.dispose);
+
+    await _pumpResultView(tester, materialInputs: materialInputs);
+    await _tapField(tester, '40');
+
+    expect(
+      tester.getSemantics(_toolbarButton('이전 칸')),
+      isSemantics(
+        label: '이전 칸',
+        isButton: true,
+        hasEnabledState: true,
+        isEnabled: true,
+        hasTapAction: true,
+      ),
+    );
+    expect(
+      tester.getSemantics(_toolbarButton('다음 칸')),
+      isSemantics(
+        label: '다음 칸',
+        isButton: true,
+        hasEnabledState: true,
+        isEnabled: false,
+      ),
+    );
+    expect(
+      tester.getSemantics(_toolbarButton('완료')),
+      isSemantics(
+        label: '완료',
+        isButton: true,
+        hasEnabledState: true,
+        isEnabled: true,
+        hasTapAction: true,
+      ),
+    );
+    semantics.dispose();
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('Android도 함유율 칸에 막대가 뜨고, 키보드 동작 키는 소재명 → 함유율 → 다음 행 순서를 따른다', (
     tester,
   ) async {
     _usePhoneView(tester);
@@ -645,7 +711,8 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.next);
     await tester.pumpAndSettle();
     expect(materialInputs[0].percentFocusNode.hasFocus, isTrue);
-    expect(find.byType(NumberKeyboardToolbar), findsNothing);
+    // 2026-10-07: Android 숫자 키보드에도 동작 키가 있지만 iOS 와 같은 막대를 그린다(DECISIONS 177).
+    expect(find.byType(NumberKeyboardToolbar), findsOneWidget);
 
     await tester.testTextInput.receiveAction(TextInputAction.next);
     await tester.pumpAndSettle();
@@ -776,16 +843,33 @@ ButtonStyleButton _addMaterialButton(WidgetTester tester) {
   );
 }
 
+// 막대의 [완료]는 글자로, ∧·∨ 는 아이콘의 낭독 이름으로 찾는다.
 Finder _toolbarButton(String label) {
   return find.descendant(
     of: find.byType(NumberKeyboardToolbar),
-    matching: find.text(label),
+    matching: label == '완료'
+        ? find.text(label)
+        : find.byWidgetPredicate(
+            (widget) => widget is Icon && widget.semanticLabel == label,
+          ),
   );
 }
 
+IconButton _toolbarIconButton(String label) => find
+    .ancestor(of: _toolbarButton(label), matching: find.byType(IconButton))
+    .evaluate()
+    .single
+    .widget as IconButton;
+
 // 버튼이 실제로 그려지는 크기입니다. ButtonStyleButton 자체는 탭 영역(48dp)까지 포함해
-// 버튼을 작게 그려도 커 보이므로, 그 안의 Material을 잽니다.
+// 버튼을 작게 그려도 커 보이므로, 그 안의 Material을 잽니다. ∧·∨ 는 IconButton 칸을 잽니다.
 Finder _toolbarButtonBox(String label) {
+  if (label != '완료') {
+    return find.ancestor(
+      of: _toolbarButton(label),
+      matching: find.byType(IconButton),
+    );
+  }
   final button = find.ancestor(
     of: _toolbarButton(label),
     matching: find.byWidgetPredicate((widget) => widget is ButtonStyleButton),
