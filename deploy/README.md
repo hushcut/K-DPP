@@ -174,6 +174,7 @@ http → https 이동 주소에 8443 이 빠지는 것은 컨테이너 안이 44
   지워집니다(`backups/` 폴더는 서버 디스크라 남습니다). 인증서를 짧은 시간에 여러 번 다시 받으면
   Let's Encrypt 발급 한도에 걸립니다.
 - **워커를 늘리지 않습니다** — 로그인 잠금(5회 실패 시 60초)이 프로세스 메모리에 있어 워커마다 갈립니다.
+  DB 연결도 워커마다 최대 40개(요청 스레드 수, `BACKEND/database.py`)라 워커 수만큼 곱해집니다(PostgreSQL 기본 상한 100).
 - 앱이 `DB 스키마가 최신이 아닙니다` 로 멈추면 `docker compose logs migrate` 를 보고
   `docker compose up -d --wait` 로 migrate 부터 다시 돌립니다.
 - DB 비밀번호는 볼륨을 처음 만들 때만 적용됩니다. 바꾸려면
