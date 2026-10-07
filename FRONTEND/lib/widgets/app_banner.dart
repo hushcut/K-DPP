@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../theme/app_palette.dart';
 
@@ -12,6 +15,21 @@ import '../theme/app_palette.dart';
 /// - [info]: 요청하지 않은 상태 변화나 대체 처리(세션 만료, 임시 추정값 저장 등).
 enum AppBannerKind { success, failure, info }
 
+/// 배너가 닫힌 까닭입니다. debug·profile 빌드의 로그에만 씁니다.
+///
+/// - [timer]: 표시 시간이 다 됐다.
+/// - [tap]·[swipe]: 손가락으로 누르거나 위로 밀었다.
+/// - [accessibilityTap]·[accessibilityDismiss]: 읽기 프로그램의 활성화(두 번 탭)·닫기 동작.
+/// - [call]: 앱 코드가 [AppBannerHostState.hide] 를 불렀다.
+enum AppBannerDismissReason {
+  timer,
+  tap,
+  swipe,
+  accessibilityTap,
+  accessibilityDismiss,
+  call,
+}
+
 /// 앱 어디서든 앱바 아래 공용 배너를 띄우는 진입점입니다.
 ///
 /// 스낵바는 스캔 셔터·하단 메뉴를 가렸다. 배너는 Navigator 위에 떠서 화면을 넘어가도
@@ -21,7 +39,7 @@ class AppBanner {
   const AppBanner._();
 
   /// 앱바(높이 [kToolbarHeight]) 아래로 띄우는 간격입니다.
-  /// 리포트(앱바 44)나 앱바 없는 로그인 첫 화면에서도 같은 자리를 씁니다.
+  /// 앱바 없는 로그인 첫 화면에서도 같은 자리를 씁니다.
   static const double gapBelowAppBar = 8;
 
   /// 화면 좌우 여백입니다.
@@ -32,6 +50,20 @@ class AppBanner {
   /// 훑으면 그 밑 내용 대신 배너가 읽혀 길었다(DECISIONS 97). 소리는 배너가 사라져도
   /// 끊기지 않는다.
   static const int accessibleNavigationMultiplier = 2;
+
+  /// 낭독 칸을 붙이기 전에 화면이 멈추기를 기다리는 최대 시간입니다.
+  ///
+  /// 배너는 바로 그리지만 낭독 칸(live region)은 화면 전환·대화상자·시트 애니메이션이
+  /// 끝난 뒤에 붙입니다. 전환과 같은 순간에 붙이면 새 화면의 첫 초점이 맨 앞의 배너로
+  /// 가서 live region 과 초점으로 두 번 읽혔다(DECISIONS 180). 로딩 표시처럼 끝나지 않는
+  /// 애니메이션이 있어도 이 시간이 지나면 붙입니다.
+  static const Duration announceWaitLimit = Duration(seconds: 1);
+
+  /// 표시·닫힘을 로그에 남길지입니다. debug·profile 빌드에서 켜지고, release 와
+  /// `flutter test`(배너가 뜨는 테스트마다 줄이 쌓인다)에서는 꺼집니다.
+  @visibleForTesting
+  static bool logEvents =
+      !kReleaseMode && !Platform.environment.containsKey('FLUTTER_TEST');
 
   /// 가장 가까운 [AppBannerHost] 를 돌려줍니다. 없으면 배선 방법을 담은 오류를 냅니다.
   static AppBannerHostState of(BuildContext context) {
@@ -104,6 +136,13 @@ class AppBannerHostState extends State<AppBannerHost>
   int _nextSerial = 0;
   Timer? _dismissTimer;
 
+  /// 지금 배너가 뜬 뒤 흐른 시간입니다. 로그에만 씁니다.
+  final Stopwatch _shownFor = Stopwatch();
+
+  /// 지금 배너에 낭독 칸을 붙였는지입니다([AppBanner.announceWaitLimit]).
+  bool _announced = false;
+  Timer? _announceTimer;
+
   @override
   void initState() {
     super.initState();
@@ -135,11 +174,44 @@ class AppBannerHostState extends State<AppBannerHost>
 
     _dismissTimer?.cancel();
 
+    final previous = _current;
+    if (previous != null && _controller.status != AnimationStatus.reverse) {
+      _log('바뀜 #${previous.serial} 표시 뒤 ${_shownFor.elapsedMilliseconds}ms');
+    }
+
+    final accessibleNavigation = MediaQuery.accessibleNavigationOf(context);
+    final duration = AppBanner.durationFor(
+      message,
+      kind,
+      accessibleNavigation: accessibleNavigation,
+    );
+    final entry = _BannerEntry(
+      message: message,
+      kind: kind,
+      serial: _nextSerial++,
+    );
+
     // 같은 문구가 다시 와도 serial 이 바뀌어 낭독 칸을 새로 만든다.
     // iOS 는 live region 이 새로 생기거나 label 이 바뀔 때만 읽는다.
     setState(() {
-      _current = _BannerEntry(message: message, kind: kind, serial: _nextSerial++);
+      _current = entry;
+      _announced = false;
     });
+    _shownFor
+      ..reset()
+      ..start();
+    _log(
+      '표시 #${entry.serial} ${kind.name} ${duration.inMilliseconds}ms '
+      '읽기프로그램=$accessibleNavigation "$message"',
+    );
+    _announceTimer?.cancel();
+    _announceTimer = Timer(
+      AppBanner.announceWaitLimit,
+      () => _announce(entry.serial),
+    );
+    SchedulerBinding.instance.addPostFrameCallback(
+      (_) => _announceWhenStill(entry.serial),
+    );
 
     if (_skipsMotion) {
       _controller.value = 1;
@@ -148,21 +220,58 @@ class AppBannerHostState extends State<AppBannerHost>
     }
 
     _dismissTimer = Timer(
-      AppBanner.durationFor(
-        message,
-        kind,
-        accessibleNavigation: MediaQuery.accessibleNavigationOf(context),
-      ),
-      hide,
+      duration,
+      () => _dismiss(AppBannerDismissReason.timer),
     );
   }
 
+  /// 프레임이 끝날 때마다 돌아가는 애니메이션이 남았는지 보고, 없으면 낭독 칸을 붙입니다.
+  ///
+  /// 화면 전환을 띄우는 코드가 배너보다 뒤에 와도 같은 프레임 안이면 그 프레임 끝에는
+  /// 전환 애니메이션이 돌고 있다. 배너 자신의 미끄러짐(읽기 프로그램이 꺼졌을 때)도 함께 기다린다.
+  void _announceWhenStill(int serial) {
+    if (!mounted || _current?.serial != serial || _announced) return;
+
+    if (SchedulerBinding.instance.transientCallbackCount > 0) {
+      SchedulerBinding.instance.addPostFrameCallback(
+        (_) => _announceWhenStill(serial),
+      );
+      return;
+    }
+
+    _announce(serial);
+  }
+
+  void _announce(int serial) {
+    _announceTimer?.cancel();
+    _announceTimer = null;
+
+    if (!mounted || _current?.serial != serial || _announced) return;
+
+    setState(() => _announced = true);
+    _log('낭독 칸 #$serial 표시 뒤 ${_shownFor.elapsedMilliseconds}ms');
+  }
+
   /// 지금 배너를 닫습니다. 없으면 아무 일도 하지 않습니다.
-  void hide() {
+  void hide() => _dismiss(AppBannerDismissReason.call);
+
+  void _dismiss(AppBannerDismissReason reason) {
     _dismissTimer?.cancel();
     _dismissTimer = null;
 
-    if (!mounted || _current == null) return;
+    final current = _current;
+    // 닫히는 중에 다시 불려도(타이머 직후 탭 등) 한 번만 닫고 한 번만 기록한다.
+    if (!mounted ||
+        current == null ||
+        _controller.status == AnimationStatus.reverse) {
+      return;
+    }
+
+    _log(
+      '닫힘 #${current.serial} 이유=${reason.name} '
+      '표시 뒤 ${_shownFor.elapsedMilliseconds}ms '
+      '읽기프로그램=${MediaQuery.accessibleNavigationOf(context)}',
+    );
 
     if (_skipsMotion) {
       _controller.value = 0;
@@ -178,9 +287,24 @@ class AppBannerHostState extends State<AppBannerHost>
     }
   }
 
+  /// 표시·닫힘을 debug·profile 빌드의 로그(Android 는 logcat 'flutter' 태그)에 남깁니다.
+  /// 읽기 프로그램을 켠 기기에서 성공 배너가 5초보다 일찍 닫힌 까닭을 가리려고
+  /// 둡니다(DECISIONS 180).
+  static void _log(String event) {
+    if (!AppBanner.logEvents) return;
+    debugPrint('[AppBanner] $event');
+  }
+
   @override
   void dispose() {
+    final current = _current;
+    if (current != null) {
+      _log(
+        '호스트 사라짐 #${current.serial} 표시 뒤 ${_shownFor.elapsedMilliseconds}ms',
+      );
+    }
     _dismissTimer?.cancel();
+    _announceTimer?.cancel();
     _curve.dispose();
     _controller.dispose();
     super.dispose();
@@ -205,11 +329,15 @@ class AppBannerHostState extends State<AppBannerHost>
               left: AppBanner.horizontalMargin,
               right: AppBanner.horizontalMargin,
               child: _buildTransition(
-                AppBannerView(
-                  key: ValueKey<int>(current.serial),
-                  message: current.message,
-                  kind: current.kind,
-                  onDismiss: hide,
+                // 화면이 멈출 때까지 낭독 트리에서 뺀다([AppBanner.announceWaitLimit]).
+                ExcludeSemantics(
+                  excluding: !_announced,
+                  child: AppBannerView(
+                    key: ValueKey<int>(current.serial),
+                    message: current.message,
+                    kind: current.kind,
+                    onDismiss: _dismiss,
+                  ),
                 ),
               ),
             ),
@@ -249,7 +377,7 @@ class _AppBannerScope extends InheritedWidget {
   bool updateShouldNotify(_AppBannerScope oldWidget) => host != oldWidget.host;
 }
 
-/// 배너 한 장의 모양입니다. 탭하거나 위로 밀면 [onDismiss] 를 부릅니다.
+/// 배너 한 장의 모양입니다. 탭하거나 위로 밀면 닫힌 까닭과 함께 [onDismiss] 를 부릅니다.
 class AppBannerView extends StatefulWidget {
   const AppBannerView({
     super.key,
@@ -260,7 +388,7 @@ class AppBannerView extends StatefulWidget {
 
   final String message;
   final AppBannerKind kind;
-  final VoidCallback onDismiss;
+  final ValueChanged<AppBannerDismissReason> onDismiss;
 
   @override
   State<AppBannerView> createState() => _AppBannerViewState();
@@ -290,12 +418,13 @@ class _AppBannerViewState extends State<AppBannerView> {
       liveRegion: true,
       label: widget.message,
       excludeSemantics: true,
-      onTap: widget.onDismiss,
+      onTap: () => widget.onDismiss(AppBannerDismissReason.accessibilityTap),
       onTapHint: '알림 닫기',
-      onDismiss: widget.onDismiss,
+      onDismiss: () =>
+          widget.onDismiss(AppBannerDismissReason.accessibilityDismiss),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: widget.onDismiss,
+        onTap: () => widget.onDismiss(AppBannerDismissReason.tap),
         onVerticalDragStart: (_) => _verticalDrag = 0,
         onVerticalDragUpdate: (details) => _verticalDrag += details.delta.dy,
         onVerticalDragEnd: (details) {
@@ -303,7 +432,7 @@ class _AppBannerViewState extends State<AppBannerView> {
 
           if (_verticalDrag <= -_dismissDragDistance ||
               velocity <= -_dismissFlingVelocity) {
-            widget.onDismiss();
+            widget.onDismiss(AppBannerDismissReason.swipe);
           }
         },
         child: Material(
