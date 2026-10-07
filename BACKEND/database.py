@@ -30,7 +30,19 @@ SQLALCHEMY_DATABASE_URL = os.getenv(
 # 2. 엔진 및 세션 설정
 # pool_pre_ping: DB 가 재시작되면 풀에 남은 연결이 끊겨 있는데, 쓰기 전에 확인해
 # 끊긴 연결을 버리고 새로 맺습니다(없으면 재시작 직후 끊긴 연결을 받은 요청이 500).
-engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True)
+# 연결 수 상한 = 요청을 처리하는 스레드 수(anyio 기본 40). 요청은 첫 조회부터 끝날 때까지 연결을
+# 쥐는데, 로그인·가입·비밀번호 변경·탈퇴는 비밀번호 해시 동안, 스캔은 Vision 호출 동안에도 쥡니다.
+# 기본값(5 + 10 = 15)이면 그런 요청 15개가 겹칠 때 다른 요청이 모두 연결을 기다리다 30초 뒤 500 이
+# 됩니다(DECISIONS 167). 평소엔 5개만 두고 몰릴 때만 늘립니다. 워커 1개 기준이며 PostgreSQL 기본
+# 연결 상한(100) 안입니다 — 워커를 늘리면 워커 수만큼 곱해집니다.
+DB_POOL_SIZE = 5
+DB_MAX_OVERFLOW = 35
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    pool_pre_ping=True,
+    pool_size=DB_POOL_SIZE,
+    max_overflow=DB_MAX_OVERFLOW,
+)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
