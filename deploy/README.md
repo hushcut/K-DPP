@@ -33,7 +33,7 @@
 
 ```sh
 cp .env.example .env && chmod 600 .env
-# .env 를 채웁니다: K_DPP_DOMAIN, POSTGRES_PASSWORD(openssl rand -hex 24)
+# .env 를 채웁니다: K_DPP_DOMAIN, POSTGRES_PASSWORD(openssl rand -hex 24), K_DPP_SCAN_DAILY_MAX(기본 100)
 mkdir -p secrets
 sudo install -o 10001 -g 10001 -m 400 /경로/key.json secrets/vision_key.json   # 'Vision 키' 참고
 docker compose up -d --build --wait
@@ -54,6 +54,8 @@ docker compose up -d --build --wait   # 배포 직전 백업 → migrate(새 리
 - 백업은 `pre-migrate-backup` 이 migrate 바로 전에 자동으로 뜹니다(`backups/pre-migrate/`).
   잘못된 리비전이 적용됐으면 그 파일로 '복구' 합니다.
 - 앱 컨테이너가 바뀌는 몇 초 동안 요청이 실패할 수 있습니다.
+- `.env.example` 에 새 필수 값이 생겼으면(`git diff <옛 커밋> -- .env.example`) `.env` 에도 넣습니다.
+  빠지면 `up` 뿐 아니라 `ps`·`logs` 도 `required variable … is missing a value` 로 멈춥니다.
 - 보안 패치: `docker compose pull postgres caddy` 와 `docker compose build --pull` 뒤 `up -d --wait`.
 - 받기 전에 그 커밋의 GitHub Actions `Backend image (docker build)` 잡이 초록인지 봅니다 — 서버와 같은
   x86_64 에서 이 이미지를 빌드하고 migrate·앱 시작까지 해 본 결과입니다.
@@ -151,8 +153,14 @@ docker compose up -d --wait
 - 파일은 서버에서 그대로 연결되므로 **소유자·권한도 서버 파일 그대로**입니다. 앱은 uid
   10001 로 돌기 때문에 위의 `install -o 10001 -g 10001 -m 400` 처럼 넣어야 읽을 수 있습니다.
   못 읽으면 스캔이 502 가 되고 `docker compose logs app` 에 `[scan] OCR 실패` 가 남습니다.
-- 키 없이 띄우려면 빈 파일(`: > secrets/vision_key.json`)을 둡니다. 스캔은 502 를 받고
-  앱은 직접 입력으로 넘어갑니다(맥 리허설·로컬과 같은 동작).
+- 키 없이 띄우려면 빈 파일(`: > secrets/vision_key.json`)을 둡니다. 스캔은 502 를 받고(한 계정
+  하루 21번째부터는 아래 하루 상한의 429) 앱은 직접 입력으로 넘어갑니다(맥 리허설·로컬과 같은 동작).
+- **하루 상한**: Vision 을 부르는 스캔은 한 계정 하루 20번(넘으면 429), 서버 전체 하루
+  `K_DPP_SCAN_DAILY_MAX` 번(넘으면 503)이고 한국 자정에 풀립니다. 앱은 둘 다 직접 입력으로
+  넘어갑니다. 서버 전체 상한에 닿으면 `docker compose logs app` 에 `[scan] <날짜 시각> KST … 서버 전체
+  하루 상한` 이 그날 한 번 남습니다 — 평소보다 이른 시각이면 남용을 의심합니다(한 사람이 계정 여럿으로
+  다 쓰면 그날 자정까지 모든 사용자가 503). 기록은 메모리라 app 을 다시 띄우면(`docker compose restart app`)
+  그날 수가 0 부터 다시 셉니다. 시연 날 늘리려면 `.env` 값을 고치고 `docker compose up -d --wait`.
 
 ## 맥 리허설
 

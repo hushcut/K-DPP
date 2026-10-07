@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
@@ -51,6 +51,7 @@ DEFAULT_ERROR_CODES = {
     503: "AI_MODULE_FAILED",
 }
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+SCAN_IMAGE_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 # 스캔 업로드 상한. 실기기 원본 사진(3~8MB)에 여유를 둔 값입니다.
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 # 탄소 계산에 허용하는 의류 무게 상한(100kg).
@@ -997,6 +998,85 @@ def serialize_analysis_result(result: database.AnalysisResult) -> dict:
     }
 
 
+# 사진 분석(Google Vision) 하루 상한(DECISIONS 164). 스캔 한 번이 Vision 호출 1~4건이고 월 1,000건을
+# 넘으면 1,000건당 $1.50 이 청구되므로, Vision 을 실제로 부르는 스캔만 부르기 직전에 세고 결과(성공·
+# 422·502)와 상관없이 되돌리지 않습니다. raw_ocr_text 로 OCR 을 건너뛴 요청, 업로드 검사(413·415)나
+# OCR 모듈 없음(503)으로 끝난 요청은 세지 않습니다. 하루는 한국 자정(00:00 KST)에 바뀝니다.
+# 기록은 로그인 한도처럼 프로세스 메모리에 둡니다 — 재시작하면 그날 수를 0부터 다시 셉니다.
+SCAN_USER_DAILY_MAX = 20
+# 한국은 서머타임이 없어 UTC+9 로 고정하면 정확합니다.
+KST_OFFSET = timedelta(hours=9)
+
+
+def parse_scan_daily_max(value: str | None) -> int | None:
+    """K_DPP_SCAN_DAILY_MAX 를 읽는다. 비어 있으면 서버 전체 상한 없음, 1 이상의 정수면 그 값.
+    그 밖의 값이면 시작하지 않는다 — 배포 설정 오타로 상한이 조용히 빠지지 않게. 공백만 있는 값도
+    거부한다: compose 의 `:?` 는 빈 값만 막고 `" "` 는 통과시킨다."""
+    if not value:
+        return None
+    normalized = value.strip()
+    if re.fullmatch(r"[0-9]+", normalized) and int(normalized) >= 1:
+        return int(normalized)
+    raise ValueError(f"K_DPP_SCAN_DAILY_MAX 는 1 이상의 정수여야 합니다: {value!r}")
+
+
+# 서버 전체 하루 상한. 계정을 여럿 만들어도 Vision 청구의 최악값이 이 값으로 묶입니다(배포는
+# deploy/compose.yaml 에서 필수). 로컬은 비워 두면 상한이 없습니다.
+SCAN_DAILY_MAX = parse_scan_daily_max(os.getenv("K_DPP_SCAN_DAILY_MAX"))
+# 한국 날짜 → {사용자 id → 그날 Vision 을 부른 스캔 수}. 오늘 것만 남깁니다.
+_vision_scan_counts: dict[date, dict[int, int]] = {}
+# 동시에 몰아친 스캔이 한도를 넘어 Vision 까지 가지 않게 확인과 증가를 한 잠금 안에서 합니다.
+_vision_scan_lock = threading.Lock()
+
+
+def reserve_vision_scan(user_id: int) -> None:
+    """Vision 을 부르기 직전에 한 번을 센다. 이 사용자가 오늘 한도에 닿았으면 429, 서버 전체가
+    오늘 한도에 닿았으면 503 이고 그때는 세지 않는다. 센 것은 되돌리지 않는다."""
+    with _vision_scan_lock:
+        # 시각을 잠금 안에서 읽어, 자정 직전에 읽은 요청이 늦게 들어와 새 날 기록을 지우지 않게 합니다.
+        # 시계가 뒤로 가도 앞날 기록은 남도록 지난 날만 지웁니다.
+        now = utc_now()
+        today = (now + KST_OFFSET).date()
+        for day in [day for day in _vision_scan_counts if day < today]:
+            del _vision_scan_counts[day]
+        counts = _vision_scan_counts.setdefault(today, {})
+        used = counts.get(user_id, 0)
+        total = sum(counts.values())
+        user_full = used >= SCAN_USER_DAILY_MAX
+        server_full = SCAN_DAILY_MAX is not None and total >= SCAN_DAILY_MAX
+        if not user_full and not server_full:
+            counts[user_id] = used + 1
+            if SCAN_DAILY_MAX is not None and total + 1 == SCAN_DAILY_MAX:
+                # 서버 전체 상한에 닿은 날을 운영자가 알 수 있게 그날 한 번만 남깁니다.
+                reached_at = (now + KST_OFFSET).strftime("%Y-%m-%d %H:%M")
+                print(
+                    f"[scan] {reached_at} KST Vision 스캔이 서버 전체 하루 상한({SCAN_DAILY_MAX}번)에 닿았습니다",
+                    file=sys.stderr,
+                )
+            return
+
+    # 두 상한 모두 다음 한국 자정에 풀립니다.
+    next_midnight = datetime.combine(today + timedelta(days=1), datetime.min.time()) - KST_OFFSET
+    retry_after = max(1, math.ceil((next_midnight - now).total_seconds()))
+    if user_full:
+        raise HTTPException(
+            status_code=429,
+            detail=build_error_detail(
+                f"사진 분석은 하루 {SCAN_USER_DAILY_MAX}번까지입니다. 소재를 직접 입력하거나 내일 다시 시도해 주세요.",
+                "SCAN_DAILY_LIMIT",
+                retry_after=retry_after,
+            ),
+        )
+    raise HTTPException(
+        status_code=503,
+        detail=build_error_detail(
+            "오늘은 사진 분석을 더 할 수 없습니다. 소재를 직접 입력해 주세요.",
+            "SCAN_UNAVAILABLE",
+            retry_after=retry_after,
+        ),
+    )
+
+
 def validate_scan_upload(image: UploadFile) -> None:
     """스캔 업로드의 형식·크기 검사. raw_ocr_text 유무와 무관하게 항상 실행한다.
 
@@ -1030,7 +1110,7 @@ def validate_scan_upload(image: UploadFile) -> None:
     image.file.seek(0)
 
 
-def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
+def extract_label_text(image: UploadFile, raw_ocr_text: str | None, user_id: int) -> str:
     validate_scan_upload(image)
 
     if raw_ocr_text and raw_ocr_text.strip():
@@ -1045,7 +1125,15 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
             },
         )
 
-    suffix = Path(image.filename or "label.jpg").suffix or ".jpg"
+    # 파서가 없으면 Vision 을 불러도 503 으로 끝나므로, 부르기(세기) 전에 같은 503 을 냅니다.
+    ensure_label_parser()
+
+    # 아래 try 의 except Exception 이 HTTPException 도 502 로 바꾸므로 그 밖에서 셉니다.
+    reserve_vision_scan(user_id)
+
+    # 임시 파일 확장자는 업로드 이름이 아니라 이미 확인한 형식에서 정합니다 — 이름이 아주 길면
+    # 임시 파일을 만들지 못해 500 이 났고, 그 요청도 이미 센 뒤였습니다(OCR 은 확장자를 보지 않음).
+    suffix = SCAN_IMAGE_SUFFIXES[image.content_type]
     copied_bytes = 0
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
         temp_path = temp_file.name
@@ -1091,7 +1179,7 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
         Path(temp_path).unlink(missing_ok=True)
 
 
-def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
+def ensure_label_parser() -> None:
     if parse_label is None:
         raise HTTPException(
             status_code=503,
@@ -1100,6 +1188,10 @@ def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
                 "hint": "AI/kdpp_ai_ocr_integrated 모듈 경로를 확인하세요.",
             },
         )
+
+
+def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
+    ensure_label_parser()
 
     parsed = parse_label(label_text)
     materials = parsed.get("materials") or {}
@@ -1362,10 +1454,10 @@ def scan_label(
     # JSON 요청의 RawOcrText 와 같은 상한입니다. 폼 필드라 Form 에 직접 겁니다.
     raw_ocr_text: str | None = Form(default=None, max_length=MAX_RAW_OCR_TEXT_LENGTH),
     db: Session = Depends(get_db),
-    # 스캔 1회가 곧 외부 OCR 호출 비용이므로 로그인 사용자만 허용합니다.
+    # 스캔 1회가 곧 외부 OCR 호출 비용이므로 로그인 사용자만 허용하고, 사용자마다 하루 횟수를 셉니다.
     current_user: database.User = Depends(get_current_user),
 ):
-    label_text = extract_label_text(image, raw_ocr_text)
+    label_text = extract_label_text(image, raw_ocr_text, current_user.id)
     materials, care_instruction, raw_ocr_preview = parse_label_materials(label_text)
     title = "스캔한 의류"
     category = "상의"

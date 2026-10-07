@@ -31,6 +31,8 @@
 - `UNSUPPORTED_IMAGE_FORMAT`: 지원하지 않는 이미지 형식
 - `OCR_FAILED`: OCR 처리 실패
 - `AI_MODULE_FAILED`: AI/OCR 모듈 로드 실패
+- `SCAN_DAILY_LIMIT`: 이 계정의 오늘 사진 분석(Vision) 횟수 소진 (429)
+- `SCAN_UNAVAILABLE`: 서버 전체의 오늘 사진 분석 횟수 소진 (503)
 - `MATERIAL_EXTRACTION_FAILED`: 소재 혼용률 추출 실패
 - `MATERIAL_NOT_FOUND`: DB에 없는 소재
 - `MATERIAL_RATIO_INVALID`: 혼용률 합계 또는 비율 오류
@@ -185,6 +187,35 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional, 4000자 이하)
   }
 }
 ```
+
+### Daily Limit (429 / 503)
+
+Google Vision 을 부르는 스캔(`raw_ocr_text` 없이 보낸 요청)은 하루 횟수를 셉니다. 하루는
+한국 자정(00:00 KST)에 바뀌고, 두 응답 모두 `detail.retry_after` 에 다음 자정까지 남은 초가 있습니다.
+
+- 한 계정 하루 **20번**(`main.SCAN_USER_DAILY_MAX`)을 넘으면 `429 SCAN_DAILY_LIMIT`.
+- 서버 전체 하루 `K_DPP_SCAN_DAILY_MAX` 번(환경변수, 비우면 없음 — 배포는 필수)을 넘으면
+  `503 SCAN_UNAVAILABLE`. 둘 다 닿았으면 429 를 줍니다.
+- Vision 을 부르기 직전에 세고 결과(성공·422·502)와 상관없이 되돌리지 않습니다.
+  `raw_ocr_text` 로 OCR 을 건너뛴 요청과 업로드 검사(413·415)·OCR 또는 라벨 파서 모듈 없음(503
+  `AI_MODULE_FAILED` — 둘 다 Vision 전에 확인)으로 끝난 요청은 세지 않습니다. 막힌 요청은 Vision 을
+  부르지 않습니다.
+
+```json
+{
+  "status": "error",
+  "error_code": "SCAN_DAILY_LIMIT",
+  "message": "사진 분석은 하루 20번까지입니다. 소재를 직접 입력하거나 내일 다시 시도해 주세요.",
+  "detail": {
+    "message": "사진 분석은 하루 20번까지입니다. 소재를 직접 입력하거나 내일 다시 시도해 주세요.",
+    "error_code": "SCAN_DAILY_LIMIT",
+    "retry_after": 30512
+  }
+}
+```
+
+서버 전체 상한은 `"message": "오늘은 사진 분석을 더 할 수 없습니다. 소재를 직접 입력해 주세요."`,
+`"error_code": "SCAN_UNAVAILABLE"` 이고 나머지 모양은 같습니다.
 
 ## POST /api/carbon/calculate
 
@@ -449,3 +480,18 @@ Authorization: Bearer <token>
 - **`POST /api/scan` 의 `raw_ocr_text` 폼 필드에도 4000자 상한**: JSON 요청
   (`/analyze`·`/api/carbon/calculate`)에만 걸려 있던 상한을 폼에도 건다. 넘으면 422
   `VALIDATION_ERROR`. 앱은 이 필드를 보내지 않는다.
+
+## 변경 이력 — 2026-10-07 사진 분석 하루 상한 (DECISIONS 164)
+
+- **`POST /api/scan` 에 하루 상한**: Google Vision 을 부르는 스캔만 세어 한 계정 하루 20번이면
+  `429 SCAN_DAILY_LIMIT`, 서버 전체 하루 `K_DPP_SCAN_DAILY_MAX` 번이면 `503 SCAN_UNAVAILABLE`.
+  둘 다 다음 한국 자정까지 `detail.retry_after`(초). Vision 을 부르기 직전에 세고 되돌리지 않으며,
+  `raw_ocr_text` 요청·업로드 검사 실패·OCR 또는 라벨 파서 모듈 없음은 세지 않는다. 기록은 프로세스
+  메모리 — 서버 1대·uvicorn 워커 1개 전제, 재시작하면 그날 수가 0 부터.
+- **환경변수 `K_DPP_SCAN_DAILY_MAX`**: 비우면 서버 전체 상한 없음(로컬 기본), 1 이상의 정수가 아니면
+  (공백만 있는 값 포함) 서버가 시작하지 않는다. `deploy/compose.yaml` 은 필수(`deploy/.env.example` 기본 100).
+- 라벨 파서 모듈이 없으면 Vision 을 부르기 **전에** 503 `AI_MODULE_FAILED`(이전에는 Vision 을 부른 뒤).
+- 업로드 파일 이름이 아주 길어도 500 이 나지 않는다 — 임시 파일 확장자를 이름이 아니라 확인한 형식
+  (JPEG·PNG·WEBP)에서 정한다.
+- 앱 변경 없음: 429 는 '사진을 분석하지 못했어요. 직접 입력해 주세요.', 503 은 일시적 문제 문구로
+  직접 입력 시트에 넘어간다(`scan_api_service.dart` 의 상태 코드 분기).
