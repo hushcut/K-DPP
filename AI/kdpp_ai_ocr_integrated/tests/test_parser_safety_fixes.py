@@ -62,9 +62,17 @@ def test_decimal_ratios_keep_input_precision_in_output_and_answer_key():
         "OUTER COTTON -80%\nLINING POLYESTER 100%",
     ],
 )
-def test_invalid_ratios_cannot_be_discarded_to_confirm_composition(text):
-    assert parse_label(text)["status"] == "failed"
-    assert parse_materials(text) == {}
+def test_invalid_ratios_cannot_confirm_their_own_part(text):
+    result = parse_label(text)
+    if text.startswith("OUTER"):
+        assert result["status"] == "success"
+        assert result["selected_part"] == "lining"
+        assert result["materials"] == {"polyester": 100}
+        assert "outer" not in result["parts"]
+        assert any(warning.startswith("outer:") for warning in result["warnings"])
+    else:
+        assert result["status"] == "failed"
+        assert parse_materials(text) == {}
 
 
 @pytest.mark.parametrize(

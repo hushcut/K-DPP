@@ -192,7 +192,7 @@ def test_adaptive_preprocessing_uses_the_existing_second_crop_slot(monkeypatch):
     result = ocr_text.run_ocr_bytes(content, enable_reflection=False, enable_denoised=False,
                                   enable_rotated=False, enable_material_region=True)
     assert len(calls) == 4
-    assert crop_options == [(False, 'standard'), (True, 'adaptive')]
+    assert crop_options == [(False, 'standard'), (True, 'adaptive_mild')]
     assert parse_label(result.text, rejected_composition_parts=result.metadata.rejected_composition_parts,
                        conflicting_parts=result.metadata.conflicting_parts,
                        unpaired_ratio_parts=result.metadata.unpaired_ratio_parts)['status'] == 'failed'

@@ -257,6 +257,36 @@ def _local_contrast(crop):
     return corrected.point([max(0, min(255, 240 + 4 * (value - 128))) for value in range(256)])
 
 
+
+def _mild_local_contrast(crop, *, denoise=False):
+    """Flatten lighting after enlargement, retaining fine printed strokes."""
+    gray = crop.convert('L')
+    if denoise:
+        # Blend rather than replace: a one-pixel stroke survives the median.
+        gray = Image.blend(gray, gray.filter(ImageFilter.MedianFilter(3)), 0.30)
+    background = gray.filter(ImageFilter.GaussianBlur(max(12, min(96, min(gray.size) / 8))))
+    flattened = ImageChops.subtract(gray, background, offset=128).point(
+        [max(0, min(255, round(232 + 1.6 * (value - 128)))) for value in range(256)]
+    )
+    return Image.blend(gray, flattened, 0.65)
+
+
+def _faint_print_contrast(crop, *, font_height=None):
+    """Reduce fabric texture before contrast gain, retaining thin ink."""
+    gray = crop.convert('L')
+    height = font_height if font_height is not None else 24.0
+    # The earlier mild blur amplified the remaining weave with the letters.
+    # Limit smoothing relative to text height; retain 10% of the original so
+    # even isolated one-pixel strokes survive rather than becoming background.
+    radius = max(0.5, min(2.0, height * 0.07))
+    smooth = Image.blend(gray, gray.filter(ImageFilter.GaussianBlur(radius)), 0.90)
+    background = smooth.filter(ImageFilter.GaussianBlur(max(12, min(96, height * 1.5))))
+    flattened = ImageChops.subtract(smooth, background, offset=128)
+    # Preserve gray levels and printed gaps instead of inventing hard edges.
+    return flattened.point([max(0, min(255, round(242 + 5.5 * (value - 128))))
+                            for value in range(256)])
+
+
 def _needs_local_contrast(crop):
     background = crop.filter(ImageFilter.GaussianBlur(max(8, min(64, min(crop.size) / 6))))
     if ImageStat.Stat(background).stddev[0] >= 12:
@@ -282,7 +312,7 @@ def prepare_material_region(
     """Crop and enhance, returning an inverse affine map to original pixels."""
 
     validated = validate_image_bytes(content)
-    if type(enhancement) is not str or enhancement not in {"standard", "original", "local_contrast", "adaptive"}:
+    if type(enhancement) is not str or enhancement not in {"standard", "original", "local_contrast", "adaptive", "adaptive_mild", "mild_contrast", "mild_denoise", "faint_print"}:
         raise InvalidImageError('소재 영역 전처리 방식이 올바르지 않습니다.')
     if len(box) != 4 or any(type(value) is not int for value in box):
         raise InvalidImageError('소재 영역의 좌표가 올바르지 않습니다.')
@@ -305,10 +335,15 @@ def prepare_material_region(
                 raise InvalidImageError('방향이 확인되지 않은 이미지의 소재 영역은 자르지 않습니다.')
             crop = image.crop(box).convert('RGB' if enhancement == 'original' else 'L')
         selected = enhancement
-        if selected == 'adaptive':
-            selected = 'local_contrast' if _needs_local_contrast(crop) else 'standard'
+        if selected in {'adaptive', 'adaptive_mild'}:
+            if _needs_local_contrast(crop):
+                selected = 'local_contrast'
+            else:
+                selected = 'mild_contrast' if selected == 'adaptive_mild' else 'standard'
         if selected == 'local_contrast':
             crop = _local_contrast(crop)
+        elif selected == 'faint_print':
+            crop = _faint_print_contrast(crop, font_height=font_height)
         width, height = crop.size
         # 작은 글자는 목표 48픽셀 높이까지 확대하되 기존 픽셀·크기 한도를 유지한다.
         font_scale = 48.0 / font_height if font_height is not None else 1.0
@@ -318,7 +353,8 @@ def prepare_material_region(
         prepared_width, prepared_height = max(1, int(width*scale)), max(1, int(height*scale))
         crop = crop.resize((prepared_width, prepared_height), Image.Resampling.LANCZOS)
         if rotated:
-            crop = crop.rotate(turn_angle, resample=Image.Resampling.BICUBIC, expand=True, fillcolor=255)
+            fill = (255, 255, 255) if crop.mode == 'RGB' else 255
+            crop = crop.rotate(turn_angle, resample=Image.Resampling.BICUBIC, expand=True, fillcolor=fill)
         canvas_width, canvas_height = crop.size
         final_scale = min(1.0, math.sqrt(MAX_PREPROCESSED_PIXELS / (canvas_width*canvas_height)),
                           MAX_PREPROCESSED_DIMENSION / max(canvas_width, canvas_height))
@@ -329,6 +365,8 @@ def prepare_material_region(
             crop = ImageOps.autocontrast(crop).filter(ImageFilter.UnsharpMask(radius=1.4, percent=150, threshold=3))
         elif selected == 'local_contrast':
             crop = crop.filter(ImageFilter.UnsharpMask(radius=1.0, percent=100, threshold=3))
+        elif selected in {'mild_contrast', 'mild_denoise'}:
+            crop = _mild_local_contrast(crop, denoise=selected == 'mild_denoise')
         encoded = _encode_preprocessed_image(crop, image_format='JPEG')
         if len(encoded) > MAX_IMAGE_BYTES:
             raise ImageTooLargeError('소재 영역 이미지의 용량이 안전한 범위를 넘습니다.')

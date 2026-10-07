@@ -82,6 +82,10 @@ PART_PATTERNS = {
     "rib": ["립", "리브", "rib", "罗纹", "羅紋"],
     "sleeve": ["소매", "sleeve", "袖子", "袖部", "袖"],
     "color_block": ["배색", "contrast", "配色", "拼接", "別布"],
+    "embroidery_yarn": [
+        "자수실", "자수", "embroidery yarn", "embroidery thread", "embroidery", "yarn", "실",
+        "刺绣", "刺繍",
+    ],
 }
 
 EXCLUDED_SEGMENT_WORDS = {
@@ -91,7 +95,6 @@ EXCLUDED_SEGMENT_WORDS = {
     "무늬",
     "밴드",
     "레이스",
-    "자수",
     "장식",
     "부자재",
     "제외",
@@ -99,13 +102,10 @@ EXCLUDED_SEGMENT_WORDS = {
     "excluding",
     "exclusive of decoration",
     "decoration",
-    "embroidery",
     "accessory",
     "trim",
     "装饰",
     "裝飾",
-    "刺绣",
-    "刺繍",
     "辅料",
     "輔料",
     "配件",
@@ -313,7 +313,7 @@ _PART_MARKER_PATTERNS = {
 
 # These short labels also appear inside fiber names, product descriptions,
 # or care instructions without naming a composition part.
-_SHORT_PART_MARKERS = {"솜", "립", "袖", "표면"}
+_SHORT_PART_MARKERS = {"솜", "립", "袖", "표면", "실"}
 
 
 def is_part_marker_match(text: str, match: re.Match[str]) -> bool:

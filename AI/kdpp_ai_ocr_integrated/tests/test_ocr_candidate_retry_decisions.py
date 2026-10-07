@@ -133,15 +133,22 @@ def test_confirmed_representative_skips_all_extra_candidates(monkeypatch, origin
         ),
     ],
 )
-def test_irreversible_rejections_remain_failed_without_extra_calls(monkeypatch, original):
+def test_irreversible_rejections_do_not_request_extra_calls(monkeypatch, original):
     result, calls = run_candidates(
         monkeypatch, {b"original": original},
         enable_reflection=True, enable_denoised=True, enable_rotated=True,
     )
 
     assert calls == [b"original"]
-    assert analyze_ocr_result(result)["status"] == "failed"
-    assert result.metadata.confidence == "low"
+    analysis = analyze_ocr_result(result)
+    if "outer" in result.metadata.conflicting_parts:
+        assert analysis["status"] == "success"
+        assert analysis["selected_part"] == "lining"
+        assert analysis["materials"] == {"polyester": 100}
+        assert "outer" not in analysis["parts"]
+    else:
+        assert analysis["status"] == "failed"
+        assert result.metadata.confidence == "low"
 
 
 def test_recovery_does_not_start_after_total_deadline(monkeypatch):

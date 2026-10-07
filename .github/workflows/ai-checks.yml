@@ -40,8 +40,6 @@ jobs:
         run: |
           uv --quiet pip compile requirements.txt --universal --python-version 3.12 --constraint requirements-text.lock --no-header --no-annotate -o "$RUNNER_TEMP/requirements-text.lock"
           diff -u requirements-text.lock "$RUNNER_TEMP/requirements-text.lock"
-          uv --quiet pip compile requirements-symbol.txt --universal --python-version 3.12 --constraint requirements-symbol.lock --no-header --no-annotate -o "$RUNNER_TEMP/requirements-symbol.lock"
-          diff -u requirements-symbol.lock "$RUNNER_TEMP/requirements-symbol.lock"
           uv --quiet pip compile requirements-dev.txt ../../BACKEND/requirements.txt --universal --python-version 3.12 --constraint requirements-ci.lock --no-header --no-annotate -o "$RUNNER_TEMP/requirements-ci.lock"
           diff -u requirements-ci.lock "$RUNNER_TEMP/requirements-ci.lock"
 

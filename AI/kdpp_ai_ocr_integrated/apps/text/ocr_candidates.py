@@ -141,7 +141,10 @@ def find_unpaired_ratio_parts(candidates: list[OcrCandidate]) -> tuple[str, ...]
 
                 resolved = any(same_region_recovery(candidate, alternative, part, candidates) for alternative in candidates)
             if not resolved:
-                unresolved.add(part)
+                from apps.text.ocr_corrections import located_generic_rejection_parts
+
+                located = located_generic_rejection_parts(candidate, candidates) if part == "generic" else ()
+                unresolved.update(located or (part,))
     return tuple(sorted(unresolved))
 
 
@@ -307,25 +310,52 @@ def find_rejected_composition_parts(
                         materials_resolved = _can_resolve_duplicate_material_rows(
                             candidate, part, required_materials, required_ratios, available_pairs,
                         )
+                    # A complete explicit representative may coexist with
+                    # additional fibers in a lower part (e.g. a lining). They
+                    # cannot provide a missing name in the representative.
+                    from apps.text.parse_label import PART_PRIORITY
+
+                    new_material_parts = {
+                        key for key in valid_parts
+                        if any(EQUIVALENT_MATERIALS.get(material, material) not in required_materials
+                               for material in alternative.observed_materials.get(key, []))
+                    }
+                    lower_parts_only = (
+                        selected_part != "generic" and selected_part in PART_PRIORITY
+                        and selected_part in alternative.parts
+                        and set(equivalent_composition(alternative.parts[selected_part])) <= required_pairs
+                        and new_material_parts <= set(PART_PRIORITY[PART_PRIORITY.index(selected_part) + 1:])
+                    )
                     if (
                         (
                             required_materials or required_ratios
                             or (empty_layout_marker and available_pairs)
                         )
                         and materials_resolved
+                        # Counts can restore known rows, never supply an unread
+                        # fiber name. Such a repair requires coordinate proof.
+                        and (empty_layout_marker or (
+                            (available_materials.keys() <= required_materials.keys() or lower_parts_only)
+                            and sum(required_ratios.values()) <= sum(required_materials.values())
+                        ))
                         and available_ratios >= required_ratios
                         and required_pairs <= available_pairs
                     ):
                         resolved = True
                         break
             if not resolved:
-                rejected.setdefault(part, set()).update(reasons)
+                from apps.text.ocr_corrections import located_generic_rejection_parts
+
+                located = located_generic_rejection_parts(candidate, candidates) if part == "generic" else ()
+                for affected in located or (part,):
+                    rejected.setdefault(affected, set()).update(reasons)
                 # An isolated second-shell heading is still an unresolved outer
                 # boundary; another candidate's unnumbered shell cannot erase it.
                 if part == "outer_2" and selected_part == "outer" and "outer" not in candidate.observed_materials:
                     rejected.setdefault("outer", set()).update(reasons)
-    # 부위명이 없는 거절 근거를 다른 후보의 OUTER 표기로 숨기지 않는다.
-    if "generic" in rejected and selected_part:
+    # 부위 없는 거절 근거를 OUTER로 숨기지 않는다. 명시된 하위 부위는
+    # 별도 조성으로 선택할 수 있으며 generic 거절 근거는 그대로 남긴다.
+    if "generic" in rejected and selected_part in {"outer", "generic"}:
         rejected.setdefault(selected_part, set()).update(rejected["generic"])
     return {part: tuple(sorted(reasons)) for part, reasons in sorted(rejected.items())}
 
@@ -361,6 +391,7 @@ def score_candidate(
         "rib": 2,
         "sleeve": 1,
         "color_block": 0,
+        "embroidery_yarn": -1,
     }.get(selected_part, 0)
     explicit_percent_count = len(re.findall(r"\d{1,3}(?:\.\d+)?\s*[%％]", text))
     source_priority = 1 if source == "original" else 0

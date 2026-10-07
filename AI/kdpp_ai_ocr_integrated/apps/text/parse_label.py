@@ -44,6 +44,7 @@ PART_PRIORITY = [
     "rib",
     "sleeve",
     "color_block",
+    "embroidery_yarn",
 ]
 
 NON_COMPOSITION_WORDS = {
@@ -179,6 +180,11 @@ _NUMBERED_OUTER_MARKER_PATTERN = re.compile(
     r"(?<![a-z0-9])(?:outshell|cutshell|shell|outer|겉\s*감)\s*[12](?![a-z0-9.,]|\s*%)"
 )
 _STORAGE_DOWN_PATTERN = re.compile(r"(?<![a-z])(?:fold|ford)\s+down(?![a-z])")
+_PRODUCT_CODE_ROW_PATTERN = re.compile(
+    r"(?:skc|sku|style|item|product|article)\s*(?:no\.?|id|code|#|:)\s*[a-z0-9-]+"
+)
+_PRODUCT_DATE_ROW_PATTERN = re.compile(r"(?:0?[1-9]|1[0-2])/(?:19|20)\d{2}")
+_PIPE_WASH_TEMPERATURE_PATTERN = re.compile(r"\|(?:30|40|50|60|70|95)\|?")
 
 
 def _has_complete_preceding_composition(infos: list[LineInfo]) -> bool:
@@ -198,6 +204,19 @@ def _is_non_composition_numeric_row(
 ) -> bool:
     """Recognize whole identifier rows and a narrow wash-symbol OCR shape."""
 
+    if (re.fullmatch(r"[0-9]{4,}", line) and previous is not None
+            and not previous.materials and not previous.unresolved_materials
+            and _PRODUCT_CODE_ROW_PATTERN.fullmatch(previous.normalized)
+            and _PRODUCT_DATE_ROW_PATTERN.fullmatch(following)):
+        # A numeric continuation between an explicit product code and its
+        # date remains metadata even when the later translations are damaged.
+        return True
+    if (_PIPE_WASH_TEMPERATURE_PATTERN.fullmatch(line)
+            and _mentions_care(following) and not extract_materials(following)
+            and "%" not in following
+            and _contains_only_known_phrases(following, set(_CARE_PHRASES))
+            and _has_complete_preceding_composition(preceding_infos or [])):
+        return True
     if _NUMERIC_IDENTIFIER_ROW_PATTERN.fullmatch(line):
         groups = re.findall(r"[0-9]+", line)
         # Long hyphenated product/contact numbers cannot be percentage ranges.
@@ -382,7 +401,7 @@ _LANGUAGE_RATIO_PREFIX_PATTERN = re.compile(
 )
 
 
-def _prepare_multilingual_rows(text: str) -> str:
+def _prepare_multilingual_rows(text: str, *, with_warnings: bool = False):
     """Restore exact wrapped aliases and separate explicit language blocks."""
 
     text = restore_registered_han_aliases(text, allow_newlines=True)
@@ -410,7 +429,11 @@ def _prepare_multilingual_rows(text: str) -> str:
     text = re.sub(r"(?m)^(.*[0-9])[ \t]*\n[ \t]*%[ \t]*$", r"\1%", text)
     # Each language's percentages remain independent; conflicting copies
     # must still produce conflicting candidates rather than being deduplicated.
-    return _LANGUAGE_RATIO_PREFIX_PATTERN.sub("\n", text)
+    from apps.text.multilingual_rows import prepare_translation_rows
+
+    prepared = prepare_translation_rows(text, allow_unread=True)
+    text = _LANGUAGE_RATIO_PREFIX_PATTERN.sub("\n", prepared.text)
+    return (text, prepared.warnings) if with_warnings else text
 
 
 def build_line_infos(text: str) -> list[LineInfo]:
@@ -484,6 +507,10 @@ def build_line_infos(text: str) -> list[LineInfo]:
         if materials and numbers and len(materials) == len(numbers):
             invalid_evidence |= not _same_line_pairing_is_supported(composition_text, number_evidence)
         unresolved = unresolved_material_tokens(composition_text)
+        if materials and numbers:
+            from apps.text.multilingual_rows import is_unverified_translation_row
+
+            invalid_evidence |= is_unverified_translation_row(composition_text)
         if _has_explicit_unknown_material_marker(composition_text, numbers):
             unresolved.append("unknown")
         infos.append(LineInfo(
@@ -689,12 +716,57 @@ def _translated_alias_rows(
     return covered
 
 
+def _confirmed_first_generic_rows(infos: list[LineInfo]) -> list[LineInfo]:
+    """명시 확인된 첫 조성만 대표로 삼고 이후 근거는 별도 부위에 보존한다."""
+    if any(info.marker_part is not None or info.part != "generic" for info in infos):
+        return infos
+    rows = [info for info in infos if not _is_metadata_line(info)
+            and (info.materials or info.unresolved_materials or "%" in info.normalized)]
+    if not rows:
+        return infos
+    complete = [candidate for candidate in _collect_candidates(infos)
+                if candidate.part == "generic" and candidate.start_index == rows[0].index
+                and candidate.explicit_percent and candidate.row_indices
+                and has_exact_total(candidate.materials.values())]
+    if not complete:
+        return infos
+    end = min(max(candidate.row_indices) for candidate in complete)
+    first = [candidate for candidate in complete if max(candidate.row_indices) == end]
+    if len({_equivalent_composition(candidate.materials) for candidate in first}) != 1:
+        return infos
+    if any(info.invalid_evidence or info.unresolved_materials or not info.materials
+           and info.numbers and not _is_ratio_only_composition_row(info)
+           for info in rows if info.index <= end):
+        return infos
+    remaining = [info for info in rows if info.index > end]
+    # A lone extra percentage is an error in the first composition, not a
+    # second table. Even an explicit selection must not hide that evidence.
+    later_complete = any(candidate.start_index > end and candidate.explicit_percent
+                         and has_exact_total(candidate.materials.values())
+                         for candidate in _collect_candidates(infos))
+    if not remaining or len(remaining) < 2 and not later_complete:
+        return infos
+    return [replace(info, part="generic_secondary") if info.index > end else info for info in infos]
+
+
+def _confirmed_polyester_rows(text: str) -> str:
+    """확인된 POLY 약어는 독립 소재·비율 행에서만 해석한다."""
+    ratio = r"[+\-−]?\d+(?:[.,]\d+)?\s*[%％]"
+    lines = []
+    for line in text.splitlines():
+        if re.fullmatch(rf"\s*(?:poly\s*{ratio}|{ratio}\s*poly)\s*", line, re.I):
+            line = re.sub(r"(?<![a-z])poly(?![a-z])", "polyester", line, flags=re.I)
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _best_candidates_by_part(
     text: str,
     *,
     conflicting_parts: tuple[str, ...] = (),
     unpaired_ratio_parts: tuple[str, ...] = (),
     rejected_composition_parts: dict[str, tuple[str, ...]] | None = None,
+    confirmed_first_generic: bool = False,
 ) -> tuple[
     dict[str, dict[str, float | int]],
     dict[str, CompositionCandidate],
@@ -703,6 +775,8 @@ def _best_candidates_by_part(
     dict,
 ]:
     infos = build_line_infos(text)
+    if confirmed_first_generic:
+        infos = _confirmed_first_generic_rows(infos)
     candidates = []
     segment = []
     body_measurement_block = False
@@ -821,7 +895,11 @@ def _best_candidates_by_part(
              or _has_invalid_numeric_row(info))
     }
     parts: dict[str, dict[str, float | int]] = {}
+    translation_warnings = _prepare_multilingual_rows(
+        _split_part_markers(normalize_text(text)), with_warnings=True,
+    )[1]
     warnings: list[str] = [
+        *translation_warnings,
         *(f"{part}:invalid_composition_evidence" for part in sorted(invalid_evidence_parts)),
         *(f"{part}:unresolved_material_token" for part in sorted(unresolved_parts - best_by_part.keys())),
         *(f"{part}:invalid_ratio" for part in sorted(invalid_ratio_parts)),
@@ -1041,8 +1119,13 @@ def parse_label(
     conflicting_parts: tuple[str, ...] = (),
     unpaired_ratio_parts: tuple[str, ...] = (),
     rejected_composition_parts: dict[str, tuple[str, ...]] | None = None,
+    confirmed_polyester_poly: bool = False,
+    confirmed_first_generic: bool = False,
 ) -> dict:
-    """OCR 후보의 상충 부위도 포함해 최종 대표 조성을 안전하게 판단한다."""
+    """OCR 근거를 검증한다. 확인 옵션은 해당 라벨의 명시 확인 후에만 쓴다."""
+
+    if type(confirmed_polyester_poly) is not bool or type(confirmed_first_generic) is not bool:
+        raise ValueError("라벨 확인 옵션은 불리언이어야 합니다.")
 
     if not text or not text.strip():
         return failed_response(
@@ -1051,10 +1134,16 @@ def parse_label(
             message="OCR에서 라벨 텍스트를 추출하지 못했습니다.",
         )
 
+    interpreted = _confirmed_polyester_rows(text) if confirmed_polyester_poly else text
     parts, candidates, warnings, expected_parts, ratio_evidence = _best_candidates_by_part(
-        text, conflicting_parts=conflicting_parts, unpaired_ratio_parts=unpaired_ratio_parts,
+        interpreted, conflicting_parts=conflicting_parts, unpaired_ratio_parts=unpaired_ratio_parts,
         rejected_composition_parts=rejected_composition_parts,
+        confirmed_first_generic=confirmed_first_generic,
     )
+    if interpreted != text:
+        warnings.append("confirmed_material_alias:poly:polyester")
+    if "generic_secondary" in expected_parts:
+        warnings.append("confirmed_representative_selection:first_generic")
     selected_part, materials = choose_representative_materials(parts)
     if not materials:
         error_code = (
@@ -1075,28 +1164,28 @@ def parse_label(
             parse_evidence=ratio_evidence,
         )
 
-    # The label names a more representative part (an outer shell above a
-    # lining) whose composition never resolved. Substituting the part that
-    # happened to add up would report a lining as the whole garment.
+    # A rejection from an unlabelled response cannot be assigned to another
+    # part just because the selected response lost those words or headings.
+    if "generic" in (rejected_composition_parts or {}) and not any(
+        info.part == "generic" and not _is_metadata_line(info)
+        and (info.materials or info.numbers or info.unresolved_materials)
+        for info in build_line_infos(text)
+    ):
+        return failed_response(
+            text, warnings=warnings, parse_evidence=ratio_evidence,
+            message="부위가 확인되지 않은 OCR 근거가 남아 소재를 확정하지 못했습니다.",
+        )
+
+    # Select the first confirmed part. Preserve evidence for higher parts
+    # without presenting the fallback as a confirmed outer composition.
     unconfirmed_parts = [
         part
         for part in PART_PRIORITY[: PART_PRIORITY.index(selected_part)]
         if part in expected_parts and part not in parts
     ]
     if unconfirmed_parts:
-        return failed_response(
-            text,
-            error_code="incomplete_part_composition",
-            message=(
-                "겉감 등 대표 부위의 혼용률을 확인하지 못해 "
-                "다른 부위 값을 대신 사용하지 않았습니다."
-            ),
-            warnings=[
-                *warnings,
-                *(f"{part}:composition_not_confirmed" for part in unconfirmed_parts),
-            ],
-            parse_evidence=ratio_evidence,
-        )
+        warnings.extend(f"{part}:composition_not_confirmed" for part in unconfirmed_parts)
+        warnings.append(f"representative_part_fallback:{selected_part}")
 
     selected_candidate = candidates[selected_part]
     parser_confidence = (
@@ -1105,6 +1194,7 @@ def parse_label(
         and has_exact_total(selected_candidate.materials.values())
         and selected_candidate.source == "same_line"
         and "unlabeled_garment_size_inferred" not in warnings
+        and "unread_translation_rows" not in warnings
         else "medium"
     )
     care_instruction = parse_care(text)

@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, localcontext
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
@@ -12,7 +13,6 @@ from pydantic import BaseModel, Field, StringConstraints
 import json
 import math
 import re
-import shutil
 import sys
 import threading
 import tempfile
@@ -27,14 +27,23 @@ if AI_MODULE_PATH.exists() and str(AI_MODULE_PATH) not in sys.path:
     sys.path.append(str(AI_MODULE_PATH))
 
 try:
-    from apps.text.ocr_text import run_ocr
+    from apps.text import ocr_text as ocr_text_module
+
+    # Keep candidate conflicts and OCR diagnostics until the service composes them.
+    run_ocr = ocr_text_module.run_ocr_with_metadata
 except Exception:
+    ocr_text_module = None
     run_ocr = None
 
 try:
     from apps.text.parse_label import parse_label
 except Exception:
     parse_label = None
+
+try:
+    from apps.service.label_analysis import analyze_ocr_result
+except Exception:
+    analyze_ocr_result = None
 
 ACCESS_TOKEN_EXPIRE_DAYS = 30
 DEFAULT_ERROR_CODES = {
@@ -48,6 +57,7 @@ DEFAULT_ERROR_CODES = {
     429: "TOO_MANY_ATTEMPTS",
     502: "OCR_FAILED",
     503: "AI_MODULE_FAILED",
+    504: "OCR_TIMEOUT",
 }
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 # 스캔 업로드 상한. 실기기 원본 사진(3~8MB)에 여유를 둔 값입니다.
@@ -873,13 +883,13 @@ def validate_scan_upload(image: UploadFile) -> None:
     image.file.seek(0)
 
 
-def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
+def extract_label_input(image: UploadFile, raw_ocr_text: str | None) -> str | dict:
     validate_scan_upload(image)
 
     if raw_ocr_text and raw_ocr_text.strip():
         return raw_ocr_text.strip()
 
-    if run_ocr is None:
+    if run_ocr is None or analyze_ocr_result is None:
         raise HTTPException(
             status_code=503,
             detail={
@@ -915,18 +925,52 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
             / "kdpp_ai_ocr_integrated"
             / "key.json"
         )
-        return run_ocr(
+        ocr_result = run_ocr(
             temp_path,
             credential_path=str(credential_path) if credential_path.exists() else "",
         )
+        # Older callers and test doubles may still provide only extracted text.
+        if isinstance(ocr_result, str):
+            return ocr_result
+        return analyze_ocr_result(ocr_result)
     except Exception as exc:
         # 예외 원문에는 서버 경로·계정 식별자 등이 섞일 수 있어
         # 서버 로그에만 남기고 클라이언트에는 고정 메시지만 돌려줍니다.
         print(f"[scan] OCR 실패: {exc!r}", file=sys.stderr)
+        status_code = 502
+        error_code = "OCR_FAILED"
+        message = "AI OCR 처리에 실패했습니다."
+        if ocr_text_module is not None:
+            if isinstance(exc, ocr_text_module.OcrCompositionError):
+                # Legacy text-only OCR cannot carry its evidence, but this is
+                # still a material recognition failure, not a provider outage.
+                return {
+                    "status": "failed",
+                    "error_code": "composition_unconfirmed",
+                    "materials": {},
+                    "confidence": {"ocr": "low", "parser": "low"},
+                }
+            elif isinstance(exc, ocr_text_module.OcrConfigurationError):
+                status_code = 502
+                error_code = "OCR_NOT_CONFIGURED"
+                message = "Google Vision OCR 설정을 확인해 주세요."
+            elif isinstance(exc, ocr_text_module.OcrQuotaExceededError):
+                status_code = 502
+                error_code = "OCR_QUOTA_EXCEEDED"
+                message = "Google Vision OCR 사용량 한도를 초과했습니다."
+            elif isinstance(exc, ocr_text_module.OcrTimeoutError):
+                status_code = 504
+                error_code = "OCR_TIMEOUT"
+                message = "Google Vision OCR 응답 시간이 초과되었습니다."
+            elif isinstance(exc, ocr_text_module.OcrUnavailableError):
+                status_code = 503
+                error_code = "OCR_SERVICE_UNAVAILABLE"
+                message = "Google Vision OCR 서비스를 일시적으로 사용할 수 없습니다."
         raise HTTPException(
-            status_code=502,
+            status_code=status_code,
             detail={
-                "message": "AI OCR 처리에 실패했습니다.",
+                "message": message,
+                "error_code": error_code,
                 "error": "라벨 이미지를 인식하지 못했습니다. 잠시 후 다시 시도해 주세요.",
             },
         ) from exc
@@ -934,8 +978,32 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
         Path(temp_path).unlink(missing_ok=True)
 
 
-def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
-    if parse_label is None:
+def _has_exact_material_total(materials: dict) -> bool:
+    """파서가 확인한 비율이 유효하며 정확히 100%인지 검사한다."""
+    if not materials:
+        return False
+
+    if any(not isinstance(key, str) or not key.strip() for key in materials):
+        return False
+    if any(
+        isinstance(value, bool) or not isinstance(value, (int, float))
+        for value in materials.values()
+    ):
+        return False
+
+    ratios = [Decimal(str(value)) for value in materials.values()]
+    if not all(ratio.is_finite() and 0 < ratio <= 100 for ratio in ratios):
+        return False
+
+    # 각 비율의 소수 자릿수와 합산 시 올림 자릿수를 확보해 작은 초과분도 보존한다.
+    fractional_digits = max(0, -min(ratio.as_tuple().exponent for ratio in ratios))
+    with localcontext() as context:
+        context.prec = 3 + len(str(len(ratios))) + fractional_digits
+        return sum(ratios, Decimal(0)) == Decimal("100")
+
+
+def parse_label_materials(label_input: str | dict) -> dict:
+    if parse_label is None and not isinstance(label_input, dict):
         raise HTTPException(
             status_code=503,
             detail={
@@ -944,8 +1012,10 @@ def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
             },
         )
 
-    parsed = parse_label(label_text)
+    parsed = label_input if isinstance(label_input, dict) else parse_label(label_input)
     materials = parsed.get("materials") or {}
+    if not isinstance(materials, dict):
+        materials = {}
     raw_ocr_preview = parsed.get("raw_ocr_preview", "")
     # AI 파서는 버전마다 관리 지침 키가 다릅니다(develop: care_text,
     # ksw/ai-ocr-enhancement: care_instruction). 한쪽만 읽으면 AI 모듈을
@@ -956,21 +1026,61 @@ def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
         or "라벨 표기법에 맞춰 관리하세요."
     )
 
-    if not materials:
+    warnings = parsed.get("warnings")
+    if not isinstance(warnings, list):
+        warnings = []
+    confidence = parsed.get("confidence")
+    if not isinstance(confidence, dict):
+        confidence = {}
+    parse_evidence = parsed.get("parse_evidence")
+    if not isinstance(parse_evidence, dict):
+        parse_evidence = {}
+    ocr_metadata = parsed.get("ocr")
+    if not isinstance(ocr_metadata, dict):
+        ocr_metadata = {}
+
+    parser_status = parsed.get("status")
+    parser_succeeded = parser_status == "success"
+    evidence_status = parse_evidence.get("composition_status")
+    evidence_confirmed = evidence_status == "confirmed"
+    exact_total = _has_exact_material_total(materials)
+
+    if not parser_succeeded or not evidence_confirmed or not exact_total:
+        parser_error_code = parsed.get("error_code")
+        if not parser_error_code:
+            if not parser_succeeded or not evidence_confirmed:
+                parser_error_code = "composition_unconfirmed"
+            elif materials:
+                parser_error_code = "ratio_total_invalid"
+            else:
+                parser_error_code = "composition_not_found"
         raise HTTPException(
             status_code=422,
             detail={
                 "message": "라벨에서 소재 혼용률을 찾지 못했습니다.",
                 "error_code": "MATERIAL_EXTRACTION_FAILED",
-                "materials": materials,
-                "partial_materials": materials,
+                "materials": {},
+                "partial_materials": {},
                 "care_instruction": care_instruction,
                 "raw_ocr_preview": raw_ocr_preview,
                 "ai_success": False,
+                "parser_error_code": parser_error_code,
+                "warnings": warnings,
+                "confidence": confidence,
+                "parse_evidence": parse_evidence,
+                "ocr": ocr_metadata,
             },
         )
 
-    return materials, care_instruction, raw_ocr_preview
+    return {
+        "materials": materials,
+        "care_instruction": care_instruction,
+        "raw_ocr_preview": raw_ocr_preview,
+        "warnings": warnings,
+        "confidence": confidence,
+        "parse_evidence": parse_evidence,
+        "ocr": ocr_metadata,
+    }
 
 # --- API 엔드포인트 시작 ---
 
@@ -1181,30 +1291,32 @@ def analyze_clothes(
 @app.post("/api/scan", tags=["v1-scan"])
 def scan_label(
     image: UploadFile = File(...),
-    raw_ocr_text: str | None = Form(default=None),
+    raw_ocr_text: str | None = Form(
+        default=None, max_length=MAX_RAW_OCR_TEXT_LENGTH
+    ),
     db: Session = Depends(get_db),
     # 스캔 1회가 곧 외부 OCR 호출 비용이므로 로그인 사용자만 허용합니다.
     current_user: database.User = Depends(get_current_user),
 ):
-    label_text = extract_label_text(image, raw_ocr_text)
-    materials, care_instruction, raw_ocr_preview = parse_label_materials(label_text)
+    label_input = extract_label_input(image, raw_ocr_text)
+    parsed = parse_label_materials(label_input)
+    materials = parsed["materials"]
     title = "스캔한 의류"
     category = "상의"
 
-    # 라벨 일부만 읽혀 합계가 100이 아니면, 이 값 그대로는 탄소 계산이
-    # 거부되므로(99.5~100.5 검사) 부분 인식임을 응답에 명시합니다.
-    total_ratio = sum(materials.values())
-    ratio_complete = 99.5 <= total_ratio <= 100.5
-
     return {
         "status": "success",
-        "message": "라벨 인식 완료" if ratio_complete else "라벨을 일부만 인식했습니다. 비율을 확인해 주세요.",
-        "ai_success": ratio_complete,
-        "analysis_failure_reason": None if ratio_complete else "RATIO_INCOMPLETE",
+        "message": "라벨 인식 완료",
+        "ai_success": True,
+        "analysis_failure_reason": None,
         "materials": materials,
         "material_details": build_material_details(materials, db),
-        "care_instruction": care_instruction,
-        "raw_ocr_preview": raw_ocr_preview,
+        "care_instruction": parsed["care_instruction"],
+        "raw_ocr_preview": parsed["raw_ocr_preview"],
+        "warnings": parsed["warnings"],
+        "confidence": parsed["confidence"],
+        "parse_evidence": parsed["parse_evidence"],
+        "ocr": parsed["ocr"],
         "clothing": {
             "name": title,
             "category": category,

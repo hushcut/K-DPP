@@ -23,6 +23,7 @@ RUNTIME_FILES = (
     "apps/text/__init__.py",
     "apps/text/composition_candidates.py",
     "apps/text/material_extraction.py",
+    "apps/text/multilingual_rows.py",
     "apps/text/ocr_cache.py",
     "apps/text/ocr_candidates.py",
     "apps/text/ocr_corrections.py",

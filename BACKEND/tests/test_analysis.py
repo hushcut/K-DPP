@@ -1,4 +1,11 @@
+from io import BytesIO
+from pathlib import Path
+
+import pytest
+from PIL import Image
+
 import main
+from apps.text import ocr_text
 
 
 def test_analyze_calculates_cotton_polyester(client):
@@ -363,12 +370,30 @@ def test_scan_rejects_unsupported_image_type(client):
     assert body["error_code"] == "UNSUPPORTED_IMAGE_FORMAT"
 
 
-def test_scan_material_failure_returns_partial_context(client):
+@pytest.mark.parametrize(
+    ("raw_text", "expected_care", "expected_preview"),
+    [
+        (
+            "wash cold do not bleach dry flat",
+            "표백 금지; 찬물 세탁; 평평하게 뉘어서 건조",
+            "wash cold do not bleach dry flat",
+        ),
+        ("DO NOT BLEACH", "표백 금지", "DO NOT BLEACH"),
+        (
+            "COTTON 60%\nDO NOT BLEACH",
+            "표백 금지",
+            "COTTON 60% DO NOT BLEACH",
+        ),
+    ],
+)
+def test_scan_material_failure_returns_partial_context(
+    client, raw_text, expected_care, expected_preview
+):
     token = _login_token(client)
     response = client.post(
         "/api/scan",
         files={"image": ("label.jpg", b"test-image", "image/jpeg")},
-        data={"raw_ocr_text": "wash cold do not bleach dry flat"},
+        data={"raw_ocr_text": raw_text},
         headers={"Authorization": f"Bearer {token}"},
     )
     body = response.json()
@@ -379,13 +404,29 @@ def test_scan_material_failure_returns_partial_context(client):
     assert body["detail"]["error_code"] == "MATERIAL_EXTRACTION_FAILED"
     # 프론트 직접 입력 폼이 읽는 필드입니다. 이 네 개가 계약이며,
     # AI 브랜치를 머지하면서 detail을 줄이면 폼 프리필이 조용히 사라집니다.
+    assert body["detail"]["materials"] == {}
     assert body["detail"]["partial_materials"] == {}
     assert body["detail"]["ai_success"] is False
-    assert body["detail"]["care_instruction"]
-    assert "raw_ocr_preview" in body["detail"]
+    assert body["detail"]["care_instruction"] == expected_care
+    assert body["detail"]["raw_ocr_preview"] == expected_preview
+    assert "care_instruction" not in body
 
 
-def test_scan_accepts_either_care_key_from_parser(client, monkeypatch):
+@pytest.mark.parametrize(
+    ("care_fields", "expected_care"),
+    [
+        ({"care_text": "손세탁; 표백 금지"}, "손세탁; 표백 금지"),
+        ({"care_instruction": "손세탁; 표백 금지"}, "손세탁; 표백 금지"),
+        ({"care_text": "", "care_instruction": "표백 금지"}, "표백 금지"),
+        (
+            {"care_text": "", "care_instruction": ""},
+            "라벨 표기법에 맞춰 관리하세요.",
+        ),
+    ],
+)
+def test_scan_accepts_either_care_key_from_parser(
+    client, monkeypatch, care_fields, expected_care
+):
     """AI 파서 버전에 따라 care_text/care_instruction 중 하나만 온다."""
     token = _login_token(client)
 
@@ -393,9 +434,11 @@ def test_scan_accepts_either_care_key_from_parser(client, monkeypatch):
         main,
         "parse_label",
         lambda text: {
+            "status": "success",
             "materials": {"cotton": 100},
-            "care_instruction": "손세탁; 표백 금지",
             "raw_ocr_preview": "COTTON 100%",
+            "parse_evidence": {"composition_status": "confirmed"},
+            **care_fields,
         },
     )
 
@@ -407,19 +450,39 @@ def test_scan_accepts_either_care_key_from_parser(client, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json()["care_instruction"] == "손세탁; 표백 금지"
+    body = response.json()
+    assert body["materials"] == {"cotton": 100}
+    assert body["care_instruction"] == expected_care
+    assert body["raw_ocr_preview"] == "COTTON 100%"
+    assert "care_text" not in body
 
 
-def test_scan_material_failure_keeps_parser_care_instruction(client, monkeypatch):
+@pytest.mark.parametrize(
+    ("care_fields", "expected_care"),
+    [
+        ({"care_text": "손세탁; 표백 금지"}, "손세탁; 표백 금지"),
+        ({"care_instruction": "손세탁; 표백 금지"}, "손세탁; 표백 금지"),
+        ({"care_text": "", "care_instruction": "표백 금지"}, "표백 금지"),
+        (
+            {"care_text": "", "care_instruction": ""},
+            "라벨 표기법에 맞춰 관리하세요.",
+        ),
+    ],
+)
+def test_scan_material_failure_keeps_parser_care_instruction(
+    client, monkeypatch, care_fields, expected_care
+):
     token = _login_token(client)
 
     monkeypatch.setattr(
         main,
         "parse_label",
         lambda text: {
+            "status": "failed",
             "materials": {},
-            "care_instruction": "손세탁; 표백 금지",
             "raw_ocr_preview": "CARE ONLY",
+            "parse_evidence": {},
+            **care_fields,
         },
     )
 
@@ -431,17 +494,46 @@ def test_scan_material_failure_keeps_parser_care_instruction(client, monkeypatch
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"]["care_instruction"] == "손세탁; 표백 금지"
+    body = response.json()
+    assert body["error_code"] == "MATERIAL_EXTRACTION_FAILED"
+    assert body["detail"]["care_instruction"] == expected_care
+    assert body["detail"]["materials"] == {}
+    assert body["detail"]["partial_materials"] == {}
+    assert body["detail"]["ai_success"] is False
+    assert body["detail"]["raw_ocr_preview"] == "CARE ONLY"
+    assert "care_text" not in body["detail"]
+    assert "care_instruction" not in body
 
 
-def test_scan_ocr_failure_does_not_leak_exception_text(client, monkeypatch):
+@pytest.mark.parametrize(
+    ("exception_type", "expected_status", "expected_code"),
+    [
+        (RuntimeError, 502, "OCR_FAILED"),
+        (ocr_text.OcrServiceError, 502, "OCR_FAILED"),
+        (ocr_text.OcrConfigurationError, 502, "OCR_NOT_CONFIGURED"),
+        (ocr_text.OcrQuotaExceededError, 502, "OCR_QUOTA_EXCEEDED"),
+        (ocr_text.OcrTimeoutError, 504, "OCR_TIMEOUT"),
+        (ocr_text.OcrUnavailableError, 503, "OCR_SERVICE_UNAVAILABLE"),
+        (ocr_text.OcrCompositionError, 422, "MATERIAL_EXTRACTION_FAILED"),
+    ],
+)
+def test_scan_ocr_failure_does_not_leak_exception_text(
+    client, monkeypatch, tmp_path, exception_type, expected_status, expected_code
+):
     """OCR 예외 원문에는 서버 경로·계정 식별자가 섞일 수 있어 응답에 넣지 않는다."""
     token = _login_token(client)
+    uploaded_files = []
+    monkeypatch.setattr(main.tempfile, "tempdir", str(tmp_path))
 
-    def _raise(*args, **kwargs):
-        raise RuntimeError("C:/secret/key.json 자격 증명 오류")
+    def fake_ocr(image_path, credential_path=""):
+        path = Path(image_path)
+        exists = path.exists()
+        uploaded_files.append((path, exists, path.read_bytes() if exists else None))
+        raise exception_type(
+            "C:/secret/key.json account-private@example.com private-provider-token"
+        )
 
-    monkeypatch.setattr(main, "run_ocr", _raise)
+    monkeypatch.setattr(main, "run_ocr", fake_ocr)
 
     response = client.post(
         "/api/scan",
@@ -449,6 +541,436 @@ def test_scan_ocr_failure_does_not_leak_exception_text(client, monkeypatch):
         headers={"Authorization": f"Bearer {token}"},
     )
 
-    assert response.status_code == 502
-    assert "secret" not in response.text
-    assert "key.json" not in response.text
+    body = response.json()
+    assert response.status_code == expected_status
+    assert body["status"] == "error"
+    assert body["error_code"] == expected_code
+    assert body["detail"]["error_code"] == expected_code
+    for sensitive_fragment in (
+        "secret", "key.json", "account-private", "private-provider-token"
+    ):
+        assert sensitive_fragment not in response.text
+    assert len(uploaded_files) == 1
+    path, existed_during_ocr, content = uploaded_files[0]
+    assert path.parent == tmp_path
+    assert existed_during_ocr is True
+    assert content == b"test-image"
+    assert not path.exists()
+
+
+@pytest.mark.parametrize(
+    ("raw_text", "expected_care"),
+    [
+        ("COTTON 100%\nDO NOT BLEACH", "표백 금지"),
+        ("COTTON 100%\nDO NOT TUMBLE DRY", "건조기 사용 금지"),
+    ],
+)
+def test_scan_preserves_enhancement_parser_care_and_cleans_upload(
+    client, monkeypatch, tmp_path, raw_text, expected_care
+):
+    """실제 enhancement 파서의 지침을 외부 계약으로 전달하며 OCR 업로드를 정리한다."""
+    token = _login_token(client)
+    uploaded_files = []
+    monkeypatch.setattr(main.tempfile, "tempdir", str(tmp_path))
+
+    def fake_ocr(image_path, credential_path=""):
+        path = Path(image_path)
+        exists = path.exists()
+        uploaded_files.append((path, exists, path.read_bytes() if exists else None))
+        return raw_text
+
+    monkeypatch.setattr(main, "run_ocr", fake_ocr)
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["materials"] == {"cotton": 100}
+    assert body["care_instruction"] == expected_care
+    assert body["ai_success"] is True
+    assert body["raw_ocr_preview"] == raw_text.replace("\n", " ")
+    assert "care_text" not in body
+    assert len(uploaded_files) == 1
+    path, existed_during_ocr, content = uploaded_files[0]
+    assert path.parent == tmp_path
+    assert existed_during_ocr is True
+    assert content == b"test-image"
+    assert not path.exists()
+
+
+def test_scan_rejects_unconfirmed_parser_materials(client, monkeypatch):
+    token = _login_token(client)
+    monkeypatch.setattr(
+        main,
+        "parse_label",
+        lambda text: {
+            "status": "failed",
+            "error_code": "ambiguous_composition",
+            "materials": {"cotton": 100},
+            "raw_ocr_preview": "COTTON 100% OR POLYESTER 100%",
+            "care_instruction": "",
+            "warnings": ["generic:ambiguous_composition_candidates"],
+            "confidence": {"ocr": "unknown", "parser": "low"},
+            "parse_evidence": {},
+        },
+    )
+
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": "ambiguous"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["materials"] == {}
+    assert detail["partial_materials"] == {}
+    assert detail["parser_error_code"] == "ambiguous_composition"
+    assert detail["warnings"] == ["generic:ambiguous_composition_candidates"]
+    assert detail["confidence"]["parser"] == "low"
+
+
+@pytest.mark.parametrize(
+    "materials",
+    [
+        {"cotton": 99.5},
+        {"cotton": 60, "polyester": 39.99999999999999},
+        {"cotton": 60, "polyester": 40.00000000000001},
+    ],
+)
+def test_scan_rejects_parser_success_with_non_exact_total(
+    client, monkeypatch, materials
+):
+    token = _login_token(client)
+    monkeypatch.setattr(
+        main,
+        "parse_label",
+        lambda text: {
+            "status": "success",
+            "materials": materials,
+            "raw_ocr_preview": "COTTON 99.5%",
+            "care_instruction": "",
+            "warnings": [],
+            "confidence": {"ocr": "unknown", "parser": "high"},
+            "parse_evidence": {"composition_status": "confirmed"},
+        },
+    )
+
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": "COTTON 99.5%"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["materials"] == {}
+    assert detail["partial_materials"] == {}
+    assert detail["parser_error_code"] == "ratio_total_invalid"
+
+
+def test_scan_rejects_parser_success_without_confirmed_evidence(
+    client,
+    monkeypatch,
+):
+    token = _login_token(client)
+    monkeypatch.setattr(
+        main,
+        "parse_label",
+        lambda text: {
+            "status": "success",
+            "materials": {"cotton": 100},
+            "raw_ocr_preview": "COTTON 100%",
+            "care_instruction": "",
+            "parse_evidence": {"composition_status": "candidate"},
+        },
+    )
+
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": "COTTON 100%"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["parser_error_code"] == "composition_unconfirmed"
+
+
+@pytest.mark.parametrize(
+    "materials",
+    [
+        {"cotton": "100"},
+        {"cotton": True},
+        {"": 100},
+        {1: 100},
+        {"cotton": float("nan")},
+        {"cotton": float("inf")},
+        {"cotton": float("-inf")},
+        {},
+        {"cotton": 0},
+        {"cotton": -1},
+        {"cotton": 101},
+    ],
+)
+def test_exact_material_total_requires_typed_finite_values(materials):
+    assert main._has_exact_material_total(materials) is False
+
+
+@pytest.mark.parametrize("excess", [1e-100, 5e-324])
+def test_exact_material_total_rejects_tiny_excess(excess):
+    assert main._has_exact_material_total({"cotton": 100, "spandex": excess}) is False
+
+
+def test_scan_returns_confirmed_parser_diagnostics(client, monkeypatch):
+    token = _login_token(client)
+    diagnostics = {
+        "warnings": ["generic:ratio_marker_inferred"],
+        "confidence": {"ocr": "unknown", "parser": "medium"},
+        "parse_evidence": {
+            "composition_status": "confirmed",
+            "source": "same_line",
+            "ratio_total_before_normalization": 100,
+            "explicit_percent": False,
+        },
+    }
+    monkeypatch.setattr(
+        main,
+        "parse_label",
+        lambda text: {
+            "status": "success",
+            "materials": {"cotton": 95, "spandex": 5},
+            "raw_ocr_preview": "COTTON 95 SPANDEX 5",
+            "care_instruction": "",
+            **diagnostics,
+        },
+    )
+
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": "COTTON 95 SPANDEX 5"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["materials"] == {"cotton": 95, "spandex": 5}
+    assert body["warnings"] == diagnostics["warnings"]
+    assert body["confidence"] == diagnostics["confidence"]
+    assert body["parse_evidence"] == diagnostics["parse_evidence"]
+
+
+def test_scan_rejects_non_exact_raw_ocr_composition(client):
+    token = _login_token(client)
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": "COTTON 100% POLYURETHANE 5%"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["partial_materials"] == {}
+
+
+@pytest.mark.parametrize(
+    ("raw_text", "expected"),
+    [
+        (
+            "COTTON 92.5% SPANDEX 7.5%",
+            {"cotton": 92.5, "spandex": 7.5},
+        ),
+        (
+            "COTTON 33.34% POLYESTER 33.33% NYLON 33.33%",
+            {"cotton": 33.34, "polyester": 33.33, "nylon": 33.33},
+        ),
+        (
+            "COTTON 1.4% POLYESTER 65.9% NYLON 32.7%",
+            {"cotton": 1.4, "polyester": 65.9, "nylon": 32.7},
+        ),
+        (
+            "COTTON 64.1% POLYESTER 0.1% NYLON 35.8%",
+            {"cotton": 64.1, "polyester": 0.1, "nylon": 35.8},
+        ),
+    ],
+)
+def test_scan_preserves_exact_decimal_composition(client, raw_text, expected):
+    token = _login_token(client)
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": raw_text},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["materials"] == expected
+    assert body["ai_success"] is True
+    assert body["parse_evidence"]["composition_status"] == "confirmed"
+
+
+def test_scan_accepts_multilingual_aliases_with_shared_ratios(client):
+    token = _login_token(client)
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": "면 / COTTON 60% 폴리에스터 / POLYESTER 40%"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["materials"] == {"cotton": 60, "polyester": 40}
+    assert body["ai_success"] is True
+    assert body["parse_evidence"]["composition_status"] == "confirmed"
+
+
+@pytest.mark.parametrize("metadata", ["SIZE\n100", "수축률 3%"])
+def test_scan_preserves_composition_with_explicit_metadata(client, metadata):
+    token = _login_token(client)
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": f"면 / COTTON 92.5% SPANDEX 7.5%\n{metadata}"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["materials"] == {"cotton": 92.5, "spandex": 7.5}
+    assert body["ai_success"] is True
+    assert body["parse_evidence"]["composition_status"] == "confirmed"
+
+
+def test_scan_does_not_use_size_as_missing_composition(client):
+    token = _login_token(client)
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": "COTTON\nSIZE\n100"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["partial_materials"] == {}
+
+
+@pytest.mark.parametrize(
+    "raw_text",
+    [
+        "COTTON 100%" + " " * (main.MAX_RAW_OCR_TEXT_LENGTH - len("COTTON 100%") + 1),
+        "COTTON 100%\n" + "9" * 5000,
+    ],
+    ids=["one_over_limit_before_strip", "oversized_integer_evidence"],
+)
+def test_scan_rejects_overlong_raw_ocr_text_before_ai(
+    client, monkeypatch, raw_text
+):
+    token = _login_token(client)
+
+    def unexpected_ai_call(*_args, **_kwargs):
+        pytest.fail("Invalid form text must be rejected before OCR or parsing")
+
+    monkeypatch.setattr(main, "run_ocr", unexpected_ai_call)
+    monkeypatch.setattr(main, "parse_label", unexpected_ai_call)
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": raw_text},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["status"] == "error"
+    assert body["error_code"] == "VALIDATION_ERROR"
+    assert body["detail"][0]["loc"] == ["body", "raw_ocr_text"]
+    assert all(set(error) <= {"loc", "msg", "type"} for error in body["detail"])
+    assert raw_text not in response.text
+
+
+def test_scan_accepts_raw_ocr_text_at_length_limit(client):
+    token = _login_token(client)
+    composition = "COTTON 100%"
+    raw_text = composition + " " * (main.MAX_RAW_OCR_TEXT_LENGTH - len(composition))
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+        data={"raw_ocr_text": raw_text},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["materials"] == {"cotton": 100}
+
+
+@pytest.mark.parametrize(
+    "ocr_text_value",
+    [
+        "COTTON 100%\nUNKNOWN 50%",
+        "COTTON 100%\n품번 COTTON 50% MODACRYLIC 50%",
+        "COTTON 100%\n100.0000000000000000001",
+        "COTTON 100%\n" + "9" * 5000,
+        "PU\nLEATHER 100%",
+        "Faux\nLeather 100%",
+    ],
+    ids=[
+        "unknown_fiber_row", "incomplete_composition_in_metadata_row",
+        "extra_decimal_row", "oversized_integer_row",
+        "split_pu_modifier", "split_faux_modifier",
+    ],
+)
+def test_scan_rejects_unsafe_ocr_evidence_through_metadata_pipeline(
+    client, monkeypatch, tmp_path, ocr_text_value
+):
+    """Only substitute Vision RPC; keep image validation, candidate parsing and service wiring."""
+    token = _login_token(client)
+    image = BytesIO()
+    Image.new("RGB", (4, 4), "white").save(image, format="JPEG")
+    uploaded_paths = []
+    actual_ocr = main.run_ocr
+
+    def tracked_ocr(image_path, **kwargs):
+        path = Path(image_path)
+        uploaded_paths.append(path)
+        assert path.exists()
+        assert path.read_bytes() == image.getvalue()
+        return actual_ocr(image_path, **kwargs)
+
+    monkeypatch.setattr(main.tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(main, "run_ocr", tracked_ocr)
+    monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        ocr_text, "_run_google_ocr",
+        lambda *_args, **_kwargs: ocr_text.OcrPayload(ocr_text_value, ocr_text_value),
+    )
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", image.getvalue(), "image/jpeg")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error_code"] == "MATERIAL_EXTRACTION_FAILED"
+    detail = body["detail"]
+    assert detail["materials"] == {}
+    assert detail["partial_materials"] == {}
+    assert detail["ai_success"] is False
+    assert detail["ocr"]["image_format"] == "JPEG"
+    assert detail["ocr"]["width"] == 4
+    assert detail["ocr"]["height"] == 4
+    assert detail["ocr"]["attempt_count"] >= 1
+    assert "Exceeds the limit" not in response.text
+    assert len(uploaded_paths) == 1
+    assert uploaded_paths[0].parent == tmp_path
+    assert not uploaded_paths[0].exists()
+    with main.database.SessionLocal() as db:
+        assert db.query(main.database.AnalysisResult).count() == 0

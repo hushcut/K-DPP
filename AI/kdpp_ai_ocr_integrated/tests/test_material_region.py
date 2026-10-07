@@ -134,7 +134,7 @@ def reread_fixture(monkeypatch, ratio='5%', material='Polyester', extra=False):
     region = find_material_region(located_candidates(raw_words), 800, 600)
     assert region is not None
     crop = prepare_material_region(content, region)
-    rotated = prepare_material_region(content, region, rotated=True)
+    rotated = prepare_material_region(content, region, rotated=True, enhancement='adaptive_mild')
     preprocessed = ocr_text.preprocess_image_bytes(content)
     with Image.open(BytesIO(preprocessed)) as image:
         sx, sy = image.width/800, image.height/600

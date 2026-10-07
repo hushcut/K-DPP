@@ -111,7 +111,13 @@ def analyze_label_image(
     )
 
 
-def analyze_label_text(text: str) -> dict[str, Any]:
-    """Parse already-extracted OCR text without claiming OCR confidence."""
+def analyze_label_text(
+    text: str, *, confirmed_polyester_poly: bool = False,
+    confirmed_first_generic: bool = False,
+) -> dict[str, Any]:
+    """Parse extracted text; explicit per-label review options never imply OCR confidence."""
 
-    return normalize_label_response(parse_label(text), api_version=API_VERSION)
+    return normalize_label_response(parse_label(
+        text, confirmed_polyester_poly=confirmed_polyester_poly,
+        confirmed_first_generic=confirmed_first_generic,
+    ), api_version=API_VERSION)

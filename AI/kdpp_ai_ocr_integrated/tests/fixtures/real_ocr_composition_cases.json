@@ -110,9 +110,9 @@
       "QA083"
     ],
     "ocr_excerpt": "겉감\n100%)\n배색 면\n95%\n폴리우레탄\n5%",
-    "status": "failed",
-    "materials": {},
-    "error_code": "incomplete_part_composition"
+    "status": "success",
+    "materials": {"cotton": 95, "polyurethane": 5},
+    "selected_part": "color_block"
   },
   {
     "id": "QA015",

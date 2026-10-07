@@ -103,10 +103,13 @@ def test_numbered_heading_indices_are_not_plain_ratios(first, second):
 
 
 @pytest.mark.parametrize('first', ['OUTSHELL Cotton', 'OUTSHELL Cotton 70%', '겉감1 UNKNOWN 100%'])
-def test_second_outer_cannot_substitute_an_unconfirmed_primary(first):
+def test_confirmed_second_outer_keeps_its_identity_when_primary_is_unconfirmed(first):
     result = parse_label(first + '\nOUTSHELL2 Polyester 100%')
-    assert result['status'] == 'failed'
-    assert result['materials'] == {}
+    assert result['status'] == 'success'
+    assert result['selected_part'] == 'outer_2'
+    assert result['materials'] == {'polyester': 100}
+    assert 'outer' not in result['parts']
+    assert 'outer:composition_not_confirmed' in result['warnings']
 
 
 def test_conflicting_secondary_fabric_does_not_change_confirmed_primary():

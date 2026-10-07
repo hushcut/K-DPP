@@ -154,8 +154,15 @@ def test_orphan_ratio_cannot_be_hidden_by_another_complete_block(text: str) -> N
     # leaving its 100% beside a complete contrast composition.
     result = parse_label(text)
 
-    assert result["status"] == "failed"
-    assert result["materials"] == {}
+    if "LINING" in text:
+        assert result["status"] == "success"
+        assert result["selected_part"] == "lining"
+        assert result["materials"] == {"polyester": 100}
+        assert "generic:unpaired_ratio_rows" in result["warnings"]
+        assert result["parse_evidence"]["observed_ratios"]["generic"] == [100.0]
+    else:
+        assert result["status"] == "failed"
+        assert result["materials"] == {}
 
 
 @pytest.mark.parametrize(
