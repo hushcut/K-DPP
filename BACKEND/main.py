@@ -17,6 +17,7 @@ from fastapi import (
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, StringConstraints
@@ -54,6 +55,8 @@ except Exception:
     parse_label = None
 
 ACCESS_TOKEN_EXPIRE_DAYS = 30
+# 계정마다 살아 있는 로그인 토큰(기기) 수 상한 — 넘으면 가장 오래된 토큰부터 지운다(add_access_token).
+ACCESS_TOKENS_PER_USER_MAX = 10
 DEFAULT_ERROR_CODES = {
     400: "BAD_REQUEST",
     401: "AUTH_REQUIRED",
@@ -1368,7 +1371,29 @@ def hash_access_token(token: str) -> str:
 
 
 def add_access_token(user_id: int, db: Session) -> str:
-    """토큰 행을 세션에 넣고 원문을 돌려준다(커밋은 부르는 쪽). 원문은 응답으로만, DB 엔 해시만."""
+    """토큰 행을 세션에 넣고 원문을 돌려준다(커밋은 부르는 쪽). 원문은 응답으로만, DB 엔 해시만.
+
+    성공한 로그인은 어떤 한도에도 세지 않아 토큰 행이 끝없이 늘 수 있으므로(DECISIONS 160), 넣기 전에
+    그 계정의 만료 토큰을 지우고 최근 토큰을 ACCESS_TOKENS_PER_USER_MAX - 1 개만 남긴다 — 가장 오래된
+    기기는 다음 요청에서 401. 부르는 쪽이 users 행을 잠근 채(SELECT … FOR UPDATE) 불러야 같은 계정의 동시
+    로그인에도 개수가 정확하다 — 로그인·비밀번호 변경은 lock_user_if_password_unchanged, 카카오 기존 계정은
+    sign_in_kakao_account 의 잠금, 카카오 새 계정은 방금 만든 행이라 겹치지 않는다.
+    """
+    tokens = database.AccessToken
+    db.query(tokens).filter(
+        tokens.user_id == user_id,
+        or_(tokens.expires_at.is_(None), tokens.expires_at <= utc_now()),
+    ).delete(synchronize_session=False)
+    older_tokens = (
+        select(tokens.token)
+        .where(tokens.user_id == user_id)
+        .order_by(tokens.created_at.desc(), tokens.token.desc())
+        .offset(ACCESS_TOKENS_PER_USER_MAX - 1)
+    )
+    db.query(tokens).filter(
+        tokens.user_id == user_id, tokens.token.in_(older_tokens)
+    ).delete(synchronize_session=False)
+
     raw_token = secrets.token_urlsafe(32)
     db.add(
         database.AccessToken(
