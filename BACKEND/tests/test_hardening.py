@@ -2,13 +2,9 @@
 
 import hashlib
 import json
-import os
-import subprocess
-import sys
 import threading
 import time
 from datetime import timedelta
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,6 +13,7 @@ from starlette.middleware.cors import CORSMiddleware
 import database
 import main
 from auth_helpers import fix_next_code, request_code, signup
+from process_helpers import run_python
 
 
 def _login_token(client, email="hardening@example.com"):
@@ -998,14 +995,7 @@ print(json.dumps({p: client.get(p).status_code for p in ("/", "/docs", "/redoc",
 
 def _import_main_with_api_docs(value):
     # 앱 객체는 import 때 만들어지므로 환경변수를 바꾼 별도 프로세스에서 봅니다.
-    return subprocess.run(
-        [sys.executable, "-c", _API_DOCS_PROBE],
-        cwd=Path(main.__file__).parent,
-        env=dict(os.environ, K_DPP_API_DOCS=value),
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    return run_python(_API_DOCS_PROBE, K_DPP_API_DOCS=value)
 
 
 def test_api_docs_can_be_turned_off():

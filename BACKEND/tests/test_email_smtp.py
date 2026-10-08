@@ -6,16 +6,12 @@
 """
 
 import base64
-import os
 import socket
 import ssl
-import subprocess
-import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from email import message_from_bytes
 from email.policy import default as email_policy
-from pathlib import Path
 
 import certifi
 import pytest
@@ -26,6 +22,7 @@ from cryptography.x509.oid import NameOID
 
 import auth_helpers
 import main
+from process_helpers import run_python
 
 # conftest 의 client 픽스처가 deliver_email 을 기록 함수로 바꾸기 전의 진짜 함수.
 REAL_DELIVER_EMAIL = main.deliver_email
@@ -603,14 +600,7 @@ def test_smtp_password_file_must_be_readable(tmp_path):
 
 def _import_main_with(**env):
     # 설정은 import 때 읽으므로 환경변수를 바꾼 별도 프로세스에서 봅니다.
-    return subprocess.run(
-        [sys.executable, "-c", "import main"],
-        cwd=Path(main.__file__).parent,
-        env=dict(os.environ, **env),
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    return run_python("import main", **env)
 
 
 def test_smtp_settings_decide_whether_the_server_starts(tmp_path):

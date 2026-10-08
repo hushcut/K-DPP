@@ -117,6 +117,8 @@ python -m pytest
   실제 DB를 지우지 않도록 DB 이름이 `_test`로 끝나지 않으면 시작하지 않습니다.
 - 다른 주소의 PostgreSQL을 쓰려면 환경변수 `K_DPP_TEST_DATABASE_URL`을 지정합니다(기본값 `postgresql+psycopg://kdpp:kdpp@127.0.0.1:5432/k_dpp_test`).
   Docker가 무거우면 PostgreSQL 설치판에 `k_dpp_test` DB를 만들고 이 값으로 가리켜도 됩니다.
+- 한국어 Windows 에서 `PYTHONUTF8` 없이 `PYTHONIOENCODING=utf-8` 만 둔 창에서도 통과합니다. 환경변수를 바꿔 새 프로세스로
+  `import main` 해 보는 테스트는 `tests/process_helpers.py` 의 `run_python` 을 거칩니다 — 새로 만들 때도 이것을 씁니다.
 - 다 쓰면 `docker compose down`(데이터 유지) 또는 `docker compose down -v`(데이터까지 삭제).
 
 현재 테스트 범위:
