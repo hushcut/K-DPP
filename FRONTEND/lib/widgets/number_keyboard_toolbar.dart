@@ -11,8 +11,8 @@ void dismissKeyboardOnTapOutside(PointerDownEvent event) {
 /// 숫자 키패드 바로 위에 띄우는 양 끝이 둥근 막대입니다. 왼쪽에 ∧(이전 칸)·∨(다음 칸), 오른쪽에 [완료].
 ///
 /// iOS 숫자 키패드에는 확인 키가 없어, 막대가 없으면 키보드를 끌어내려야만 닫을 수
-/// 있었습니다. 모양은 iOS 키보드 액세서리를 따르고, 두 플랫폼에서 같은 막대를 씁니다
-/// (DECISIONS 177 — 30 의 떠 있는 둥근 버튼을 바꿈).
+/// 있었습니다. 모양은 iOS 키보드 액세서리를 따릅니다(DECISIONS 177 — 30 의 떠 있는 둥근 버튼을 바꿈).
+/// Android 숫자 키보드에는 동작 키가 있어 막대를 띄우지 않습니다(DECISIONS 185).
 ///
 /// 갈 곳이 없는 화살표는 흐리게 남겨, 막대 안 버튼 자리가 칸마다 바뀌지 않게 합니다.
 /// 좌우·위아래에 여백을 둔 캡슐이라 위 모서리가 둥근 키보드 위에 따로 떠 보입니다(DECISIONS 178).
@@ -54,11 +54,10 @@ class NumberKeyboardToolbar extends StatelessWidget {
   static const Color _lightDisabled = Color(0xFFA1A1A8);
   static const Color _darkDisabled = Color(0xFF6E6E73);
 
-  /// 숫자 키패드 위에 막대를 붙이는 플랫폼인지 알려 줍니다. iOS·Android 둘 다입니다(DECISIONS 177).
-  static bool isNeeded(BuildContext context) {
-    final platform = Theme.of(context).platform;
-    return platform == TargetPlatform.iOS || platform == TargetPlatform.android;
-  }
+  /// 이 플랫폼의 숫자 키패드에 확인 키가 없어 막대가 필요한지 알려 줍니다. iOS 만 참입니다
+  /// (DECISIONS 185 — 177 의 Android 표시를 거둠).
+  static bool isNeeded(BuildContext context) =>
+      Theme.of(context).platform == TargetPlatform.iOS;
 
   @override
   Widget build(BuildContext context) {

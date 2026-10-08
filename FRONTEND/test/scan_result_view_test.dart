@@ -690,7 +690,7 @@ void main() {
     semantics.dispose();
   }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
-  testWidgets('Android도 함유율 칸에 막대가 뜨고, 키보드 동작 키는 소재명 → 함유율 → 다음 행 순서를 따른다', (
+  testWidgets('Android는 막대 없이 키보드 동작 키가 소재명 → 함유율 → 다음 행 순서를 따른다', (
     tester,
   ) async {
     _usePhoneView(tester);
@@ -711,8 +711,8 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.next);
     await tester.pumpAndSettle();
     expect(materialInputs[0].percentFocusNode.hasFocus, isTrue);
-    // 2026-10-07: Android 숫자 키보드에도 동작 키가 있지만 iOS 와 같은 막대를 그린다(DECISIONS 177).
-    expect(find.byType(NumberKeyboardToolbar), findsOneWidget);
+    // 2026-10-08: Android 숫자 키보드의 동작 키가 막대와 하는 일이 겹쳐 막대를 뺀다(DECISIONS 185).
+    expect(find.byType(NumberKeyboardToolbar), findsNothing);
 
     await tester.testTextInput.receiveAction(TextInputAction.next);
     await tester.pumpAndSettle();

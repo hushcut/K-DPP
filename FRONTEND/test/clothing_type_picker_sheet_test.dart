@@ -131,6 +131,31 @@ void main() {
       expect(find.byType(NumberKeyboardToolbar), findsNothing);
     }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
+    testWidgets('Android 무게 칸에는 키보드 위 막대를 그리지 않는다', (tester) async {
+      // Android 숫자 키보드의 동작 키가 막대와 하는 일이 겹친다(DECISIONS 185).
+      _usePhoneView(tester);
+      await _openSheet(tester, discardPrompt: prompt);
+      await tester.scrollUntilVisible(find.text('직접 입력'), 100);
+      await tester.tap(find.text('직접 입력'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(TextField, '실제 무게'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<EditableText>(
+              find.descendant(
+                of: find.widgetWithText(TextField, '실제 무게'),
+                matching: find.byType(EditableText),
+              ),
+            )
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
+      expect(find.byType(NumberKeyboardToolbar), findsNothing);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
     testWidgets('바깥을 탭해도 닫히지 않고 확인창도 뜨지 않는다', (tester) async {
       _usePhoneView(tester);
       final sheet = await _openSheet(tester, discardPrompt: prompt);
