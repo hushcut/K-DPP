@@ -80,3 +80,39 @@ class KakaoLoginButton extends StatelessWidget {
     );
   }
 }
+
+/// 카카오로 로그인한 계정임을 보여 주는 노란 원 안의 말풍선 표식입니다(설정 프로필 카드).
+///
+/// [KakaoLoginButton] 과 같은 바탕·심볼 색을 써서 로그인 버튼과 같은 표식으로 읽힙니다.
+/// 뜻은 옆 글자('카카오 계정')가 전하므로 낭독에서는 빠집니다.
+class KakaoSymbolBadge extends StatelessWidget {
+  const KakaoSymbolBadge({super.key, this.size = 20});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExcludeSemantics(
+      child: Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: const BoxDecoration(
+          color: KakaoLoginButton.containerColor,
+          shape: BoxShape.circle,
+        ),
+        child: SvgPicture.asset(
+          'assets/images/icon_talk_login.svg',
+          package: 'kakao_flutter_sdk_user',
+          width: size * 0.55,
+          height: size * 0.55,
+          colorFilter: const ColorFilter.mode(
+            KakaoLoginButton.symbolColor,
+            BlendMode.srcIn,
+          ),
+          excludeFromSemantics: true,
+        ),
+      ),
+    );
+  }
+}

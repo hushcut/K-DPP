@@ -14,6 +14,7 @@ import 'utils/accessibility_announcer.dart';
 import 'utils/session_expiry_handler.dart';
 import 'widgets/app_back_button.dart';
 import 'widgets/app_banner.dart';
+import 'widgets/kakao_login_button.dart';
 
 /// 사용자·테마 상태를 읽어 설정 메뉴를 구성하고 각 설정 동작을 실행합니다.
 class SettingsScreen extends StatelessWidget {
@@ -588,16 +589,27 @@ class SettingsScreen extends StatelessWidget {
                           color: primaryText,
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        accountLabel,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: secondaryText,
-                          height: 1.4,
-                        ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          // 이메일이 없는 계정은 카카오 계정이므로 로그인 버튼과 같은 표식을 붙입니다.
+                          if (accountEmail == null) ...[
+                            const KakaoSymbolBadge(),
+                            const SizedBox(width: 6),
+                          ],
+                          Flexible(
+                            child: Text(
+                              accountLabel,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: secondaryText,
+                                height: 1.4,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),

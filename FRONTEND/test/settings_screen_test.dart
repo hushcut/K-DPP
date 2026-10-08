@@ -12,6 +12,7 @@ import 'package:k_dpp/services/auth_api_service.dart';
 import 'package:k_dpp/settings_screen.dart';
 import 'package:k_dpp/theme_provider.dart';
 import 'package:k_dpp/widgets/app_banner.dart';
+import 'package:k_dpp/widgets/kakao_login_button.dart';
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
 import 'package:provider/provider.dart';
 
@@ -97,6 +98,42 @@ void main() {
     // 프로필 카드와 '내 정보'의 로그인 칸 두 곳입니다.
     expect(find.text('카카오 계정'), findsNWidgets(2));
     expect(find.text('로그인'), findsOneWidget);
+    // 카카오 표식은 프로필 카드에만 붙고, 낭독은 옆 글자만 읽습니다.
+    expect(find.byType(KakaoSymbolBadge), findsOneWidget);
+    final semantics = tester.ensureSemantics();
+    expect(find.bySemanticsLabel('카카오 사용자\n카카오 계정'), findsOneWidget);
+    expect(find.bySemanticsLabel('로그인\n카카오 계정'), findsOneWidget);
+    semantics.dispose();
+  });
+
+  testWidgets('이메일 계정의 프로필 카드에는 카카오 표식이 없다', (tester) async {
+    final provider = ClosetProvider(
+      storage: FakeClosetStorage(),
+      authSessionStorage: FakeAuthSessionStorage(),
+    );
+    await provider.setAuthenticatedUser(
+      nickname: '홍길동',
+      email: 'honggildong@example.com',
+      accessToken: 'access-token',
+      expiresInSeconds: 3600,
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => ThemeProvider()),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: SettingsScreen(),
+        ),
+      ),
+    );
+
+    expect(find.text('honggildong@example.com'), findsNWidgets(2));
+    expect(find.byType(KakaoSymbolBadge), findsNothing);
   });
 
   testWidgets('비밀번호 변경은 서버 규칙과 같은 기준으로 먼저 걸러 낸다', (tester) async {
