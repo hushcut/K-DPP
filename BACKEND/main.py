@@ -2618,7 +2618,15 @@ def calculate_carbon_range(
         unknown_materials="[]",
     )
     db.add(result)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        if _integrity_constraint_name(error) != "fk_analysis_results_user_id_users":
+            raise
+        # 토큰 확인 뒤 다른 기기의 탈퇴가 먼저 커밋됐습니다(탈퇴가 users 행을 쥔 동안 이 INSERT 가 기다렸다가
+        # 외래 키에 걸림). 계정이 없으니 저장하지 않고 세션 만료로 냅니다(DECISIONS 161).
+        raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
     db.refresh(result)
 
     return {

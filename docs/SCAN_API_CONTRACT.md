@@ -370,13 +370,15 @@ Authorization: Bearer <token>
 `main.py`의 `ensure_password_rules`). 프론트도 같은 규칙으로 먼저 걸러
 불필요한 왕복을 줄입니다.
 
-### 알려진 한계 (탈퇴 동시성)
+### 탈퇴와 겹친 탄소 계산
 
 기기 A의 `/api/carbon/calculate`가 토큰 검증을 통과한 직후 기기 B에서 탈퇴가 커밋되면,
-A의 이력 INSERT가 외래키 위반(`fk_analysis_results_user_id_users`)으로 실패하고 **A는 500을 받습니다**.
-탈퇴가 아직 커밋 전이면 A의 INSERT는 탈퇴 커밋까지 기다렸다가 같은 이유로 실패합니다.
-계정이 이미 없으니 저장하지 않는 것은 맞고, 응답 코드를 401로 바꿀지는 정하지 않았습니다.
-두 요청이 거의 동시에 겹쳐야 일어납니다.
+A의 이력 INSERT가 외래키(`fk_analysis_results_user_id_users`)에 걸립니다. 탈퇴가 아직 커밋 전이면
+A의 INSERT는 탈퇴 커밋까지 기다렸다가 같은 이유로 걸립니다. 계정이 이미 없으니 저장하지 않고
+**A는 401 "로그인이 만료되었습니다."(`AUTH_REQUIRED`)를 받습니다** — 다른 401 과 같이 세션 만료로 처리하고
+탄소량은 임시 추정값으로 둡니다(DECISIONS 161 — 그 전에는 500 이라 A 가 계정 없는 세션을 들고 있었음).
+반대로 A의 INSERT가 먼저면 탈퇴가 기다렸다가 그 이력까지 지웁니다(A는 200).
+두 요청이 거의 동시에 겹쳐야 일어납니다(`BACKEND/tests/test_withdraw_calculate_race.py`).
 
 SQLite 때 있던 두 경합 — 지워진 `user_id`로 고아 행이 남는 것, 마지막 가입자가 탈퇴한 뒤
 새 가입자가 같은 `users.id`를 받아 `/me/history`에 이전 계정 이력이 보이는 것 — 은 PostgreSQL에서
