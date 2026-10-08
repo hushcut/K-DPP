@@ -82,10 +82,10 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('iOS 무게 칸에는 키보드 위에 완료 막대가 뜨고, 키보드가 올라와도 시트가 넘치지 않는다', (
+    testWidgets('iOS 무게 칸에는 키보드 위에 막대가 뜨고(∧ 는 의류 종류로, ∨ 는 흐림), 키보드가 올라와도 시트가 넘치지 않는다', (
       tester,
     ) async {
-      // iOS 숫자 키패드에는 확인 키가 없다. 무게 뒤로 이어지는 입력란이 없어 [다음]은 없다.
+      // iOS 숫자 키패드에는 확인 키가 없다. 무게 뒤로 이어지는 입력란이 없어 ∨ 는 흐리다(DECISIONS 177).
       _usePhoneView(tester);
       EditableText.debugDeterministicCursor = true;
       addTearDown(() => EditableText.debugDeterministicCursor = false);
@@ -105,12 +105,56 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       expect(_toolbarButton('완료'), findsOneWidget);
-      expect(_toolbarButton('다음'), findsNothing);
+      expect(_toolbarIconButton('다음 칸').onPressed, isNull);
 
+      // ∧ 는 앞 칸인 의류 종류로 간다. 글자 칸이라 막대는 사라진다.
+      await tester.tap(_toolbarButton('이전 칸'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<EditableText>(
+              find.descendant(
+                of: find.widgetWithText(TextField, '의류 종류'),
+                matching: find.byType(EditableText),
+              ),
+            )
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
+      expect(find.byType(NumberKeyboardToolbar), findsNothing);
+
+      await tester.tap(find.widgetWithText(TextField, '실제 무게'));
+      await tester.pumpAndSettle();
       await tester.tap(_toolbarButton('완료'));
       await tester.pumpAndSettle();
       expect(find.byType(NumberKeyboardToolbar), findsNothing);
     }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+    testWidgets('Android 무게 칸에는 키보드 위 막대를 그리지 않는다', (tester) async {
+      // Android 숫자 키보드의 동작 키가 막대와 하는 일이 겹친다(DECISIONS 185).
+      _usePhoneView(tester);
+      await _openSheet(tester, discardPrompt: prompt);
+      await tester.scrollUntilVisible(find.text('직접 입력'), 100);
+      await tester.tap(find.text('직접 입력'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(TextField, '실제 무게'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<EditableText>(
+              find.descendant(
+                of: find.widgetWithText(TextField, '실제 무게'),
+                matching: find.byType(EditableText),
+              ),
+            )
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
+      expect(find.byType(NumberKeyboardToolbar), findsNothing);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
 
     testWidgets('바깥을 탭해도 닫히지 않고 확인창도 뜨지 않는다', (tester) async {
       _usePhoneView(tester);
@@ -443,9 +487,20 @@ Finder _dialogButton(String label) {
   );
 }
 
+// 막대의 [완료]는 글자로, ∧·∨ 는 아이콘의 낭독 이름으로 찾는다.
 Finder _toolbarButton(String label) {
   return find.descendant(
     of: find.byType(NumberKeyboardToolbar),
-    matching: find.text(label),
+    matching: label == '완료'
+        ? find.text(label)
+        : find.byWidgetPredicate(
+            (widget) => widget is Icon && widget.semanticLabel == label,
+          ),
   );
 }
+
+IconButton _toolbarIconButton(String label) => find
+    .ancestor(of: _toolbarButton(label), matching: find.byType(IconButton))
+    .evaluate()
+    .single
+    .widget as IconButton;

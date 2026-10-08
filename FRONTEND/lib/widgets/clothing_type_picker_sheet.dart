@@ -120,6 +120,7 @@ class ClothingTypePickerSheet extends StatefulWidget {
 class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
   final TextEditingController _directNameController = TextEditingController();
   final TextEditingController _directWeightController = TextEditingController();
+  final FocusNode _directNameFocusNode = FocusNode();
   final FocusNode _directWeightFocusNode = FocusNode();
 
   bool _isDirectInputMode = false;
@@ -165,6 +166,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
     widget.optionsListenable?.removeListener(_handleOptionsChanged);
     _directNameController.dispose();
     _directWeightController.dispose();
+    _directNameFocusNode.dispose();
     _directWeightFocusNode.dispose();
     super.dispose();
   }
@@ -318,8 +320,8 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
     );
   }
 
-  // iOS 숫자 키패드에는 확인 키가 없어, 무게 칸에 포커스가 있는 동안 시트 맨 아래
-  // (키보드 바로 위)에 [완료] 막대를 붙입니다. 무게 뒤로 이어지는 입력란이 없어 [다음]은 없습니다.
+  // 무게 칸에 포커스가 있는 동안 시트 맨 아래(키보드 바로 위)에 ∧·∨·[완료] 막대를 붙입니다
+  // (DECISIONS 177). ∧ 는 앞 칸인 의류 종류로 가고, 무게 뒤로 이어지는 입력란이 없어 ∨ 는 흐립니다.
   Widget _buildWeightKeyboardToolbar(BuildContext context) {
     if (!_isDirectInputMode || !NumberKeyboardToolbar.isNeeded(context)) {
       return const SizedBox.shrink();
@@ -328,7 +330,10 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
     return ListenableBuilder(
       listenable: _directWeightFocusNode,
       builder: (context, _) => _directWeightFocusNode.hasFocus
-          ? NumberKeyboardToolbar(onDone: () => _directWeightFocusNode.unfocus())
+          ? NumberKeyboardToolbar(
+              onPrevious: _directNameFocusNode.requestFocus,
+              onDone: () => _directWeightFocusNode.unfocus(),
+            )
           : const SizedBox.shrink(),
     );
   }
@@ -578,6 +583,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
         const SizedBox(height: 18),
         TextField(
           controller: _directNameController,
+          focusNode: _directNameFocusNode,
           autofocus: true,
           style: TextStyle(color: primaryText),
           textInputAction: TextInputAction.next,
