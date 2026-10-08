@@ -2,17 +2,11 @@ from datetime import timedelta
 
 import database
 import main
+from auth_helpers import fix_next_code, request_code, signup
 
 
 def _signup_and_login(client, email="session@example.com"):
-    client.post(
-        "/auth/signup",
-        json={
-            "email": email,
-            "password": "password123",
-            "nickname": "tester",
-        },
-    )
+    signup(client, email)
     return client.post(
         "/auth/login",
         json={
@@ -23,14 +17,7 @@ def _signup_and_login(client, email="session@example.com"):
 
 
 def test_signup_success(client):
-    response = client.post(
-        "/auth/signup",
-        json={
-            "email": "signup@example.com",
-            "password": "password123",
-            "nickname": "tester",
-        },
-    )
+    response = signup(client, "signup@example.com")
 
     body = response.json()
 
@@ -40,30 +27,22 @@ def test_signup_success(client):
     assert body["user"]["nickname"] == "tester"
 
 
-def test_signup_duplicate_email_fails(client):
-    payload = {
-        "email": "duplicate@example.com",
-        "password": "password123",
-        "nickname": "tester",
-    }
+def test_signup_duplicate_email_fails(client, monkeypatch):
+    # 가입된 이메일엔 번호 대신 안내 메일이 가므로, 409 는 맞는 번호를 가진 사람만 봅니다
+    # (같은 이메일 동시 가입 등). 여기서는 번호를 고정해 그 경우를 만듭니다.
+    assert signup(client, "duplicate@example.com").status_code == 200
+    monkeypatch.setattr(main, "EMAIL_CODE_RESEND_SECONDS", 0)
+    code = fix_next_code(monkeypatch)
+    assert request_code(client, "duplicate@example.com") is None
 
-    first = client.post("/auth/signup", json=payload)
-    second = client.post("/auth/signup", json=payload)
+    second = signup(client, "duplicate@example.com", code=code)
 
-    assert first.status_code == 200
     assert second.status_code == 409
     assert second.json()["status"] == "error"
 
 
 def test_login_success(client):
-    client.post(
-        "/auth/signup",
-        json={
-            "email": "login@example.com",
-            "password": "password123",
-            "nickname": "tester",
-        },
-    )
+    signup(client, "login@example.com")
 
     response = client.post(
         "/auth/login",
@@ -84,14 +63,7 @@ def test_login_success(client):
 
 
 def test_login_wrong_password_fails(client):
-    client.post(
-        "/auth/signup",
-        json={
-            "email": "wrong-password@example.com",
-            "password": "password123",
-            "nickname": "tester",
-        },
-    )
+    signup(client, "wrong-password@example.com")
 
     response = client.post(
         "/auth/login",
@@ -252,7 +224,7 @@ def test_change_password_requires_authentication(client):
     assert response.status_code == 401
 
 
-def test_withdraw_deletes_user_tokens_and_history(client):
+def test_withdraw_deletes_user_tokens_and_history(client, monkeypatch):
     token, email = _make_session(client, "withdraw@example.com")
     session = database.SessionLocal()
     try:
@@ -303,13 +275,9 @@ def test_withdraw_deletes_user_tokens_and_history(client):
         client.post("/auth/login", json={"email": email, "password": "password123"}).status_code
         == 401
     )
-    assert (
-        client.post(
-            "/auth/signup",
-            json={"email": email, "password": "password123", "nickname": "again"},
-        ).status_code
-        == 200
-    )
+    # (첫 가입의 번호 요청에서 60초가 안 지났으므로 재요청 간격만 풀어 둡니다.)
+    monkeypatch.setattr(main, "EMAIL_CODE_RESEND_SECONDS", 0)
+    assert signup(client, email, nickname="again").status_code == 200
 
 
 def test_withdraw_wrong_password_keeps_account(client):

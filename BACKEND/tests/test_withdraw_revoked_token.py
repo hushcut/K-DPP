@@ -8,6 +8,7 @@ from datetime import timedelta
 
 import database
 import main
+from auth_helpers import signup
 
 
 def _auth_header(token):
@@ -15,10 +16,7 @@ def _auth_header(token):
 
 
 def _signup(client, email):
-    client.post(
-        "/auth/signup",
-        json={"email": email, "password": "password123", "nickname": "tester"},
-    )
+    signup(client, email)
 
 
 def _login(client, email, password="password123"):
