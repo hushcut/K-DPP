@@ -41,6 +41,7 @@ void main() {
           nickname: '홍길동',
           email: 'honggildong@example.com',
           password: 'password123',
+          code: '123456',
         );
 
         expect(
@@ -137,6 +138,7 @@ void main() {
             nickname: ' 홍길동 ',
             email: ' honggildong@example.com ',
             password: 'password123',
+            code: ' 123456 ',
           );
           final requestBody =
               jsonDecode(capturedRequest.body) as Map<String, dynamic>;
@@ -149,6 +151,7 @@ void main() {
             'nickname': '홍길동',
             'email': 'honggildong@example.com',
             'password': 'password123',
+            'code': '123456',
           });
           expect(result.user.id, 8);
           expect(result.accessToken, isNull);
@@ -211,6 +214,7 @@ void main() {
             nickname: '홍길동',
             email: 'honggildong@example.com',
             password: 'password123',
+            code: '123456',
           ),
           throwsA(
             isA<AuthApiException>()
