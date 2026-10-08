@@ -28,7 +28,9 @@ class AppPalette {
   final Color textSecondary;
 
   /// 글자로 쓰는 강조색(링크의 동작 글자 등)입니다. 다크 배경(#121212)에서 [accent] 는
-  /// 대비가 3.4:1 로 본문 기준(4.5:1)에 못 미쳐 밝힌 색(6.5:1)을 씁니다. 라이트는 [accent](5.2:1).
+  /// 대비가 3.4:1 로 본문 기준(4.5:1)에 못 미쳐 밝힌 색(8.0:1)을 씁니다. 라이트는 [accent](5.2:1).
+  /// 다크 값은 숫자 키보드 막대의 회색 띠(#3A3A3C)에서도 4.5:1 을 넘게(4.9:1)
+  /// 하나로 맞췄습니다(DECISIONS 187).
   final Color accentText;
 
   /// 현재 테마 밝기에 맞는 팔레트를 돌려줍니다.
@@ -55,6 +57,6 @@ class AppPalette {
     border: Color(0xFF2C2C2E),
     textPrimary: Colors.white,
     textSecondary: Color(0xFFD1D1D6),
-    accentText: Color(0xFF8A8DFF),
+    accentText: Color(0xFF9EA1FF),
   );
 }
