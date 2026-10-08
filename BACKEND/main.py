@@ -1,6 +1,10 @@
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from email.message import EmailMessage
+from email.policy import default as email_policy
+from email.utils import format_datetime, make_msgid, parseaddr
 from typing import Annotated, Literal
 
 from fastapi import (
@@ -22,6 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, StringConstraints
 import asyncio
+import base64
 import certifi
 import httpx
 import ipaddress
@@ -30,6 +35,7 @@ import math
 import os
 import re
 import shutil
+import smtplib
 import ssl
 import sys
 import threading
@@ -570,17 +576,25 @@ def verify_password(password: str, stored_hash: str) -> bool:
 DUMMY_PASSWORD_HASH = hash_password("k-dpp-timing-guard")
 # 최소한의 이메일 형식 검사: 공백 없는 로컬@도메인.최상위 형태만 허용.
 EMAIL_PATTERN = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+# 주소 문법에서 따옴표·주석·꺾쇠·그룹 등의 뜻이 있는 글자. 이런 글자가 든 '"v@x.com"'·'v@x.com(1)' 은
+# 위 형식을 통과하지만 SMTP(smtplib)가 모두 같은 v@x.com 으로 읽어, 표기마다 따로인 이메일당 발송 한도를
+# 우회해 한 메일함에 몰아 보낼 수 있었다(DECISIONS 175). 실제 주소에는 거의 쓰이지 않는다.
+EMAIL_SPECIAL_CHARACTERS = frozenset('"<>(),;:\\[]')
 
 
 def ensure_email_format(email: str) -> None:
     """가입·인증번호 요청·비밀번호 찾기의 이메일 형식 검사(정규화한 뒤의 값). 제어 문자·짝 없는
     서로게이트도 막습니다 — 각각 DB 저장·HMAC(UTF-8 인코딩)에서 500 이 나고 서버 로그 줄을 흐트러뜨려서.
     길이는 요청 모델(EmailInput)이 원문을 먼저 막지만, 소문자로 바꾸면 길어지는 글자(İ 등)가 있어
-    인증번호 기록의 키가 되는 정규화한 값도 같은 상한으로 한 번 더 봅니다."""
+    인증번호 기록의 키가 되는 정규화한 값도 같은 상한으로 한 번 더 봅니다.
+    ASCII 만 받고 주소 문법 글자(EMAIL_SPECIAL_CHARACTERS)는 막습니다 — 보낼 주소가 한도의 키와 같은
+    주소여야 하고, 한글 주소는 메일 서버가 SMTPUTF8 을 지원해야만 보내져서입니다(DECISIONS 175)."""
     if (
         len(email) > MAX_EMAIL_LENGTH
+        or not email.isascii()
         or not email.isprintable()
         or not EMAIL_PATTERN.fullmatch(email)
+        or any(character in EMAIL_SPECIAL_CHARACTERS for character in email)
     ):
         raise HTTPException(status_code=400, detail="올바른 이메일을 입력해 주세요.")
 
@@ -766,21 +780,20 @@ EMAIL_CODE_RECORDS_MAX_ENTRIES = 10_000
 
 
 def parse_email_delivery(value: str | None) -> str:
-    """K_DPP_EMAIL_DELIVERY 를 읽는다. 비우거나 log 면 메일을 보내지 않고 번호를 서버 로그에 찍는다.
-    실제 발송 서비스는 학생 팩 도메인이 정해진 뒤 고르므로(DECISIONS 144·147) 아직 받는 이름이 없다.
-    그 밖의 값이면 시작하지 않는다 — 서비스 이름 오타로 메일이 안 나가고 번호가 로그로만 남지 않게."""
+    """K_DPP_EMAIL_DELIVERY 를 읽는다. 비우거나 log 면 메일을 보내지 않고 번호를 서버 로그에 찍고,
+    smtp 면 아래 SMTP 설정으로 보낸다(DECISIONS 171 — 업체는 설정·비밀값만으로 바꾼다).
+    그 밖의 값이면 시작하지 않는다 — 오타로 메일이 안 나가고 번호가 로그로만 남지 않게."""
     normalized = (value or "").strip().lower()
     if normalized in ("", "log"):
         return "log"
-    raise ValueError(
-        "K_DPP_EMAIL_DELIVERY 는 비우거나 log 여야 합니다(실제 발송 서비스는 아직 없음): "
-        f"{value!r}"
-    )
+    if normalized == "smtp":
+        return "smtp"
+    raise ValueError(f"K_DPP_EMAIL_DELIVERY 는 비우거나 log 또는 smtp 여야 합니다: {value!r}")
 
 
 def parse_email_daily_max(value: str | None) -> int | None:
     """K_DPP_EMAIL_DAILY_MAX 를 읽는다. 비어 있으면 상한 없음, 1 이상의 정수면 그 값.
-    그 밖의 값이면 시작하지 않는다. 실제 발송을 붙일 때 이 값을 필수로 한다(발송 서비스 무료 한도)."""
+    그 밖의 값이면 시작하지 않는다. smtp 로 보낼 때는 필수다(발송 서비스 무료 한도 — parse_smtp_settings)."""
     text = (value or "").strip()
     if not text:
         return None
@@ -794,6 +807,111 @@ EMAIL_DELIVERY = parse_email_delivery(os.getenv("K_DPP_EMAIL_DELIVERY"))
 # 메일을 실제로 보내지 않는 요청(가입 안 된 이메일의 비밀번호 찾기)도 셉니다 — 실제 발송만 세면
 # 상한 근처에서 남은 칸이 줄었는지로 그 이메일의 가입 여부를 알아낼 수 있어서.
 EMAIL_DAILY_MAX = parse_email_daily_max(os.getenv("K_DPP_EMAIL_DAILY_MAX"))
+
+# SMTP 발송(DECISIONS 171). 배포는 Resend(smtp.resend.com·587·사용자 resend·비밀번호 = API 키)이고,
+# 다른 SMTP 서버로 바꿀 때는 아래 설정과 비밀번호 파일만 바꿉니다. 465·2465 는 처음부터 TLS, 그 밖의
+# 포트는 STARTTLS 이며, 서버가 STARTTLS 를 내놓지 않으면 로그인하지 않고 실패합니다(비밀번호를 평문으로
+# 보내지 않음). 비밀번호는 환경변수(docker inspect 에 보임)가 아니라 파일(compose secret)에서 읽습니다.
+SMTP_IMPLICIT_TLS_PORTS = {465, 2465}
+# 소켓 동작(연결·TLS·명령 하나)마다의 대기 상한. 발송은 응답 뒤라 사용자를 기다리게 하지 않지만,
+# 그동안 요청 스레드 하나를 쥡니다.
+SMTP_TIMEOUT_SECONDS = 15
+SMTP_REQUIRED_SETTINGS = (
+    "K_DPP_SMTP_HOST",
+    "K_DPP_SMTP_PORT",
+    "K_DPP_SMTP_USERNAME",
+    "K_DPP_SMTP_PASSWORD_FILE",
+    "K_DPP_EMAIL_FROM",
+    "K_DPP_EMAIL_DAILY_MAX",
+)
+SMTP_HOST_PATTERN = re.compile(r"[A-Za-z0-9.-]+")
+
+
+@dataclass(frozen=True)
+class SmtpSettings:
+    host: str
+    port: int
+    username: str
+    sender: str  # From 머리글 값 그대로(표시 이름 포함)
+    sender_address: str  # 봉투(MAIL FROM)·Message-ID 에 쓰는 주소만
+    password: str = field(repr=False)  # 설정을 로그·예외로 찍어도 남지 않게
+
+
+def parse_email_from(value: str) -> str:
+    """K_DPP_EMAIL_FROM(예 'K-DPP <no-reply@send.example.com>')을 검사하고 주소만 돌려준다. 주소는
+    하나·ASCII(받는 쪽에 SMTPUTF8 을 요구하지 않게)·도메인에 점이 있어야 하고 그룹 문법('G: a@b.c;')은
+    안 된다. 표시 이름은 한글도 되고 EmailMessage 가 RFC 2047 로 바꾼다. SMTP 설정 오류 문구에는 값을
+    넣지 않는다 — API 키를 엉뚱한 칸에 넣었을 때 시작 로그에 그대로 남지 않게."""
+    message = "K_DPP_EMAIL_FROM 은 'K-DPP <no-reply@send.example.com>' 처럼 ASCII 주소 하나여야 합니다."
+    try:
+        header = email_policy.header_factory("From", value)
+        addresses = header.addresses
+    except Exception:  # noqa: BLE001 — 어떤 파싱 오류든 '틀린 값'으로 시작을 멈춥니다.
+        raise ValueError(message) from None
+    if (
+        not value.isprintable()
+        or header.defects
+        or len(addresses) != 1
+        or any(group.display_name is not None for group in header.groups)
+        or not addresses[0].username
+        or "." not in addresses[0].domain
+        or not addresses[0].addr_spec.isascii()
+    ):
+        raise ValueError(message)
+    return addresses[0].addr_spec
+
+
+def read_smtp_password(path_text: str) -> str:
+    """비밀번호 파일을 읽는다. 앞뒤 공백·줄바꿈은 지우고, 비었거나 한 줄의 ASCII 가 아니면(smtplib 의
+    AUTH 가 ASCII 만 보냄) 시작하지 않는다. 문구에는 경로도 내용도 넣지 않는다(경로 칸에 키를 넣는 실수)."""
+    try:
+        password = Path(path_text).read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(
+            f"K_DPP_SMTP_PASSWORD_FILE 의 파일을 읽지 못했습니다({type(exc).__name__})."
+        ) from None
+    if not password or not password.isascii() or not password.isprintable():
+        raise ValueError(
+            "K_DPP_SMTP_PASSWORD_FILE 의 파일이 비었거나 한 줄의 ASCII 가 아닙니다."
+        )
+    return password
+
+
+def parse_smtp_settings(delivery: str, env: Mapping[str, str]) -> SmtpSettings | None:
+    """smtp 일 때 SMTP 설정을 읽는다(log 면 None — 아무것도 읽지 않음). 하나라도 비었거나 틀리면 시작하지
+    않는다 — 설정이 빠진 채 떠서 메일은 하나도 안 나가는데 번호 요청은 늘 200 인 상태가 되지 않게.
+    하루 상한(K_DPP_EMAIL_DAILY_MAX)도 필수다: 발송 서비스 무료 한도를 넘는 요청은 503 으로 먼저 막는다."""
+    if delivery != "smtp":
+        return None
+    values = {name: (env.get(name) or "").strip() for name in SMTP_REQUIRED_SETTINGS}
+    missing = [name for name, text in values.items() if not text]
+    if missing:
+        raise ValueError(
+            "K_DPP_EMAIL_DELIVERY=smtp 에 필요한 설정이 비어 있습니다: " + ", ".join(missing)
+        )
+    host = values["K_DPP_SMTP_HOST"]
+    if not SMTP_HOST_PATTERN.fullmatch(host):
+        raise ValueError("K_DPP_SMTP_HOST 는 호스트 이름(영문·숫자·.·-)이어야 합니다.")
+    port_text = values["K_DPP_SMTP_PORT"]
+    if not re.fullmatch(r"[0-9]+", port_text) or not 0 < int(port_text) < 65536:
+        raise ValueError("K_DPP_SMTP_PORT 는 1~65535 의 정수여야 합니다.")
+    username = values["K_DPP_SMTP_USERNAME"]
+    if not username.isascii() or not username.isprintable():
+        raise ValueError("K_DPP_SMTP_USERNAME 은 한 줄의 ASCII 여야 합니다.")
+    sender = values["K_DPP_EMAIL_FROM"]
+    return SmtpSettings(
+        host=host,
+        port=int(port_text),
+        username=username,
+        sender=sender,
+        sender_address=parse_email_from(sender),
+        password=read_smtp_password(values["K_DPP_SMTP_PASSWORD_FILE"]),
+    )
+
+
+SMTP_SETTINGS = parse_smtp_settings(EMAIL_DELIVERY, os.environ)
+# 카카오 호출과 같은 certifi 묶음으로 서버 인증서·호스트 이름을 확인합니다(TLS 1.2 이상).
+_EMAIL_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 # 번호는 HMAC-SHA256 값으로만 둡니다(DECISIONS 147 ⑦). 6자리는 100만 가지뿐이라 보통 해시는
 # 대입으로 바로 풀리므로, 서버가 켜질 때 만든 비밀 키를 섞습니다(키도 메모리에만 있음).
@@ -1088,8 +1206,83 @@ def log_email(message: OutgoingEmail) -> None:
     )
 
 
+def build_email_message(message: OutgoingEmail, settings: SmtpSettings) -> EmailMessage:
+    """보낼 메일을 만든다. 한글 제목·표시 이름은 EmailMessage 가 RFC 2047 로 바꾸고(머리글을 손으로
+    만들지 않음), 본문은 base64 라 받는 서버의 8BITMIME 지원과 상관없이 7bit 로 나간다."""
+    mail = EmailMessage()
+    mail["From"] = settings.sender
+    mail["To"] = message.to
+    mail["Subject"] = message.subject
+    # utc_now() 는 시간대 없는 UTC 라 붙여 줍니다(없으면 '-0000' — 시간대를 모른다는 뜻).
+    mail["Date"] = format_datetime(utc_now().replace(tzinfo=timezone.utc))
+    # 도메인을 주지 않으면 make_msgid 가 이 서버의 호스트 이름을 찾고(DNS) 메일에 넣습니다.
+    mail["Message-ID"] = make_msgid(domain=settings.sender_address.rsplit("@", 1)[1])
+    mail.set_content(message.body, cte="base64")
+    return mail
+
+
+def send_smtp_email(message: OutgoingEmail, settings: SmtpSettings) -> None:
+    """SMTP 로 한 통 보낸다. 연결·TLS·로그인·거부·시간 초과는 예외로 올려 send_email_code_message 가
+    로그로 남긴다(응답은 이미 나감). 보낸 뒤의 QUIT 실패는 발송 실패로 보지 않는다."""
+    # smtplib 은 받는 주소를 parseaddr 로 다시 읽습니다. 형식 검사(ensure_email_format)가 막는 표기지만,
+    # 이메일당 한도의 키와 다른 주소로는 보내지 않도록 연결 전에 한 번 더 봅니다(DECISIONS 175).
+    if parseaddr(message.to) != ("", message.to):
+        raise ValueError("받는 주소를 SMTP 가 다른 주소로 읽어 보내지 않습니다.")
+    mail = build_email_message(message, settings)
+    implicit_tls = settings.port in SMTP_IMPLICIT_TLS_PORTS
+    if implicit_tls:
+        smtp = smtplib.SMTP_SSL(
+            settings.host, settings.port, timeout=SMTP_TIMEOUT_SECONDS, context=_EMAIL_SSL_CONTEXT
+        )
+    else:
+        smtp = smtplib.SMTP(settings.host, settings.port, timeout=SMTP_TIMEOUT_SECONDS)
+    try:
+        if not implicit_tls:
+            # 서버가 STARTTLS 를 내놓지 않으면 SMTPNotSupportedError — 로그인 전에 멈춥니다.
+            smtp.starttls(context=_EMAIL_SSL_CONTEXT)
+        smtp.login(settings.username, settings.password)
+        smtp.send_message(mail, from_addr=settings.sender_address, to_addrs=[message.to])
+    except BaseException:
+        smtp.close()
+        raise
+    try:
+        smtp.quit()
+    except (smtplib.SMTPException, OSError):
+        smtp.close()
+
+
+class EmailDeliveryError(Exception):
+    """SMTP 발송 실패. 받는 서버는 거부 문구에 받는 주소나 받은 AUTH 줄을 되돌려 줄 수 있어, 서버 로그에
+    남기기 전에 원래 예외의 repr 에서 받는 주소·비밀번호(와 AUTH 로 보낸 base64)를 가린다. 로그에는
+    가린 repr 만 보이게 repr 을 그 문구로 둔다(send_email_code_message 가 {exc!r} 로 찍음)."""
+
+    def __repr__(self) -> str:
+        return str(self)
+
+
+def describe_smtp_failure(exc: Exception, message: OutgoingEmail, settings: SmtpSettings) -> str:
+    text = repr(exc)
+    password = settings.password
+    hidden = {
+        password,
+        base64.b64encode(password.encode("ascii")).decode("ascii"),  # AUTH LOGIN
+        base64.b64encode(f"\0{settings.username}\0{password}".encode("ascii")).decode("ascii"),  # AUTH PLAIN
+    }
+    for secret in sorted(hidden, key=len, reverse=True):
+        text = text.replace(secret, "<비밀번호>")
+    # 비밀번호 찾기 메일은 가입된 이메일에만 가므로, 실패 줄의 주소는 가입 여부까지 남깁니다.
+    return text.replace(message.to, "<받는 주소>")
+
+
 def deliver_email(message: OutgoingEmail) -> None:
-    # 실제 발송(도메인 인증된 서비스의 HTTPS API)은 서비스를 고른 뒤 EMAIL_DELIVERY 로 나눠 붙입니다.
+    if EMAIL_DELIVERY == "smtp":
+        try:
+            send_smtp_email(message, SMTP_SETTINGS)
+        except Exception as exc:  # noqa: BLE001 — 무엇이 실패했든 가린 문구로만 올립니다.
+            raise EmailDeliveryError(describe_smtp_failure(exc, message, SMTP_SETTINGS)) from None
+        # 주소·번호는 남기지 않습니다(받는 사람별 기록은 발송 서비스 화면에 있음).
+        print(f"[email] 메일을 보냈습니다({message.purpose}).", file=sys.stderr, flush=True)
+        return
     log_email(message)
 
 

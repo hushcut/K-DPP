@@ -36,6 +36,7 @@ cp .env.example .env && chmod 600 .env
 # .env 를 채웁니다: K_DPP_DOMAIN, POSTGRES_PASSWORD(openssl rand -hex 24), K_DPP_SCAN_DAILY_MAX(기본 100), K_DPP_KAKAO_APP_ID(카카오 앱 ID — 비우면 카카오 로그인 꺼짐)
 mkdir -p secrets
 sudo install -o 10001 -g 10001 -m 400 /경로/key.json secrets/vision_key.json   # 'Vision 키' 참고
+sudo install -o 10001 -g 10001 -m 400 /경로/smtp_password secrets/smtp_password   # '메일 발송' 참고(.env 의 K_DPP_EMAIL_FROM 도)
 docker compose up -d --build --wait
 docker compose ps -a      # pre-migrate-backup·migrate: Exited (0), 나머지: healthy / Up
 curl https://<도메인>/    # {"status":"success",...}
@@ -146,6 +147,35 @@ docker compose up -d --wait
   배포 방식이 바뀔 때. 맥 리허설에서 같은 순서를 확인했습니다(백업 → 백업 뒤 가입·이력 삭제 → stage →
   바꿔 끼우기 → 백업 시점 상태로 돌아옴·옛 DB 남음, 옛 리비전 백업은 migrate 가 head 로 올림).
 
+## 메일 발송
+
+가입·비밀번호 찾기 인증번호 메일은 Resend 를 SMTP 로 씁니다(무료 하루 100통·월 3,000통, DECISIONS 171).
+다른 SMTP 서버로 바꿀 때는 `.env` 의 `K_DPP_SMTP_*` 와 비밀번호 파일만 바꿉니다.
+
+- 도메인: Resend 에 하위 도메인(예 `send.<도메인>`)을 추가하고 Resend 가 보여 주는 SPF·DKIM 레코드를 DNS 에
+  넣어 Verified 를 확인합니다. DMARC(`_dmarc` TXT `v=DMARC1; p=none;`)는 그 48시간 뒤, 첫 시험 발송은 도메인을
+  등록하고 24시간 뒤에 합니다(네이버·다음은 SPF 가 맞지 않으면 반송).
+- `.env`: `K_DPP_EMAIL_DELIVERY=smtp`, `K_DPP_EMAIL_FROM`(예 `K-DPP <no-reply@send.<도메인>>`),
+  `K_DPP_EMAIL_DAILY_MAX=100`(Resend 하루 한도와 같은 UTC 날짜 — 넘는 요청은 앱이 503 으로 먼저 막음).
+  SMTP 값(`smtp.resend.com`·587·`resend`)은 `.env.example` 그대로 둡니다. 하나라도 비었거나 틀리면 앱이
+  시작하지 않고 `docker compose logs app` 에 그 이름이 나옵니다.
+- 비밀번호 = Resend API 키(권한은 'Sending access', 도메인을 위 하위 도메인으로 제한). `secrets/smtp_password`
+  에 한 줄로, Vision 키처럼 `sudo install -o 10001 -g 10001 -m 400 …` 로 넣습니다. 환경변수로 두지 않는 것은
+  `docker inspect` 에 보이기 때문입니다.
+- 587 은 STARTTLS 이고, 서버가 STARTTLS 를 내놓지 않으면 로그인하지 않고 실패합니다(비밀번호를 평문으로
+  보내지 않음). 587 이 막혔으면 `K_DPP_SMTP_PORT=2587`(STARTTLS) 또는 465·2465(처음부터 TLS).
+- 메일은 응답 뒤에 보내므로 앱 응답은 발송 결과와 상관없이 같습니다. `docker compose logs app` 에 보낸 것은
+  `[email] 메일을 보냈습니다(signup)`, 실패는 `[email] 인증 메일 처리 실패(…)` 로 남고 주소·번호·비밀번호는
+  남기지 않습니다. 받는 사람별 기록은 Resend 화면의 Emails 에서 봅니다.
+- **시연 날 발송이 막히면** `.env` 를 `K_DPP_EMAIL_DELIVERY=log` 로 바꾸고 `docker compose up -d --wait` —
+  번호가 `docker compose logs app` 에 `[email] <주소> | <제목> | 인증번호 123456` 으로 남습니다.
+- log 로 띄울 때도 secret 파일은 있어야 하므로 빈 파일(`: > secrets/smtp_password`)을 둡니다.
+- **띄운 직후 한 번 확인합니다**: 앱(또는 `curl`)으로 진짜 메일함에 가입 인증번호를 요청하고 메일이 왔는지,
+  `docker compose logs app` 에 `메일을 보냈습니다` 가 남았는지 봅니다. 형식만 맞고 값이 틀린 설정(API 키·호스트 오타,
+  인증 안 된 발신 도메인)은 앱이 정상으로 뜨고 메일만 실패하므로 이 확인으로만 드러납니다.
+- 서버에서 시험 메일은 진짜 메일함이나 `delivered@resend.dev` 로만 보냅니다. 지어낸 주소는 반송되어
+  Resend 반송률에 들어가고, 반송률이 높으면 계정이 멈춥니다.
+
 ## Vision 키
 
 - 앱은 `/run/secrets/vision_key` 를 `GOOGLE_APPLICATION_CREDENTIALS` 로 씁니다(저장소의
@@ -165,7 +195,8 @@ docker compose up -d --wait
 ## 맥 리허설
 
 `.env` 에서 `K_DPP_DOMAIN=localhost` 로 두고 맨 아래 세 줄의 주석을 풉니다(이 맥 안에서만,
-8080·8443). Vision 키는 빈 파일로 둡니다.
+8080·8443). Vision 키·SMTP 비밀번호는 빈 파일로 두고 `K_DPP_EMAIL_DELIVERY=log`(번호는
+`docker compose logs app`)로 띄웁니다.
 
 ```sh
 docker compose up -d --build --wait

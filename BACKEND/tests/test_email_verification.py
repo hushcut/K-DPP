@@ -663,7 +663,9 @@ def test_log_mode_prints_the_code_to_the_server_log(capsys):
 def test_parse_email_delivery():
     for value in (None, "", "  ", "log", " LOG "):
         assert main.parse_email_delivery(value) == "log", value
-    for value in ("resend", "smtp", "logs", "off"):
+    for value in ("smtp", " SMTP "):
+        assert main.parse_email_delivery(value) == "smtp", value
+    for value in ("resend", "smtps", "logs", "off"):
         with pytest.raises(ValueError):
             main.parse_email_delivery(value)
 

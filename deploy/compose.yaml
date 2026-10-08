@@ -123,8 +123,18 @@ services:
       K_DPP_API_DOCS: "off"
       # 카카오 로그인용 카카오 앱 ID(숫자, 비밀값 아님 — DECISIONS 152 ⑦). 비우면 카카오 로그인이 꺼져 503.
       K_DPP_KAKAO_APP_ID: ${K_DPP_KAKAO_APP_ID:-}
+      # 인증 메일(DECISIONS 171, README '메일 발송'). smtp 면 아래 값과 secret smtp_password 가 모두 있어야
+      # 앱이 시작합니다. 하루 상한은 비우면 없어지므로 배포는 필수입니다.
+      K_DPP_EMAIL_DELIVERY: ${K_DPP_EMAIL_DELIVERY:?deploy/.env 에 K_DPP_EMAIL_DELIVERY 를 넣으세요}
+      K_DPP_EMAIL_DAILY_MAX: ${K_DPP_EMAIL_DAILY_MAX:?deploy/.env 에 K_DPP_EMAIL_DAILY_MAX 를 넣으세요}
+      K_DPP_EMAIL_FROM: ${K_DPP_EMAIL_FROM:-}
+      K_DPP_SMTP_HOST: ${K_DPP_SMTP_HOST:-}
+      K_DPP_SMTP_PORT: ${K_DPP_SMTP_PORT:-}
+      K_DPP_SMTP_USERNAME: ${K_DPP_SMTP_USERNAME:-}
+      K_DPP_SMTP_PASSWORD_FILE: /run/secrets/smtp_password
     secrets:
       - vision_key
+      - smtp_password
     depends_on:
       postgres:
         condition: service_healthy
@@ -167,6 +177,9 @@ secrets:
   vision_key:
     # 파일이 있어야 시작합니다. 키 없이 띄우는 법은 README 'Vision 키'.
     file: ${K_DPP_VISION_KEY_FILE:-./secrets/vision_key.json}
+  smtp_password:
+    # SMTP 비밀번호(Resend API 키) 한 줄. 파일이 있어야 시작합니다 — log 로 띄울 때는 빈 파일(README '메일 발송').
+    file: ./secrets/smtp_password
 
 volumes:
   pgdata:
