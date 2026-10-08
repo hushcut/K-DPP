@@ -33,7 +33,7 @@
 
 ```sh
 cp .env.example .env && chmod 600 .env
-# .env 를 채웁니다: K_DPP_DOMAIN, POSTGRES_PASSWORD(openssl rand -hex 24), K_DPP_SCAN_DAILY_MAX(기본 100)
+# .env 를 채웁니다: K_DPP_DOMAIN, POSTGRES_PASSWORD(openssl rand -hex 24), K_DPP_SCAN_DAILY_MAX(기본 100), K_DPP_KAKAO_APP_ID(카카오 앱 ID — 비우면 카카오 로그인 꺼짐)
 mkdir -p secrets
 sudo install -o 10001 -g 10001 -m 400 /경로/key.json secrets/vision_key.json   # 'Vision 키' 참고
 docker compose up -d --build --wait

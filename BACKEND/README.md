@@ -73,6 +73,9 @@ http://127.0.0.1:8000/docs
 [email] user@example.com | [K-DPP] 가입 인증번호 | 인증번호 123456
 ```
 
+카카오 로그인(`POST /auth/kakao`)은 서버에 카카오 앱 ID(`K_DPP_KAKAO_APP_ID`)가 있어야 켜집니다. 로컬·CI 기본은
+비어 있어 503 `SOCIAL_LOGIN_UNAVAILABLE` 이고, 실기기로 시험할 때만 `BACKEND/.env` 에 앱 ID 를 넣습니다.
+
 번호는 10분 동안 쓸 수 있고, 서버를 다시 켜면 받아 둔 번호는 쓸 수 없습니다(다시 받기). 같은 이메일은 60초 뒤에
 다시 받을 수 있습니다. 이미 가입된 이메일로 가입 번호를 요청하면 번호 대신 안내만 찍힙니다(`인증번호 없음`).
 
@@ -188,6 +191,7 @@ copy .env.example .env
 `BACKEND/.env`의 `K_DPP_DATABASE_URL` 또는 운영체제 환경변수로 다른 PostgreSQL을 가리킬 수 있습니다(SQLite는 더 지원하지 않습니다).
 브라우저(Flutter 웹 등)에서 API를 부를 때만 `K_DPP_CORS_ORIGINS`에 출처를 쉼표로 적습니다(예: `flutter run -d chrome --web-port 5000` 이면 `http://localhost:5000`). 비워 두면 어떤 출처도 허용하지 않습니다 — 모바일 앱은 CORS와 무관합니다.
 인증 메일은 `K_DPP_EMAIL_DELIVERY` 를 비우거나 `log` 로 두면 보내지 않고 서버 로그에 찍습니다(지금은 이것만 됩니다 — 실제 발송 서비스는 발송 도메인이 정해진 뒤 붙입니다. 다른 값이면 서버가 시작하지 않습니다). `K_DPP_EMAIL_DAILY_MAX` 는 서버 전체 하루(UTC) 번호 요청 상한이고, 비우면 상한이 없습니다.
+카카오 로그인은 `K_DPP_KAKAO_APP_ID`(카카오 개발자 콘솔의 앱 ID, 숫자 — 비밀값 아님)를 넣으면 켜집니다. 비우면 꺼져 503 이고, 숫자가 아니면 서버가 시작하지 않습니다(앱 키를 잘못 넣는 실수를 막음). 서버에 두는 카카오 비밀값은 없습니다.
 
 ## Git에 올리지 않는 파일
 

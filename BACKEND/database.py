@@ -4,6 +4,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from sqlalchemy import (
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -12,6 +13,7 @@ from sqlalchemy import (
     MetaData,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -65,11 +67,42 @@ def utc_now() -> datetime:
 
 class User(Base):
     __tablename__ = "users"
+    # 카카오 계정은 이메일·비밀번호가 없습니다(DECISIONS 143·152). 둘은 같이 있거나 같이 없어야
+    # 이메일 로그인·비밀번호 찾기가 비밀번호 없는 행을 만나지 않습니다(DECISIONS 153 ②).
+    __table_args__ = (
+        CheckConstraint(
+            "(email IS NULL) = (password_hash IS NULL)", name="email_password_together"
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, nullable=False, index=True)
+    # PostgreSQL 의 UNIQUE 는 NULL 을 여럿 받으므로 카카오 계정끼리는 부딪치지 않습니다.
+    email = Column(String, unique=True, nullable=True, index=True)
     nickname = Column(String, nullable=False)
-    password_hash = Column(String, nullable=False)
+    password_hash = Column(String, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+
+
+class SocialAccount(Base):
+    """소셜 로그인 연결(제공자·회원번호 → 사용자). 카카오부터, 구글도 같은 표에 둡니다(DECISIONS 152 ⑧).
+
+    토큰은 저장하지 않습니다. user_id 로 시작하는 UNIQUE 가 있어 user_id 만으로 찾는 조회(탈퇴)도
+    그 색인을 씁니다 — 따로 색인을 두지 않습니다.
+    """
+
+    __tablename__ = "social_accounts"
+    __table_args__ = (
+        # 한 소셜 계정은 한 사용자에게만.
+        UniqueConstraint("provider", "subject", name="uq_social_accounts_provider_subject"),
+        # 한 사용자는 제공자마다 하나만.
+        UniqueConstraint("user_id", "provider", name="uq_social_accounts_user_id_provider"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    provider = Column(String, nullable=False)
+    # 제공자의 회원번호. 카카오는 Long 이라 문자열로 둡니다(구글 sub 도 문자열).
+    subject = Column(String, nullable=False)
     created_at = Column(DateTime, nullable=False, default=utc_now)
 
 
