@@ -3,6 +3,7 @@ from dataclasses import replace, dataclass
 from decimal import Decimal, InvalidOperation
 
 from apps.text.ratio_contract import EXACT_RATIO_TOTAL, has_exact_total
+from apps.text.translation_alternatives import prepare_translation_alternatives
 
 from apps.text.composition_candidates import (
     CompositionCandidate,
@@ -135,6 +136,7 @@ _TEMPERATURE_PATTERN = re.compile(
 _CARE_PHRASES = tuple(
     {alias.casefold() for aliases in CARE_RULES.values() for alias in aliases}
 )
+_SPLIT_CARE_BOUNDARY_PHRASES = frozenset(_CARE_PHRASES) | {"dry cleaning only"}
 # Number safety needs broader context than the phrases used to display care
 # instructions. These words alone do not imply a specific care recommendation.
 _CARE_CONTEXT_PATTERN = re.compile(
@@ -554,7 +556,28 @@ def _multilingual_restored_row_indices(original: str, prepared: str) -> set[int]
     }
 
 
-def build_line_infos(text: str, *, restored_indices: set[int] | None = None) -> list[LineInfo]:
+_ARABIC_MATERIAL_ALIASES = {
+    alias for alias in ALIAS_TO_MATERIAL
+    if re.fullmatch(r"[\u0600-\u06ff]+", alias)
+}
+
+
+def _has_registered_arabic_material(text: str) -> bool:
+    """Require a complete Arabic alias inside an actual material evidence span."""
+    if re.search(r"[\u0600-\u06ff]", text) is None:
+        return False
+    return any(
+        token.group() in _ARABIC_MATERIAL_ALIASES
+        for evidence in _material_evidence(text)
+        for token in _TOKEN_PATTERN.finditer(text, evidence.start, evidence.end)
+    )
+
+
+def build_line_infos(
+    text: str, *, restored_indices: set[int] | None = None,
+    translation_indices: set[int] | None = None,
+    translation_warnings: list[str] | None = None,
+) -> list[LineInfo]:
     infos: list[LineInfo] = []
     current_part = "generic"
     pending_metadata_kind = None
@@ -564,9 +587,22 @@ def build_line_infos(text: str, *, restored_indices: set[int] | None = None) -> 
     unproven_rewrite = restored_rows is None
     if unproven_rewrite:
         restored_rows = set(range(len(prepared.split("\n"))))
+    translations = prepare_translation_alternatives(prepared)
+    # These rows keep an already complete primary name/explicit percentage;
+    # only the repeated alternatives were wrapped. They do not borrow a name
+    # or number across rows and therefore need no reconstructed-pair boundary.
+    if not unproven_rewrite:
+        restored_rows -= translations.recovered_rows
     if restored_indices is not None:
         restored_indices.update(restored_rows)
-    raw_lines = prepared.split("\n")
+    if translation_indices is not None and not unproven_rewrite:
+        translation_indices.update(translations.recovered_rows)
+    if translation_warnings is not None:
+        if translations.recovered_rows:
+            translation_warnings.append("registered_translation_alternatives")
+        if translations.damaged_rows:
+            translation_warnings.append("damaged_translation_fragment")
+    raw_lines = translations.text.split("\n")
     content_indices = [i for i, raw in enumerate(raw_lines) if normalize_text(raw)]
     last_content_index = content_indices[-1] if content_indices else -1
     following_lines = {
@@ -617,17 +653,19 @@ def build_line_infos(text: str, *, restored_indices: set[int] | None = None) -> 
         numbers, invalid_evidence, explicit_percent, number_evidence = _read_numbers(
             composition_text, allow_plain_numbers=bool(materials) or number_only_line,
         )
+        invalid_evidence |= index in translations.rejected_rows
         invalid_evidence |= bool(_IMITATION_LEATHER_PATTERN.search(composition_text))
         invalid_evidence |= storage_caption_invalid
-        if materials and index in restored_rows:
-            # Joining an alias must not move an unknown continuation into an
-            # unchecked trailing suffix of a material/ratio row.
+        has_arabic_material = bool(materials) and _has_registered_arabic_material(composition_text)
+        if materials and (index in restored_rows or has_arabic_material):
+            # Restored rows and newly supported Arabic fibers must account
+            # for every word, including negation and unknown suffixes.
             invalid_evidence |= not _contains_only_known_phrases(
                 composition_text, _MATERIAL_ONLY_LINE_CONTEXTS,
             )
             invalid_evidence |= unproven_rewrite
             # The general reader may ignore bare identifiers after a complete
-            # explicit ratio. A restored row must account for every printed
+            # explicit ratio. These rows must account for every printed
             # digit, percent and uncertainty sign instead of hiding one in
             # the joined prefix or suffix.
             numeric_remainder = composition_text
@@ -854,12 +892,41 @@ def _translated_alias_rows(
     return covered
 
 
+def _is_complete_split_care_boundary(
+    infos: list[LineInfo], position: int, step: int, part: str,
+) -> bool:
+    """Recognize two adjacent prepared care rows without discarding evidence."""
+    following = position + step
+    if not 0 <= following < len(infos):
+        return False
+    rows = sorted((infos[position], infos[following]), key=lambda info: info.index)
+    if rows[0].index + 1 != rows[1].index or any(
+        info.part != part or info.marker_part is not None or info.is_metadata
+        or info.materials or info.numbers or info.explicit_percent
+        or info.invalid_evidence or info.unresolved_materials
+        for info in rows
+    ):
+        return False
+    joined = " ".join(info.normalized for info in rows)
+    return (
+        joined in _SPLIT_CARE_BOUNDARY_PHRASES
+        and _mentions_care(joined)
+        and not re.search(r"[\d%]", joined)
+        and not any(sign in joined for sign in _INEXACT_SIGNS)
+    )
+
+
 def _restored_block_has_clear_boundaries(
     candidate: CompositionCandidate, infos: list[LineInfo],
+    *, reject_unpaired_numeric: bool = False,
+    invalid_evidence_parts: set[str] | None = None,
 ) -> bool:
     """Shared ratios must not conceal unreadable neighboring fiber rows."""
     first, last = min(candidate.row_indices), max(candidate.row_indices)
     by_index = {info.index: position for position, info in enumerate(infos)}
+    used_split_care_boundary = False
+    clear_boundaries = True
+    unexplained_numeric_parts: set[str] = set()
     for index in candidate.row_indices:
         line = _strip_excluded_segments(infos[by_index[index]].normalized)
         line = _mask_storage_caption(line)
@@ -873,7 +940,7 @@ def _restored_block_has_clear_boundaries(
         if not _contains_only_known_phrases(
             line, _RESTORED_ROW_CONTEXTS,
         ):
-            return False
+            clear_boundaries = False
     for origin, step in ((first, -1), (last, 1)):
         position = by_index[origin] + step
         while 0 <= position < len(infos):
@@ -885,7 +952,8 @@ def _restored_block_has_clear_boundaries(
             ):
                 # A separate qualifier cannot be discarded as decoration
                 # when reconstructing a declaration from other rows.
-                return False
+                clear_boundaries = False
+                break
             if info.is_standalone_marker and _contains_only_known_phrases(
                 info.normalized, set(PART_PATTERNS.get(candidate.part, ())),
             ):
@@ -914,6 +982,30 @@ def _restored_block_has_clear_boundaries(
                     position += step
                     continue
                 break
+            if _is_complete_split_care_boundary(infos, position, step, candidate.part):
+                used_split_care_boundary = True
+                break
+            if not info.materials and re.search(
+                r"[\d%]", info.normalized,
+            ):
+                # Unread Unicode digits must not fall through as punctuation
+                # or a ratio-free heading. Only an explicit temperature or
+                # complete known care sentence can explain these digits.
+                care_text = _mask_temperatures(info.normalized)
+                if _TEMPERATURE_PATTERN.fullmatch(info.normalized) or (
+                    _mentions_care(info.normalized)
+                    and not re.search(r"[\d%]", care_text)
+                    and _contains_only_known_phrases(
+                        care_text, set(_CARE_PHRASES) | _STORAGE_CAPTION_WORDS,
+                    )
+                ):
+                    break
+                unexplained_numeric_parts.add(info.part)
+                if reject_unpaired_numeric:
+                    if invalid_evidence_parts is not None:
+                        invalid_evidence_parts.add(info.part)
+                    clear_boundaries = False
+                    break
             if info.materials or info.numbers or info.unresolved_materials or info.invalid_evidence:
                 # Existing coverage and number validation still own these.
                 position += step
@@ -949,8 +1041,18 @@ def _restored_block_has_clear_boundaries(
                 )
             ):
                 break
-            return False
-    return True
+            clear_boundaries = False
+            break
+    if used_split_care_boundary:
+        # Check both sides even if the first side or printed row is unreadable.
+        # A newly recognized care boundary must not expose extra numeric,
+        # opaque or qualified evidence that another candidate's matching
+        # material/ratio pairs could erase during aggregation.
+        if unexplained_numeric_parts:
+            clear_boundaries = False
+        if not clear_boundaries and invalid_evidence_parts is not None:
+            invalid_evidence_parts.add(candidate.part)
+    return clear_boundaries
 
 
 def _best_candidates_by_part(
@@ -967,7 +1069,12 @@ def _best_candidates_by_part(
     dict,
 ]:
     restored_indices: set[int] = set()
-    infos = build_line_infos(text, restored_indices=restored_indices)
+    translation_indices: set[int] = set()
+    translation_warnings: list[str] = []
+    infos = build_line_infos(
+        text, restored_indices=restored_indices,
+        translation_indices=translation_indices, translation_warnings=translation_warnings,
+    )
     candidates = []
     segment = []
     body_measurement_block = False
@@ -988,11 +1095,22 @@ def _best_candidates_by_part(
         info.index for info in infos if info.materials
         and info.index in restored_indices
     }
+    arabic_material_indices = {
+        info.index for info in infos if info.materials
+        and _has_registered_arabic_material(_strip_excluded_segments(info.normalized))
+    }
+    boundary_invalid_evidence_parts: set[str] = set()
     candidates = [
         candidate for candidate in candidates
-        if (candidate.source not in {"translated_lines", "ratio_first_lines"}
-            and not restored_material_indices.intersection(candidate.row_indices))
-        or _restored_block_has_clear_boundaries(candidate, infos)
+        if (candidate.row_indices and set(candidate.row_indices).issubset(translation_indices))
+        or (candidate.source not in {"translated_lines", "ratio_first_lines"}
+            and not restored_material_indices.intersection(candidate.row_indices)
+            and not arabic_material_indices.intersection(candidate.row_indices))
+        or _restored_block_has_clear_boundaries(
+            candidate, infos,
+            reject_unpaired_numeric=bool(arabic_material_indices.intersection(candidate.row_indices)),
+            invalid_evidence_parts=boundary_invalid_evidence_parts,
+        )
     ]
     heading_indices = _composition_heading_indices(infos)
     best_by_part: dict[str, CompositionCandidate] = {}
@@ -1094,7 +1212,7 @@ def _best_candidates_by_part(
         info.part for info in infos if info.invalid_evidence and not _is_metadata_line(info)
         and (info.materials or "%" in info.normalized
              or _has_invalid_numeric_row(info))
-    }
+    } | boundary_invalid_evidence_parts
     parts: dict[str, dict[str, float | int]] = {}
     warnings: list[str] = [
         *(f"{part}:invalid_composition_evidence" for part in sorted(invalid_evidence_parts)),
@@ -1187,6 +1305,7 @@ def _best_candidates_by_part(
 
     if any(info.inferred_metadata for info in infos):
         warnings.append("unlabeled_garment_size_inferred")
+    warnings.extend(translation_warnings)
     return parts, best_by_part, warnings, expected_parts, ratio_evidence
 
 
@@ -1334,7 +1453,11 @@ def parse_label(
     if not materials:
         error_code = (
             "ambiguous_composition"
-            if any("ambiguous_composition_candidates" in item for item in warnings)
+            if any(
+                "ambiguous_composition_candidates" in item
+                or "ambiguous_outer_compositions" in item
+                for item in warnings
+            )
             else "composition_not_found"
         )
         message = (
@@ -1349,6 +1472,48 @@ def parse_label(
             warnings=warnings,
             parse_evidence=ratio_evidence,
         )
+
+    # Numbered outer fabrics describe peer panels, rather than a lower-priority
+    # lining. A missing second panel must not make the first panel representative
+    # by default; different complete panels also have no single composition.
+    outer_parts = [part for part in ("outer", "outer_2") if part in expected_parts]
+    if selected_part in outer_parts and len(outer_parts) > 1:
+        unconfirmed_outer_parts = [part for part in outer_parts if part not in parts]
+        if unconfirmed_outer_parts:
+            return failed_response(
+                text,
+                error_code="incomplete_part_composition",
+                message="여러 겉감 중 확인되지 않은 조성이 있어 대표 소재를 선택하지 않았습니다.",
+                warnings=[
+                    *warnings,
+                    *(f"{part}:composition_not_confirmed" for part in unconfirmed_outer_parts),
+                ],
+                parse_evidence=ratio_evidence,
+            )
+        if len({_equivalent_composition(parts[part]) for part in outer_parts}) > 1:
+            # Preserve this rejection for candidate aggregation. A later crop
+            # containing only one panel cannot erase a complete peer panel.
+            rejections = {
+                part: set(reasons)
+                for part, reasons in ratio_evidence["rejected_composition_parts"].items()
+            }
+            for part in outer_parts:
+                rejections.setdefault(part, set()).add("ambiguous_outer_compositions")
+            return failed_response(
+                text,
+                error_code="ambiguous_composition",
+                message="서로 다른 겉감 조성이 있어 대표 소재를 자동으로 선택하지 않았습니다.",
+                warnings=[
+                    *warnings,
+                    *(f"{part}:ambiguous_outer_compositions" for part in outer_parts),
+                ],
+                parse_evidence={
+                    **ratio_evidence,
+                    "rejected_composition_parts": {
+                        part: sorted(reasons) for part, reasons in sorted(rejections.items())
+                    },
+                },
+            )
 
     # The label names a more representative part (an outer shell above a
     # lining) whose composition never resolved. Substituting the part that
@@ -1380,6 +1545,7 @@ def parse_label(
         and has_exact_total(selected_candidate.materials.values())
         and selected_candidate.source == "same_line"
         and "unlabeled_garment_size_inferred" not in warnings
+        and "damaged_translation_fragment" not in warnings
         else "medium"
     )
     care_instruction = parse_care(text)

@@ -109,7 +109,7 @@ def test_complete_literal_storage_captions_remain_supported(caption, inline):
 
 
 def test_explicit_secondary_part_bounds_restored_primary_block():
-    result = parse_label(f"OUTSHELL1\n{TRANSLATED}\nOUTSHELL2\nUNKNOWN")
+    result = parse_label(f"OUTSHELL1\n{TRANSLATED}\nLINING\nUNKNOWN")
     assert result["status"] == "success", result
     assert result["materials"] == {"cotton": 60, "polyester": 40}
     assert result["parts"] == {"outer": {"cotton": 60, "polyester": 40}}

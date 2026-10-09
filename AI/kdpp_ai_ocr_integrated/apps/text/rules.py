@@ -46,6 +46,8 @@ MATERIAL_ALIASES = {
         "全棉",
         "綿",
         "コットン",
+        "قطن",
+        "القطن",
     ],
     "polyester": [
         "polyester",
@@ -69,6 +71,8 @@ MATERIAL_ALIASES = {
         "滌綸",
         "ポリエステル",
         "ポリエステル繊維",
+        "بوليستر",
+        "البوليستر",
     ],
     "rayon": [
         "rayon",

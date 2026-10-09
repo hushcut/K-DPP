@@ -44,19 +44,30 @@ def agreed_original_composition(candidates: list[OcrCandidate]) -> bool:
 
     originals = [candidate for candidate in candidates if candidate.source == "original"]
     for raw in originals:
-        if raw.layout_used or raw.parser_status != "success" or raw.parser_warnings:
+        translation_warnings = {"registered_translation_alternatives", "damaged_translation_fragment"}
+        if (raw.layout_used or raw.parser_status != "success"
+                or set(raw.parser_warnings) - translation_warnings):
             continue
         if not raw.image_key or not raw.image_variant_key or not raw.image_words or len(raw.image_region) != 4:
             continue
         for layout in originals:
             if (
-                not layout.layout_used or layout.parser_status != "success" or layout.parser_warnings
+                not layout.layout_used or layout.parser_status != "success"
+                or set(layout.parser_warnings) - translation_warnings
                 or raw.image_key != layout.image_key or raw.image_variant_key != layout.image_variant_key
                 or raw.image_words != layout.image_words
                 or raw.image_region != layout.image_region
                 or raw.selected_part != layout.selected_part or raw.parts != layout.parts
             ):
                 continue
+            if raw.parser_warnings or layout.parser_warnings:
+                # The warning concerns damaged repeated copies, not a missing
+                # primary name/ratio. Prove direct pairs and token-preserving
+                # views of the SAME provider response before skipping a retry.
+                if (not _has_explicit_complete_pairs(raw, allow_translation_warnings=True)
+                        or not _has_explicit_complete_pairs(layout, allow_translation_warnings=True)
+                        or not _matching_word_tokens(raw.text, layout.text, raw.image_words)):
+                    continue
             if (
                 raw.observed_materials.keys() == layout.observed_materials.keys()
                 and raw.observed_ratios.keys() == layout.observed_ratios.keys()
@@ -127,11 +138,16 @@ def _upright_rotated_rows(words: tuple[OcrWord, ...]) -> str | None:
     return _horizontal_rows(upright, slope)
 
 
-def _has_explicit_complete_pairs(candidate: OcrCandidate) -> bool:
+def _has_explicit_complete_pairs(
+    candidate: OcrCandidate, *, allow_translation_warnings: bool = False,
+) -> bool:
     """Every observed material and ratio must have a same-row explicit pair."""
 
+    warnings = set(candidate.parser_warnings)
+    if allow_translation_warnings:
+        warnings -= {"registered_translation_alternatives", "damaged_translation_fragment"}
     if (
-        candidate.parser_status != "success" or candidate.parser_warnings
+        candidate.parser_status != "success" or warnings
         or candidate.conflicting_parts or candidate.unpaired_ratio_parts
         or candidate.rejected_composition_parts or not candidate.parts
         or candidate.observed_materials.keys() != candidate.parts.keys()
