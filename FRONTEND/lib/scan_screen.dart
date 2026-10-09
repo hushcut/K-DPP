@@ -40,9 +40,13 @@ part 'scan/scan_view_builders.dart';
 ///
 /// 결과를 입력하는 동안에는 이 화면을 담은 라우트가 곧바로 닫히지 않게 막고 버릴지 묻습니다.
 class ScanScreen extends StatefulWidget {
-  const ScanScreen({super.key, this.isActive = true});
+  const ScanScreen({super.key, this.isActive = true, this.saving});
 
   final bool isActive;
+
+  /// 저장 중인지 담는 값입니다. 이 화면을 담은 라우트가 넘기면 같은 값을 보고 위 막대의
+  /// 설정 버튼을 막습니다. 이 화면만 값을 바꿉니다.
+  final ValueNotifier<bool>? saving;
 
   @override
   State<ScanScreen> createState() => _ScanScreenState();
@@ -57,7 +61,15 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   bool _isScanComplete = false;
   bool _isScanFailed = false;
   bool _hasTriedSubmit = false;
-  bool _isSaving = false;
+  bool _isSavingValue = false;
+
+  // 저장 중에는 "<"·뒤로가기처럼 설정도 열리지 않아야, 저장 끝에 스택을 정리할 때 연 설정이
+  // 사라지지 않습니다. 위 막대는 이 화면 밖에 있어 바꿀 때마다 [ScanScreen.saving] 에도 씁니다.
+  bool get _isSaving => _isSavingValue;
+  set _isSaving(bool value) {
+    _isSavingValue = value;
+    widget.saving?.value = value;
+  }
 
   // 촬영 이미지와 분석·서버 응답 원본을 보관합니다.
   File? _selectedImage;

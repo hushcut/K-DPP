@@ -1,4 +1,5 @@
 // 홈·옷장 탭을 한 화면에서 관리하고, 스캔·상세 리포트를 그 위에 쌓아 여는 앱의 메인 셸입니다.
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -197,6 +198,9 @@ class _MainScreenState extends State<MainScreen>
     // 빠른 연속 탭으로 설정 화면이 두 번 쌓이지 않게 합니다.
     if (_isCoveredByRoute) return;
 
+    // 스캔·리포트와 같습니다. 초점이 남아 있으면 설정을 닫고 돌아올 때 검색창이 초점을 되찾아
+    // 내렸던 키보드가 다시 뜹니다(2026-10-08 Android 재현).
+    FocusManager.instance.primaryFocus?.unfocus();
     await _pushCoveringRoute(() => Navigator.pushNamed(context, '/settings'));
   }
 
@@ -287,9 +291,11 @@ Color _appBarIconColor(BuildContext context) {
 }
 
 /// 메인 화면과 스캔 화면이 함께 쓰는 위 막대(가운데 로고, 오른쪽 설정)입니다.
+/// [settingsLocked] 가 true 인 동안에는 설정 버튼을 흐리게 하고 누를 수 없게 합니다.
 PreferredSizeWidget _buildMainAppBar(
   BuildContext context, {
   required VoidCallback onOpenSettings,
+  ValueListenable<bool>? settingsLocked,
   Widget? leading,
 }) {
   return AppBar(
@@ -303,22 +309,67 @@ PreferredSizeWidget _buildMainAppBar(
     leading: leading,
     title: const KdppLogoMark(size: 34),
     actions: [
-      IconButton(
-        onPressed: onOpenSettings,
-        tooltip: '설정',
-        icon: Icon(Icons.settings_outlined, color: _appBarIconColor(context)),
-      ),
+      _SettingsButton(onPressed: onOpenSettings, locked: settingsLocked),
       const SizedBox(width: 8),
     ],
   );
+}
+
+/// 위 막대 오른쪽 설정 버튼입니다. [locked] 가 true 인 동안에는 흐리게 하고 누를 수 없게 합니다.
+class _SettingsButton extends StatelessWidget {
+  const _SettingsButton({required this.onPressed, this.locked});
+
+  final VoidCallback onPressed;
+  final ValueListenable<bool>? locked;
+
+  @override
+  Widget build(BuildContext context) {
+    final locked = this.locked;
+    if (locked == null) return _buildButton(context, isLocked: false);
+
+    return ValueListenableBuilder<bool>(
+      valueListenable: locked,
+      builder: (context, isLocked, _) =>
+          _buildButton(context, isLocked: isLocked),
+    );
+  }
+
+  Widget _buildButton(BuildContext context, {required bool isLocked}) {
+    final color = _appBarIconColor(context);
+
+    return IconButton(
+      // 막힌 동안 TalkBack 은 '사용 중지됨'으로 읽어 왜 안 열리는지 알 수 있습니다.
+      onPressed: isLocked ? null : onPressed,
+      tooltip: '설정',
+      color: color,
+      disabledColor: color.withValues(alpha: 0.38),
+      icon: const Icon(Icons.settings_outlined),
+    );
+  }
 }
 
 /// 탭 위에 쌓아 여는 스캔 화면입니다.
 ///
 /// 라우트라서 "<"·시스템 뒤로가기·iOS 왼쪽 끝 밀기로 닫히고, 하단 메뉴까지 덮습니다.
 /// 결과를 입력하는 동안에는 [ScanScreen] 이 곧바로 닫히지 않게 막고 버릴지 묻습니다.
-class _ScanPage extends StatelessWidget {
+/// 저장하는 동안에는 설정 버튼도 막습니다. 저장이 끝나면 스택을 통째로 정리하므로, 그 사이에
+/// 연 설정은 보던 중에 사라지기 때문입니다(2026-10-08 Android 재현, DECISIONS 2026-10-09).
+class _ScanPage extends StatefulWidget {
   const _ScanPage();
+
+  @override
+  State<_ScanPage> createState() => _ScanPageState();
+}
+
+class _ScanPageState extends State<_ScanPage> {
+  // 스캔 화면이 저장 중인지입니다. 스캔 화면이 바꾸고, 위 막대가 보고 설정 버튼을 막습니다.
+  final ValueNotifier<bool> _saving = ValueNotifier<bool>(false);
+
+  @override
+  void dispose() {
+    _saving.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -344,10 +395,14 @@ class _ScanPage extends StatelessWidget {
           // 빠른 연속 탭으로 설정 화면이 두 번 쌓이지 않게 합니다.
           if (ModalRoute.of(context)?.isCurrent == false) return;
 
+          // 옷장 탭 설정과 같습니다. 손가락으로 누르면 입력 칸이 바깥 탭으로 이미 초점을 풀지만,
+          // TalkBack 처럼 포인터 없이 누르면 초점이 남아 돌아올 때 키보드가 다시 뜹니다.
+          FocusManager.instance.primaryFocus?.unfocus();
           Navigator.pushNamed(context, '/settings');
         },
+        settingsLocked: _saving,
       ),
-      body: ScanScreen(isActive: !isCovered),
+      body: ScanScreen(isActive: !isCovered, saving: _saving),
     );
   }
 }
