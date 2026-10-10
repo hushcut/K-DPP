@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -430,8 +432,9 @@ void main() {
     WidgetTester tester, {
     double navigationBarOpacity = NavigationBarOpacityProvider.defaultOpacity,
     Map<String, WidgetBuilder> routes = const {},
+    FakeClosetStorage? storage,
   }) async {
-    final provider = ClosetProvider(storage: FakeClosetStorage());
+    final provider = ClosetProvider(storage: storage ?? FakeClosetStorage());
     final opacityProvider = NavigationBarOpacityProvider();
     if (navigationBarOpacity != NavigationBarOpacityProvider.defaultOpacity) {
       opacityProvider.preview(navigationBarOpacity);
@@ -521,16 +524,14 @@ void main() {
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
 
+  // 설정 화면 대역입니다. "<"(설정 닫기)로 닫힙니다.
+  Widget settingsStub(BuildContext context) => Scaffold(
+    appBar: AppBar(leading: const AppBackButton(tooltip: '설정 닫기')),
+    body: const Text('설정 화면'),
+  );
+
   testWidgets('스캔 화면에서 설정을 열면 카메라를 끄고, 설정을 닫으면 다시 켠다', (tester) async {
-    await pumpMainScreen(
-      tester,
-      routes: {
-        '/settings': (_) => Scaffold(
-          appBar: AppBar(leading: const AppBackButton(tooltip: '설정 닫기')),
-          body: const Text('설정 화면'),
-        ),
-      },
-    );
+    await pumpMainScreen(tester, routes: {'/settings': settingsStub});
 
     await tester.tap(find.text('스캔'));
     await tester.pump();
@@ -688,6 +689,181 @@ void main() {
     expect(find.text('홈'), findsOneWidget);
   });
 
+  // 입력 칸이 초점을 가졌는지입니다. 초점은 칸 안의 EditableText 가 가집니다.
+  bool fieldHasFocus(WidgetTester tester, Finder field) => tester
+      .state<EditableTextState>(
+        find.descendant(of: field, matching: find.byType(EditableText)),
+      )
+      .widget
+      .focusNode
+      .hasFocus;
+
+  // 2026-10-08 Android 재현(DECISIONS 2026-10-09 ①): 검색창에 초점이 남은 채 설정을 열면, 설정을
+  // 닫고 돌아올 때 검색창이 초점을 되찾아 내렸던 키보드가 다시 떴다.
+  testWidgets('옷장 검색창에 초점이 있어도 설정을 다녀오면 초점과 키보드가 돌아오지 않는다', (tester) async {
+    final provider = await pumpMainScreen(
+      tester,
+      routes: {'/settings': settingsStub},
+    );
+    await provider.addClothes(
+      Clothes(
+        title: '홍길동 니트',
+        category: '상의',
+        health: 84,
+        materials: {'wool': 100},
+        careInstruction: '드라이클리닝 권장',
+        carbonFootprint: 3.6,
+      ),
+    );
+    await tester.tap(find.text('옷장'));
+    await tester.pumpAndSettle();
+
+    final search = find.widgetWithText(TextField, '옷 이름, 소재 검색');
+    await tester.tap(search);
+    await tester.pump();
+    expect(fieldHasFocus(tester, search), isTrue);
+    expect(tester.testTextInput.isVisible, isTrue);
+
+    await tester.tap(find.byTooltip('설정'));
+    await tester.pumpAndSettle();
+    expect(find.text('설정 화면'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('설정 닫기'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('설정 화면'), findsNothing);
+    expect(fieldHasFocus(tester, search), isFalse);
+    expect(tester.testTextInput.isVisible, isFalse);
+  });
+
+  // DECISIONS 2026-10-09 ①: 스캔 화면 설정 버튼도 같은 규칙이다. 손가락으로 누르면 입력 칸의 바깥 탭
+  // 처리가 먼저 초점을 풀지만, 낭독기처럼 포인터 없이 누르면 초점이 남아 있었다.
+  testWidgets('스캔 입력 칸에 초점이 있어도 낭독기로 설정을 다녀오면 초점과 키보드가 돌아오지 않는다', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    await pumpMainScreen(tester, routes: {'/settings': settingsStub});
+    await openScanResultForm(tester);
+
+    final materialName = find.widgetWithText(TextFormField, '소재명');
+    await tester.ensureVisible(materialName);
+    await tester.tap(materialName);
+    await tester.pump();
+    expect(fieldHasFocus(tester, materialName), isTrue);
+
+    // 낭독기의 두 번 탭처럼 포인터 이벤트 없이 누른다.
+    tester.semantics.tap(
+      find.semantics.byPredicate((node) => node.tooltip == '설정'),
+    );
+    await tester.pump();
+    await tester.pump(routeTransition);
+    expect(find.text('설정 화면'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('설정 닫기'));
+    await tester.pump();
+    await tester.pump(routeTransition);
+
+    expect(find.text('설정 화면'), findsNothing);
+    expect(fieldHasFocus(tester, materialName), isFalse);
+    expect(tester.testTextInput.isVisible, isFalse);
+    semantics.dispose();
+  });
+
+  // 결과 입력 화면에서 소재 한 줄(면 100%)을 채워 저장할 수 있게 한다.
+  Future<void> fillOneMaterial(WidgetTester tester) async {
+    await tester.enterText(find.widgetWithText(TextFormField, '소재명'), '면');
+    await tester.enterText(find.widgetWithText(TextFormField, '%'), '100');
+    await tester.pump();
+  }
+
+  IconButton settingsButton(WidgetTester tester) => tester.widget<IconButton>(
+    find.widgetWithIcon(IconButton, Icons.settings_outlined),
+  );
+
+  // 실제로 그려지는 설정 아이콘 색입니다.
+  Color settingsIconColor(WidgetTester tester) =>
+      IconTheme.of(tester.element(find.byIcon(Icons.settings_outlined))).color!;
+
+  Future<void> tapSave(WidgetTester tester) async {
+    await tester.ensureVisible(find.text('옷장에 저장하기'));
+    await tester.tap(find.text('옷장에 저장하기'));
+    await tester.pump();
+  }
+
+  // 2026-10-08 Android 재현(DECISIONS 2026-10-09 ③): 저장(서버 계산)을 기다리는 동안 연 설정이
+  // 저장 끝의 스택 정리로 보던 중에 사라졌다. 저장 중엔 "<"·뒤로가기처럼 설정도 막는다.
+  testWidgets('저장하는 동안에는 스캔 화면의 설정 버튼이 흐려져 열리지 않고, 저장이 끝나면 리포트가 열린다', (
+    tester,
+  ) async {
+    final storage = _HeldClosetStorage();
+    await pumpMainScreen(
+      tester,
+      storage: storage,
+      routes: {'/settings': settingsStub, '/main': (_) => const MainScreen()},
+    );
+    await openScanResultForm(tester);
+    await fillOneMaterial(tester);
+    expect(settingsButton(tester).onPressed, isNotNull);
+    final enabledColor = settingsIconColor(tester);
+
+    final releaseSave = storage.holdNextSave();
+    await tapSave(tester);
+
+    expect(settingsButton(tester).onPressed, isNull);
+    // 버튼은 아이콘 색을 테마 애니메이션(kThemeChangeDuration)으로 바꿉니다.
+    await tester.pump(kThemeChangeDuration);
+    expect(settingsIconColor(tester).a, lessThan(enabledColor.a));
+    await tester.tap(find.byTooltip('설정'), warnIfMissed: false);
+    await tester.pump();
+    await tester.pump(routeTransition);
+    expect(find.text('설정 화면'), findsNothing);
+    expect(find.byType(ScanResultView), findsOneWidget);
+
+    // 저장이 끝나면 새 스캔 화면 위에 리포트가 열린다(스택 정리는 그대로).
+    releaseSave();
+    await tester.pump();
+    await tester.pump(routeTransition);
+    await tester.pump(routeTransition);
+    expect(find.text('상세 리포트'), findsOneWidget);
+
+    // 리포트를 닫으면 나오는 새 스캔 화면의 설정 버튼은 다시 눌린다.
+    await tester.tap(find.byTooltip('리포트 닫기'));
+    await tester.pump();
+    await tester.pump(routeTransition);
+    expect(find.text(scanGuide), findsOneWidget);
+    expect(settingsButton(tester).onPressed, isNotNull);
+    expect(settingsIconColor(tester), enabledColor);
+  });
+
+  testWidgets('저장이 실패하면 입력 화면에 남고 설정 버튼이 다시 눌린다', (tester) async {
+    final storage = _HeldClosetStorage();
+    await pumpMainScreen(
+      tester,
+      storage: storage,
+      routes: {'/settings': settingsStub},
+    );
+    await openScanResultForm(tester);
+    await fillOneMaterial(tester);
+
+    storage.saveClothesError = StateError('옷장 저장 실패 흉내');
+    final releaseSave = storage.holdNextSave();
+    await tapSave(tester);
+    expect(settingsButton(tester).onPressed, isNull);
+
+    releaseSave();
+    await tester.pump();
+
+    expect(find.byType(ScanResultView), findsOneWidget);
+    expect(settingsButton(tester).onPressed, isNotNull);
+
+    await tester.tap(find.byTooltip('설정'));
+    await tester.pump();
+    await tester.pump(routeTransition);
+    expect(find.text('설정 화면'), findsOneWidget);
+    // 실패 배너가 저절로 닫힐 때까지 시간을 흘려 타이머를 남기지 않는다.
+    await tester.pump(const Duration(seconds: 10));
+  });
+
   // 2026-10-01 DECISIONS 75: 선택 모드에선 하단 메뉴를 높이는 남긴 채 아래로 밀어 숨기고,
   // 그 막대 자리 왼쪽에 휴지통을 띄운다(참고: Apple Music 플레이리스트 편집).
   testWidgets('옷장 선택 모드에서는 하단 메뉴를 높이를 남긴 채 내려 숨기고, 막대 자리 왼쪽에 휴지통을 띄운다', (
@@ -792,4 +968,24 @@ void main() {
     await pumpMainScreen(tester, navigationBarOpacity: 1.0);
     expect(find.byType(BackdropFilter), findsNothing);
   });
+}
+
+/// 옷장 저장을 붙잡아 두어 스캔 화면의 '저장 중' 상태를 만들 수 있는 저장소입니다.
+class _HeldClosetStorage extends FakeClosetStorage {
+  Completer<void>? _hold;
+
+  /// 다음 옷장 저장을 붙잡고, 풀어 주는 함수를 돌려줍니다.
+  VoidCallback holdNextSave() {
+    final hold = Completer<void>();
+    _hold = hold;
+    return hold.complete;
+  }
+
+  @override
+  Future<void> saveClothesList(List<Clothes> items) async {
+    final hold = _hold;
+    _hold = null;
+    await hold?.future;
+    return super.saveClothesList(items);
+  }
 }
