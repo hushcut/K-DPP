@@ -5,6 +5,7 @@ import 'package:k_dpp/email_login_screen.dart';
 import 'package:k_dpp/services/auth_api_service.dart';
 import 'package:k_dpp/signup_screen.dart';
 import 'package:k_dpp/widgets/app_banner.dart';
+import 'package:k_dpp/widgets/number_keyboard_toolbar.dart';
 
 import 'helpers/app_banner_expect.dart';
 import 'helpers/fake_auth_backend.dart';
@@ -426,21 +427,28 @@ void main() {
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
 
-  testWidgets('iOS 에서 번호 칸에 포커스가 있으면 키패드 위에 [다음]을 띄워 닉네임으로 옮긴다', (
+  testWidgets('iOS 에서 번호 칸에 포커스가 있으면 키패드 위 막대의 ∨ 로 닉네임에 옮긴다', (
     tester,
   ) async {
     await pumpSignupScreen(tester);
     await tester.tap(field('인증번호'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(OutlinedButton, '다음'));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NumberKeyboardToolbar),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is Icon && widget.semanticLabel == '다음 칸',
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
 
     final nicknameEditable = tester.widget<EditableText>(
       find.descendant(of: field('닉네임'), matching: find.byType(EditableText)),
     );
     expect(nicknameEditable.focusNode.hasFocus, isTrue);
-    expect(find.widgetWithText(OutlinedButton, '다음'), findsNothing);
+    expect(find.byType(NumberKeyboardToolbar), findsNothing);
   }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
   testWidgets('비밀번호 칸에서 자판의 다음은 눈 아이콘을 건너뛰고 비밀번호 확인 칸으로 간다', (

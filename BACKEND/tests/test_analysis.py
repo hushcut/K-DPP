@@ -1,4 +1,5 @@
 import main
+from auth_helpers import signup
 
 
 def test_analyze_calculates_cotton_polyester(client):
@@ -62,15 +63,8 @@ def test_analyze_returns_400_when_ratio_total_is_not_100(client):
 
 
 def test_authenticated_analyze_is_visible_in_my_history(client):
-    signup = client.post(
-        "/auth/signup",
-        json={
-            "email": "history@example.com",
-            "password": "password123",
-            "nickname": "history-user",
-        },
-    )
-    user_id = signup.json()["user"]["id"]
+    signup_response = signup(client, "history@example.com", nickname="history-user")
+    user_id = signup_response.json()["user"]["id"]
 
     login = client.post(
         "/auth/login",
@@ -130,14 +124,7 @@ def test_history_requires_login(client):
 
 
 def test_carbon_range_uses_db_factor_and_weight_range(client):
-    client.post(
-        "/auth/signup",
-        json={
-            "email": "carbon@example.com",
-            "password": "password123",
-            "nickname": "carbon-user",
-        },
-    )
+    signup(client, "carbon@example.com", nickname="carbon-user")
     login = client.post(
         "/auth/login",
         json={
@@ -190,14 +177,7 @@ def test_carbon_range_uses_db_factor_and_weight_range(client):
 
 
 def test_carbon_range_prefers_direct_weight(client):
-    client.post(
-        "/auth/signup",
-        json={
-            "email": "direct-weight@example.com",
-            "password": "password123",
-            "nickname": "direct-weight-user",
-        },
-    )
+    signup(client, "direct-weight@example.com", nickname="direct-weight-user")
     login = client.post(
         "/auth/login",
         json={
@@ -234,14 +214,7 @@ def test_carbon_range_prefers_direct_weight(client):
 
 
 def test_carbon_range_requires_weight_input(client):
-    client.post(
-        "/auth/signup",
-        json={
-            "email": "missing-weight@example.com",
-            "password": "password123",
-            "nickname": "missing-weight-user",
-        },
-    )
+    signup(client, "missing-weight@example.com", nickname="missing-weight-user")
     login = client.post(
         "/auth/login",
         json={
@@ -276,10 +249,7 @@ def test_carbon_range_requires_login(client):
 
 
 def _login_token(client, email="scan-user@example.com"):
-    client.post(
-        "/auth/signup",
-        json={"email": email, "password": "password123", "nickname": "scan-user"},
-    )
+    signup(client, email, nickname="scan-user")
     login = client.post(
         "/auth/login",
         json={"email": email, "password": "password123"},

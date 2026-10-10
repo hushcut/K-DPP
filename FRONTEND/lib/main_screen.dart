@@ -368,8 +368,9 @@ class _ReportPage extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: AppPalette.of(context).background,
+      // 앱바 높이는 기본값(56)이라 "<" 가 설정·스캔 화면과 같은 높이에 온다(2026-10-05 Android 확인 —
+      // 44 일 때는 6dp 위에 있었다).
       appBar: AppBar(
-        toolbarHeight: 44,
         backgroundColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,

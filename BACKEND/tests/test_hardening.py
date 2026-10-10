@@ -16,13 +16,11 @@ from starlette.middleware.cors import CORSMiddleware
 
 import database
 import main
+from auth_helpers import fix_next_code, request_code, signup
 
 
 def _login_token(client, email="hardening@example.com"):
-    client.post(
-        "/auth/signup",
-        json={"email": email, "password": "password123", "nickname": "tester"},
-    )
+    signup(client, email)
     login = client.post(
         "/auth/login",
         json={"email": email, "password": "password123"},
@@ -77,6 +75,7 @@ def test_password_with_surrounding_whitespace_is_rejected(client):
             "email": "space@example.com",
             "password": "password1 ",
             "nickname": "space-user",
+            "code": "123456",
         },
     )
 
@@ -86,7 +85,7 @@ def test_password_with_surrounding_whitespace_is_rejected(client):
 def test_invalid_email_format_is_rejected(client):
     response = client.post(
         "/auth/signup",
-        json={"email": "@.", "password": "password123", "nickname": "tester"},
+        json={"email": "@.", "password": "password123", "nickname": "tester", "code": "123456"},
     )
 
     assert response.status_code == 400
@@ -190,10 +189,7 @@ def test_access_token_is_stored_hashed(client):
 
 def test_login_locks_after_repeated_failures(client):
     email = "lockout@example.com"
-    client.post(
-        "/auth/signup",
-        json={"email": email, "password": "password123", "nickname": "lock-user"},
-    )
+    signup(client, email, nickname="lock-user")
 
     for _ in range(main.LOGIN_MAX_ATTEMPTS):
         response = client.post(
@@ -211,10 +207,7 @@ def test_login_locks_after_repeated_failures(client):
 
 def test_login_success_resets_failure_count(client):
     email = "reset-count@example.com"
-    client.post(
-        "/auth/signup",
-        json={"email": email, "password": "password123", "nickname": "reset-user"},
-    )
+    signup(client, email, nickname="reset-user")
 
     for _ in range(main.LOGIN_MAX_ATTEMPTS - 1):
         client.post("/auth/login", json={"email": email, "password": "nope-nope"})
@@ -513,10 +506,7 @@ def _set_stored_hash(email, password_hash):
 
 
 def _signup(client, email):
-    client.post(
-        "/auth/signup",
-        json={"email": email, "password": "password123", "nickname": "iter-user"},
-    )
+    signup(client, email, nickname="iter-user")
 
 
 def test_signup_stores_hash_with_current_iterations(client):
@@ -577,8 +567,15 @@ def test_rehash_does_not_undo_a_concurrent_password_change(client, monkeypatch):
     monkeypatch.setattr(main, "verify_password", verify_then_change)
     response = client.post("/auth/login", json={"email": email, "password": "password123"})
 
-    assert response.status_code == 200
+    # 옛 비밀번호로 확인한 로그인은 토큰을 받지 못하고(비밀번호 찾기 뒤에도 살아남는 토큰 방지),
+    # 먼저 커밋된 새 비밀번호를 재해시로 되돌리지도 않습니다.
+    assert response.status_code == 401
     assert _stored_hash(email) == changed
+    session = database.SessionLocal()
+    try:
+        assert session.query(database.AccessToken).count() == 0
+    finally:
+        session.close()
 
 
 # --- CORS (2026-10-04 보안 손질, DECISIONS 139) ---------------------------------
@@ -761,20 +758,22 @@ def _count_signup_hashes(monkeypatch, delay=0.0):
     return calls
 
 
-def _try_signup(client, email, password="password123", nickname="ip-user"):
-    return client.post(
-        "/auth/signup",
-        json={"email": email, "password": password, "nickname": nickname},
-    )
+def _try_signup(client, email, password="password123", nickname="ip-user", code=None):
+    """번호를 받아 가입을 시도한다. code 를 주면 번호 요청 없이 그 값으로(형식 오류 시험 등)."""
+    return signup(client, email, password=password, nickname=nickname, code=code)
 
 
 def test_signup_ip_limit_counts_successes_and_conflicts(client, monkeypatch):
     monkeypatch.setattr(main, "SIGNUP_IP_MAX_ATTEMPTS", 3)
+    monkeypatch.setattr(main, "EMAIL_CODE_RESEND_SECONDS", 0)
     hashes = _count_signup_hashes(monkeypatch)
 
     assert _try_signup(client, "signup-a@example.com").status_code == 200
-    # 이미 가입된 이메일(409)은 그 이메일이 가입돼 있는지를 알려 주므로 셉니다.
-    assert _try_signup(client, "signup-a@example.com").status_code == 409
+    # 이미 가입된 이메일(409)은 그 이메일이 가입돼 있는지를 알려 주므로 셉니다. 가입된 이메일엔
+    # 번호 대신 안내 메일이 가므로 번호를 고정해 맞는 번호를 가진 경우를 만듭니다.
+    code = fix_next_code(monkeypatch)
+    assert request_code(client, "signup-a@example.com") is None
+    assert _try_signup(client, "signup-a@example.com", code=code).status_code == 409
     assert _try_signup(client, "signup-b@example.com").status_code == 200
 
     blocked = _try_signup(client, "signup-c@example.com")
@@ -782,7 +781,7 @@ def test_signup_ip_limit_counts_successes_and_conflicts(client, monkeypatch):
     assert blocked.json()["error_code"] == "TOO_MANY_ATTEMPTS"
     assert blocked.json()["message"] == "가입 시도가 너무 많습니다. 60분 후 다시 시도해 주세요."
     # 가입 여부 조회(409)도 창이 끝날 때까지 막히고, 막힌 시도는 해시·계정 생성까지 가지 않습니다.
-    assert _try_signup(client, "signup-a@example.com").status_code == 429
+    assert _try_signup(client, "signup-a@example.com", code=code).status_code == 429
     assert len(hashes) == 2
     assert _try_login(client, "signup-c@example.com", "password123").status_code == 401
 
@@ -791,9 +790,13 @@ def test_signup_format_errors_do_not_count_toward_ip_limit(client, monkeypatch):
     # 형식 오류(400)는 DB·해시를 거치지 않으므로 세지 않습니다 — 입력 실수로 한도를 쓰지 않게.
     monkeypatch.setattr(main, "SIGNUP_IP_MAX_ATTEMPTS", 1)
 
-    assert _try_signup(client, "not-an-email").status_code == 400
-    assert _try_signup(client, "short-nick@example.com", nickname="a").status_code == 400
-    assert _try_signup(client, "short-pw@example.com", password="short").status_code == 400
+    assert _try_signup(client, "not-an-email", code="123456").status_code == 400
+    assert _try_signup(client, "short-nick@example.com", nickname="a", code="123456").status_code == 400
+    assert _try_signup(client, "short-pw@example.com", password="short", code="123456").status_code == 400
+    # 번호가 숫자 6자리가 아닌 것도 형식 오류(400)라 세지 않습니다.
+    bad_code = _try_signup(client, "bad-code@example.com", code="12345")
+    assert bad_code.status_code == 400
+    assert bad_code.json()["error_code"] == "BAD_REQUEST"
     assert _try_signup(client, "format-ok@example.com").status_code == 200
     assert _try_signup(client, "format-next@example.com").status_code == 429
 
@@ -803,9 +806,11 @@ def test_concurrent_signup_burst_hashes_only_up_to_the_ip_limit(client, monkeypa
     monkeypatch.setattr(main, "SIGNUP_IP_MAX_ATTEMPTS", 3)
     hashes = _count_signup_hashes(monkeypatch, delay=0.3)
     statuses = []
+    codes = [request_code(client, f"signup-burst-{i}@example.com") for i in range(8)]
 
     def attempt(i):
-        statuses.append(_try_signup(client, f"signup-burst-{i}@example.com").status_code)
+        email = f"signup-burst-{i}@example.com"
+        statuses.append(_try_signup(client, email, code=codes[i]).status_code)
 
     threads = [threading.Thread(target=attempt, args=(i,)) for i in range(8)]
     for t in threads:
@@ -892,11 +897,19 @@ def test_signup_rejects_overlong_inputs_before_hashing(client, monkeypatch):
     }
 
     for name, fields in cases.items():
-        body = {"email": email, "password": "password123", "nickname": "limit-user", **fields}
+        # 형식이 맞는 번호를 넣어, 422 가 '번호 칸 없음'이 아니라 길이 상한에서 나는지 봅니다.
+        body = {
+            "email": email,
+            "password": "password123",
+            "nickname": "limit-user",
+            "code": "123456",
+            **fields,
+        }
         response = client.post("/auth/signup", json=body)
 
         assert response.status_code == 422, name
         assert response.json()["error_code"] == "VALIDATION_ERROR", name
+        assert response.json()["detail"][0]["loc"] == ["body", next(iter(fields))], name
         # 거부 응답은 입력을 되돌려주지 않습니다(증폭 방지).
         assert len(response.content) < 2000, name
 

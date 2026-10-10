@@ -66,6 +66,19 @@ http://127.0.0.1:8000/docs
 
 배포 서버는 `K_DPP_API_DOCS=off` 로 `/docs`·`/redoc`·`/openapi.json` 을 끕니다(로컬 기본은 켬).
 
+가입·비밀번호 찾기는 이메일 인증번호가 필요합니다(`POST /auth/email-code`). 로컬 서버는 메일을 보내지 않고
+번호를 서버 로그(uvicorn 을 띄운 창)에 찍습니다.
+
+```text
+[email] user@example.com | [K-DPP] 가입 인증번호 | 인증번호 123456
+```
+
+카카오 로그인(`POST /auth/kakao`)은 서버에 카카오 앱 ID(`K_DPP_KAKAO_APP_ID`)가 있어야 켜집니다. 로컬·CI 기본은
+비어 있어 503 `SOCIAL_LOGIN_UNAVAILABLE` 이고, 실기기로 시험할 때만 `BACKEND/.env` 에 앱 ID 를 넣습니다.
+
+번호는 10분 동안 쓸 수 있고, 서버를 다시 켜면 받아 둔 번호는 쓸 수 없습니다(다시 받기). 같은 이메일은 60초 뒤에
+다시 받을 수 있습니다. 이미 가입된 이메일로 가입 번호를 요청하면 번호 대신 안내만 찍힙니다(`인증번호 없음`).
+
 Android Emulator의 Flutter 앱에서 백엔드를 호출할 때는 다음 주소를 사용합니다.
 
 ```text
@@ -111,8 +124,9 @@ python -m pytest
 - cotton 80 + polyester 20 계산 성공
 - 없는 소재 입력 시 400 반환
 - 비율 합계가 100이 아닐 때 400 반환
-- 회원가입 성공
+- 회원가입 성공(인증번호를 받아 가입 — 테스트는 메일 대신 `tests/auth_helpers.py` 가 번호를 꺼냄)
 - 중복 이메일 회원가입 실패
+- 이메일 인증번호·비밀번호 찾기: 가입 여부와 무관한 같은 응답, 5번 틀림·10분 만료·새 번호로 갈아 끼우기, 60초 재요청·이메일·IP·서버 하루 한도, 동시 요청, 재설정 뒤 토큰 삭제, 재설정과 겹친 로그인·비밀번호 변경·탈퇴(`tests/test_email_verification.py`)
 - 로그인 성공
 - 비밀번호 틀림 실패
 - 소재 목록 조회 성공
@@ -176,6 +190,8 @@ copy .env.example .env
 현재 코드는 `.env` 파일 없이도 실행됩니다. 이때 DB 는 로컬 PostgreSQL(`compose.yaml`) `postgresql+psycopg://kdpp:kdpp@127.0.0.1:5432/k_dpp` 입니다.
 `BACKEND/.env`의 `K_DPP_DATABASE_URL` 또는 운영체제 환경변수로 다른 PostgreSQL을 가리킬 수 있습니다(SQLite는 더 지원하지 않습니다).
 브라우저(Flutter 웹 등)에서 API를 부를 때만 `K_DPP_CORS_ORIGINS`에 출처를 쉼표로 적습니다(예: `flutter run -d chrome --web-port 5000` 이면 `http://localhost:5000`). 비워 두면 어떤 출처도 허용하지 않습니다 — 모바일 앱은 CORS와 무관합니다.
+인증 메일은 `K_DPP_EMAIL_DELIVERY` 를 비우거나 `log` 로 두면 보내지 않고 서버 로그에 찍습니다(로컬 기본). `smtp` 면 `K_DPP_SMTP_HOST`·`K_DPP_SMTP_PORT`·`K_DPP_SMTP_USERNAME`·`K_DPP_SMTP_PASSWORD_FILE`(비밀번호를 담은 파일 경로)·`K_DPP_EMAIL_FROM`·`K_DPP_EMAIL_DAILY_MAX` 로 보내고, 하나라도 비었거나 틀리면 서버가 시작하지 않습니다(배포는 `deploy/README.md` '메일 발송'). 그 밖의 값이어도 시작하지 않습니다. `K_DPP_EMAIL_DAILY_MAX` 는 서버 전체 하루(UTC) 번호 요청 상한이고, `log` 에서는 비우면 상한이 없습니다.
+카카오 로그인은 `K_DPP_KAKAO_APP_ID`(카카오 개발자 콘솔의 앱 ID, 숫자 — 비밀값 아님)를 넣으면 켜집니다. 비우면 꺼져 503 이고, 숫자가 아니면 서버가 시작하지 않습니다(앱 키를 잘못 넣는 실수를 막음). 서버에 두는 카카오 비밀값은 없습니다.
 
 ## Git에 올리지 않는 파일
 

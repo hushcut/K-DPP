@@ -149,7 +149,7 @@ class _SignupScreenState extends State<SignupScreen> {
     }
   }
 
-  // iOS 숫자 키패드에는 다음 키가 없어, 번호 칸에 포커스가 있는 동안 [다음]·[완료]를 그립니다.
+  // iOS 숫자 키패드에는 다음 키가 없어, 번호 칸에 포커스가 있는 동안 키보드 위에 ∧·∨·[완료] 막대를 그립니다.
   Widget _buildNumberKeyboardToolbar(BuildContext context) {
     if (!NumberKeyboardToolbar.isNeeded(context)) {
       return const SizedBox.shrink();

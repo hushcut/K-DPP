@@ -1,25 +1,48 @@
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
+from email.message import EmailMessage
+from email.policy import default as email_policy
+from email.utils import format_datetime, make_msgid, parseaddr
+from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, StringConstraints
+import asyncio
+import base64
+import certifi
+import httpx
 import ipaddress
 import json
 import math
 import os
 import re
 import shutil
+import smtplib
+import ssl
 import sys
 import threading
 import tempfile
 from pathlib import Path
 import hashlib
+import hmac
 import secrets
 import database
 
@@ -38,6 +61,8 @@ except Exception:
     parse_label = None
 
 ACCESS_TOKEN_EXPIRE_DAYS = 30
+# 계정마다 살아 있는 로그인 토큰(기기) 수 상한 — 넘으면 가장 오래된 토큰부터 지운다(add_access_token).
+ACCESS_TOKENS_PER_USER_MAX = 10
 DEFAULT_ERROR_CODES = {
     400: "BAD_REQUEST",
     401: "AUTH_REQUIRED",
@@ -51,6 +76,7 @@ DEFAULT_ERROR_CODES = {
     503: "AI_MODULE_FAILED",
 }
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+SCAN_IMAGE_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 # 스캔 업로드 상한. 실기기 원본 사진(3~8MB)에 여유를 둔 값입니다.
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 # 탄소 계산에 허용하는 의류 무게 상한(100kg).
@@ -386,6 +412,19 @@ class SignupRequest(BaseModel):
     email: EmailInput
     password: PasswordInput
     nickname: NicknameInput
+    # POST /auth/email-code(purpose signup)로 받은 번호. 인증번호 단계가 없는 앱 빌드는 422.
+    code: str
+
+
+class EmailCodeRequest(BaseModel):
+    email: EmailInput
+    purpose: Literal["signup", "password_reset"]
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailInput
+    code: str
+    new_password: PasswordInput
 
 
 class LoginRequest(BaseModel):
@@ -398,8 +437,18 @@ class ChangePasswordRequest(BaseModel):
     new_password: PasswordInput
 
 
+class KakaoLoginRequest(BaseModel):
+    # 카카오 SDK 로그인으로 받은 OAuthToken.accessToken.
+    access_token: str
+    # 새 계정일 때만 씁니다(없으면 카카오 닉네임). 이미 있는 계정이면 무시합니다.
+    nickname: NicknameInput | None = None
+
+
 class WithdrawRequest(BaseModel):
-    password: PasswordInput
+    # 계정에 맞는 칸 하나만 봅니다 — 비밀번호 계정은 password, 카카오 계정은 kakao_access_token
+    # (탈퇴 확인 단계에서 앱이 재인증 로그인으로 받은 토큰). 맞지 않는 칸은 무시합니다.
+    password: PasswordInput | None = None
+    kakao_access_token: str | None = None
 
 
 # 소재 계산은 입력 소재 수에 비례해 반복되므로 개수·길이를 제한하지 않으면
@@ -451,6 +500,28 @@ def ensure_password_rules(password: str) -> None:
         raise HTTPException(status_code=400, detail="비밀번호 앞뒤에는 공백을 사용할 수 없습니다.")
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="비밀번호는 8자 이상 입력해 주세요.")
+    # 제어 문자·짝 없는 서로게이트는 해시(UTF-8 인코딩)·저장에서 500 을 내므로 형식 오류로 막습니다.
+    if not password.isprintable():
+        raise HTTPException(status_code=400, detail="비밀번호에 쓸 수 없는 문자가 있습니다.")
+
+
+def nickname_rule_error(nickname: str) -> str | None:
+    """닉네임(앞뒤 공백을 지운 값)이 규칙에 맞지 않으면 그 이유, 맞으면 None.
+    가입·카카오 로그인(요청 닉네임과 카카오 닉네임)이 같은 규칙을 씁니다. 요청 닉네임의 상한은
+    요청 모델(NicknameInput)이 먼저 422 로 막고, 여기서는 카카오에서 받아 온 닉네임에 걸립니다."""
+    if len(nickname) < 2:
+        return "닉네임은 2자 이상 입력해 주세요."
+    if len(nickname) > MAX_NICKNAME_LENGTH:
+        return f"닉네임은 {MAX_NICKNAME_LENGTH}자 이하로 입력해 주세요."
+    if not nickname.isprintable():
+        return "닉네임에 쓸 수 없는 문자가 있습니다."
+    return None
+
+
+def ensure_nickname_rules(nickname: str) -> None:
+    error = nickname_rule_error(nickname)
+    if error is not None:
+        raise HTTPException(status_code=400, detail=error)
 
 
 # PBKDF2-SHA256 반복 수(OWASP 권장값). 저장 형식에 반복 수가 들어 있어 값을 올려도
@@ -487,9 +558,14 @@ def verify_password(password: str, stored_hash: str) -> bool:
     except ValueError:
         return False
 
+    try:
+        encoded_password = password.encode("utf-8")
+    except UnicodeEncodeError:
+        # 짝 없는 서로게이트 등 — 이런 비밀번호로는 가입할 수 없으므로 틀린 비밀번호입니다.
+        return False
     digest = hashlib.pbkdf2_hmac(
         "sha256",
-        password.encode("utf-8"),
+        encoded_password,
         salt.encode("utf-8"),
         iterations,
     ).hex()
@@ -500,10 +576,33 @@ def verify_password(password: str, stored_hash: str) -> bool:
 DUMMY_PASSWORD_HASH = hash_password("k-dpp-timing-guard")
 # 최소한의 이메일 형식 검사: 공백 없는 로컬@도메인.최상위 형태만 허용.
 EMAIL_PATTERN = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+# 주소 문법에서 따옴표·주석·꺾쇠·그룹 등의 뜻이 있는 글자. 이런 글자가 든 '"v@x.com"'·'v@x.com(1)' 은
+# 위 형식을 통과하지만 SMTP(smtplib)가 모두 같은 v@x.com 으로 읽어, 표기마다 따로인 이메일당 발송 한도를
+# 우회해 한 메일함에 몰아 보낼 수 있었다(DECISIONS 175). 실제 주소에는 거의 쓰이지 않는다.
+EMAIL_SPECIAL_CHARACTERS = frozenset('"<>(),;:\\[]')
+
+
+def ensure_email_format(email: str) -> None:
+    """가입·인증번호 요청·비밀번호 찾기의 이메일 형식 검사(정규화한 뒤의 값). 제어 문자·짝 없는
+    서로게이트도 막습니다 — 각각 DB 저장·HMAC(UTF-8 인코딩)에서 500 이 나고 서버 로그 줄을 흐트러뜨려서.
+    길이는 요청 모델(EmailInput)이 원문을 먼저 막지만, 소문자로 바꾸면 길어지는 글자(İ 등)가 있어
+    인증번호 기록의 키가 되는 정규화한 값도 같은 상한으로 한 번 더 봅니다.
+    ASCII 만 받고 주소 문법 글자(EMAIL_SPECIAL_CHARACTERS)는 막습니다 — 보낼 주소가 한도의 키와 같은
+    주소여야 하고, 한글 주소는 메일 서버가 SMTPUTF8 을 지원해야만 보내져서입니다(DECISIONS 175)."""
+    if (
+        len(email) > MAX_EMAIL_LENGTH
+        or not email.isascii()
+        or not email.isprintable()
+        or not EMAIL_PATTERN.fullmatch(email)
+        or any(character in EMAIL_SPECIAL_CHARACTERS for character in email)
+    ):
+        raise HTTPException(status_code=400, detail="올바른 이메일을 입력해 주세요.")
+
 
 # 로그인 무차별 대입 방어: 같은 이메일로 연속 실패하면 잠시 잠급니다.
 # 실패 기록(아래 로그인·가입 IP 기준도)은 프로세스 메모리에 둡니다 — 서버 1대·uvicorn 워커
 # 1개 전제(DECISIONS 139). 재시작하면 지워지고, 워커를 늘리면 한도가 워커 수만큼 늘어납니다.
+# 아래 이메일 인증번호도 같은 전제라, 워커를 늘리면 맞는 번호도 틀렸다고 나옵니다(DECISIONS 147).
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_LOCKOUT_SECONDS = 60
 # 저횟수(1~4회) 실패 기록이 영구히 남으면 임의 이메일 반복 전송으로 메모리를
@@ -658,11 +757,804 @@ def release_login_attempt_for_ip(ip_key: str | None) -> None:
             _login_ip_failures[ip_key] = (count - 1, window_start)
 
 
-def auth_user_response(user: database.User) -> dict:
+# --- 이메일 인증번호 (DECISIONS 144·147·148) ----------------------------------------
+# 가입 전 이메일 확인과 비밀번호 찾기에 같은 6자리 번호를 씁니다. 번호·틀린 수·발송 한도는
+# 위 로그인 기록처럼 프로세스 메모리에 둡니다 — 서버가 다시 켜지면 받아 둔 번호는 쓸 수 없습니다.
+EMAIL_CODE_LENGTH = 6
+EMAIL_CODE_PATTERN = re.compile(r"[0-9]{6}")
+EMAIL_CODE_TTL_SECONDS = 10 * 60
+# 번호 하나당 틀릴 수 있는 횟수. 이만큼 틀리면 그 번호를 버리고 다시 받게 합니다.
+EMAIL_CODE_MAX_FAILURES = 5
+# 같은 이메일로 다시 요청하기까지 기다리는 시간(두 용도 합산).
+EMAIL_CODE_RESEND_SECONDS = 60
+# 발송 한도(두 용도 합산). 창은 가입 IP 기준(142)처럼 그 창의 첫 요청부터 잽니다. 이메일당
+# 하루 10번 × 번호당 5번이라 한 계정에 하루 50번까지만 추측할 수 있습니다(100만 가지 중).
+EMAIL_CODE_EMAIL_HOURLY_MAX = 5
+EMAIL_CODE_EMAIL_DAILY_MAX = 10
+EMAIL_CODE_IP_HOURLY_MAX = 20
+EMAIL_CODE_HOUR_SECONDS = 60 * 60
+EMAIL_CODE_DAY_SECONDS = 24 * 60 * 60
+# 발송 기록을 둘 이메일 수 상한. 넘치면 오래된 것을 지우지 않고(지우면 그 이메일의 한도가 풀림)
+# 새 이메일의 요청을 503 으로 받지 않습니다 — IP 를 알 수 없고 하루 상한도 없는 서버에서 메모리를 묶습니다.
+EMAIL_CODE_RECORDS_MAX_ENTRIES = 10_000
+
+
+def parse_email_delivery(value: str | None) -> str:
+    """K_DPP_EMAIL_DELIVERY 를 읽는다. 비우거나 log 면 메일을 보내지 않고 번호를 서버 로그에 찍고,
+    smtp 면 아래 SMTP 설정으로 보낸다(DECISIONS 171 — 업체는 설정·비밀값만으로 바꾼다).
+    그 밖의 값이면 시작하지 않는다 — 오타로 메일이 안 나가고 번호가 로그로만 남지 않게."""
+    normalized = (value or "").strip().lower()
+    if normalized in ("", "log"):
+        return "log"
+    if normalized == "smtp":
+        return "smtp"
+    raise ValueError(f"K_DPP_EMAIL_DELIVERY 는 비우거나 log 또는 smtp 여야 합니다: {value!r}")
+
+
+def parse_email_daily_max(value: str | None) -> int | None:
+    """K_DPP_EMAIL_DAILY_MAX 를 읽는다. 비어 있으면 상한 없음, 1 이상의 정수면 그 값.
+    그 밖의 값이면 시작하지 않는다. smtp 로 보낼 때는 필수다(발송 서비스 무료 한도 — parse_smtp_settings)."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    if re.fullmatch(r"[0-9]+", text) and int(text) > 0:
+        return int(text)
+    raise ValueError(f"K_DPP_EMAIL_DAILY_MAX 는 1 이상의 정수여야 합니다: {value!r}")
+
+
+EMAIL_DELIVERY = parse_email_delivery(os.getenv("K_DPP_EMAIL_DELIVERY"))
+# 서버 전체 하루 상한(DECISIONS 147 ④). 넘으면 503. 하루는 UTC 날짜(한국 시각 오전 9시에 바뀜).
+# 메일을 실제로 보내지 않는 요청(가입 안 된 이메일의 비밀번호 찾기)도 셉니다 — 실제 발송만 세면
+# 상한 근처에서 남은 칸이 줄었는지로 그 이메일의 가입 여부를 알아낼 수 있어서.
+EMAIL_DAILY_MAX = parse_email_daily_max(os.getenv("K_DPP_EMAIL_DAILY_MAX"))
+
+# SMTP 발송(DECISIONS 171). 배포는 Resend(smtp.resend.com·587·사용자 resend·비밀번호 = API 키)이고,
+# 다른 SMTP 서버로 바꿀 때는 아래 설정과 비밀번호 파일만 바꿉니다. 465·2465 는 처음부터 TLS, 그 밖의
+# 포트는 STARTTLS 이며, 서버가 STARTTLS 를 내놓지 않으면 로그인하지 않고 실패합니다(비밀번호를 평문으로
+# 보내지 않음). 비밀번호는 환경변수(docker inspect 에 보임)가 아니라 파일(compose secret)에서 읽습니다.
+SMTP_IMPLICIT_TLS_PORTS = {465, 2465}
+# 소켓 동작(연결·TLS·명령 하나)마다의 대기 상한. 발송은 응답 뒤라 사용자를 기다리게 하지 않지만,
+# 그동안 요청 스레드 하나를 쥡니다.
+SMTP_TIMEOUT_SECONDS = 15
+SMTP_REQUIRED_SETTINGS = (
+    "K_DPP_SMTP_HOST",
+    "K_DPP_SMTP_PORT",
+    "K_DPP_SMTP_USERNAME",
+    "K_DPP_SMTP_PASSWORD_FILE",
+    "K_DPP_EMAIL_FROM",
+    "K_DPP_EMAIL_DAILY_MAX",
+)
+SMTP_HOST_PATTERN = re.compile(r"[A-Za-z0-9.-]+")
+
+
+@dataclass(frozen=True)
+class SmtpSettings:
+    host: str
+    port: int
+    username: str
+    sender: str  # From 머리글 값 그대로(표시 이름 포함)
+    sender_address: str  # 봉투(MAIL FROM)·Message-ID 에 쓰는 주소만
+    password: str = field(repr=False)  # 설정을 로그·예외로 찍어도 남지 않게
+
+
+def parse_email_from(value: str) -> str:
+    """K_DPP_EMAIL_FROM(예 'K-DPP <no-reply@send.example.com>')을 검사하고 주소만 돌려준다. 주소는
+    하나·ASCII(받는 쪽에 SMTPUTF8 을 요구하지 않게)·도메인에 점이 있어야 하고 그룹 문법('G: a@b.c;')은
+    안 된다. 표시 이름은 한글도 되고 EmailMessage 가 RFC 2047 로 바꾼다. SMTP 설정 오류 문구에는 값을
+    넣지 않는다 — API 키를 엉뚱한 칸에 넣었을 때 시작 로그에 그대로 남지 않게."""
+    message = "K_DPP_EMAIL_FROM 은 'K-DPP <no-reply@send.example.com>' 처럼 ASCII 주소 하나여야 합니다."
+    try:
+        header = email_policy.header_factory("From", value)
+        addresses = header.addresses
+    except Exception:  # noqa: BLE001 — 어떤 파싱 오류든 '틀린 값'으로 시작을 멈춥니다.
+        raise ValueError(message) from None
+    if (
+        not value.isprintable()
+        or header.defects
+        or len(addresses) != 1
+        or any(group.display_name is not None for group in header.groups)
+        or not addresses[0].username
+        or "." not in addresses[0].domain
+        or not addresses[0].addr_spec.isascii()
+    ):
+        raise ValueError(message)
+    return addresses[0].addr_spec
+
+
+def read_smtp_password(path_text: str) -> str:
+    """비밀번호 파일을 읽는다. 앞뒤 공백·줄바꿈은 지우고, 비었거나 한 줄의 ASCII 가 아니면(smtplib 의
+    AUTH 가 ASCII 만 보냄) 시작하지 않는다. 문구에는 경로도 내용도 넣지 않는다(경로 칸에 키를 넣는 실수)."""
+    try:
+        password = Path(path_text).read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(
+            f"K_DPP_SMTP_PASSWORD_FILE 의 파일을 읽지 못했습니다({type(exc).__name__})."
+        ) from None
+    if not password or not password.isascii() or not password.isprintable():
+        raise ValueError(
+            "K_DPP_SMTP_PASSWORD_FILE 의 파일이 비었거나 한 줄의 ASCII 가 아닙니다."
+        )
+    return password
+
+
+def parse_smtp_settings(delivery: str, env: Mapping[str, str]) -> SmtpSettings | None:
+    """smtp 일 때 SMTP 설정을 읽는다(log 면 None — 아무것도 읽지 않음). 하나라도 비었거나 틀리면 시작하지
+    않는다 — 설정이 빠진 채 떠서 메일은 하나도 안 나가는데 번호 요청은 늘 200 인 상태가 되지 않게.
+    하루 상한(K_DPP_EMAIL_DAILY_MAX)도 필수다: 발송 서비스 무료 한도를 넘는 요청은 503 으로 먼저 막는다."""
+    if delivery != "smtp":
+        return None
+    values = {name: (env.get(name) or "").strip() for name in SMTP_REQUIRED_SETTINGS}
+    missing = [name for name, text in values.items() if not text]
+    if missing:
+        raise ValueError(
+            "K_DPP_EMAIL_DELIVERY=smtp 에 필요한 설정이 비어 있습니다: " + ", ".join(missing)
+        )
+    host = values["K_DPP_SMTP_HOST"]
+    if not SMTP_HOST_PATTERN.fullmatch(host):
+        raise ValueError("K_DPP_SMTP_HOST 는 호스트 이름(영문·숫자·.·-)이어야 합니다.")
+    port_text = values["K_DPP_SMTP_PORT"]
+    if not re.fullmatch(r"[0-9]+", port_text) or not 0 < int(port_text) < 65536:
+        raise ValueError("K_DPP_SMTP_PORT 는 1~65535 의 정수여야 합니다.")
+    username = values["K_DPP_SMTP_USERNAME"]
+    if not username.isascii() or not username.isprintable():
+        raise ValueError("K_DPP_SMTP_USERNAME 은 한 줄의 ASCII 여야 합니다.")
+    sender = values["K_DPP_EMAIL_FROM"]
+    return SmtpSettings(
+        host=host,
+        port=int(port_text),
+        username=username,
+        sender=sender,
+        sender_address=parse_email_from(sender),
+        password=read_smtp_password(values["K_DPP_SMTP_PASSWORD_FILE"]),
+    )
+
+
+SMTP_SETTINGS = parse_smtp_settings(EMAIL_DELIVERY, os.environ)
+# 카카오 호출과 같은 certifi 묶음으로 서버 인증서·호스트 이름을 확인합니다(TLS 1.2 이상).
+_EMAIL_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+
+# 번호는 HMAC-SHA256 값으로만 둡니다(DECISIONS 147 ⑦). 6자리는 100만 가지뿐이라 보통 해시는
+# 대입으로 바로 풀리므로, 서버가 켜질 때 만든 비밀 키를 섞습니다(키도 메모리에만 있음).
+_EMAIL_CODE_KEY = secrets.token_bytes(32)
+
+
+@dataclass
+class _EmailCode:
+    digest: bytes
+    expires_at: datetime
+    failures: int = 0
+
+
+@dataclass
+class _EmailCodeSendWindow:
+    last_requested_at: datetime
+    hour_start: datetime
+    hour_count: int
+    day_start: datetime
+    day_count: int
+
+
+# 확인·틀린 수 증가·소모와 한도 확인·증가를 각각 한 번의 잠금 안에서 해, 동시에 몰아친
+# 요청으로 틀린 횟수나 발송 한도를 넘어서지 못하게 합니다.
+_email_code_lock = threading.Lock()
+# (용도, 이메일) → 살아 있는 번호 하나. 새 번호를 받으면 이전 번호를 갈아 끼웁니다.
+_email_codes: dict[tuple[str, str], _EmailCode] = {}
+# 이메일 → 재요청 간격·1시간·24시간 창(두 용도 합산)
+_email_code_senders: dict[str, _EmailCodeSendWindow] = {}
+# IP(키) → (이번 1시간 창의 요청 수, 창 시작 시각)
+_email_code_ip_requests: dict[str, tuple[int, datetime]] = {}
+# UTC 날짜 → 그날 받아들인 요청 수(오늘 것만 남김)
+_email_daily_requests: dict[date, int] = {}
+
+
+def generate_email_code() -> str:
+    return f"{secrets.randbelow(10 ** EMAIL_CODE_LENGTH):0{EMAIL_CODE_LENGTH}d}"
+
+
+def _email_code_digest(purpose: str, email: str, code: str) -> bytes:
+    # 용도·이메일을 함께 묶어, 다른 이메일이나 다른 용도의 번호로는 맞지 않게 합니다.
+    message = f"{purpose}\n{email}\n{code}".encode("utf-8")
+    return hmac.new(_EMAIL_CODE_KEY, message, hashlib.sha256).digest()
+
+
+def _seconds_until(moment: datetime, now: datetime) -> int:
+    return max(1, math.ceil((moment - now).total_seconds()))
+
+
+def _wait_text(seconds: int) -> str:
+    minutes = math.ceil(seconds / 60)
+    if minutes < 60:
+        return f"{minutes}분"
+    return f"{math.ceil(seconds / 3600)}시간"
+
+
+def _prune_email_code_records_locked(now: datetime) -> None:
+    """만료된 번호·지난 창을 지운다. 반드시 _email_code_lock 안에서 호출.
+
+    기록은 한도를 통과한 요청만 만들고, 발송 기록 수는 EMAIL_CODE_RECORDS_MAX_ENTRIES 로 묶습니다.
+    """
+    for key in [k for k, record in _email_codes.items() if record.expires_at <= now]:
+        del _email_codes[key]
+    day = timedelta(seconds=EMAIL_CODE_DAY_SECONDS)
+    hour = timedelta(seconds=EMAIL_CODE_HOUR_SECONDS)
+    resend = timedelta(seconds=EMAIL_CODE_RESEND_SECONDS)
+    # 세 창(24시간·1시간·재요청 간격)이 모두 끝난 기록만 지웁니다. 24시간 창이 끝나는 순간에도
+    # 그 사이 새로 시작한 1시간 창은 살아 있을 수 있습니다.
+    for key in [
+        k
+        for k, window in _email_code_senders.items()
+        if window.day_start + day <= now
+        and window.hour_start + hour <= now
+        and window.last_requested_at + resend <= now
+    ]:
+        del _email_code_senders[key]
+    for key in [k for k, (_, start) in _email_code_ip_requests.items() if start + hour <= now]:
+        del _email_code_ip_requests[key]
+    for day_key in [d for d in _email_daily_requests if d != now.date()]:
+        del _email_daily_requests[day_key]
+
+
+def issue_email_code(email: str, purpose: str, ip_key: str | None) -> tuple[str, int]:
+    """한도를 모두 확인한 뒤 새 번호를 만들어 같은 이메일·용도의 이전 번호를 갈아 끼운다.
+    (번호, 다음 요청까지 기다릴 초)를 돌려준다.
+
+    어느 한도에라도 걸리면 아무것도 세지 않고 429·503 을 낸다. 가입 여부는 보지 않는다 —
+    가입된 이메일이든 아니든 번호 기록과 한도 계산이 똑같아야 이어지는 응답으로도 드러나지 않는다.
+    """
+    # 번호·HMAC 은 아무것도 세기 전에 만듭니다(여기서 실패하면 한도만 쓰고 번호는 없는 일이 없게).
+    code = generate_email_code()
+    digest = _email_code_digest(purpose, email, code)
+    now = utc_now()
+    hour = timedelta(seconds=EMAIL_CODE_HOUR_SECONDS)
+    day = timedelta(seconds=EMAIL_CODE_DAY_SECONDS)
+    with _email_code_lock:
+        _prune_email_code_records_locked(now)
+
+        window = _email_code_senders.get(email)
+        hour_start, hour_count, day_start, day_count = now, 0, now, 0
+        if window is not None:
+            resend_at = window.last_requested_at + timedelta(seconds=EMAIL_CODE_RESEND_SECONDS)
+            if now < resend_at:
+                retry_after = _seconds_until(resend_at, now)
+                raise HTTPException(
+                    status_code=429,
+                    detail=build_error_detail(
+                        f"인증번호는 {retry_after}초 후 다시 요청할 수 있습니다.",
+                        "EMAIL_CODE_RESEND_TOO_SOON",
+                        retry_after=retry_after,
+                    ),
+                )
+            if now < window.hour_start + hour:
+                hour_start, hour_count = window.hour_start, window.hour_count
+            if now < window.day_start + day:
+                day_start, day_count = window.day_start, window.day_count
+
+        ip_count, ip_start = 0, now
+        if ip_key is not None:
+            ip_count, ip_start = _email_code_ip_requests.get(ip_key, (0, now))
+
+        # 여러 한도에 함께 걸렸으면 모두 풀리는 때를 알려 줍니다(그 전에 다시 하면 또 막힘).
+        blocked_until = []
+        if hour_count >= EMAIL_CODE_EMAIL_HOURLY_MAX:
+            blocked_until.append(hour_start + hour)
+        if day_count >= EMAIL_CODE_EMAIL_DAILY_MAX:
+            blocked_until.append(day_start + day)
+        if ip_key is not None and ip_count >= EMAIL_CODE_IP_HOURLY_MAX:
+            blocked_until.append(ip_start + hour)
+        if blocked_until:
+            retry_after = _seconds_until(max(blocked_until), now)
+            raise HTTPException(
+                status_code=429,
+                detail=build_error_detail(
+                    f"인증번호 요청이 너무 많습니다. {_wait_text(retry_after)} 후 다시 시도해 주세요.",
+                    "TOO_MANY_ATTEMPTS",
+                    retry_after=retry_after,
+                ),
+            )
+
+        today = now.date()
+        requests_today = _email_daily_requests.get(today, 0)
+        records_full = (
+            window is None and len(_email_code_senders) >= EMAIL_CODE_RECORDS_MAX_ENTRIES
+        )
+        if records_full or (EMAIL_DAILY_MAX is not None and requests_today >= EMAIL_DAILY_MAX):
+            raise HTTPException(
+                status_code=503,
+                # 503 의 기본 error_code 는 AI_MODULE_FAILED 라 직접 넣습니다.
+                detail=build_error_detail(
+                    "지금은 인증 메일을 보낼 수 없습니다. 나중에 다시 시도해 주세요.",
+                    "EMAIL_SEND_UNAVAILABLE",
+                ),
+            )
+
+        _email_code_senders[email] = _EmailCodeSendWindow(
+            last_requested_at=now,
+            hour_start=hour_start,
+            hour_count=hour_count + 1,
+            day_start=day_start,
+            day_count=day_count + 1,
+        )
+        if ip_key is not None:
+            _email_code_ip_requests[ip_key] = (ip_count + 1, ip_start)
+        _email_daily_requests[today] = requests_today + 1
+        _email_codes[(purpose, email)] = _EmailCode(
+            digest=digest, expires_at=now + timedelta(seconds=EMAIL_CODE_TTL_SECONDS)
+        )
+
+        # 이번 요청으로 1시간·24시간·IP 한도에 닿았으면 '다시 받기'는 그 창이 풀릴 때까지 기다려야 합니다.
+        next_allowed = [now + timedelta(seconds=EMAIL_CODE_RESEND_SECONDS)]
+        if hour_count + 1 >= EMAIL_CODE_EMAIL_HOURLY_MAX:
+            next_allowed.append(hour_start + hour)
+        if day_count + 1 >= EMAIL_CODE_EMAIL_DAILY_MAX:
+            next_allowed.append(day_start + day)
+        if ip_key is not None and ip_count + 1 >= EMAIL_CODE_IP_HOURLY_MAX:
+            next_allowed.append(ip_start + hour)
+    return code, _seconds_until(max(next_allowed), now)
+
+
+def ensure_email_code_format(code: str) -> str:
+    """번호가 숫자 6자리인지 본다. 아니면 400 이고 틀린 횟수에 넣지 않는다(오타로 기회를 잃지 않게)."""
+    code = code.strip()
+    if not EMAIL_CODE_PATTERN.fullmatch(code):
+        raise HTTPException(status_code=400, detail="인증번호 6자리를 입력해 주세요.")
+    return code
+
+
+def check_email_code(
+    email: str, purpose: str, code: str, consume: bool = False
+) -> _EmailCode:
+    """번호를 확인한다. 틀리면 틀린 수를 늘리고 400(5번째면 번호를 버림). 맞으면 그 기록을
+    돌려준다. consume=True 면 맞는 순간 같은 잠금 안에서 지워 같은 번호로 두 번 쓰지 못하게 하고,
+    아니면 다 쓴 뒤 consume_email_code 로 지운다(가입은 성공했을 때만 사라짐)."""
+    key = (purpose, email)
+    resend_required = HTTPException(
+        status_code=400,
+        detail=build_error_detail(
+            "인증번호가 없거나 만료되었습니다. 인증번호를 다시 받아 주세요.",
+            "VERIFICATION_CODE_RESEND_REQUIRED",
+        ),
+    )
+    with _email_code_lock:
+        record = _email_codes.get(key)
+        if record is not None and record.expires_at <= utc_now():
+            del _email_codes[key]
+            record = None
+        if record is None:
+            raise resend_required
+        if hmac.compare_digest(record.digest, _email_code_digest(purpose, email, code)):
+            if consume:
+                del _email_codes[key]
+            return record
+        record.failures += 1
+        remaining_attempts = EMAIL_CODE_MAX_FAILURES - record.failures
+        if remaining_attempts <= 0:
+            del _email_codes[key]
+            raise resend_required
+    raise HTTPException(
+        status_code=400,
+        detail=build_error_detail(
+            f"인증번호가 올바르지 않습니다. {remaining_attempts}번 더 입력할 수 있습니다.",
+            "VERIFICATION_CODE_INVALID",
+            remaining_attempts=remaining_attempts,
+        ),
+    )
+
+
+def consume_email_code(email: str, purpose: str, record: _EmailCode) -> None:
+    """확인한 번호를 지운다. 그 사이 새 번호를 받았으면 새 번호는 그대로 둔다."""
+    with _email_code_lock:
+        if _email_codes.get((purpose, email)) is record:
+            del _email_codes[(purpose, email)]
+
+
+@dataclass
+class OutgoingEmail:
+    to: str
+    purpose: str
+    subject: str
+    body: str
+    code: str | None  # 이미 가입된 이메일로 가는 안내 메일은 번호가 없습니다.
+
+
+def compose_email_code_message(
+    email: str, purpose: str, code: str, registered: bool
+) -> OutgoingEmail | None:
+    """가입 여부에 따라 보낼 메일을 고른다. 가입 안 된 이메일의 비밀번호 찾기는 None(보내지 않음)."""
+    ignore_line = "직접 요청하지 않았다면 이 메일은 무시해 주세요."
+    if purpose == "signup" and registered:
+        return OutgoingEmail(
+            to=email,
+            purpose=purpose,
+            subject="[K-DPP] 이미 가입된 이메일입니다",
+            body=(
+                "이 이메일로 K-DPP 가입 인증번호 요청이 있었지만 이미 가입된 계정이 있어 번호를 "
+                "보내지 않았습니다.\n비밀번호가 기억나지 않으면 앱 로그인 화면의 '비밀번호 찾기'를 "
+                f"이용해 주세요.\n{ignore_line}"
+            ),
+            code=None,
+        )
+    if purpose == "signup":
+        return OutgoingEmail(
+            to=email,
+            purpose=purpose,
+            subject="[K-DPP] 가입 인증번호",
+            body=(
+                f"K-DPP 가입 인증번호는 {code} 입니다.\n10분 안에 앱에 입력해 주세요.\n{ignore_line}"
+            ),
+            code=code,
+        )
+    if registered:
+        return OutgoingEmail(
+            to=email,
+            purpose=purpose,
+            subject="[K-DPP] 비밀번호 재설정 인증번호",
+            body=(
+                f"K-DPP 비밀번호 재설정 인증번호는 {code} 입니다.\n10분 안에 앱에 입력해 주세요.\n"
+                f"{ignore_line} 비밀번호는 바뀌지 않습니다."
+            ),
+            code=code,
+        )
+    return None
+
+
+def log_email(message: OutgoingEmail) -> None:
+    """log 모드: 메일 대신 서버 로그에 찍는다(로컬·CI·시연은 여기서 번호를 본다)."""
+    print(
+        f"[email] {message.to} | {message.subject} | 인증번호 {message.code or '없음'}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def build_email_message(message: OutgoingEmail, settings: SmtpSettings) -> EmailMessage:
+    """보낼 메일을 만든다. 한글 제목·표시 이름은 EmailMessage 가 RFC 2047 로 바꾸고(머리글을 손으로
+    만들지 않음), 본문은 base64 라 받는 서버의 8BITMIME 지원과 상관없이 7bit 로 나간다."""
+    mail = EmailMessage()
+    mail["From"] = settings.sender
+    mail["To"] = message.to
+    mail["Subject"] = message.subject
+    # utc_now() 는 시간대 없는 UTC 라 붙여 줍니다(없으면 '-0000' — 시간대를 모른다는 뜻).
+    mail["Date"] = format_datetime(utc_now().replace(tzinfo=timezone.utc))
+    # 도메인을 주지 않으면 make_msgid 가 이 서버의 호스트 이름을 찾고(DNS) 메일에 넣습니다.
+    mail["Message-ID"] = make_msgid(domain=settings.sender_address.rsplit("@", 1)[1])
+    mail.set_content(message.body, cte="base64")
+    return mail
+
+
+def send_smtp_email(message: OutgoingEmail, settings: SmtpSettings) -> None:
+    """SMTP 로 한 통 보낸다. 연결·TLS·로그인·거부·시간 초과는 예외로 올려 send_email_code_message 가
+    로그로 남긴다(응답은 이미 나감). 보낸 뒤의 QUIT 실패는 발송 실패로 보지 않는다."""
+    # smtplib 은 받는 주소를 parseaddr 로 다시 읽습니다. 형식 검사(ensure_email_format)가 막는 표기지만,
+    # 이메일당 한도의 키와 다른 주소로는 보내지 않도록 연결 전에 한 번 더 봅니다(DECISIONS 175).
+    if parseaddr(message.to) != ("", message.to):
+        raise ValueError("받는 주소를 SMTP 가 다른 주소로 읽어 보내지 않습니다.")
+    mail = build_email_message(message, settings)
+    implicit_tls = settings.port in SMTP_IMPLICIT_TLS_PORTS
+    if implicit_tls:
+        smtp = smtplib.SMTP_SSL(
+            settings.host, settings.port, timeout=SMTP_TIMEOUT_SECONDS, context=_EMAIL_SSL_CONTEXT
+        )
+    else:
+        smtp = smtplib.SMTP(settings.host, settings.port, timeout=SMTP_TIMEOUT_SECONDS)
+    try:
+        if not implicit_tls:
+            # 서버가 STARTTLS 를 내놓지 않으면 SMTPNotSupportedError — 로그인 전에 멈춥니다.
+            smtp.starttls(context=_EMAIL_SSL_CONTEXT)
+        smtp.login(settings.username, settings.password)
+        smtp.send_message(mail, from_addr=settings.sender_address, to_addrs=[message.to])
+    except BaseException:
+        smtp.close()
+        raise
+    try:
+        smtp.quit()
+    except (smtplib.SMTPException, OSError):
+        smtp.close()
+
+
+class EmailDeliveryError(Exception):
+    """SMTP 발송 실패. 받는 서버는 거부 문구에 받는 주소나 받은 AUTH 줄을 되돌려 줄 수 있어, 서버 로그에
+    남기기 전에 원래 예외의 repr 에서 받는 주소·비밀번호(와 AUTH 로 보낸 base64)를 가린다. 로그에는
+    가린 repr 만 보이게 repr 을 그 문구로 둔다(send_email_code_message 가 {exc!r} 로 찍음)."""
+
+    def __repr__(self) -> str:
+        return str(self)
+
+
+def describe_smtp_failure(exc: Exception, message: OutgoingEmail, settings: SmtpSettings) -> str:
+    text = repr(exc)
+    password = settings.password
+    hidden = {
+        password,
+        base64.b64encode(password.encode("ascii")).decode("ascii"),  # AUTH LOGIN
+        base64.b64encode(f"\0{settings.username}\0{password}".encode("ascii")).decode("ascii"),  # AUTH PLAIN
+    }
+    for secret in sorted(hidden, key=len, reverse=True):
+        text = text.replace(secret, "<비밀번호>")
+    # 비밀번호 찾기 메일은 가입된 이메일에만 가므로, 실패 줄의 주소는 가입 여부까지 남깁니다.
+    return text.replace(message.to, "<받는 주소>")
+
+
+def deliver_email(message: OutgoingEmail) -> None:
+    if EMAIL_DELIVERY == "smtp":
+        try:
+            send_smtp_email(message, SMTP_SETTINGS)
+        except Exception as exc:  # noqa: BLE001 — 무엇이 실패했든 가린 문구로만 올립니다.
+            raise EmailDeliveryError(describe_smtp_failure(exc, message, SMTP_SETTINGS)) from None
+        # 주소·번호는 남기지 않습니다(받는 사람별 기록은 발송 서비스 화면에 있음).
+        print(f"[email] 메일을 보냈습니다({message.purpose}).", file=sys.stderr, flush=True)
+        return
+    log_email(message)
+
+
+def send_email_code_message(email: str, purpose: str, code: str) -> None:
+    """응답을 보낸 뒤(BackgroundTasks) 가입 여부를 보고 메일을 고른다. 가입 여부 조회와 발송
+    시간이 응답에 섞이지 않도록 DB 는 여기서만 본다. 응답은 이미 나갔으므로 실패는 로그로만."""
+    try:
+        db = database.SessionLocal()
+        try:
+            registered = (
+                db.query(database.User.id).filter(database.User.email == email).first()
+                is not None
+            )
+        finally:
+            db.close()
+        message = compose_email_code_message(email, purpose, code, registered)
+        if message is None:
+            if EMAIL_DELIVERY == "log":
+                print(
+                    f"[email] {email} | 가입되지 않은 이메일이라 비밀번호 찾기 메일을 보내지 않습니다.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return
+        deliver_email(message)
+    except Exception as exc:  # noqa: BLE001 — 백그라운드 작업이라 올려 보낼 곳이 없습니다.
+        print(f"[email] 인증 메일 처리 실패({purpose}): {exc!r}", file=sys.stderr, flush=True)
+
+
+# --- 카카오 로그인 (DECISIONS 140·143·152·153) ------------------------------------------
+# 앱이 카카오 SDK 로그인으로 받은 액세스 토큰을 보내면, 카카오에 그 토큰이 우리 앱이 받은
+# 것인지(app_id) 묻고 회원번호로 계정을 찾습니다. 서버는 회원번호만 저장하고 카카오 토큰은
+# 저장하지 않으며, 로그·예외 문구에도 남기지 않습니다.
+KAKAO_PROVIDER = "kakao"
+KAKAO_API_BASE = "https://kapi.kakao.com"
+# 카카오 호출 한 번의 전체 시간(연결부터 응답을 다 받을 때까지). 한 요청에서 최대 두 번 부르므로
+# 앱의 대기(15초) 안에 끝납니다.
+KAKAO_CALL_TIMEOUT_SECONDS = 5.0
+# 공백이 아닌 출력 가능한 ASCII 1,024자까지. 아니면 카카오에 묻지 않고 400(횟수 제한에도 안 셈).
+KAKAO_TOKEN_PATTERN = re.compile(r"[!-~]{1,1024}")
+# 카카오 오류 본문의 code. -401(무효·만료 토큰)·-2(잘못된 형식)는 토큰 거부, 그 밖(-1 일시 장애 등)은 502.
+KAKAO_TOKEN_REJECTED_CODES = (-401, -2)
+# 서버 전체의 카카오 동시 호출 상한(DECISIONS 156). 카카오가 느려지면 호출마다 스레드 풀(기본 40)의
+# 작업자를 최대 5초 붙잡으므로, 넘치면 묻지 않고 곧바로 502 — 스캔·이메일 로그인·상태 확인 몫을 남깁니다.
+KAKAO_MAX_CONCURRENT_CALLS = 10
+_kakao_call_slots = threading.BoundedSemaphore(KAKAO_MAX_CONCURRENT_CALLS)
+
+
+def parse_kakao_app_id(value: str | None) -> int | None:
+    """K_DPP_KAKAO_APP_ID 를 읽는다. 비어 있으면 None(카카오 로그인 꺼짐 — 503), 1 이상의 정수면 그 값.
+    그 밖의 값이면 시작하지 않는다 — 앱 키(문자열)를 잘못 넣으면 모든 토큰이 '다른 앱 것'으로 거부돼서."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    if re.fullmatch(r"[0-9]+", text) and int(text) > 0:
+        return int(text)
+    raise ValueError(f"K_DPP_KAKAO_APP_ID 는 카카오 앱 ID(숫자)여야 합니다: {value!r}")
+
+
+# 카카오 개발자 콘솔의 앱 ID(비밀값 아님). 서버에 두는 카카오 비밀값은 없습니다(어드민 키를 쓰지 않음).
+# 로컬·CI 는 비워 두어 카카오 로그인이 꺼진 채(503) 시작합니다.
+KAKAO_APP_ID = parse_kakao_app_id(os.getenv("K_DPP_KAKAO_APP_ID"))
+
+
+class KakaoTokenRejected(Exception):
+    """카카오가 토큰을 거부했거나(-401·-2) 다른 앱이 받은 토큰 → SOCIAL_TOKEN_INVALID."""
+
+
+class KakaoUnavailable(Exception):
+    """카카오 일시 장애·5xx·시간 초과·연결 실패·예상 밖 응답 → 502. 문구에 토큰을 넣지 않는다."""
+
+
+@dataclass
+class KakaoTokenInfo:
+    subject: str  # 카카오 회원번호(Long)를 문자열로
+    app_id: int
+
+
+# 호출마다 CA 묶음을 다시 읽지 않게 한 번만 만듭니다(httpx 기본값과 같은 certifi 묶음).
+_KAKAO_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+
+
+async def _send_kakao_request(
+    method: str, path: str, access_token: str, form: bool
+) -> httpx.Response:
+    headers = {"Authorization": f"Bearer {access_token}"}
+    if form:
+        # 카카오 문서가 이 헤더를 요구하는 API(사용자 정보·연결 끊기). 보내는 본문은 없습니다.
+        headers["Content-Type"] = "application/x-www-form-urlencoded;charset=utf-8"
+    async with httpx.AsyncClient(
+        # 연결(TCP·TLS) 단계 제한을 전체 마감보다 짧게 둡니다. TLS 핸드셰이크가 멈춘 채 전체 마감의
+        # 취소에 걸리면 httpcore 가 소켓을 닫지 않고 GC 를 기다리기 때문입니다(단계 제한은 닫음).
+        timeout=httpx.Timeout(
+            KAKAO_CALL_TIMEOUT_SECONDS, connect=KAKAO_CALL_TIMEOUT_SECONDS * 0.6
+        ),
+        verify=_KAKAO_SSL_CONTEXT,
+        # 환경변수의 프록시·.netrc 를 따르지 않습니다 — 잘못된 프록시 값이 502 가 아닌 500 이 되지 않게.
+        trust_env=False,
+    ) as client:
+        return await client.request(method, KAKAO_API_BASE + path, headers=headers)
+
+
+def _call_kakao(method: str, path: str, access_token: str, form: bool = False) -> dict:
+    """카카오 API 를 한 번 부르고 성공 본문(JSON 객체)을 돌려준다.
+
+    연결부터 응답을 다 받을 때까지 KAKAO_CALL_TIMEOUT_SECONDS 를 넘으면 끊는다. httpx 의 timeout 은
+    연결·읽기·쓰기·풀 단계마다 따로라 조금씩 오는 응답은 그것만으로 끝나지 않으므로, 이 호출만의
+    이벤트 루프에서 전체에 마감을 건다(asyncio.run 과 달리 닫을 때 끝나지 않은 DNS 조회를 기다리지 않음).
+    오류는 HTTP 상태가 아니라 본문 code 로 나눈다 — 일시 장애(-1)도 HTTP 400 으로 온다.
+    """
+    if not _kakao_call_slots.acquire(blocking=False):
+        raise KakaoUnavailable(f"{path}: 동시 호출 상한({KAKAO_MAX_CONCURRENT_CALLS}건)")
+    try:
+        loop = asyncio.new_event_loop()
+        try:
+            response = loop.run_until_complete(
+                asyncio.wait_for(
+                    _send_kakao_request(method, path, access_token, form),
+                    KAKAO_CALL_TIMEOUT_SECONDS,
+                )
+            )
+        except (httpx.HTTPError, OSError) as exc:
+            # OSError 에는 전체 마감의 TimeoutError 와, 응답을 읽는 중의 TLS 오류(ssl.SSLError —
+            # httpcore 가 httpx 예외로 바꾸지 않음)가 들어 있습니다.
+            raise KakaoUnavailable(f"{path}: {type(exc).__name__}") from None
+        finally:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
+    finally:
+        _kakao_call_slots.release()
+
+    try:
+        body = response.json()
+    except (ValueError, RecursionError):  # 깨진 JSON·UTF-8 아님 / 아주 깊게 중첩된 JSON
+        body = None
+    if response.status_code == 200 and isinstance(body, dict):
+        return body
+    code = body.get("code") if isinstance(body, dict) else None
+    code = code if type(code) is int else None
+    if code in KAKAO_TOKEN_REJECTED_CODES:
+        raise KakaoTokenRejected(f"{path}: code {code}")
+    raise KakaoUnavailable(f"{path}: HTTP {response.status_code}, code {code}")
+
+
+def _kakao_member_id(body: dict, path: str) -> str:
+    member_id = body.get("id")
+    # bool 은 int 의 하위 형이라 type 으로 봅니다.
+    if type(member_id) is not int or member_id <= 0:
+        raise KakaoUnavailable(f"{path}: 회원번호가 없는 응답")
+    return str(member_id)
+
+
+def kakao_token_info(access_token: str) -> KakaoTokenInfo:
+    """GET /v1/user/access_token_info — 토큰의 회원번호와 토큰을 받은 앱 ID. (테스트가 바꿔 끼움)"""
+    path = "/v1/user/access_token_info"
+    body = _call_kakao("GET", path, access_token)
+    app_id = body.get("app_id")
+    if type(app_id) is not int:
+        raise KakaoUnavailable(f"{path}: 앱 ID 가 없는 응답")
+    return KakaoTokenInfo(subject=_kakao_member_id(body, path), app_id=app_id)
+
+
+def kakao_profile_nickname(access_token: str, subject: str) -> str | None:
+    """GET /v2/user/me — 새 계정일 때만 부른다. 카카오 닉네임(동의 항목 '닉네임'), 없으면 None.
+    토큰 정보와 회원번호가 다르면 예상 밖 응답(502). (테스트가 바꿔 끼움)"""
+    path = "/v2/user/me"
+    body = _call_kakao("GET", path, access_token, form=True)
+    if _kakao_member_id(body, path) != subject:
+        raise KakaoUnavailable(f"{path}: 토큰 정보와 회원번호가 다른 응답")
+    account = body.get("kakao_account")
+    profile = account.get("profile") if isinstance(account, dict) else None
+    if not isinstance(profile, dict):
+        return None
+    # 카카오 운영 정책에 맞지 않는 닉네임은 카카오가 기본 닉네임("닉네임을 등록해주세요")으로 바꿔 줍니다.
+    if profile.get("is_default_nickname") is True:
+        return None
+    nickname = profile.get("nickname")
+    return nickname if isinstance(nickname, str) else None
+
+
+def kakao_unlink(access_token: str) -> None:
+    """POST /v1/user/unlink — 이 토큰의 사용자와 우리 앱의 연결을 끊는다(탈퇴 커밋 뒤). (테스트가 바꿔 끼움)"""
+    _call_kakao("POST", "/v1/user/unlink", access_token, form=True)
+
+
+def log_kakao_failure(action: str, exc: Exception) -> None:
+    # 우리 예외의 문구엔 경로·응답 코드만 있습니다. 그 밖의 예외는 문구에 무엇이 들었는지 모르니 이름만.
+    reason = str(exc) if isinstance(exc, (KakaoTokenRejected, KakaoUnavailable)) else type(exc).__name__
+    print(f"[kakao] {action}: {reason}", file=sys.stderr, flush=True)
+
+
+def ensure_kakao_login_enabled() -> None:
+    if KAKAO_APP_ID is None:
+        raise HTTPException(
+            status_code=503,
+            # 503 의 기본 error_code 는 AI_MODULE_FAILED 라 직접 넣습니다.
+            detail=build_error_detail(
+                "이 서버에서는 카카오 로그인을 쓸 수 없습니다.", "SOCIAL_LOGIN_UNAVAILABLE"
+            ),
+        )
+
+
+def ensure_kakao_token_format(access_token: str) -> str:
+    access_token = access_token.strip()
+    if not KAKAO_TOKEN_PATTERN.fullmatch(access_token):
+        raise HTTPException(
+            status_code=400,
+            detail="카카오 로그인 정보가 올바르지 않습니다. 카카오 로그인을 다시 해 주세요.",
+        )
+    return access_token
+
+
+def verify_kakao_token(access_token: str) -> str:
+    """카카오에 토큰을 물어 우리 앱이 받은 토큰이면 회원번호를 돌려준다."""
+    info = kakao_token_info(access_token)
+    if info.app_id != KAKAO_APP_ID:
+        raise KakaoTokenRejected("다른 앱이 받은 토큰")
+    return info.subject
+
+
+def social_token_invalid(status_code: int) -> HTTPException:
+    # 로그인(/auth/kakao)은 401(자격 거부), 탈퇴 확인은 400(로그인한 요청의 401 은 세션 만료 전용).
+    return HTTPException(
+        status_code=status_code,
+        detail=build_error_detail(
+            "카카오 로그인을 확인하지 못했습니다. 카카오 로그인을 다시 해 주세요.",
+            "SOCIAL_TOKEN_INVALID",
+        ),
+    )
+
+
+def social_provider_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=502,
+        detail=build_error_detail(
+            "카카오 서버가 응답하지 않습니다. 잠시 후 다시 시도해 주세요.",
+            "SOCIAL_PROVIDER_UNAVAILABLE",
+        ),
+    )
+
+
+def resolve_kakao_nickname(access_token: str, subject: str) -> str:
+    """새 카카오 계정의 닉네임 — 카카오 닉네임이 없거나 가입 규칙에 맞지 않으면 400 SOCIAL_NICKNAME_REQUIRED."""
+    nickname = (kakao_profile_nickname(access_token, subject) or "").strip()
+    if nickname_rule_error(nickname) is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=build_error_detail("사용할 닉네임을 입력해 주세요.", "SOCIAL_NICKNAME_REQUIRED"),
+        )
+    return nickname
+
+
+def user_login_methods(user: database.User, db: Session) -> list[str]:
+    """이 계정으로 로그인하는 방법(DECISIONS 152 ③). 비밀번호가 있으면 password, 그리고 연결된 소셜 계정."""
+    methods = ["password"] if user.password_hash is not None else []
+    providers = (
+        db.query(database.SocialAccount.provider)
+        .filter(database.SocialAccount.user_id == user.id)
+        .order_by(database.SocialAccount.provider)
+        .all()
+    )
+    methods.extend(provider for (provider,) in providers)
+    return methods
+
+
+def auth_user_response(user: database.User, db: Session) -> dict:
     return {
         "id": user.id,
+        # 카카오 계정은 None(카카오 이메일은 받지 않음 — DECISIONS 143).
         "email": user.email,
         "nickname": user.nickname,
+        "login_methods": user_login_methods(user, db),
     }
 
 
@@ -671,17 +1563,78 @@ def hash_access_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def create_access_token(user: database.User, db: Session) -> tuple[str, database.AccessToken]:
-    """토큰 원문은 응답으로만 전달하고 DB에는 해시를 저장한다."""
-    raw_token = secrets.token_urlsafe(32)
-    access_token = database.AccessToken(
-        token=hash_access_token(raw_token),
-        user_id=user.id,
-        expires_at=utc_now() + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS),
+def add_access_token(user_id: int, db: Session) -> str:
+    """토큰 행을 세션에 넣고 원문을 돌려준다(커밋은 부르는 쪽). 원문은 응답으로만, DB 엔 해시만.
+
+    성공한 로그인은 어떤 한도에도 세지 않아 토큰 행이 끝없이 늘 수 있으므로(DECISIONS 160), 넣기 전에
+    그 계정의 만료 토큰을 지우고 최근 토큰을 ACCESS_TOKENS_PER_USER_MAX - 1 개만 남긴다 — 가장 오래된
+    기기는 다음 요청에서 401. 부르는 쪽이 users 행을 잠근 채(SELECT … FOR UPDATE) 불러야 같은 계정의 동시
+    로그인에도 개수가 정확하다 — 로그인·비밀번호 변경은 lock_user_if_password_unchanged, 카카오 기존 계정은
+    sign_in_kakao_account 의 잠금, 카카오 새 계정은 방금 만든 행이라 겹치지 않는다.
+    """
+    tokens = database.AccessToken
+    db.query(tokens).filter(
+        tokens.user_id == user_id,
+        or_(tokens.expires_at.is_(None), tokens.expires_at <= utc_now()),
+    ).delete(synchronize_session=False)
+    older_tokens = (
+        select(tokens.token)
+        .where(tokens.user_id == user_id)
+        .order_by(tokens.created_at.desc(), tokens.token.desc())
+        .offset(ACCESS_TOKENS_PER_USER_MAX - 1)
     )
-    db.add(access_token)
-    db.commit()
-    return raw_token, access_token
+    db.query(tokens).filter(
+        tokens.user_id == user_id, tokens.token.in_(older_tokens)
+    ).delete(synchronize_session=False)
+
+    raw_token = secrets.token_urlsafe(32)
+    db.add(
+        database.AccessToken(
+            token=hash_access_token(raw_token),
+            user_id=user_id,
+            expires_at=utc_now() + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS),
+        )
+    )
+    return raw_token
+
+
+def lock_user_if_password_unchanged(db: Session, user_id: int, verified_hash: str) -> bool:
+    """users 행을 잠그고(SELECT … FOR UPDATE) 비밀번호 해시가 방금 검증한 값 그대로인지 본다.
+
+    비밀번호 확인(해시, 수백 ms)과 쓰기 사이에 비밀번호 찾기·변경이 끼어들면, 옛 비밀번호로 확인한
+    요청이 새 비밀번호를 덮어쓰거나 재설정 뒤에도 살아 있는 토큰을 받는다. 그래서 토큰을 만들거나
+    비밀번호·계정을 바꾸는 경로는 모두 이 잠금을 먼저 잡고 다시 본다 — 잠그는 순서도 users →
+    access_tokens 로 같아져 서로 교착하지 않는다. 잠금은 그 요청의 commit·rollback 까지 간다.
+    """
+    current_hash = (
+        db.query(database.User.password_hash)
+        .filter(database.User.id == user_id)
+        .with_for_update()
+        .scalar()
+    )
+    return current_hash is not None and current_hash == verified_hash
+
+
+def lock_user_row(db: Session, user_id: int) -> bool:
+    """비밀번호와 무관하게 users 행을 잠근다(카카오 계정 — 위 함수는 해시가 NULL 이면 늘 False).
+    행이 없으면(탈퇴가 먼저 커밋됨) False. 잠그는 순서는 위와 같다(users → access_tokens)."""
+    return (
+        db.query(database.User.id)
+        .filter(database.User.id == user_id)
+        .with_for_update()
+        .scalar()
+        is not None
+    )
+
+
+def delete_user_rows(db: Session, user_id: int) -> None:
+    """탈퇴: 계정과 그 토큰·분석 이력·소셜 연결을 지운다(커밋은 부르는 쪽, users 행을 잠근 뒤).
+    외래 키에 ON DELETE 가 없어 users 를 마지막에 지운다."""
+    for model in (database.AnalysisResult, database.AccessToken, database.SocialAccount):
+        db.query(model).filter(model.user_id == user_id).delete(synchronize_session=False)
+    db.query(database.User).filter(database.User.id == user_id).delete(
+        synchronize_session=False
+    )
 
 
 def read_bearer_token(authorization: str | None) -> str | None:
@@ -997,6 +1950,85 @@ def serialize_analysis_result(result: database.AnalysisResult) -> dict:
     }
 
 
+# 사진 분석(Google Vision) 하루 상한(DECISIONS 164). 스캔 한 번이 Vision 호출 1~4건이고 월 1,000건을
+# 넘으면 1,000건당 $1.50 이 청구되므로, Vision 을 실제로 부르는 스캔만 부르기 직전에 세고 결과(성공·
+# 422·502)와 상관없이 되돌리지 않습니다. raw_ocr_text 로 OCR 을 건너뛴 요청, 업로드 검사(413·415)나
+# OCR 모듈 없음(503)으로 끝난 요청은 세지 않습니다. 하루는 한국 자정(00:00 KST)에 바뀝니다.
+# 기록은 로그인 한도처럼 프로세스 메모리에 둡니다 — 재시작하면 그날 수를 0부터 다시 셉니다.
+SCAN_USER_DAILY_MAX = 20
+# 한국은 서머타임이 없어 UTC+9 로 고정하면 정확합니다.
+KST_OFFSET = timedelta(hours=9)
+
+
+def parse_scan_daily_max(value: str | None) -> int | None:
+    """K_DPP_SCAN_DAILY_MAX 를 읽는다. 비어 있으면 서버 전체 상한 없음, 1 이상의 정수면 그 값.
+    그 밖의 값이면 시작하지 않는다 — 배포 설정 오타로 상한이 조용히 빠지지 않게. 공백만 있는 값도
+    거부한다: compose 의 `:?` 는 빈 값만 막고 `" "` 는 통과시킨다."""
+    if not value:
+        return None
+    normalized = value.strip()
+    if re.fullmatch(r"[0-9]+", normalized) and int(normalized) >= 1:
+        return int(normalized)
+    raise ValueError(f"K_DPP_SCAN_DAILY_MAX 는 1 이상의 정수여야 합니다: {value!r}")
+
+
+# 서버 전체 하루 상한. 계정을 여럿 만들어도 Vision 청구의 최악값이 이 값으로 묶입니다(배포는
+# deploy/compose.yaml 에서 필수). 로컬은 비워 두면 상한이 없습니다.
+SCAN_DAILY_MAX = parse_scan_daily_max(os.getenv("K_DPP_SCAN_DAILY_MAX"))
+# 한국 날짜 → {사용자 id → 그날 Vision 을 부른 스캔 수}. 오늘 것만 남깁니다.
+_vision_scan_counts: dict[date, dict[int, int]] = {}
+# 동시에 몰아친 스캔이 한도를 넘어 Vision 까지 가지 않게 확인과 증가를 한 잠금 안에서 합니다.
+_vision_scan_lock = threading.Lock()
+
+
+def reserve_vision_scan(user_id: int) -> None:
+    """Vision 을 부르기 직전에 한 번을 센다. 이 사용자가 오늘 한도에 닿았으면 429, 서버 전체가
+    오늘 한도에 닿았으면 503 이고 그때는 세지 않는다. 센 것은 되돌리지 않는다."""
+    with _vision_scan_lock:
+        # 시각을 잠금 안에서 읽어, 자정 직전에 읽은 요청이 늦게 들어와 새 날 기록을 지우지 않게 합니다.
+        # 시계가 뒤로 가도 앞날 기록은 남도록 지난 날만 지웁니다.
+        now = utc_now()
+        today = (now + KST_OFFSET).date()
+        for day in [day for day in _vision_scan_counts if day < today]:
+            del _vision_scan_counts[day]
+        counts = _vision_scan_counts.setdefault(today, {})
+        used = counts.get(user_id, 0)
+        total = sum(counts.values())
+        user_full = used >= SCAN_USER_DAILY_MAX
+        server_full = SCAN_DAILY_MAX is not None and total >= SCAN_DAILY_MAX
+        if not user_full and not server_full:
+            counts[user_id] = used + 1
+            if SCAN_DAILY_MAX is not None and total + 1 == SCAN_DAILY_MAX:
+                # 서버 전체 상한에 닿은 날을 운영자가 알 수 있게 그날 한 번만 남깁니다.
+                reached_at = (now + KST_OFFSET).strftime("%Y-%m-%d %H:%M")
+                print(
+                    f"[scan] {reached_at} KST Vision 스캔이 서버 전체 하루 상한({SCAN_DAILY_MAX}번)에 닿았습니다",
+                    file=sys.stderr,
+                )
+            return
+
+    # 두 상한 모두 다음 한국 자정에 풀립니다.
+    next_midnight = datetime.combine(today + timedelta(days=1), datetime.min.time()) - KST_OFFSET
+    retry_after = max(1, math.ceil((next_midnight - now).total_seconds()))
+    if user_full:
+        raise HTTPException(
+            status_code=429,
+            detail=build_error_detail(
+                f"사진 분석은 하루 {SCAN_USER_DAILY_MAX}번까지입니다. 소재를 직접 입력하거나 내일 다시 시도해 주세요.",
+                "SCAN_DAILY_LIMIT",
+                retry_after=retry_after,
+            ),
+        )
+    raise HTTPException(
+        status_code=503,
+        detail=build_error_detail(
+            "오늘은 사진 분석을 더 할 수 없습니다. 소재를 직접 입력해 주세요.",
+            "SCAN_UNAVAILABLE",
+            retry_after=retry_after,
+        ),
+    )
+
+
 def validate_scan_upload(image: UploadFile) -> None:
     """스캔 업로드의 형식·크기 검사. raw_ocr_text 유무와 무관하게 항상 실행한다.
 
@@ -1030,7 +2062,7 @@ def validate_scan_upload(image: UploadFile) -> None:
     image.file.seek(0)
 
 
-def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
+def extract_label_text(image: UploadFile, raw_ocr_text: str | None, user_id: int) -> str:
     validate_scan_upload(image)
 
     if raw_ocr_text and raw_ocr_text.strip():
@@ -1045,7 +2077,15 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
             },
         )
 
-    suffix = Path(image.filename or "label.jpg").suffix or ".jpg"
+    # 파서가 없으면 Vision 을 불러도 503 으로 끝나므로, 부르기(세기) 전에 같은 503 을 냅니다.
+    ensure_label_parser()
+
+    # 아래 try 의 except Exception 이 HTTPException 도 502 로 바꾸므로 그 밖에서 셉니다.
+    reserve_vision_scan(user_id)
+
+    # 임시 파일 확장자는 업로드 이름이 아니라 이미 확인한 형식에서 정합니다 — 이름이 아주 길면
+    # 임시 파일을 만들지 못해 500 이 났고, 그 요청도 이미 센 뒤였습니다(OCR 은 확장자를 보지 않음).
+    suffix = SCAN_IMAGE_SUFFIXES[image.content_type]
     copied_bytes = 0
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
         temp_path = temp_file.name
@@ -1091,7 +2131,7 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None) -> str:
         Path(temp_path).unlink(missing_ok=True)
 
 
-def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
+def ensure_label_parser() -> None:
     if parse_label is None:
         raise HTTPException(
             status_code=503,
@@ -1100,6 +2140,10 @@ def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
                 "hint": "AI/kdpp_ai_ocr_integrated 모듈 경로를 확인하세요.",
             },
         )
+
+
+def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
+    ensure_label_parser()
 
     parsed = parse_label(label_text)
     materials = parsed.get("materials") or {}
@@ -1131,21 +2175,54 @@ def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
 
 # --- API 엔드포인트 시작 ---
 
+EMAIL_CODE_SENT_MESSAGES = {
+    "signup": "인증번호를 보냈습니다. 메일이 오지 않으면 주소를 확인해 주세요.",
+    "password_reset": "가입된 이메일이면 인증번호를 보냈습니다. 메일이 오지 않으면 주소를 확인해 주세요.",
+}
+
+
+@app.post("/auth/email-code", tags=["auth"])
+def request_email_code(
+    request: EmailCodeRequest, http_request: Request, background_tasks: BackgroundTasks
+):
+    """가입·비밀번호 찾기 인증번호를 요청한다(DECISIONS 144·147·148).
+
+    가입 여부와 상관없이 같은 용도면 늘 같은 응답이다. 이 함수는 DB 를 보지 않고, 어떤 메일을
+    보낼지(번호·이미 가입 안내·보내지 않음)는 응답을 보낸 뒤 send_email_code_message 가 정한다.
+    """
+    email = normalize_email(request.email)
+    ensure_email_format(email)
+    code, resend_after = issue_email_code(
+        email,
+        request.purpose,
+        client_ip_key(http_request.client.host if http_request.client else None),
+    )
+    background_tasks.add_task(send_email_code_message, email, request.purpose, code)
+    return {
+        "status": "success",
+        "message": EMAIL_CODE_SENT_MESSAGES[request.purpose],
+        "expires_in": EMAIL_CODE_TTL_SECONDS,
+        "resend_after": resend_after,
+    }
+
+
 @app.post("/auth/signup", tags=["auth"])
 def signup(request: SignupRequest, http_request: Request, db: Session = Depends(get_db)):
     email = normalize_email(request.email)
     nickname = request.nickname.strip()
     password = request.password
 
-    if not EMAIL_PATTERN.fullmatch(email or ""):
-        raise HTTPException(status_code=400, detail="올바른 이메일을 입력해 주세요.")
-    if len(nickname) < 2:
-        raise HTTPException(status_code=400, detail="닉네임은 2자 이상 입력해 주세요.")
+    ensure_email_format(email)
+    ensure_nickname_rules(nickname)
     ensure_password_rules(password)
-    # 형식을 통과한 시도부터 DB 조회·해시 전에 셉니다(409 도 셈, 접속 주소는 로그인과 같음).
+    code = ensure_email_code_format(request.code)
+    # 형식을 통과한 시도부터 DB 조회·해시 전에 셉니다(번호 틀림·409 도 셈, 접속 주소는 로그인과 같음).
     reserve_signup_attempt_for_ip(
         client_ip_key(http_request.client.host if http_request.client else None)
     )
+    # 번호를 409 보다 먼저 봅니다. 가입된 이메일엔 번호 대신 안내 메일이 가므로, '이미 가입'은
+    # 맞는 번호를 가진 사람(메일함 주인)만 보게 됩니다(관찰 ⓖ).
+    email_code = check_email_code(email, "signup", code)
 
     existing_user = db.query(database.User).filter(database.User.email == email).first()
     if existing_user is not None:
@@ -1165,11 +2242,53 @@ def signup(request: SignupRequest, http_request: Request, db: Session = Depends(
         db.rollback()
         raise HTTPException(status_code=409, detail="이미 가입된 이메일입니다.")
     db.refresh(user)
+    consume_email_code(email, "signup", email_code)
 
     return {
         "status": "success",
         "message": "회원가입이 완료되었습니다.",
-        "user": auth_user_response(user),
+        "user": auth_user_response(user, db),
+    }
+
+
+@app.post("/auth/password-reset", tags=["auth"])
+def reset_password(request: PasswordResetRequest, db: Session = Depends(get_db)):
+    """비밀번호 찾기: 인증번호와 새 비밀번호를 한 번에 받아 바꾼다(DECISIONS 147·148).
+
+    성공하면 그 계정의 토큰을 모두 지우고(찾는 흔한 이유가 도용 의심 — /auth/password 와 같음)
+    이메일 로그인 잠금을 푼다. 새 토큰은 주지 않는다(앱은 로그인 화면으로).
+    """
+    email = normalize_email(request.email)
+    ensure_email_format(email)
+    ensure_password_rules(request.new_password)
+    code = ensure_email_code_format(request.code)
+    # 맞는 순간 번호를 지워, 같은 번호로 동시에 두 번 재설정하지 못하게 합니다(뒤에서 500 이 나면 다시 받기).
+    check_email_code(email, "password_reset", code, consume=True)
+
+    # 번호가 맞을 때만 해시합니다. 첫 DB 조회 전에 해시해 그동안 DB 연결을 쥐지 않습니다.
+    new_password_hash = hash_password(request.new_password)
+    # users 행을 먼저 잠급니다 — 로그인·비밀번호 변경·탈퇴와 같은 순서(users → access_tokens).
+    user_id = (
+        db.query(database.User.id)
+        .filter(database.User.email == email)
+        .with_for_update()
+        .scalar()
+    )
+    if user_id is not None:
+        db.query(database.User).filter(database.User.id == user_id).update(
+            {"password_hash": new_password_hash}, synchronize_session=False
+        )
+        db.query(database.AccessToken).filter(
+            database.AccessToken.user_id == user_id
+        ).delete(synchronize_session=False)
+        db.commit()
+    # 가입 안 된 이메일엔 번호 메일이 가지 않아, 여기까지 오려면 번호를 맞혀야 합니다(번호당 5번).
+    # 그때도 해시까지 하고 같은 응답을 내 가입 여부를 드러내지 않습니다.
+    clear_login_failures(email)
+
+    return {
+        "status": "success",
+        "message": "비밀번호를 다시 설정했습니다. 새 비밀번호로 로그인해 주세요.",
     }
 
 
@@ -1195,31 +2314,152 @@ def login(request: LoginRequest, http_request: Request, db: Session = Depends(ge
         record_login_failure(email)
         raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다.")
 
+    # 반복 수를 올리기 전에 만든 해시는 원문을 아는 지금 새로 저장합니다(토큰 발급과 한 커밋).
+    # 해시는 행을 잠그기 전에 해 둡니다.
+    upgraded_hash = (
+        hash_password(request.password) if password_needs_rehash(user.password_hash) else None
+    )
+
+    if not lock_user_if_password_unchanged(db, user.id, user.password_hash):
+        # 확인하는 동안 비밀번호가 바뀌었습니다(비밀번호 찾기·변경). 옛 비밀번호로는 토큰을 주지 않고,
+        # 같은 순간 먼저 커밋된 새 비밀번호를 옛 비밀번호의 재해시로 되돌리지도 않습니다.
+        db.rollback()
+        record_login_failure(email)
+        raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다.")
+
     clear_login_failures(email)
     release_login_attempt_for_ip(ip_key)
 
-    if password_needs_rehash(user.password_hash):
-        # 반복 수를 올리기 전에 만든 해시는 원문을 아는 지금 새로 저장합니다(토큰 발급과
-        # 한 커밋). 같은 순간 비밀번호 변경이 먼저 커밋됐다면 그 값을 되돌리지 않도록
-        # 저장된 값이 방금 검증한 옛 해시일 때만 바꿉니다.
-        db.query(database.User).filter(
-            database.User.id == user.id,
-            database.User.password_hash == user.password_hash,
-        ).update(
-            {"password_hash": hash_password(request.password)},
-            synchronize_session=False,
+    if upgraded_hash is not None:
+        db.query(database.User).filter(database.User.id == user.id).update(
+            {"password_hash": upgraded_hash}, synchronize_session=False
         )
 
-    raw_token, _access_token = create_access_token(user, db)
+    # 잠근 행을 그대로 쥔 채 토큰을 만들고 한 번에 커밋합니다.
+    raw_token = add_access_token(user.id, db)
+    db.commit()
 
     return {
         "status": "success",
         "message": "로그인되었습니다.",
-        "user": auth_user_response(user),
+        "user": auth_user_response(user, db),
         "access_token": raw_token,
         "token_type": "bearer",
         "expires_in": ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
     }
+
+
+@app.post("/auth/kakao", tags=["auth"])
+def kakao_login(request: KakaoLoginRequest, http_request: Request, db: Session = Depends(get_db)):
+    """카카오 로그인 — 첫 로그인이 곧 가입(DECISIONS 152 ②). 검사 순서는 API_CONTRACT.md 와 같다.
+
+    로그인 IP 기록(이메일 로그인 실패와 같은 기록)에 카카오에 묻기 전에 한 번을 세고,
+    SOCIAL_TOKEN_INVALID 일 때만 남긴다. 새 카카오 계정은 가입 IP 한도에 세지 않는다(152 ⑥).
+    """
+    ensure_kakao_login_enabled()
+    access_token = ensure_kakao_token_format(request.access_token)
+    nickname = None
+    if request.nickname is not None:
+        nickname = request.nickname.strip()
+        ensure_nickname_rules(nickname)
+    ip_key = client_ip_key(http_request.client.host if http_request.client else None)
+    reserve_login_attempt_for_ip(ip_key)
+
+    token_rejected = False
+    try:
+        subject = verify_kakao_token(access_token)
+        user_payload, raw_token, is_new_user = sign_in_kakao_account(
+            db, subject, access_token, nickname
+        )
+    except KakaoTokenRejected:
+        token_rejected = True
+        raise social_token_invalid(401) from None
+    except KakaoUnavailable as exc:
+        log_kakao_failure("로그인 실패", exc)
+        raise social_provider_unavailable() from None
+    finally:
+        # 성공·SOCIAL_NICKNAME_REQUIRED·502·서버 오류는 미리 센 한 번을 되돌립니다.
+        if not token_rejected:
+            release_login_attempt_for_ip(ip_key)
+
+    return {
+        "status": "success",
+        "message": "카카오 계정으로 가입했습니다." if is_new_user else "로그인되었습니다.",
+        "user": user_payload,
+        "access_token": raw_token,
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        "is_new_user": is_new_user,
+    }
+
+
+def _integrity_constraint_name(error: IntegrityError) -> str | None:
+    diag = getattr(error.orig, "diag", None)
+    return getattr(diag, "constraint_name", None)
+
+
+def sign_in_kakao_account(
+    db: Session, subject: str, access_token: str, nickname: str | None
+) -> tuple[dict, str, bool]:
+    """회원번호로 계정을 찾아 토큰을 만든다. 없으면 users·social_accounts·토큰을 한 커밋으로 만든다.
+    (user 응답, 토큰 원문, 새 계정인지)를 돌려준다.
+
+    - 같은 카카오 계정의 첫 로그인이 동시에 둘 오면 늦은 쪽은 UNIQUE(provider, subject) 에 걸려
+      롤백한 뒤 다시 찾아 로그인한다(is_new_user false).
+    - 찾은 계정이 잠그기 전에 탈퇴로 사라졌으면 다시 찾는다(그때는 새 계정).
+    - user 응답은 행을 쥔 채 만든다 — 커밋 뒤 다시 읽는 사이에 탈퇴가 끼면 없는 행을 읽게 된다.
+    """
+    for _ in range(3):
+        user_id = (
+            db.query(database.SocialAccount.user_id)
+            .filter(
+                database.SocialAccount.provider == KAKAO_PROVIDER,
+                database.SocialAccount.subject == subject,
+            )
+            .scalar()
+        )
+        if user_id is not None:
+            user = (
+                db.query(database.User)
+                .filter(database.User.id == user_id)
+                .with_for_update()
+                .first()
+            )
+            if user is None:
+                # 찾은 뒤 잠그기 전에 탈퇴가 커밋됐습니다(소셜 연결도 같이 지워짐) — 다시 찾습니다.
+                db.rollback()
+                continue
+            raw_token = add_access_token(user.id, db)
+            user_payload = auth_user_response(user, db)
+            db.commit()
+            return user_payload, raw_token, False
+
+        # 새 계정. 닉네임을 정하는 동안(카카오 호출) DB 연결을 쥐지 않게 읽기 트랜잭션을 끝냅니다.
+        db.rollback()
+        if nickname is None:
+            nickname = resolve_kakao_nickname(access_token, subject)
+        user = database.User(email=None, password_hash=None, nickname=nickname)
+        try:
+            db.add(user)
+            db.flush()
+            db.add(
+                database.SocialAccount(
+                    user_id=user.id, provider=KAKAO_PROVIDER, subject=subject
+                )
+            )
+            raw_token = add_access_token(user.id, db)
+            db.flush()
+        except IntegrityError as error:
+            db.rollback()
+            if _integrity_constraint_name(error) != "uq_social_accounts_provider_subject":
+                raise
+            # 같은 카카오 계정의 첫 로그인이 먼저 커밋됐습니다 — 다시 찾으면 그 계정으로 로그인합니다.
+            continue
+        user_payload = auth_user_response(user, db)
+        db.commit()
+        return user_payload, raw_token, True
+
+    raise RuntimeError("카카오 계정을 찾지도 만들지도 못했습니다(경합이 세 번 이어짐).")
 
 
 @app.post("/auth/logout", tags=["auth"])
@@ -1252,15 +2492,24 @@ def change_password(
         db.commit()
         raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
 
+    if user.password_hash is None:
+        # 카카오 계정 — 확인할 비밀번호가 없습니다. 이메일도 없어(None) 아래 로그인 잠금 함수를 부르지
+        # 않습니다(None 하나를 모든 카카오 계정이 키로 나눠 쓰게 됨). 앱은 이 버튼을 숨깁니다.
+        raise HTTPException(
+            status_code=400,
+            detail=build_error_detail("비밀번호로 가입한 계정이 아닙니다.", "PASSWORD_NOT_SET"),
+        )
+
     # 재인증도 로그인과 같은 잠금 카운터를 쓴다. 토큰만 탈취한 공격자가 이 경로로
     # 비밀번호를 무제한 추측하면 로그인 잠금이 무의미해지고, 맞히는 순간 다른 세션이
     # 모두 끊겨 계정을 통째로 빼앗기기 때문이다.
     check_login_lockout(user.email)
+    verified_hash = user.password_hash
 
     # 401은 "이 세션이 더 이상 유효하지 않다"는 뜻으로만 쓴다. 프론트가 401을
     # 세션 만료로 보고 강제 로그아웃시키므로(session_expiry_handler), 비밀번호를
     # 한 번 잘못 친 것만으로 로그아웃되면 안 된다. 재인증 실패는 400으로 낸다.
-    if not verify_password(request.current_password, user.password_hash):
+    if not verify_password(request.current_password, verified_hash):
         record_login_failure(user.email)
         raise HTTPException(status_code=400, detail="현재 비밀번호가 올바르지 않습니다.")
 
@@ -1271,19 +2520,27 @@ def change_password(
     if request.new_password == request.current_password:
         raise HTTPException(status_code=400, detail="새 비밀번호가 기존 비밀번호와 같습니다.")
 
-    user.password_hash = hash_password(request.new_password)
+    new_password_hash = hash_password(request.new_password)
+    if not lock_user_if_password_unchanged(db, user.id, verified_hash):
+        # 확인하는 동안 비밀번호 찾기·다른 기기의 변경이 먼저 끝났습니다. 그쪽이 이 세션의 토큰도
+        # 지웠으므로 세션 만료로 냅니다 — 옛 비밀번호로 확인한 변경이 새 비밀번호를 덮지 않게.
+        db.rollback()
+        raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
+
+    # 비밀번호 저장·기존 토큰 삭제·새 토큰 발급을 한 커밋으로 — 새 토큰은 지운 뒤에 넣어야 함께 지워지지 않는다.
+    db.query(database.User).filter(database.User.id == user.id).update(
+        {"password_hash": new_password_hash}, synchronize_session=False
+    )
     db.query(database.AccessToken).filter(
         database.AccessToken.user_id == user.id
     ).delete(synchronize_session=False)
+    raw_token = add_access_token(user.id, db)
     db.commit()
-
-    # 기존 토큰을 모두 지운 뒤에 발급해야 새 토큰이 함께 삭제되지 않는다.
-    raw_token, _new_token = create_access_token(user, db)
 
     return {
         "status": "success",
         "message": "비밀번호가 변경되었습니다.",
-        "user": auth_user_response(user),
+        "user": auth_user_response(user, db),
         "access_token": raw_token,
         "token_type": "bearer",
         "expires_in": ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
@@ -1293,10 +2550,12 @@ def change_password(
 @app.post("/auth/withdraw", tags=["auth"])
 def withdraw(
     request: WithdrawRequest,
+    http_request: Request,
     access_token: database.AccessToken = Depends(get_current_access_token),
     db: Session = Depends(get_db),
 ):
-    """비밀번호를 확인한 뒤 계정·토큰·분석 이력을 한 트랜잭션에서 지운다.
+    """재인증(비밀번호 계정은 비밀번호, 카카오 계정은 카카오 로그인)한 뒤 계정·토큰·분석 이력·
+    소셜 연결을 한 트랜잭션에서 지운다.
 
     DELETE 메서드 대신 POST를 쓰는 이유는 프론트 공용 HTTP 헬퍼가
     GET/POST만 지원하기 때문이다(docs/SCAN_API_CONTRACT.md 참조).
@@ -1308,27 +2567,95 @@ def withdraw(
         db.commit()
         raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
 
+    if user.password_hash is None:
+        return withdraw_kakao_account(request, http_request, user.id, db)
+
+    if request.password is None:
+        raise HTTPException(status_code=400, detail="비밀번호를 입력해 주세요.")
+
     check_login_lockout(user.email)
+    verified_hash = user.password_hash
 
     # 비밀번호 변경과 같은 이유로 재인증 실패는 400으로 낸다(401은 세션 만료 전용).
-    if not verify_password(request.password, user.password_hash):
+    if not verify_password(request.password, verified_hash):
         record_login_failure(user.email)
         raise HTTPException(status_code=400, detail="비밀번호가 올바르지 않습니다.")
 
+    if not lock_user_if_password_unchanged(db, user.id, verified_hash):
+        # 확인하는 동안 비밀번호가 바뀌었거나(비밀번호 찾기·변경 — 이 세션의 토큰도 지워짐) 계정이 없어졌습니다.
+        db.rollback()
+        raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
+
     clear_login_failures(user.email)
 
-    user_id = user.id
-
-    # users 행만 지우면 analysis_results·access_tokens에 고아 행이 남는다.
-    # 외래키 ON DELETE가 걸려 있지 않으므로 애플리케이션에서 함께 지운다.
-    db.query(database.AnalysisResult).filter(
-        database.AnalysisResult.user_id == user_id
-    ).delete(synchronize_session=False)
-    db.query(database.AccessToken).filter(
-        database.AccessToken.user_id == user_id
-    ).delete(synchronize_session=False)
-    db.delete(user)
+    delete_user_rows(db, user.id)
     db.commit()
+
+    return {"status": "success", "message": "회원 탈퇴가 완료되었습니다."}
+
+
+def withdraw_kakao_account(
+    request: WithdrawRequest, http_request: Request, user_id: int, db: Session
+) -> dict:
+    """카카오 계정 탈퇴(DECISIONS 152 ④·153 ①): 카카오 토큰 확인 → users 행 잠금 → 이 계정의 회원번호와
+    대조 → 삭제 커밋 → 그 토큰으로 카카오 연결 끊기(실패해도 탈퇴는 성공, 로그만).
+
+    비밀번호와 달리 추측할 수 없어 이메일 로그인 잠금(5회/60초)은 쓰지 않는다 — 이메일이 None 이라
+    쓰면 모든 카카오 계정이 한 칸을 나눠 쓴다. 로그인 IP 기록에 묻기 전에 한 번을 세고
+    SOCIAL_TOKEN_INVALID 일 때만 남긴다.
+    """
+    if request.kakao_access_token is None:
+        raise HTTPException(status_code=400, detail="카카오 로그인으로 탈퇴를 확인해 주세요.")
+    ensure_kakao_login_enabled()
+    kakao_token = ensure_kakao_token_format(request.kakao_access_token)
+    ip_key = client_ip_key(http_request.client.host if http_request.client else None)
+    reserve_login_attempt_for_ip(ip_key)
+
+    # 카카오에 묻는 동안(최대 5초) DB 연결을 쥐지 않게 지금까지의 읽기 트랜잭션을 끝냅니다.
+    db.rollback()
+    token_rejected = False
+    try:
+        try:
+            subject = verify_kakao_token(kakao_token)
+        except KakaoTokenRejected:
+            token_rejected = True
+            raise social_token_invalid(400) from None
+        except KakaoUnavailable as exc:
+            log_kakao_failure("탈퇴 확인 실패", exc)
+            raise social_provider_unavailable() from None
+
+        if not lock_user_row(db, user_id):
+            # 카카오에 묻는 동안 다른 기기에서 탈퇴가 먼저 끝났습니다(이 세션의 토큰도 지워짐).
+            db.rollback()
+            raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
+        linked_subject = (
+            db.query(database.SocialAccount.subject)
+            .filter(
+                database.SocialAccount.user_id == user_id,
+                database.SocialAccount.provider == KAKAO_PROVIDER,
+            )
+            .scalar()
+        )
+        if linked_subject != subject:
+            db.rollback()
+            raise HTTPException(
+                status_code=400,
+                detail=build_error_detail(
+                    "이 계정에 연결된 카카오 계정이 아닙니다. 가입한 카카오 계정으로 다시 로그인해 주세요.",
+                    "SOCIAL_ACCOUNT_MISMATCH",
+                ),
+            )
+        delete_user_rows(db, user_id)
+        db.commit()
+    finally:
+        if not token_rejected:
+            release_login_attempt_for_ip(ip_key)
+
+    try:
+        kakao_unlink(kakao_token)
+    except Exception as exc:  # noqa: BLE001 — 계정은 이미 지워졌으므로 응답은 성공 그대로입니다.
+        # 카카오 쪽 연결이 남습니다. 같은 카카오 계정의 다음 로그인은 새 계정입니다.
+        log_kakao_failure(f"탈퇴한 사용자 {user_id} 의 카카오 연결 끊기 실패", exc)
 
     return {"status": "success", "message": "회원 탈퇴가 완료되었습니다."}
 
@@ -1362,10 +2689,10 @@ def scan_label(
     # JSON 요청의 RawOcrText 와 같은 상한입니다. 폼 필드라 Form 에 직접 겁니다.
     raw_ocr_text: str | None = Form(default=None, max_length=MAX_RAW_OCR_TEXT_LENGTH),
     db: Session = Depends(get_db),
-    # 스캔 1회가 곧 외부 OCR 호출 비용이므로 로그인 사용자만 허용합니다.
+    # 스캔 1회가 곧 외부 OCR 호출 비용이므로 로그인 사용자만 허용하고, 사용자마다 하루 횟수를 셉니다.
     current_user: database.User = Depends(get_current_user),
 ):
-    label_text = extract_label_text(image, raw_ocr_text)
+    label_text = extract_label_text(image, raw_ocr_text, current_user.id)
     materials, care_instruction, raw_ocr_preview = parse_label_materials(label_text)
     title = "스캔한 의류"
     category = "상의"
@@ -1484,7 +2811,15 @@ def calculate_carbon_range(
         unknown_materials="[]",
     )
     db.add(result)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        if _integrity_constraint_name(error) != "fk_analysis_results_user_id_users":
+            raise
+        # 토큰 확인 뒤 다른 기기의 탈퇴가 먼저 커밋됐습니다(탈퇴가 users 행을 쥔 동안 이 INSERT 가 기다렸다가
+        # 외래 키에 걸림). 계정이 없으니 저장하지 않고 세션 만료로 냅니다(DECISIONS 161).
+        raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
     db.refresh(result)
 
     return {
@@ -1546,7 +2881,7 @@ def get_user_history_response(
 
     return {
         "status": "success",
-        "user": auth_user_response(current_user),
+        "user": auth_user_response(current_user, db),
         "history": [serialize_analysis_result(result) for result in results],
         "has_more": has_more,
     }

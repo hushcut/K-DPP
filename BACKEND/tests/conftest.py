@@ -27,7 +27,15 @@ os.environ["K_DPP_DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["K_DPP_CORS_ORIGINS"] = ""
 # API 문서도 기본값(켬)으로 시험합니다. 끈 경우는 별도 프로세스로 봅니다(test_hardening).
 os.environ["K_DPP_API_DOCS"] = ""
+# 서버 전체 하루 스캔 상한도 기본값(없음)으로 시험합니다. 상한은 테스트가 main 값을 바꿔 봅니다.
+os.environ["K_DPP_SCAN_DAILY_MAX"] = ""
+# 인증 메일도 기본값(log 모드·하루 상한 없음)으로 시험합니다. 다른 값은 별도 프로세스로 봅니다.
+os.environ["K_DPP_EMAIL_DELIVERY"] = ""
+os.environ["K_DPP_EMAIL_DAILY_MAX"] = ""
+# 카카오 로그인도 기본값(앱 ID 없음 — 꺼짐, 503)으로 시험합니다. 켠 경우는 테스트가 main.KAKAO_APP_ID 를 바꿉니다.
+os.environ["K_DPP_KAKAO_APP_ID"] = ""
 
+import auth_helpers  # noqa: E402
 import database  # noqa: E402
 
 try:
@@ -44,7 +52,7 @@ import main  # noqa: E402
 
 # 테스트마다 비우는 표. 소재(materials)는 마이그레이션이 넣은 값을 그대로 쓴다
 # — 소재를 바꾸는 API·테스트가 없다.
-PER_TEST_TABLES = ("analysis_results", "access_tokens", "users")
+PER_TEST_TABLES = ("analysis_results", "access_tokens", "social_accounts", "users")
 
 
 def make_alembic_config() -> Config:
@@ -83,15 +91,23 @@ def alembic_config():
 
 
 @pytest.fixture()
-def client():
+def client(monkeypatch):
     with database.engine.begin() as connection:
         connection.execute(
             text(f"TRUNCATE {', '.join(PER_TEST_TABLES)} RESTART IDENTITY")
         )
-    # 로그인 잠금·가입 IP 카운터는 프로세스 메모리에 남으므로 테스트마다 초기화합니다.
+    # 로그인 잠금·가입 IP 카운터·인증번호 기록·하루 스캔 카운터는 프로세스 메모리에 남으므로 테스트마다 초기화합니다.
     main._login_failures.clear()
     main._login_ip_failures.clear()
     main._signup_ip_attempts.clear()
+    main._vision_scan_counts.clear()
+    main._email_codes.clear()
+    main._email_code_senders.clear()
+    main._email_code_ip_requests.clear()
+    main._email_daily_requests.clear()
+    # 인증 메일은 로그 대신 auth_helpers.SENT_EMAILS 에 모아, 가입 헬퍼가 번호를 꺼내 씁니다.
+    auth_helpers.SENT_EMAILS.clear()
+    monkeypatch.setattr(main, "deliver_email", auth_helpers.record_email)
 
     with TestClient(main.app) as test_client:
         yield test_client

@@ -303,6 +303,8 @@ void main() {
       final firstId = find.semantics.byLabel('저장하지 못했어요.').evaluate().single.id;
 
       banner.show('저장하지 못했어요.', kind: AppBannerKind.failure);
+      // 낭독 칸은 화면이 멈춘 프레임의 다음 프레임에 붙는다.
+      await tester.pump();
       await tester.pump();
       final secondId = find.semantics.byLabel('저장하지 못했어요.').evaluate().single.id;
 
@@ -329,6 +331,114 @@ void main() {
 
       expect(labels.first, '저장하지 못했어요.');
       expect(labels.indexOf('첫 화면'), greaterThan(0));
+
+      handle.dispose();
+    });
+
+    // 화면이 바뀔 때 Android·iOS 는 새 화면의 첫 칸에 초점을 준다. 그 순간 배너가 낭독 트리
+    // 맨 앞에 있으면 live region 과 초점으로 두 번 읽힌다(DECISIONS 180).
+    testWidgets('화면 전환과 같이 뜬 배너는 전환이 끝난 뒤에 낭독 칸이 생긴다', (tester) async {
+      const message = '로그인이 만료됐어요. 다시 로그인해 주세요.';
+      final handle = tester.ensureSemantics();
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(accessibleNavigation: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      await _pumpApp(tester);
+      final navigator = Navigator.of(tester.element(find.text('첫 화면')));
+
+      // 세션 만료처럼 배너를 띄우고 같은 순간 화면을 바꾼다.
+      _banner(tester).show(message, kind: AppBannerKind.info);
+      navigator.pushNamedAndRemoveUntil('/no-app-bar', (route) => false);
+
+      int? routeFrame;
+      int? liveFrame;
+      var oldRouteGoneAtLive = false;
+      for (var frame = 1; frame <= 90 && liveFrame == null; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (frame == 1) expect(find.text(message), findsOneWidget);
+
+        if (routeFrame == null && _hasSemanticsLabel('앱바 없는 화면')) {
+          routeFrame = frame;
+        }
+        if (_isAnnounced(message)) {
+          liveFrame = frame;
+          oldRouteGoneAtLive = !_hasSemanticsLabel('첫 화면');
+        }
+      }
+
+      expect(routeFrame, isNotNull);
+      expect(liveFrame, greaterThan(routeFrame!));
+      expect(oldRouteGoneAtLive, isTrue, reason: '전환이 끝나 앞 화면이 빠진 뒤');
+
+      handle.dispose();
+    });
+
+    testWidgets('시트를 닫으며 뜬 배너는 시트가 다 내려간 뒤에 낭독 칸이 생긴다', (tester) async {
+      const message = '의류 정보가 수정됐어요.';
+      final handle = tester.ensureSemantics();
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(accessibleNavigation: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      await _pumpApp(tester);
+
+      showModalBottomSheet<void>(
+        context: tester.element(find.text('첫 화면')),
+        builder: (_) => const SizedBox(height: 200, child: Text('수정 시트')),
+      );
+      await tester.pumpAndSettle();
+
+      // 리포트 수정처럼 시트를 닫고 같은 순간 배너를 띄운다.
+      Navigator.of(tester.element(find.text('수정 시트'))).pop();
+      _banner(tester).show(message, kind: AppBannerKind.success);
+
+      int? liveFrame;
+      var sheetGoneAtLive = false;
+      for (var frame = 1; frame <= 90 && liveFrame == null; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (_isAnnounced(message)) {
+          liveFrame = frame;
+          sheetGoneAtLive = !_hasSemanticsLabel('수정 시트');
+        }
+      }
+
+      expect(liveFrame, isNotNull);
+      expect(sheetGoneAtLive, isTrue);
+
+      handle.dispose();
+    });
+
+    testWidgets('끝나지 않는 애니메이션이 있어도 1초 안에 낭독 칸이 생긴다', (tester) async {
+      const message = '저장하지 못했어요.';
+      final handle = tester.ensureSemantics();
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(accessibleNavigation: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: AppBannerHost.builder,
+          home: Scaffold(
+            appBar: AppBar(title: const Text('첫 화면')),
+            body: const Center(child: CircularProgressIndicator()),
+          ),
+        ),
+      );
+
+      _banner(tester).show(message, kind: AppBannerKind.failure);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(_isAnnounced(message), isFalse, reason: '로딩 표시가 도는 동안은 기다린다');
+
+      await tester.pump(
+        AppBanner.announceWaitLimit - const Duration(milliseconds: 500),
+      );
+      await tester.pump();
+      expect(_isAnnounced(message), isTrue);
 
       handle.dispose();
     });
@@ -384,6 +494,123 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
       await tester.pump();
       expect(find.byType(AppBannerView), findsNothing);
+    });
+  });
+
+  group('기록', () {
+    // 기기에서 성공 배너가 일찍 닫힌 까닭을 logcat 으로 가린다(DECISIONS 180).
+    testWidgets('표시와 닫힘을 이유·시간·읽기 프로그램 여부와 함께 남긴다', (tester) async {
+      final handle = tester.ensureSemantics();
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(accessibleNavigation: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      await _pumpApp(tester);
+      final banner = _banner(tester);
+
+      final logs = <String>[];
+      final originalDebugPrint = debugPrint;
+      debugPrint = (message, {wrapWidth}) => logs.add(message ?? '');
+      final originalLogEvents = AppBanner.logEvents;
+      AppBanner.logEvents = true;
+
+      try {
+        banner.show('의류 정보가 수정됐어요.', kind: AppBannerKind.success);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 5100));
+
+        banner.show('저장하지 못했어요.', kind: AppBannerKind.failure);
+        await tester.pump();
+        await tester.tap(find.byType(AppBannerView));
+        await tester.pump();
+
+        banner.show('저장하지 못했어요.', kind: AppBannerKind.failure);
+        await tester.pump();
+        await tester.drag(find.byType(AppBannerView), const Offset(0, -40));
+        await tester.pump();
+
+        banner.show('저장하지 못했어요.', kind: AppBannerKind.failure);
+        await tester.pump();
+        await tester.pump();
+        tester.semantics.tap(find.semantics.byLabel('저장하지 못했어요.'));
+        await tester.pump();
+
+        banner.show('저장하지 못했어요.', kind: AppBannerKind.failure);
+        await tester.pump();
+        await tester.pump();
+        tester.semantics.dismiss(find.semantics.byLabel('저장하지 못했어요.'));
+        await tester.pump();
+
+        banner.show('저장하지 못했어요.', kind: AppBannerKind.failure);
+        await tester.pump();
+        banner.show('알림 문구', kind: AppBannerKind.info);
+        await tester.pump();
+        banner.hide();
+        await tester.pump();
+      } finally {
+        debugPrint = originalDebugPrint;
+        AppBanner.logEvents = originalLogEvents;
+      }
+
+      expect(
+        logs.first,
+        '[AppBanner] 표시 #0 success 5000ms 읽기프로그램=true "의류 정보가 수정됐어요."',
+      );
+
+      final closes = logs
+          .map(
+            RegExp(
+              r'^\[AppBanner\] (닫힘|바뀜) #(\d+) (?:이유=(\w+) )?표시 뒤 \d+ms',
+            ).firstMatch,
+          )
+          .nonNulls
+          .map((match) => '${match[1]} #${match[2]} ${match[3] ?? ''}'.trim())
+          .toList();
+      expect(closes, [
+        '닫힘 #0 timer',
+        '닫힘 #1 tap',
+        '닫힘 #2 swipe',
+        '닫힘 #3 accessibilityTap',
+        '닫힘 #4 accessibilityDismiss',
+        '바뀜 #5',
+        '닫힘 #6 call',
+      ]);
+      expect(
+        logs.where((line) => line.startsWith('[AppBanner] 닫힘')),
+        everyElement(endsWith('읽기프로그램=true')),
+      );
+
+      handle.dispose();
+    });
+
+    testWidgets('닫히는 중에 다시 불려도 한 번만 기록한다', (tester) async {
+      await _pumpApp(tester);
+      final banner = _banner(tester);
+
+      final logs = <String>[];
+      final originalDebugPrint = debugPrint;
+      final originalLogEvents = AppBanner.logEvents;
+      debugPrint = (message, {wrapWidth}) => logs.add(message ?? '');
+      AppBanner.logEvents = true;
+
+      try {
+        banner.show('저장하지 못했어요.', kind: AppBannerKind.failure);
+        await tester.pumpAndSettle();
+        banner.hide();
+        await tester.pump(const Duration(milliseconds: 50));
+        banner.hide();
+        await tester.pumpAndSettle();
+      } finally {
+        debugPrint = originalDebugPrint;
+        AppBanner.logEvents = originalLogEvents;
+      }
+
+      expect(find.byType(AppBannerView), findsNothing);
+      expect(
+        logs.where((line) => line.startsWith('[AppBanner] 닫힘')),
+        hasLength(1),
+      );
     });
   });
 
@@ -477,6 +704,26 @@ Future<void> _pumpApp(
       },
     ),
   );
+}
+
+/// 낭독 트리에 [label] 칸이 있는지입니다.
+bool _hasSemanticsLabel(String label) {
+  return find.semantics
+      .byPredicate((node) => node.label == label)
+      .evaluate()
+      .isNotEmpty;
+}
+
+/// [message] 배너의 낭독 칸(live region)이 붙었는지입니다.
+bool _isAnnounced(String message) {
+  return find.semantics
+      .byPredicate(
+        (node) =>
+            node.label == message &&
+            node.getSemanticsData().flagsCollection.isLiveRegion,
+      )
+      .evaluate()
+      .isNotEmpty;
 }
 
 AppBannerHostState _banner(WidgetTester tester) {
