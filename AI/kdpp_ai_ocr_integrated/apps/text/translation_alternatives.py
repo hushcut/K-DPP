@@ -5,6 +5,8 @@ copies must agree. Only a registered-name prefix, or a short OCR fragment
 between readable copies, can be treated as damaged translation text.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from decimal import Decimal
 import re
@@ -28,6 +30,88 @@ _UNSAFE = re.compile(
 )
 _HEADINGS = {"composition", "구성"}
 _AMBIGUOUS_SHORT_NAMES = {"pu", "pa", "pe", "pp", "pes", "pla", "mix", "unk"}
+
+# Letter shapes in a registered Cyrillic alias may be read as Latin letters.
+# This is used only inside a corroborating translation list, never as a
+# standalone material alias or a general fuzzy match.
+_CYRILLIC_GLYPHS = {
+    "х": "[хx]", "л": "[лn]", "о": "[оo]", "п": "[пn]", "к": "[кk]",
+}
+
+
+def _registered_glyph_copy(word: str, material: str) -> bool:
+    return any(
+        key == material and len(alias) >= 5 and any(c in _CYRILLIC_GLYPHS for c in alias)
+        and re.fullmatch("".join(_CYRILLIC_GLYPHS.get(c, re.escape(c)) for c in alias), word)
+        for alias, key in ALIAS_TO_MATERIAL.items()
+    )
+
+
+def _prepare_repeated_hyphen_declaration(text: str) -> TranslationAlternatives:
+    """Keep a literal 100% primary row and validate each printed repeat.
+
+    A long translation list must end in a second explicit, identical 100%
+    declaration and the written decoration-exclusion caption. Every list
+    clause must be a registered alias of the primary fiber, except one
+    registered Cyrillic glyph copy surrounded by readable agreeing aliases.
+    No extra digit, unknown fiber, part, or uncertainty sign is discarded.
+    """
+    rows = text.split("\n")
+    recovered, damaged = set(), set()
+    for start, row in enumerate(rows):
+        primary = _PRIMARY.match(row)
+        name = _NAME.match(row, primary.end()) if primary else None
+        if (name is None or Decimal(primary.group(1)) != 100
+                or not re.match(r"\s*-", row[name.end():])):
+            continue
+        end = start + 1
+        while end < len(rows) and not re.fullmatch(r"exclusive\s+of\s+decoration\s*[.]?", rows[end]):
+            terminal_repeat = (end + 1 < len(rows)
+                               and re.fullmatch(r"exclusive\s+of\s+decoration\s*[.]?", rows[end + 1]))
+            if (not rows[end].strip() or declared_part(rows[end])
+                    or (_STOP.search(rows[end]) and not terminal_repeat)):
+                break
+            end += 1
+        if end >= len(rows) or not re.fullmatch(r"exclusive\s+of\s+decoration\s*[.]?", rows[end]):
+            continue
+        repeat = re.fullmatch(r"\s*(\$\s*)?([0-9]+(?:\.[0-9]+)?)\s*%\s*-\s*([^\W\d_]+)\s*", rows[end - 1])
+        key = ALIAS_TO_MATERIAL[name.group()]
+        if (repeat is None or Decimal(repeat.group(2)) != 100
+                or ALIAS_TO_MATERIAL.get(repeat.group(3)) != key):
+            continue
+        body = "".join(rows[start:end - 1])[name.end():]
+        clauses = [c.strip() for c in body.split("-") if c.strip()]
+        aliases, glyphs, valid = {name.group(), repeat.group(3)}, [], bool(clauses)
+        for position, clause in enumerate(clauses):
+            names = list(_NAME.finditer(clause))
+            remainder = list(clause)
+            for match in names:
+                if ALIAS_TO_MATERIAL[match.group()] != key:
+                    valid = False
+                aliases.add(match.group())
+                remainder[match.start():match.end()] = " " * len(match.group())
+            opaque = "".join(remainder).strip()
+            if not opaque and names:
+                continue
+            if (names or not _registered_glyph_copy(clause, key)
+                    or position == 0 or position == len(clauses) - 1):
+                valid = False
+                break
+            glyphs.append(position)
+        if not valid or len(aliases) < 6 or len(glyphs) > 1:
+            continue
+        # Opaque evidence immediately preceding a list cannot become a title.
+        before = rows[start - 1] if start else ""
+        if (_UNSAFE.search(before) or unresolved_material_tokens(before)
+                or (re.search(r"[^\W\d_]", before)
+                    and before.strip(" :") not in _HEADINGS)):
+            continue
+        rows[start] = rows[start][:name.end()]
+        rows[start + 1:end] = [""] * (end - start - 1)
+        recovered.add(start)
+        if glyphs or repeat.group(1):
+            damaged.add(start)
+    return TranslationAlternatives("\n".join(rows), frozenset(recovered), frozenset(damaged))
 
 
 @dataclass(frozen=True)
@@ -100,11 +184,15 @@ def prepare_translation_alternatives(text: str) -> TranslationAlternatives:
     """Keep row identities and every number/part outside a validated list."""
     if "%" not in text:
         return TranslationAlternatives(text)
+    hyphen = _prepare_repeated_hyphen_declaration(text)
+    text = hyphen.text
     hyphen_rejections = _validate_hyphen_copies(text)
     if "/" not in text:
-        return TranslationAlternatives(text, rejected_rows=frozenset(hyphen_rejections))
+        return TranslationAlternatives(
+            text, hyphen.recovered_rows, hyphen.damaged_rows, frozenset(hyphen_rejections),
+        )
     rows = text.split("\n")
-    recovered, damaged, rejected = set(), set(), set(hyphen_rejections)
+    recovered, damaged, rejected = set(hyphen.recovered_rows), set(hyphen.damaged_rows), set(hyphen_rejections)
     cursor = 0
     while cursor < len(rows):
         primary = _PRIMARY.match(rows[cursor])

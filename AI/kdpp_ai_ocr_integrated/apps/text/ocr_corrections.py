@@ -1477,6 +1477,126 @@ def _mixed_translation_recovery(candidate, alternative, part, target_part, candi
                for key in expected)
 
 
+def _same_response_hyphen_recovery(candidate, alternative, part, target_part):
+    """A reordered layout cannot contradict its fully located literal list.
+
+    The raw response validates every registered repeat, both explicit 100%
+    declarations and its printed exclusion boundary. Raw/layout are one OCR
+    input; only their row order differs and every annotation must be retained.
+    """
+    from apps.text.parse_label import _prepare_multilingual_rows, _split_part_markers
+    from apps.text.translation_alternatives import _prepare_repeated_hyphen_declaration
+
+    if (not candidate.layout_used or alternative.layout_used or part != "generic" or target_part != "generic"
+            or alternative.parser_status != "success"
+            or not alternative.image_key or candidate.image_key != alternative.image_key
+            or len(alternative.image_region) != 4 or not alternative.image_words
+            or len({w.page for w in candidate.image_words + alternative.image_words}) != 1
+            or not alternative.image_variant_key or candidate.image_variant_key != alternative.image_variant_key
+            or candidate.source != alternative.source or candidate.image_words != alternative.image_words
+            or candidate.image_region != alternative.image_region
+            or alternative.parts != {"generic": alternative.materials}
+            or len(alternative.materials) != 1 or list(alternative.materials.values()) != [100]
+            or "registered_translation_alternatives" not in alternative.parser_warnings
+            or set(alternative.parser_warnings) - {"registered_translation_alternatives", "damaged_translation_fragment"}):
+        return False
+    words = alternative.image_words
+    left, top, right, bottom = alternative.image_region
+    if (len(set(words)) != len(words) or any(len(w.vertices) != 4 or not (
+            left - 2 <= w.left and w.right <= right + 2 and top - 2 <= w.top and w.bottom <= bottom + 2
+            ) for w in words)
+            or not _covers_row_tokens(_tokens(alternative.text), list(words))
+            or not _covers_row_tokens(_tokens(candidate.text), list(words))):
+        return False
+    prepared = _split_part_markers(_prepare_multilingual_rows(_split_part_markers(normalize_text(alternative.text))))
+    validated = _prepare_repeated_hyphen_declaration(prepared)
+    if len(validated.recovered_rows) != 1:
+        return False
+    # Locate the literal primary row, including its first translation and
+    # separators. A repeated percent elsewhere cannot supply this row.
+    rows = normalize_text(alternative.text).splitlines()
+    primary_rows = [row for row in rows if re.match(r"^100\s*%\s*[^\W\d_]+\s*-", row)]
+    if len(primary_rows) != 1:
+        return False
+
+    def literal_options(row):
+        # Repeated hyphens in other rows otherwise exhaust the bounded
+        # partition search. A unique literal word locates this physical row
+        # before searching; numbers alone never act as the location anchor.
+        tokens = _tokens(row)
+        unique = [w for w in words if len(_tokens(w.text)) == 1
+                  and _tokens(w.text)[0].isalpha() and len(w.text) > 1
+                  and _tokens(w.text)[0] in tokens
+                  and sum(_tokens(other.text) == _tokens(w.text) for other in words) == 1]
+        if not unique:
+            return _row_options(row, words, physical=True, allow_quantisation=True)
+        anchor = max(unique, key=lambda w: math.dist(w.vertices[0], w.vertices[1]))
+        a, b = anchor.vertices[:2]
+        length = math.dist(a, b)
+        if not length:
+            return ()
+        normal = (-(b[1] - a[1]) / length, (b[0] - a[0]) / length)
+
+        def frame(word):
+            values = [normal[0] * x + normal[1] * y for x, y in word.vertices]
+            return (min(values) + max(values)) / 2, max(values) - min(values)
+
+        center, height = frame(anchor)
+        pool = tuple(w for w in words if abs(frame(w)[0] - center) <= 2 + 0.55 * max(height, frame(w)[1]))
+        return tuple(tuple(words.index(pool[i]) for i in option)
+                     for option in _row_options(row, pool, physical=True, allow_quantisation=True))
+
+    options = literal_options(primary_rows[0])
+    if len(options) != 1:
+        return False
+    primary = tuple(words[i] for i in options[0])
+    # The repeated percentage must also have its own complete printed row.
+    repeat_rows = [row for row in rows if re.fullmatch(r"\$?\s*100\s*%\s*-\s*[^\W\d_]+", row)]
+    if len(repeat_rows) != 1:
+        return False
+    repeats = literal_options(repeat_rows[0])
+    if len(repeats) != 1 or not set(primary).isdisjoint(words[i] for i in repeats[0]):
+        return False
+    start, end = rows.index(primary_rows[0]), rows.index(repeat_rows[0]) + 1
+    # The translations and their exclusion caption must be consecutive
+    # physical rows in the primary row's reading frame, not another label.
+    anchor = max(primary, key=lambda w: math.dist(w.vertices[0], w.vertices[1]))
+    (x0, y0), (x1, y1), *_ = anchor.vertices
+    length = math.hypot(x1 - x0, y1 - y0)
+    direction = ((x1 - x0) / length, (y1 - y0) / length)
+    normal = (-direction[1], direction[0])
+    used, previous = set(), None
+    for row in rows[start:end + 1]:
+        options = literal_options(row)
+        if len(options) != 1:
+            return False
+        located = tuple(words[i] for i in options[0])
+        if used.intersection(located):
+            return False
+        used.update(located)
+        row_anchor = max(located, key=lambda w: math.dist(w.vertices[0], w.vertices[1]))
+        a, b = row_anchor.vertices[:2]
+        row_length = math.dist(a, b)
+        if ((b[0] - a[0]) * direction[0] + (b[1] - a[1]) * direction[1]) / row_length < 0.98:
+            return False
+        points = [point for w in located for point in w.vertices]
+        xs = [direction[0] * x + direction[1] * y for x, y in points]
+        ys = [normal[0] * x + normal[1] * y for x, y in points]
+        frame = (min(xs), max(xs), (min(ys) + max(ys)) / 2, max(ys) - min(ys))
+        intervals = sorted((
+            min(direction[0] * x + direction[1] * y for x, y in w.vertices),
+            max(direction[0] * x + direction[1] * y for x, y in w.vertices),
+        ) for w in located)
+        if any(b[0] - a[1] > 3 * frame[3] for a, b in zip(intervals, intervals[1:])):
+            return False
+        if previous and (frame[2] <= previous[2]
+                         or frame[2] - previous[2] > 3 * max(frame[3], previous[3])
+                         or min(frame[1], previous[1]) <= max(frame[0], previous[0])):
+            return False
+        previous = frame
+    return True
+
+
 def same_region_recovery(
     candidate: OcrCandidate, alternative: OcrCandidate, part: str,
     candidates: list[OcrCandidate] | None = None,
@@ -1512,6 +1632,8 @@ def same_region_recovery(
     if _repeated_translation_recovery(candidate, alternative, part, target_part, candidates or []):
         return True
     if _mixed_translation_recovery(candidate, alternative, part, target_part, candidates or []):
+        return True
+    if _same_response_hyphen_recovery(candidate, alternative, part, target_part):
         return True
     if ((_has_unclassified_context(candidate) and not _literal_raw_context(candidate, candidates or []))
             or (_has_unclassified_context(alternative) and not _literal_raw_context(alternative, candidates or []))):

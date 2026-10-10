@@ -51,6 +51,18 @@ def agreed_original_composition(candidates: list[OcrCandidate]) -> bool:
         if not raw.image_key or not raw.image_variant_key or not raw.image_words or len(raw.image_region) != 4:
             continue
         for layout in originals:
+            if (layout.layout_used and layout.parser_status == "failed"
+                    and not layout.parts and not layout.conflicting_parts
+                    and "registered_translation_alternatives" in raw.parser_warnings
+                    and len({word.page for word in raw.image_words}) == 1
+                    and _has_explicit_complete_pairs(raw, allow_translation_warnings=True)):
+                from apps.text.ocr_corrections import _same_response_hyphen_recovery
+
+                # One literal response can validate both printed declarations
+                # and every translation row. Its failed reordered view is not
+                # an independent reason to retry or raise confidence to high.
+                if _same_response_hyphen_recovery(layout, raw, "generic", "generic"):
+                    return True
             if (
                 not layout.layout_used or layout.parser_status != "success"
                 or set(layout.parser_warnings) - translation_warnings

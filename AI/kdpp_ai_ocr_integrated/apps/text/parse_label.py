@@ -1906,6 +1906,11 @@ def _classify_metadata_line(
     line: str, pending_kind: str | None
 ) -> tuple[bool, str | None]:
     """명시한 항목의 값만 제외하며, 헤더의 대기 상태는 바로 다음 줄에만 적용한다."""
+    # A standalone currency amount above 100 cannot be a fiber percentage.
+    # Keep signed amounts, percent signs and any attached material/text out.
+    amount = re.fullmatch(r"[$€£₩]\s*([0-9]+(?:\.[0-9]{1,2})?)", line)
+    if amount and Decimal(amount.group(1)) > 100:
+        return True, None
     header = _METADATA_HEADER_PATTERN.fullmatch(line)
     if header:
         kind = "size" if header.group("size") else "measurement" if header.group("measurement") else "shrinkage"
