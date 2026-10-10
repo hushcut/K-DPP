@@ -38,12 +38,73 @@ class TranslationAlternatives:
     rejected_rows: frozenset[int] = frozenset()
 
 
+def _validate_hyphen_copies(text: str) -> set[int]:
+    """Read literal hyphen-separated aliases without interpreting signed ratios.
+
+    Only a complete primary percentage/name and at least three registered
+    copies of that fiber qualify. Unknown words, additional numbers and signs
+    are retained for ordinary rejection; no fuzzy fiber lookup occurs here.
+    """
+    rows = text.split("\n")
+    rejected = set()
+    for index, row in enumerate(rows):
+        primary = _PRIMARY.match(row)
+        name = _NAME.match(row, primary.end()) if primary else None
+        if name is None or not re.match(r"\s*-", row[name.end():]):
+            continue
+        end = index + 1
+        while end < len(rows) and rows[end].strip() and not _STOP.search(rows[end]) and not declared_part(rows[end]):
+            if "-" not in rows[end] or re.search(r"exclusive|exclu", rows[end]):
+                break
+            end += 1
+        tail = "".join(rows[index:end])[name.end():]
+        clauses = [clause.strip() for clause in tail.split("-") if clause.strip()]
+        key = ALIAS_TO_MATERIAL[name.group()]
+        known = {name.group()}
+        valid = bool(clauses)
+        for clause in clauses:
+            # A lone OCR bracket/quote between registered copies is punctuation,
+            # not a fiber or numeric sign. Keep it in the ordinary reader.
+            if clause in {"[", "]", "\"", "'"}:
+                continue
+            names = list(_NAME.finditer(clause))
+            remainder = list(clause)
+            for alias in names:
+                if ALIAS_TO_MATERIAL[alias.group()] != key:
+                    valid = False
+                else:
+                    known.add(alias.group())
+                remainder[alias.start():alias.end()] = " " * len(alias.group())
+            valid &= bool(names) and not "".join(remainder).strip()
+        if not valid or len(known) < 3:
+            if len(known) >= 3:
+                rejected.add(index)
+            continue
+        neighbors = rows[max(0, index - 1):index] + rows[end:end + 1]
+        if any(_UNSAFE.search(line) or unresolved_material_tokens(line)
+               or (re.search(r"[^\W\d_]", line) and not declared_part(line)
+                   and not _PRIMARY.match(line)
+                   and not ("%" in line and extract_materials(line))
+                   and line.strip(" :") not in _HEADINGS
+                   and not re.match(r"(?:made\s+in\s+|wash\b|hand\s+wash\b|machine\s+wash\b|dry\b|exclusive\b|exclu)", line))
+               for line in neighbors):
+            rejected.add(index)
+            continue
+    # Keep every readable copy and repeated ratio in its original row. The
+    # ordinary reader already supports registered glosses; this validator
+    # closes the path where opaque suffixes were treated as harmless text.
+    return rejected
+
+
 def prepare_translation_alternatives(text: str) -> TranslationAlternatives:
     """Keep row identities and every number/part outside a validated list."""
-    if "%" not in text or "/" not in text:
+    if "%" not in text:
         return TranslationAlternatives(text)
+    hyphen_rejections = _validate_hyphen_copies(text)
+    if "/" not in text:
+        return TranslationAlternatives(text, rejected_rows=frozenset(hyphen_rejections))
     rows = text.split("\n")
-    recovered, damaged, rejected = set(), set(), set()
+    recovered, damaged, rejected = set(), set(), set(hyphen_rejections)
     cursor = 0
     while cursor < len(rows):
         primary = _PRIMARY.match(rows[cursor])
@@ -131,7 +192,15 @@ def prepare_translation_alternatives(text: str) -> TranslationAlternatives:
                 and any(match.start() > fragment.end() for match in names)
                 and re.search(r"/\s*[^/]*$", body[:fragment.start()]) is not None
             )
-            if not registered_prefix and not bounded_noise:
+            # One trailing glyph may be a damaged final translation. Require
+            # four distinct complete copies, a literal slash, and no remaining
+            # suffix. Longer opaque names and short polymer codes stay out.
+            terminal_glyph = (
+                len(aliases) >= 4 and word.isascii() and len(word) == 1
+                and not body[fragment.end():].strip(" /\t\n")
+                and re.search(r"/\s*$", body[:fragment.start()]) is not None
+            )
+            if not registered_prefix and not bounded_noise and not terminal_glyph:
                 valid = False
                 break
         # Unknown punctuation is evidence too; allow only list delimiters and

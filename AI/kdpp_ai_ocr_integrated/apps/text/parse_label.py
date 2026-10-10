@@ -613,6 +613,18 @@ def build_line_infos(
         current: normalize_text(raw_lines[following])
         for current, following in zip(content_indices, content_indices[1:])
     }
+    # OCR can put a single non-text glyph between a wash temperature and its
+    # written wash caption. It supplies no fiber/ratio; do not jump across
+    # letters, digits, percent signs, or uncertainty signs.
+    for position, index in enumerate(content_indices[:-2]):
+        glyph_index, care_index = content_indices[position + 1:position + 3]
+        glyph = normalize_text(raw_lines[glyph_index])
+        care = normalize_text(raw_lines[care_index])
+        if (glyph_index == index + 1 and care_index == glyph_index + 1
+                and re.fullmatch(r"[☆★○□△]", glyph)
+                and _mentions_care(care) and not extract_materials(care)
+                and not re.search(r"[0-9%]", care)):
+            following_lines[index] = care
     for position, index in enumerate(content_indices[:-1]):
         if following_lines[index] != "neutral":
             continue

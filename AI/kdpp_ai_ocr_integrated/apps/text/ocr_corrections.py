@@ -1286,6 +1286,197 @@ def _repeated_translation_recovery(candidate, alternative, part, target_part, ca
                     for word in words))
 
 
+def _mixed_translation_recovery(candidate, alternative, part, target_part, candidates):
+    """Match literal mixed-fiber declarations through damaged translation copies.
+
+    Every primary row and ratio stays unchanged. A detached wash number needs
+    a full-image written care caption at the same coordinates. This proof does
+    not classify care symbols or supply a missing material or percentage.
+    """
+    from apps.text.material_extraction import ALIAS_TO_MATERIAL, declared_part, unresolved_material_tokens
+    from apps.text.parse_label import _prepare_multilingual_rows
+
+    expected = alternative.parts.get(target_part, {})
+    if (part != "generic" or target_part != "generic" or len(expected) != 2
+            or len(alternative.parts) != 1 or sum(expected.values()) != 100
+            or "registered_translation_alternatives" not in alternative.parser_warnings
+            or set(alternative.parser_warnings) - {"registered_translation_alternatives", "damaged_translation_fragment"}):
+        return False
+    if candidate.layout_used:
+        return any(not raw.layout_used and raw.source == candidate.source
+                   and raw.image_key == candidate.image_key and raw.image_variant_key == candidate.image_variant_key
+                   and raw.image_words == candidate.image_words and raw.image_region == candidate.image_region
+                   and Counter(_annotation_tokens(raw.text)) == Counter(_annotation_tokens(candidate.text))
+                   and _mixed_translation_recovery(raw, alternative, part, target_part, candidates)
+                   for raw in candidates)
+    if alternative.layout_used:
+        return False
+    if (candidate is not alternative and (candidate.image_variant_key == alternative.image_variant_key
+                                         or candidate.source == alternative.source)):
+        return False
+    forbidden = NEGATING_MODIFIERS | UNPRICED_MATERIALS | {"unknown", "olefin", "未知繊維", "未知纤维"}
+
+    def blocks(item):
+        text = normalize_text(item.text)
+        if (not item.image_variant_key or len(item.image_region) != 4 or declared_part(text)
+                or not re.search(r"(?m)^composition\s*/", text)
+                or any(token in forbidden for token in _tokens(text))
+                or unresolved_material_tokens(_prepare_multilingual_rows(text))
+                or not _covers_row_tokens(_annotation_tokens(item.text), list(item.image_words), tokenise=_annotation_tokens)
+                or len(set(item.image_words)) != len(item.image_words)):
+            return None
+        left, top, right, bottom = item.image_region
+        if any(len(word.vertices) != 4 or not (left - 6 <= word.left and word.right <= right + 6
+               and top - 6 <= word.top and word.bottom <= bottom + 6) for word in item.image_words):
+            return None
+        matches = list(re.finditer(r"(?m)^([1-9]\d?(?:\.\d+)?)\s*%\s*([^/\n]+)\s*/", text))
+        if len(matches) != len(expected) or text.count("%") != len(matches):
+            return None
+        found, primary_words, copy_words = {}, {}, {}
+        for position, match in enumerate(matches):
+            key = find_material_key(match.group(2).strip())
+            if key not in expected or key in found or float(match.group(1)) != expected[key]:
+                return None
+            primary_text = match.group().rstrip("/ ")
+            primary = _row_words(primary_text, item.image_words, tokenise=_annotation_tokens)
+            if not primary or not _physical_row(primary_text, primary, allow_quantisation=True,
+                                                tokenise=_annotation_tokens):
+                return None
+            end = matches[position + 1].start() if position + 1 < len(matches) else len(text)
+            body = text[match.end():end]
+            stop = re.search(r"(?m)^.*(?:[0-9%]|wash|bleach|dry).*$", body)
+            # A short, wide OCR artifact can enclose a separately read wash
+            # number. Locate both boxes before treating that row as footer.
+            artifact_stop = None
+            for artifact in re.finditer(r"(?m)^[a-z]{1,3}$", body):
+                boxes = _row_words(artifact.group(), item.image_words)
+                if boxes and any(word.text in {"30", "40", "50", "60", "70", "95"}
+                                 and any(box.left <= word.left and word.right <= box.right
+                                         and box.top <= word.top and word.bottom <= box.bottom
+                                         and box.right - box.left >= 3 * box.height for box in boxes)
+                                 for word in item.image_words):
+                    artifact_stop = artifact.start()
+                    break
+            body_end = min([len(body), *([stop.start()] if stop else []),
+                            *([artifact_stop] if artifact_stop is not None else [])])
+            body = body[:body_end]
+            body = re.sub(r"(?m)^\s*구성\s*:\s*$", "", body)
+            body = _prepare_multilingual_rows(body)
+            # A wrap can end a Latin name immediately before a complete
+            # Japanese/Korean copy without preserving its slash. Keep script
+            # boundaries rather than joining two different alphabet runs.
+            body = re.sub(r"(?<=[a-z])\s*(?=[\u3040-\u30ff\uac00-\ud7a3])", "/", body)
+            aliases = sorted((a for a, material in ALIAS_TO_MATERIAL.items() if material == key), key=len, reverse=True)
+            names, noise = {normalize_text(match.group(2).strip())}, 0
+            for clause in body.replace("\n", "").split("/"):
+                compact = re.sub(r"\s", "", clause)
+                if not compact:
+                    continue
+                if compact in {"pu", "pa", "pe", "pp", "pes", "pla", "mix", "unk", "ny", "wo", "ela"}:
+                    return None
+                if re.search(r"[0-9%+−±<>≤≥~≈]", compact) or set(
+                        find_material_key(token) for token in _tokens(compact)) - {None, key}:
+                    return None
+                alias = next((a for a in aliases if compact.startswith(a)), None)
+                if alias:
+                    names.add(alias)
+                    tail = compact[len(alias):]
+                else:
+                    prefix = max((length for a in aliases for length in range(4, len(a) + 1)
+                                  if compact.startswith(a[:length])), default=0)
+                    tail = compact[prefix:] if prefix else compact
+                    if not prefix and len(tail) > 3:
+                        return None
+                if tail and (not tail.isascii() or not tail.isalpha() or len(tail) > 3):
+                    return None
+                noise += len(tail)
+            if len(names) < 3 or noise > 6:
+                return None
+            # Locate the original, unjoined body; the semantic check above may
+            # join known wrap fragments, but never changes annotation text.
+            original_body = text[match.start():match.end() + body_end]
+            original_body = re.sub(r"(?m)^\s*구성\s*:\s*$", "", original_body)
+            height = max(word.height for word in primary)
+            limit = max(w.bottom for w in primary) + 2 * height * len(original_body.splitlines())
+            if position + 1 < len(matches):
+                next_primary = _row_words(matches[position + 1].group().rstrip("/ "), item.image_words,
+                                          tokenise=_annotation_tokens)
+                if not next_primary:
+                    return None
+                limit = min(word.top for word in next_primary)
+            pool = tuple(word for word in item.image_words if word.bottom >= min(w.top for w in primary)
+                         and word.center_y < limit)
+            words = _row_words(original_body, pool, tokenise=_annotation_tokens)
+            if not words:
+                return None
+            found[key], primary_words[key], copy_words[key] = expected[key], primary, words
+        core = set(word for words in copy_words.values() for word in words)
+        bottom = max(word.bottom for word in core)
+        height = max(word.height for word in core)
+        first_top = min(word.top for word in core)
+        origin_bottom = -1
+        for line in text.splitlines():
+            if re.fullmatch(r"중국산|한국산|made\s+in\s+[a-z]+", line):
+                origin = _row_words(line, item.image_words, tokenise=_annotation_tokens)
+                if origin and max(word.bottom for word in origin) < first_top:
+                    origin_bottom = max(origin_bottom, max(word.bottom for word in origin))
+        heading_tokens = set(_annotation_tokens("composition zusamme nsetzung composición composição 구성 : /"))
+        extras = [word for word in item.image_words if word not in core and re.search(r"[0-9%]", word.text)]
+        for word in extras:
+            if (word.text not in {"30", "40", "50", "60", "70", "95"} or word.top <= bottom
+                    or word.top - bottom > 3 * height):
+                return None
+            if not any(peer.source == "original" and not peer.layout_used and peer.image_key == item.image_key
+                       and re.search(r"wash\s+with|machine\s+wash|hand\s+wash", normalize_text(peer.text))
+                       and any(other.text == word.text and _overlaps(word, other) for other in peer.image_words)
+                       and any(normalize_text(caption.text) in {"wash", "washing"}
+                               and word.bottom - 2 <= caption.top <= word.bottom + 6 * height
+                               for caption in peer.image_words)
+                       for peer in candidates):
+                return None
+        # Any material-looking words outside the list are still contradictory
+        # evidence. Short cropped header/footer fragments need their own box.
+        for word in item.image_words:
+            if word in core:
+                continue
+            if find_material_key(word.text):
+                return None
+            if word.bottom < first_top and word.top >= origin_bottom:
+                if set(_annotation_tokens(word.text)) - heading_tokens:
+                    return None
+            if word.top > bottom and not re.search(r"[0-9%]", word.text):
+                captions = [w for w in item.image_words if normalize_text(w.text) in {"wash", "washing"}]
+                if captions and word.center_y >= min(w.top for w in captions):
+                    continue
+                wide_artifact = (len(word.text) <= 3 and word.right - word.left >= 3 * word.height
+                                 and any(word.left <= number.left and number.right <= word.right
+                                         and word.top <= number.top and number.bottom <= word.bottom for number in extras))
+                if (word.top - bottom > 3 * height or (len(word.text) > 1 and not wide_artifact)
+                        or not extras or not any(abs(word.center_y - number.center_y) <= 2 * height for number in extras)):
+                    return None
+        return primary_words, copy_words
+
+    source, target = blocks(candidate), blocks(alternative)
+    if not source or not target:
+        return False
+    def covered_copy(word, words):
+        # A provider may omit one foreign copy while reading its other copies.
+        # The source clause must already pass the bounded translation check;
+        # its box must stay inside this fiber's entire repeated block, not the
+        # other fiber or a new row outside the reread.
+        margin = 2
+        return (any(_overlaps(word, other) for other in words)
+                or (min(w.left for w in words) - margin <= word.left
+                    and word.right <= max(w.right for w in words) + margin
+                    and min(w.top for w in words) - margin <= word.top
+                    and word.bottom <= max(w.bottom for w in words) + margin))
+    return all(_aligned_reading(source[0][key], target[0][key])
+               and _aligned_reading(target[0][key], source[0][key])
+               and _numeric_components_align(source[0][key], target[0][key], (), corroborated=False)
+               and all(covered_copy(word, target[1][key]) for word in source[1][key])
+               for key in expected)
+
+
 def same_region_recovery(
     candidate: OcrCandidate, alternative: OcrCandidate, part: str,
     candidates: list[OcrCandidate] | None = None,
@@ -1319,6 +1510,8 @@ def same_region_recovery(
     if _shared_percent_recovery(candidate, alternative, part, target_part):
         return True
     if _repeated_translation_recovery(candidate, alternative, part, target_part, candidates or []):
+        return True
+    if _mixed_translation_recovery(candidate, alternative, part, target_part, candidates or []):
         return True
     if ((_has_unclassified_context(candidate) and not _literal_raw_context(candidate, candidates or []))
             or (_has_unclassified_context(alternative) and not _literal_raw_context(alternative, candidates or []))):
