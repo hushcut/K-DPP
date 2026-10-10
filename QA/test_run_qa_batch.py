@@ -13,7 +13,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from QA.run_qa_batch import (
+from QA.run_qa_batch import (  # noqa: E402 - 저장소 경로를 먼저 설정한다.
     AnswerCase,
     ApiErrorCode,
     ApiResponseTooLargeError,
@@ -23,15 +23,18 @@ from QA.run_qa_batch import (
     QaRunConfig,
     build_multipart_body,
     build_result_row,
+    call_scan_api,
     classify_result,
     csv_safe,
     execute_scan_api,
     parse_api_materials,
     parse_api_response_body,
+    parse_args,
     print_summary,
     read_limited_response,
     truncate_raw_response,
     validate_upload_field,
+    write_results,
 )
 
 
@@ -40,6 +43,127 @@ TEST_CONFIG = QaRunConfig(
     timeout_seconds=1,
     tolerance=3.0,
 )
+
+
+@pytest.mark.parametrize("token_env", ["K_DPP_QA_TOKEN", "CUSTOM_QA_TOKEN"])
+def test_scan_request_uses_env_token_only_in_auth_header(tmp_path, monkeypatch, token_env):
+    image = tmp_path / "label.jpg"
+    image.write_bytes(b"image contents")
+    token = "qa-test-token-not-a-real-credential"
+    monkeypatch.setenv(token_env, token)
+    config = QaRunConfig(token_env=token_env)
+
+    def fake_urlopen(req, timeout):
+        assert req.get_header("Authorization") == f"Bearer {token}"
+        assert token.encode() not in req.data
+        assert token not in req.full_url
+        response = BytesIO(b'{"materials":{"cotton":100}}')
+        response.status = 200
+        return response
+
+    monkeypatch.setattr("QA.run_qa_batch.request.urlopen", fake_urlopen)
+    status, payload, raw, contract_error = call_scan_api(config, image)
+    assert status == 200 and payload["materials"] == {"cotton": 100}
+    assert contract_error == ""
+    assert token not in raw and token not in repr(config)
+
+
+def test_scan_request_without_token_preserves_unauthenticated_api_support(tmp_path, monkeypatch):
+    image = tmp_path / "label.jpg"
+    image.write_bytes(b"image contents")
+    monkeypatch.delenv("K_DPP_QA_TOKEN", raising=False)
+
+    def fake_urlopen(req, timeout):
+        assert req.get_header("Authorization") is None
+        response = BytesIO(b'{"materials":{"cotton":100}}')
+        response.status = 200
+        return response
+
+    monkeypatch.setattr("QA.run_qa_batch.request.urlopen", fake_urlopen)
+    assert call_scan_api(QaRunConfig(), image)[0] == 200
+
+
+def test_token_env_option_accepts_name_without_token_cli_value(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["qa", "--answers", "answers.csv", "--images", "images",
+                                     "--output", "results.csv", "--token-env", "CUSTOM_QA_TOKEN"])
+    assert parse_args().token_env == "CUSTOM_QA_TOKEN"
+
+
+def test_echoed_env_token_is_redacted_from_http_error_and_exception(tmp_path, monkeypatch):
+    from urllib.error import HTTPError
+    import json
+
+    token = "qa-test-token-not-a-real-credential"
+    monkeypatch.setenv("K_DPP_QA_TOKEN", token)
+    image = tmp_path / "label.jpg"
+    image.write_bytes(b"image contents")
+
+    def http_failure(req, timeout):
+        body = json.dumps({"detail": f"echoed Bearer {token}"}).encode()
+        raise HTTPError(req.full_url, 401, "Unauthorized", {}, BytesIO(body))
+
+    monkeypatch.setattr("QA.run_qa_batch.request.urlopen", http_failure)
+    result = execute_scan_api(QaRunConfig(), image)
+    assert result.status_code == 401
+    assert token not in result.raw_response and token not in repr(result.payload)
+    assert "[REDACTED]" in result.raw_response
+
+    def connection_failure(req, timeout):
+        raise RuntimeError(f"echoed Bearer {token}")
+
+    monkeypatch.setattr("QA.run_qa_batch.request.urlopen", connection_failure)
+    result = execute_scan_api(QaRunConfig(), image)
+    assert token not in result.raw_response and token not in result.exception_text
+    assert "[REDACTED]" in result.exception_text
+
+
+@pytest.mark.parametrize("token", ["bad\r\nInjected: header", "bad token"])
+def test_invalid_token_cannot_inject_headers(tmp_path, monkeypatch, token):
+    image = tmp_path / "label.jpg"
+    image.write_bytes(b"image contents")
+    monkeypatch.setenv("K_DPP_QA_TOKEN", token)
+    with pytest.raises(ValueError, match="Bearer 토큰 형식") as captured:
+        call_scan_api(QaRunConfig(), image)
+    assert token not in str(captured.value)
+
+
+@pytest.mark.parametrize("code", ["MATERIAL_EXTRACTION_FAILED", "material_extraction_failed"])
+def test_backend_material_extraction_422_is_an_ocr_or_parser_failure(code):
+    judgment, _, category = classify_result(
+        answer={"cotton": 100}, actual={}, status_code=422,
+        error_message="소재를 추출하지 못했습니다.", tolerance=3.0, api_error_code=code,
+    )
+    assert judgment == QaJudgment.OCR_FAILURE
+    assert category == FailureCategory.OCR_OR_PARSER_FAILURE
+
+
+def test_authenticated_parser_failure_csv_preserves_category_and_hides_token(tmp_path, monkeypatch):
+    import json
+    from urllib.error import HTTPError
+
+    token = "qa-test-token-not-a-real-credential"
+    monkeypatch.setenv("K_DPP_QA_TOKEN", token)
+    image = tmp_path / "label.jpg"
+    image.write_bytes(b"image contents")
+    case = AnswerCase(row={}, case_id="QA001", file_name=image.name,
+                      original_materials={"cotton": 100}, normalized_materials={"cotton": 100},
+                      case_type="일반 라벨", include_in_accuracy=True)
+
+    def fake_urlopen(req, timeout):
+        assert req.get_header("Authorization") == f"Bearer {token}"
+        payload = {"error_code": "MATERIAL_EXTRACTION_FAILED",
+                   "message": f"unconfirmed composition; echoed {token}"}
+        raise HTTPError(req.full_url, 422, "Unprocessable Entity", {},
+                        BytesIO(json.dumps(payload).encode()))
+
+    monkeypatch.setattr("QA.run_qa_batch.request.urlopen", fake_urlopen)
+    row = build_result_row(case, image, QaRunConfig())
+    assert row["judgment"] == QaJudgment.OCR_FAILURE
+    assert row["failure_category"] == FailureCategory.OCR_OR_PARSER_FAILURE
+    assert row["api_error_code"] == "MATERIAL_EXTRACTION_FAILED"
+    output = tmp_path / "qa_result.csv"
+    write_results(output, [row])
+    assert token not in output.read_text(encoding="utf-8-sig")
 
 
 def test_api_materials_use_the_same_parser_aliases() -> None:

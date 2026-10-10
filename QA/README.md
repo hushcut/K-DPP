@@ -2,12 +2,16 @@
 
 의류 라벨 사진을 백엔드 `/api/scan`에 보내고 소재·혼용률 결과를 정답표와 비교하는 도구입니다.
 
-## 현재 실행 제한
+## 백엔드 인증
 
 현재 백엔드의 `/api/scan`은 `Authorization: Bearer <token>` 인증이 필수입니다.
-이 도구에는 인증 헤더를 전달하는 옵션이 없어 현재 백엔드에 그대로 실행하면 401을
-`서버/API 실패`로 기록합니다. 현재 백엔드의 정상 통합 평가에는 인증 헤더 지원이 먼저
-필요합니다. 아래 명령은 도구의 입력·옵션 사용법을 설명합니다. 인증 지원은 별도 후속 작업입니다.
+로그인 API에서 발급받은 토큰을 환경변수 `K_DPP_QA_TOKEN`에 설정하면 이 도구가
+요청의 인증 헤더에만 전달합니다. 토큰은 명령행 인수나 이미지 업로드 본문에 넣지 않습니다.
+응답이나 예외에 같은 토큰이 포함되어도 결과 CSV에 저장하기 전에 가립니다.
+
+환경변수 이름을 바꾸려면 `--token-env CUSTOM_QA_TOKEN`을 사용합니다. 토큰이 없으면
+인증 헤더를 생략하므로 인증이 필요 없는 다른 API도 기존대로 검사할 수 있습니다.
+현재 K-DPP 백엔드에 토큰 없이 호출한 401은 `서버/API 실패`로 기록됩니다.
 
 OCR·파서 규칙을 지금 검사할 때는 [AI README](../AI/kdpp_ai_ocr_integrated/README.md)의
 저장 캐시 기반 단위 QA를 사용합니다. 백엔드 설정·인증 요구사항은
@@ -106,14 +110,14 @@ QA002,QA002.jpg,cotton,100,일반 라벨,TRUE,,,바닥에 두고,실내 조명,�
 
 ## 일반 라벨과 복합 라벨 기준
 
-정확도 비교 대상의 혼용률 합계는 AI 파서의 확정 기준인 `100±0.01%p`를 따릅니다.
+정확도 비교 대상의 혼용률 합계는 AI 파서의 확정 기준인 정확히 `100%`를 따릅니다.
 개별 소재 비율의 비교 허용 오차 `±5%p`와 조성 합계 기준은 서로 다른 검사입니다.
 
 정답표는 아래 기준으로 나눕니다.
 
 ```text
 일반 라벨:
-- 소재·혼용률 합계가 100%이며 합계 오차는 0.01%p 이하
+- 소재·혼용률 합계가 정확히 100%
 - 기준 밖의 합계는 100%로 보정하지 않고 정답지 오류로 처리
 
 복합/부위별 라벨:
@@ -142,14 +146,19 @@ QA008,QA008.jpg,polyester;acrylic,100;60,복합/부위별 라벨,TRUE,polyester,
 
 **Windows PowerShell, 저장소 루트** 기준입니다. Python은 AI README의 개발 환경
 설치로 준비한 가상환경을 사용합니다. 예시 데이터셋 폴더는 직접 준비하고 `$dataset`을
-실제 경로에 맞게 바꿉니다. 백엔드 준비는 위 링크를 따르며 현재 인증 제한을 먼저 확인합니다.
+실제 경로에 맞게 바꿉니다. 백엔드 준비는 위 링크를 따릅니다. 토큰은 로그인으로
+발급받은 값을 환경변수에 설정합니다. PowerShell 기록에 토큰 원문을 남기지 않으려면
+아래처럼 숨겨서 입력할 수 있습니다.
 
 ```powershell
 $dataset = ".\QA_DATASET"
+$qaSecureToken = Read-Host "로그인 API에서 발급받은 토큰" -AsSecureString
+$env:K_DPP_QA_TOKEN = [System.Net.NetworkCredential]::new('', $qaSecureToken).Password
 .\AI\kdpp_ai_ocr_integrated\.venv\Scripts\python.exe .\QA\run_qa_batch.py `
   --answers "$dataset\answer_key.csv" `
   --images "$dataset\images" `
   --output "$dataset\results\qa_result.csv"
+Remove-Item Env:K_DPP_QA_TOKEN
 ```
 
 기본 요청 주소는 `http://127.0.0.1:8000/api/scan`, 업로드 필드는 `image`입니다.
@@ -160,12 +169,17 @@ $dataset = ".\QA_DATASET"
 
 | 옵션 | 기본값 | 역할 |
 | --- | --- | --- |
+| `--token-env` | `K_DPP_QA_TOKEN` | Bearer 토큰을 읽을 환경변수 이름 |
 | `--timeout` | `60` | 요청 제한 시간(초) |
 | `--tolerance` | `5.0` | 소재별 혼용률 비교 허용 오차(%p) |
 | `--max-image-bytes` | `10485760` | 이미지 업로드 크기 상한 |
 | `--max-response-bytes` | `1048576` | 응답 읽기 크기 상한 |
 | `--max-raw-response-chars` | `4000` | CSV에 남길 응답 미리보기 길이 |
 | `--sleep` | `0.0` | 요청 사이의 대기 시간(초) |
+
+백엔드가 HTTP 422와 `MATERIAL_EXTRACTION_FAILED`를 반환하면 소재 추출 실패로
+분류합니다(`OCR 실패`, `ocr_or_parser_failure`). 인증 실패(401), 서버 오류 등은
+`서버/API 실패`로 남기며 이미지 인식 실패와 구분합니다.
 
 `--max-response-bytes`는 네트워크에서 읽을 수 있는 응답 자체의 상한이고,
 `--max-raw-response-chars`는 결과 CSV에 남길 응답 미리보기의 상한입니다. 후자가
@@ -189,8 +203,9 @@ OCR 실패: 성공 응답에 소재가 없거나 알려진 조성 실패 코드�
 소재 누락과 추가가 함께 있으면 `material_missing_and_extra`, 혼용률만
 다르면 `ratio_mismatch`, 서버 요청 문제는 `server_or_api_failure`로 기록합니다.
 응답의 숫자 문자열·불리언·NaN·무한대·범위 밖 비율은 `api_contract_invalid`로 기록합니다.
-현재 백엔드가 조성 충돌을 502로 반환하는 경우에는 `서버/API 실패`로 판정합니다.
-422 구분은 백엔드 담당 브랜치의 후속 수정입니다.
+백엔드의 HTTP 422 소재 추출 실패는 `ocr_or_parser_failure`로 분류하고,
+그 밖의 5xx 오류는 `서버/API 실패`로 판정합니다. 이 분류는 OCR 글자 인식과
+파서 해석 중 어느 단계에서 실패했는지를 단독으로 판별하지는 않습니다.
 
 허용 오차를 바꾸려면 실행 명령에 `--tolerance 3`처럼 추가합니다.
 

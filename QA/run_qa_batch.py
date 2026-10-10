@@ -11,6 +11,8 @@ import argparse
 import csv
 import json
 import mimetypes
+import os
+import re
 import sys
 import time
 import traceback
@@ -28,19 +30,20 @@ if str(AI_ROOT) not in sys.path:
     # QA는 AI 정답지 계약을 재사용하되, API 호출 책임은 이 파일에 남긴다.
     sys.path.insert(0, str(AI_ROOT))
 
-from apps.text.qa_comparison import (
+from apps.text.qa_comparison import (  # noqa: E402 - 저장소 AI 경로를 먼저 설정한다.
     QaComparisonError,
     compare_material_compositions,
     normalize_material_mapping,
     validate_tolerance,
 )
-from apps.text.qa_dataset import load_qa_answer_key
+from apps.text.qa_dataset import load_qa_answer_key  # noqa: E402 - 위 경로 설정 이후 import한다.
 
 
 DEFAULT_API_URL = "http://127.0.0.1:8000/api/scan"
 DEFAULT_TIMEOUT_SECONDS = 60
 DEFAULT_TOLERANCE = 5.0
 DEFAULT_UPLOAD_FIELD = "image"
+DEFAULT_TOKEN_ENV = "K_DPP_QA_TOKEN"
 DEFAULT_MAX_IMAGE_BYTES = 10 * 1024 * 1024
 DEFAULT_MAX_RESPONSE_BYTES = 1 * 1024 * 1024
 DEFAULT_MAX_RAW_RESPONSE_CHARS = 4_000
@@ -76,6 +79,7 @@ class ApiErrorCode(StrEnum):
     OCR_TEXT_EMPTY = "ocr_text_empty"
     COMPOSITION_NOT_FOUND = "composition_not_found"
     AMBIGUOUS_COMPOSITION = "ambiguous_composition"
+    MATERIAL_EXTRACTION_FAILED = "material_extraction_failed"
     INVALID_REQUEST = "invalid_request"
 
 
@@ -84,6 +88,7 @@ OCR_OR_PARSER_422_CODES = frozenset(
         ApiErrorCode.OCR_TEXT_EMPTY,
         ApiErrorCode.COMPOSITION_NOT_FOUND,
         ApiErrorCode.AMBIGUOUS_COMPOSITION,
+        ApiErrorCode.MATERIAL_EXTRACTION_FAILED,
     }
 )
 
@@ -116,6 +121,7 @@ class QaRunConfig:
     max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES
     max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES
     max_raw_response_chars: int = DEFAULT_MAX_RAW_RESPONSE_CHARS
+    token_env: str = DEFAULT_TOKEN_ENV
 
     def __post_init__(self) -> None:
         normalized_api_url = self.api_url.strip()
@@ -132,6 +138,8 @@ class QaRunConfig:
             raise ValueError("이미지와 응답 크기 제한은 0보다 커야 합니다.")
         object.__setattr__(self, "api_url", normalized_api_url)
         object.__setattr__(self, "upload_field", validate_upload_field(self.upload_field))
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.token_env):
+            raise ValueError("토큰 환경변수 이름이 올바르지 않습니다.")
 
 
 @dataclass
@@ -202,6 +210,11 @@ def parse_args() -> argparse.Namespace:
         "--upload-field",
         default=DEFAULT_UPLOAD_FIELD,
         help=f"Multipart upload field name. Default: {DEFAULT_UPLOAD_FIELD}",
+    )
+    parser.add_argument(
+        "--token-env",
+        default=DEFAULT_TOKEN_ENV,
+        help=f"Environment variable containing the Bearer token. Default: {DEFAULT_TOKEN_ENV}",
     )
     parser.add_argument(
         "--timeout",
@@ -361,27 +374,40 @@ def call_scan_api(
     image_path: Path,
 ) -> tuple[int, dict[str, Any], str, str]:
     body, content_type = build_multipart_body(image_path, config)
+    headers = {
+        "Content-Type": content_type,
+        "ngrok-skip-browser-warning": "true",
+    }
+    token = os.environ.get(config.token_env, "").strip()
+    if token:
+        if any(character.isspace() or ord(character) < 32 or ord(character) > 126
+               for character in token):
+            raise ValueError("Bearer 토큰 형식이 올바르지 않습니다.")
+        headers["Authorization"] = f"Bearer {token}"
     req = request.Request(
         config.api_url,
         data=body,
         method="POST",
-        headers={
-            "Content-Type": content_type,
-            "ngrok-skip-browser-warning": "true",
-        },
+        headers=headers,
     )
 
     try:
         with request.urlopen(req, timeout=config.timeout_seconds) as response:
-            raw = read_limited_response(response, config.max_response_bytes)
+            raw = redact_token(read_limited_response(response, config.max_response_bytes), config)
             payload, contract_error = parse_api_response_body(raw)
             return response.status, payload, raw, contract_error
     except error.HTTPError as exc:
-        raw = read_limited_response(exc, config.max_response_bytes)
+        raw = redact_token(read_limited_response(exc, config.max_response_bytes), config)
         payload, _ = parse_api_response_body(raw)
         if not payload:
             payload = {"status": "error", "message": raw}
         return exc.code, payload, raw, ""
+
+
+def redact_token(text: str, config: QaRunConfig) -> str:
+    """Keep credentials out of retained responses and exception diagnostics."""
+    token = os.environ.get(config.token_env, "").strip()
+    return text.replace(token, "[REDACTED]") if token else text
 
 
 def execute_scan_api(
@@ -408,23 +434,23 @@ def execute_scan_api(
         )
     except QaInputTooLargeError as exc:
         return ApiCallResult(
-            exception_text=str(exc),
+            exception_text=redact_token(str(exc), config),
             execution_failure_category=FailureCategory.QA_INPUT_TOO_LARGE,
         )
     except ApiResponseTooLargeError as exc:
         return ApiCallResult(
-            exception_text=str(exc),
+            exception_text=redact_token(str(exc), config),
             execution_failure_category=FailureCategory.API_RESPONSE_TOO_LARGE,
         )
     except Exception as exc:  # noqa: BLE001 - QA output should record all failures.
         raw_response, raw_response_truncated = truncate_raw_response(
-            traceback.format_exc(limit=2),
+            redact_token(traceback.format_exc(limit=2), config),
             config.max_raw_response_chars,
         )
         return ApiCallResult(
             raw_response=raw_response,
             raw_response_truncated=raw_response_truncated,
-            exception_text=f"{type(exc).__name__}: {exc}",
+            exception_text=redact_token(f"{type(exc).__name__}: {exc}", config),
         )
 
 
@@ -463,13 +489,13 @@ def classify_result(
 
     if status_code < 200 or status_code >= 300:
         if status_code == 422:
-            if api_error_code in OCR_OR_PARSER_422_CODES:
+            if api_error_code.casefold() in OCR_OR_PARSER_422_CODES:
                 return (
                     QaJudgment.OCR_FAILURE,
                     "AI 인식 실패 또는 소재/혼용률 추출 실패",
                     FailureCategory.OCR_OR_PARSER_FAILURE,
                 )
-            if api_error_code == ApiErrorCode.INVALID_REQUEST:
+            if api_error_code.casefold() == ApiErrorCode.INVALID_REQUEST:
                 return (
                     QaJudgment.API_FAILURE,
                     "HTTP 422: invalid_request",
@@ -692,6 +718,7 @@ def main() -> int:
         max_image_bytes=args.max_image_bytes,
         max_response_bytes=args.max_response_bytes,
         max_raw_response_chars=args.max_raw_response_chars,
+        token_env=args.token_env,
     )
 
     cases = read_answer_cases(answers_path)

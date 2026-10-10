@@ -373,10 +373,12 @@ app.*.symbols
 .gclient_previous_sync_commits
 
 BACKEND/k_dpp.db
+BACKEND/.pytest_k_dpp.db
 BACKEND/*.db-journal
 BACKEND/*.db-wal
 BACKEND/*.db-shm
 BACKEND/__pycache__/
+**/key.json
 venv/
 
 # Local QA image datasets and generated comparison artifacts
@@ -398,4 +400,15 @@ QA_DATASET/
 # 로컬 작업 지침과 인계 문서는 GitHub에 올리지 않음
 /AGENTS.md
 /CLAUDE.md
-/docs/
+/docs/*
+!/docs/SCAN_API_CONTRACT.md
+!/docs/AI_DEVELOP_INTEGRATION_PLAN.md
+
+# 폐기한 심볼 실험과 기계 로컬 작업 사본
+/AI/kdpp_ai_ocr_integrated/apps/symbol/
+/AI/kdpp_ai_ocr_integrated/models/
+/AI/kdpp_ai_ocr_integrated/requirements-symbol.*
+/AI/kdpp_ai_ocr_integrated/scripts/audit_symbol_dataset.py
+/AI/kdpp_ai_ocr_integrated/scripts/check_split_leakage.py
+/AI/kdpp_ai_ocr_integrated/tests/test_symbol_*.py
+**/.claude/worktrees/
