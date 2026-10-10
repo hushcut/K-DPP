@@ -8,6 +8,9 @@ google-cloud-vision은 run_ocr가 스캔할 때에야 불러옵니다. 그때 im
 키가 없을 때와 같은 502(OCR_FAILED)로 삼키므로, 서버에서 설치가 깨져도 평소처럼 보입니다.
 그래서 여기서 미리 불러 봅니다(키는 필요 없습니다).
 
+Pillow는 AI 모듈의 어느 파일이 불러오는지가 판마다 달라(06-04 판은 ocr_text가 없으면 조용히
+건너뛰고, 그 뒤 판은 ocr_image가 반드시 불러옴) AI 모듈 안을 들여다보지 않고 직접 불러 봅니다.
+
 BACKEND/requirements.txt만 설치된 상태(배포 런타임과 같은 조건)에서 돌려야 의미가 있습니다.
 """
 
@@ -24,15 +27,14 @@ def main() -> int:
     if backend_main.parse_label is None:
         problems.append("apps.text.parse_label.parse_label import 실패 - 소재 파싱이 전부 503이 됩니다")
 
-    if not problems:
-        # main.py가 sys.path에 AI 경로를 넣은 뒤에야 직접 import할 수 있습니다.
-        from apps.text import ocr_text
-
-        if getattr(ocr_text, "Image", None) is None:
-            problems.append(
-                "Pillow 미설치 - preprocess_image_bytes가 None을 반환해 OCR 전처리 후보가 "
-                "조용히 비활성화됩니다(스캔당 Vision 호출이 2회에서 1회로 줄어 인식률이 달라짐)"
-            )
+    try:
+        # 06-04 판 ocr_text가 쓰는 세 모듈입니다.
+        from PIL import Image, ImageFilter, ImageOps  # noqa: F401, PLC0415
+    except Exception as exc:  # noqa: BLE001
+        problems.append(
+            f"Pillow import 실패({exc!r}) - OCR 전처리 후보가 조용히 꺼지거나"
+            "(스캔당 Vision 호출이 2회에서 1회로 줄어 인식률이 달라짐) run_ocr import가 실패합니다"
+        )
 
     try:
         # protobuf·grpcio 버전이 맞지 않으면 ImportError가 아닌 TypeError 등으로 실패합니다.
