@@ -64,9 +64,11 @@ def test_final_rejection_triggers_basic_recovery(monkeypatch, original, restored
     analysis = analyze_ocr_result(result)
 
     if original.text.startswith("OUTER"):
-        assert calls == [b"original"]
-        assert_selected_part(analysis, "lining", {"cotton": 100}, unconfirmed="outer")
-        assert "outer" in analysis["ocr"]["rejected_composition_parts"]
+        # IN keeps one basic reread when only the lower part is complete.
+        assert calls == [b"original", b"basic"]
+        assert_selected_part(analysis, "outer", {"polyester": 100})
+        assert analysis["parts"]["lining"] == {"cotton": 100}
+        assert analysis["ocr"]["rejected_composition_parts"] == {}
         return
     assert calls == [b"original", b"basic"]
     assert analysis["status"] == "success"

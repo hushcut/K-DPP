@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from apps.text.composition_candidates import equivalent_composition
-from apps.text.material_extraction import PART_PATTERNS, _material_evidence, normalize_text
+from apps.text.material_extraction import PART_PATTERNS, _material_evidence, extract_materials, normalize_text
 from apps.text.rules import EQUIVALENT_MATERIALS
 from apps.text.ocr_layout import OcrWord, _horizontal_rows, _projected_height
 
@@ -44,7 +44,8 @@ def agreed_original_composition(candidates: list[OcrCandidate]) -> bool:
 
     originals = [candidate for candidate in candidates if candidate.source == "original"]
     for raw in originals:
-        translation_warnings = {"registered_translation_alternatives", "damaged_translation_fragment"}
+        translation_warnings = {"registered_translation_alternatives", "damaged_translation_fragment",
+                                "multilingual_translation_rows", "unread_translation_rows"}
         if (raw.layout_used or raw.parser_status != "success"
                 or set(raw.parser_warnings) - translation_warnings):
             continue
@@ -191,7 +192,8 @@ def _has_explicit_complete_pairs(
 
     warnings = set(candidate.parser_warnings)
     if allow_translation_warnings:
-        warnings -= {"registered_translation_alternatives", "damaged_translation_fragment"}
+        warnings -= {"registered_translation_alternatives", "damaged_translation_fragment",
+                     "multilingual_translation_rows", "unread_translation_rows"}
     if (
         candidate.parser_status != "success" or warnings
         or candidate.conflicting_parts or candidate.unpaired_ratio_parts
@@ -488,12 +490,29 @@ def find_rejected_composition_parts(
                         materials_resolved = _can_resolve_duplicate_material_rows(
                             candidate, part, required_materials, required_ratios, available_pairs,
                         )
+                    from apps.text.parse_label import PART_PRIORITY
+
+                    new_material_parts = {
+                        key for key in valid_parts
+                        if any(EQUIVALENT_MATERIALS.get(material, material) not in required_materials
+                               for material in alternative.observed_materials.get(key, []))
+                    }
+                    lower_parts_only = (
+                        selected_part != "generic" and selected_part in PART_PRIORITY
+                        and selected_part in alternative.parts
+                        and set(equivalent_composition(alternative.parts[selected_part])) <= required_pairs
+                        and new_material_parts <= set(PART_PRIORITY[PART_PRIORITY.index(selected_part) + 1:])
+                    )
                     if (
                         (
                             required_materials or required_ratios
                             or (empty_layout_marker and available_pairs)
                         )
                         and materials_resolved
+                        and (empty_layout_marker or (
+                            (available_materials.keys() <= required_materials.keys() or lower_parts_only)
+                            and sum(required_ratios.values()) <= sum(required_materials.values())
+                        ))
                         and available_ratios >= required_ratios
                         and required_pairs <= available_pairs
                     ):
@@ -619,3 +638,27 @@ def build_candidate(
         },
         parser_warnings=tuple(parser_warnings),
     )
+
+
+def rotated_layout_has_same_tokens(text: str, layout_text: str, words: tuple[OcrWord, ...]) -> bool:
+    """Vertical word baselines cannot validate a horizontal row reconstruction."""
+
+    token_pattern = r"[^\W\d_]+|\d+|[^\w\s]"
+    tokens = Counter(re.findall(token_pattern, normalize_text(text)))
+    if (
+        tokens != Counter(re.findall(token_pattern, normalize_text(layout_text)))
+        or tokens != Counter(re.findall(token_pattern, normalize_text(" ".join(word.text for word in words))))
+    ):
+        return False
+    anchors = [word for word in words if len(word.vertices) == 4
+               and (extract_materials(word.text) or "%" in word.text)]
+    if (
+        len(anchors) < 2 or not any(extract_materials(word.text) for word in anchors)
+        or not any("%" in word.text for word in anchors)
+    ):
+        return False
+    vertical = sum(
+        abs(word.vertices[1][1] - word.vertices[0][1]) > 1.7 * abs(word.vertices[1][0] - word.vertices[0][0])
+        for word in anchors
+    )
+    return vertical / len(anchors) >= 0.8

@@ -228,6 +228,10 @@ def prepare_translation_alternatives(text: str) -> TranslationAlternatives:
         names = list(_NAME.finditer(body))
         aliases = {match.group() for match in names}
         if len(aliases) < 2:
+            from apps.text.multilingual_rows import is_unverified_translation_row
+
+            if is_unverified_translation_row(body):
+                rejected.add(cursor)
             cursor = end
             continue
         # Multiple explicit declarations on one printed row belong to the
@@ -288,7 +292,14 @@ def prepare_translation_alternatives(text: str) -> TranslationAlternatives:
                 and not body[fragment.end():].strip(" /\t\n")
                 and re.search(r"/\s*$", body[:fragment.start()]) is not None
             )
-            if not registered_prefix and not bounded_noise and not terminal_glyph:
+            # Preserve the old unread-marker case, but never accept arbitrary
+            # trailing words such as ABC or a longer unregistered fiber name.
+            unread_marker = (
+                len(aliases) >= 2 and re.fullmatch(r"x{2,3}", word) is not None
+                and re.search(r"/\s*$", body[:fragment.start()]) is not None
+                and not body[fragment.end():].strip(" /\t\n")
+            )
+            if not registered_prefix and not bounded_noise and not terminal_glyph and not unread_marker:
                 valid = False
                 break
         # Unknown punctuation is evidence too; allow only list delimiters and

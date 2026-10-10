@@ -376,6 +376,11 @@ def _adjacent_line_candidates(infos: list[LineInfo]) -> list[CompositionCandidat
             neighbor = infos[next_position]
             if neighbor.part != info.part or neighbor.materials:
                 break
+            from apps.text.parse_label import COMPOSITION_HINTS
+
+            if (not neighbor.numbers and _TOKEN_PATTERN.search(neighbor.normalized)
+                    and neighbor.normalized.rstrip(" :") not in COMPOSITION_HINTS):
+                break
             candidate = _pair_values(
                 info.part,
                 info.materials,
@@ -471,6 +476,9 @@ def _has_translation_context(info: LineInfo) -> bool:
         "/" in info.normalized or "-" in info.normalized
         or sum(find_material_key(token) is not None
                for token in _TOKEN_PATTERN.findall(info.normalized)) >= 2
+        or any(find_material_key(token) is not None
+               and re.search(r"[Ѐ-ԯ぀-ヿ㐀-鿿가-힯]", token)
+               for token in _TOKEN_PATTERN.findall(info.normalized))
     )
 
 
@@ -540,7 +548,7 @@ def _translated_component(infos: list[LineInfo], position: int, part: str):
     material = primary.materials[0]
     alias_infos = [primary]
     translated = False
-    context = _has_translation_context(primary)
+    context = _has_translation_context(primary) or _has_registered_translation_run(infos, position, primary)
     separator = "/" in primary.normalized or "-" in primary.normalized
 
     def take_alias_rows():
@@ -653,3 +661,51 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
     ):
         candidates.extend(collector(infos))
     return candidates
+
+
+def _has_registered_translation_run(infos: list[LineInfo], position: int, primary: LineInfo) -> bool:
+    """Require a composition heading and two distinct, complete translations."""
+    from apps.text.parse_label import COMPOSITION_HINTS, _CARE_PHRASES, _contains_only_known_phrases, _mentions_care
+
+    headed = primary.marker_part == primary.part
+    for preceding in reversed(infos[:position]):
+        if preceding.part != primary.part or preceding.is_metadata or preceding.invalid_evidence or preceding.unresolved_materials:
+            break
+        if preceding.marker_part is not None:
+            headed = preceding.marker_part == primary.part and preceding.is_standalone_marker
+            break
+        if (not preceding.materials and not preceding.numbers
+                and preceding.normalized.rstrip(" :") in COMPOSITION_HINTS):
+            headed = True
+            break
+    if not headed:
+        return False
+    material = primary.materials[0]
+    primary_aliases = {token for token in _TOKEN_PATTERN.findall(primary.normalized)
+                       if find_material_key(token) == material}
+    aliases = set()
+    cursor = infos.index(primary) + 1
+    last_index = primary.index
+    while cursor < len(infos):
+        row = infos[cursor]
+        alias = row.normalized.strip(" /-")
+        if (row.index != last_index + 1 or row.part != primary.part
+                or row.materials != (material,) or row.numbers or "%" in row.normalized
+                or row.invalid_evidence or row.unresolved_materials or row.is_metadata
+                or row.marker_part is not None or find_material_key(alias) != material):
+            break
+        if alias not in primary_aliases:
+            aliases.add(alias)
+        last_index = row.index
+        cursor += 1
+    if cursor < len(infos):
+        following = infos[cursor]
+        if (following.part == primary.part and not following.marker_part
+                and not following.is_metadata and not following.materials and not following.numbers
+                and _TOKEN_PATTERN.search(following.normalized)):
+            # An unregistered name cannot end a translated material column.
+            # Only a fully recognized care instruction is a confirmed boundary.
+            if not (_mentions_care(following.normalized)
+                    and _contains_only_known_phrases(following.normalized, set(_CARE_PHRASES))):
+                return False
+    return len(aliases) >= 2

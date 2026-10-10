@@ -9,7 +9,7 @@ import re
 from statistics import median
 from typing import TYPE_CHECKING
 
-from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageChops, ImageFilter, ImageOps, ImageStat, UnidentifiedImageError
 
 from apps.text.material_extraction import declared_part, extract_materials, normalize_text, unresolved_material_tokens
 from apps.text.ocr_errors import ImageTooLargeError, InvalidImageError
@@ -29,6 +29,7 @@ class RegionImage:
     source: str
     transform: tuple[float, ...]
     region: tuple[float, ...]
+    enhancement: str = "standard"
 
 
 def _word_geometry(word: OcrWord) -> tuple[float, float] | None:
@@ -54,7 +55,7 @@ def _word_geometry(word: OcrWord) -> tuple[float, float] | None:
 def _supported_geometry(words: list[OcrWord]) -> tuple[float, float] | None:
     unique = []
     for word in sorted(words, key=lambda item: (item.left, item.top, item.right, item.bottom, item.text)):
-        # Different OCR spellings of one physical box supply one observation.
+        # OCR aliases at one physical location are one observation.
         if any(word.page == other.page
                and abs(word.center_x - other.center_x) < 0.4 * min(word.right - word.left, other.right - other.left)
                and abs(word.center_y - other.center_y) < 0.4 * min(word.height, other.height)
@@ -121,6 +122,36 @@ def _fallback_material_region(
     return left, top, right, bottom
 
 
+def _composition_header_region(words, width, height):
+    """소재명이 누락돼도 가까운 조성·혼용 제목으로 표 위치만 제안한다."""
+    composition = [word for word in words if normalize_text(word.text).strip(":()") == "조성"]
+    blending = [word for word in words if normalize_text(word.text).strip(":()") in {"혼용", "혼용률"}]
+    pairs = [(first, second) for first in composition for second in blending
+             if abs(first.center_y - second.center_y) <= max(first.height, second.height)
+             and 0 < second.center_x - first.center_x <= 12 * max(first.height, second.height)]
+    if not pairs:
+        return None
+    headers = list(dict.fromkeys(word for pair in pairs for word in pair))
+    font_height = median(word.height for word in headers)
+    if max(word.center_y for word in headers) - min(word.center_y for word in headers) > 2 * font_height:
+        return None
+    row = [word for word in words if abs(word.center_y - median(w.center_y for w in headers)) <= font_height
+           and min(w.left for w in headers) - 6 * font_height <= word.center_x
+           <= max(w.right for w in headers) + 3 * font_height]
+    left = max(0, math.floor(min(word.left for word in row) - 3 * font_height))
+    right = min(width, math.ceil(max(word.right for word in row) + 2 * font_height))
+    top = max(0, math.floor(min(word.top for word in headers) - font_height))
+    bottom = min(height, math.ceil(max(word.bottom for word in headers) + 5 * font_height))
+    context = [word for word in words if top <= word.center_y <= bottom
+               and left - font_height <= word.center_x <= right + font_height]
+    if context:
+        left = max(0, math.floor(min(left, min(word.left for word in context) - font_height)))
+        right = min(width, math.ceil(max(right, max(word.right for word in context) + font_height)))
+    if right - left < 128 or bottom - top < 32 or (right - left) * (bottom - top) >= width * height * 0.85:
+        return None
+    return left, top, right, bottom
+
+
 def material_region_options(
     candidates: list[OcrCandidate], box: tuple[int, int, int, int],
 ) -> tuple[float | None, float]:
@@ -132,12 +163,233 @@ def material_region_options(
                  and left <= word.left < word.right <= right and top <= word.top < word.bottom <= bottom
                  and extract_materials(word.text)))
     geometry = _supported_geometry(words)
+    if geometry is None:
+        context = list(dict.fromkeys(word for candidate in candidates
+                       if candidate.image_key and candidate.image_variant_key and len(candidate.image_region) == 4
+                       for word in candidate.image_words if word.page == 0
+                       and left <= word.left < word.right <= right and top <= word.top < word.bottom <= bottom
+                       and sum(character.isalpha() for character in word.text) >= 2))
+        geometry = _supported_geometry(context)
+        if not words:
+            words = context
     heights = [value[1] if (value := _word_geometry(word)) is not None else word.height for word in words]
     font_height = median(heights) if heights else None
-    # 5도 미만의 미세 기울기는 기존 -3도 재인식 후보를 유지한다.
-    # 뚜렷한 기울기에만 관측 방향을 적용하며 글자 확대는 그대로 사용한다.
+    # 근거 없는 방향과 거의 수평인 글자는 기존 작은 회전 후보를 유지한다.
     angle = geometry[0] if geometry is not None and abs(geometry[0]) >= 5 else -3.0
     return font_height, angle
+
+
+def find_material_region(candidates: list[OcrCandidate], width: int, height: int) -> tuple[int, int, int, int] | None:
+    """Locate observed material/unknown percentage rows in original geometry."""
+
+    # Cropping a thumbnail does not restore its missing source pixels.
+    if max(width, height) < 512:
+        return None
+    seen = set()
+    words = []
+    for candidate in candidates:
+        if not candidate.image_key or not candidate.image_variant_key or len(candidate.image_region) != 4:
+            continue
+        for word in candidate.image_words:
+            key = (word.text, word.left, word.top, word.right, word.bottom, word.page)
+            if key in seen or word.page != 0 or not (0 <= word.left < word.right <= width and 0 <= word.top < word.bottom <= height):
+                continue
+            seen.add(key)
+            words.append(word)
+    if not words:
+        return None
+    geometry = _supported_geometry([word for word in words if extract_materials(word.text)])
+    if geometry is not None and 60 <= abs(geometry[0]) <= 120:
+        return _fallback_material_region(words, width, height)
+    care_headers = {'shrinkage', '수축률', '수축율'}
+    percentages = [word for word in words if '%' in normalize_text(word.text) and not any(
+        normalize_text(other.text).strip(':') in care_headers
+        and abs(word.center_y - other.center_y) <= max(word.height, other.height)
+        for other in words
+    )]
+    header_region = _composition_header_region(words, width, height)
+    if header_region is not None and all(
+        header_region[0] <= word.left < word.right <= header_region[2]
+        and header_region[1] <= word.top < word.bottom <= header_region[3]
+        for word in percentages
+    ):
+        return header_region
+    anchors = [word for word in words if extract_materials(word.text) or declared_part(word.text)
+               or unresolved_material_tokens(word.text)
+               or normalize_text(word.text).strip(':()') in {'composition', 'content', '혼용률', '혼용', '소재', '섬유'}]
+    # An unreadable name alone has no composition evidence. Use its observed
+    # neighbouring percentage to locate the row without accepting the name.
+    for ratio in percentages:
+        row = [word for word in words if abs(word.center_y-ratio.center_y) <= max(word.height, ratio.height)
+               and abs(word.center_x-ratio.center_x) <= 30 * max(word.height, ratio.height)]
+        names = [word for word in row if sum(character.isalpha() for character in word.text) >= 2]
+        # Unknown rows are allowed as crop locations, never as valid fibers.
+        anchors.extend(names)
+    if not percentages or not anchors:
+        return _fallback_material_region(words, width, height)
+    font_height = float(median(word.height for word in anchors + percentages))
+    nearby_percentages = [word for word in percentages if any(
+        abs(word.center_y - anchor.center_y) <= 6 * max(font_height, anchor.height, word.height)
+        for anchor in anchors
+    )]
+    anchors = [word for word in anchors if any(
+        abs(word.center_y - ratio.center_y) <= 6 * max(font_height, word.height, ratio.height)
+        for ratio in nearby_percentages
+    )]
+    if not nearby_percentages or not anchors:
+        return _fallback_material_region(words, width, height)
+    top = min(word.top for word in anchors + nearby_percentages) - 2.5 * font_height
+    bottom = max(word.bottom for word in anchors + nearby_percentages) + 2.5 * font_height
+    # Keep complete neighbouring rows, including separate numbers and part names.
+    context = [word for word in words if top <= word.center_y <= bottom]
+    left = max(0, math.floor(min(word.left for word in context) - 2 * font_height))
+    right = min(width, math.ceil(max(word.right for word in context) + 2 * font_height))
+    top, bottom = max(0, math.floor(top)), min(height, math.ceil(bottom))
+    if right - left < 128 or bottom - top < 32 or (right-left) * (bottom-top) >= width * height * 0.85:
+        return _fallback_material_region(words, width, height)
+    return left, top, right, bottom
+
+
+def _local_contrast(crop):
+    """천 무늬와 완만한 조명 변화를 완화하고 남은 글자 대비를 넓힌다."""
+    smooth = crop.filter(ImageFilter.MedianFilter(3))
+    background = smooth.filter(ImageFilter.GaussianBlur(max(8, min(64, min(crop.size) / 6))))
+    corrected = ImageChops.subtract(smooth, background, offset=128)
+    return corrected.point([max(0, min(255, 240 + 4 * (value - 128))) for value in range(256)])
+
+
+
+def _mild_local_contrast(crop, *, denoise=False):
+    """Flatten lighting after enlargement, retaining fine printed strokes."""
+    gray = crop.convert('L')
+    if denoise:
+        # Blend rather than replace: a one-pixel stroke survives the median.
+        gray = Image.blend(gray, gray.filter(ImageFilter.MedianFilter(3)), 0.30)
+    background = gray.filter(ImageFilter.GaussianBlur(max(12, min(96, min(gray.size) / 8))))
+    flattened = ImageChops.subtract(gray, background, offset=128).point(
+        [max(0, min(255, round(232 + 1.6 * (value - 128)))) for value in range(256)]
+    )
+    return Image.blend(gray, flattened, 0.65)
+
+
+def _faint_print_contrast(crop, *, font_height=None):
+    """Reduce fabric texture before contrast gain, retaining thin ink."""
+    gray = crop.convert('L')
+    height = font_height if font_height is not None else 24.0
+    # The earlier mild blur amplified the remaining weave with the letters.
+    # Limit smoothing relative to text height; retain 10% of the original so
+    # even isolated one-pixel strokes survive rather than becoming background.
+    radius = max(0.5, min(2.0, height * 0.07))
+    smooth = Image.blend(gray, gray.filter(ImageFilter.GaussianBlur(radius)), 0.90)
+    background = smooth.filter(ImageFilter.GaussianBlur(max(12, min(96, height * 1.5))))
+    flattened = ImageChops.subtract(smooth, background, offset=128)
+    # Preserve gray levels and printed gaps instead of inventing hard edges.
+    return flattened.point([max(0, min(255, round(242 + 5.5 * (value - 128))))
+                            for value in range(256)])
+
+
+def _needs_local_contrast(crop):
+    background = crop.filter(ImageFilter.GaussianBlur(max(8, min(64, min(crop.size) / 6))))
+    if ImageStat.Stat(background).stddev[0] >= 12:
+        return True
+    histogram = crop.histogram()
+    total = sum(histogram)
+    cumulative, low, high = 0, None, 255
+    for value, count in enumerate(histogram):
+        cumulative += count
+        if low is None and cumulative >= 0.05 * total:
+            low = value
+        if cumulative >= 0.95 * total:
+            high = value
+            break
+    return low is not None and 8 <= high - low <= 64
+
+
+def prepare_material_region(
+    content: bytes, box: tuple[int, int, int, int], *, rotated: bool = False,
+    font_height: float | None = None, rotation_degrees: float | None = None,
+    enhancement: str = "standard",
+    word_boxes: tuple[tuple[int, int, int, int], ...] = (),
+) -> RegionImage:
+    """Crop and enhance, returning an inverse affine map to original pixels."""
+
+    validated = validate_image_bytes(content)
+    if type(enhancement) is not str or enhancement not in {"standard", "original", "local_contrast", "adaptive", "adaptive_mild", "mild_contrast", "mild_denoise", "faint_print"}:
+        raise InvalidImageError('소재 영역 전처리 방식이 올바르지 않습니다.')
+    if len(box) != 4 or any(type(value) is not int for value in box):
+        raise InvalidImageError('소재 영역의 좌표가 올바르지 않습니다.')
+    if font_height is not None and (
+        type(font_height) not in {int, float} or not math.isfinite(font_height) or font_height <= 0
+    ):
+        raise InvalidImageError('소재 글자 높이가 올바르지 않습니다.')
+    if rotation_degrees is not None and (
+        type(rotation_degrees) not in {int, float} or not math.isfinite(rotation_degrees)
+        or abs(rotation_degrees) > 180
+    ):
+        raise InvalidImageError('소재 회전 각도가 올바르지 않습니다.')
+    turn_angle = (rotation_degrees if rotation_degrees is not None else -3) if rotated else 0
+    left, top, right, bottom = box
+    if not (0 <= left < right <= validated.width and 0 <= top < bottom <= validated.height):
+        raise InvalidImageError('소재 영역의 좌표가 올바르지 않습니다.')
+    try:
+        with Image.open(BytesIO(validated.content)) as image:
+            if image.getexif().get(274, 1) != 1:
+                raise InvalidImageError('방향이 확인되지 않은 이미지의 소재 영역은 자르지 않습니다.')
+            crop = image.crop(box).convert('RGB' if enhancement == 'original' else 'L')
+        threshold = _material_ink_threshold(crop, box, word_boxes) if rotated and enhancement == "standard" else None
+        if threshold is not None:
+            crop = crop.point(lambda value: 255 if value > threshold else 0)
+        selected = enhancement
+        if selected in {'adaptive', 'adaptive_mild'}:
+            if _needs_local_contrast(crop):
+                selected = 'local_contrast'
+            else:
+                selected = 'mild_contrast' if selected == 'adaptive_mild' else 'standard'
+        if selected == 'local_contrast':
+            crop = _local_contrast(crop)
+        elif selected == 'faint_print':
+            crop = _faint_print_contrast(crop, font_height=font_height)
+        width, height = crop.size
+        # 작은 글자는 목표 48픽셀 높이까지 확대하되 기존 픽셀·크기 한도를 유지한다.
+        font_scale = 48.0 / font_height if font_height is not None else 1.0
+        scale = min(max(1.0, MIN_OCR_WIDTH / width, font_scale), MAX_OCR_WIDTH / width,
+                    math.sqrt(MAX_PREPROCESSED_PIXELS / (width * height)),
+                    MAX_PREPROCESSED_DIMENSION / max(width, height))
+        prepared_width, prepared_height = max(1, int(width*scale)), max(1, int(height*scale))
+        crop = crop.resize((prepared_width, prepared_height), Image.Resampling.LANCZOS)
+        if rotated:
+            fill = (255, 255, 255) if crop.mode == 'RGB' else 255
+            crop = crop.rotate(turn_angle, resample=Image.Resampling.BICUBIC, expand=True, fillcolor=fill)
+        canvas_width, canvas_height = crop.size
+        final_scale = min(1.0, math.sqrt(MAX_PREPROCESSED_PIXELS / (canvas_width*canvas_height)),
+                          MAX_PREPROCESSED_DIMENSION / max(canvas_width, canvas_height))
+        if final_scale < 1:
+            crop = crop.resize((max(1, int(canvas_width*final_scale)), max(1, int(canvas_height*final_scale))), Image.Resampling.LANCZOS)
+        output_width, output_height = crop.size
+        if selected == 'standard':
+            crop = ImageOps.autocontrast(crop)
+            if threshold is None:
+                crop = crop.filter(ImageFilter.UnsharpMask(radius=1.4, percent=150, threshold=3))
+        elif selected == 'local_contrast':
+            crop = crop.filter(ImageFilter.UnsharpMask(radius=1.0, percent=100, threshold=3))
+        elif selected in {'mild_contrast', 'mild_denoise'}:
+            crop = _mild_local_contrast(crop, denoise=selected == 'mild_denoise')
+        encoded = _encode_preprocessed_image(crop, image_format='JPEG')
+        if len(encoded) > MAX_IMAGE_BYTES:
+            raise ImageTooLargeError('소재 영역 이미지의 용량이 안전한 범위를 넘습니다.')
+        ox, oy = width / prepared_width, height / prepared_height
+        sx, sy = canvas_width / output_width, canvas_height / output_height
+        angle = math.radians(turn_angle)
+        cosine, sine = math.cos(angle), math.sin(angle)
+        transform = (
+            cosine*sx*ox, -sine*sy*ox, left + (prepared_width/2-cosine*canvas_width/2+sine*canvas_height/2)*ox,
+            sine*sx*oy, cosine*sy*oy, top + (prepared_height/2-sine*canvas_width/2-cosine*canvas_height/2)*oy,
+        )
+        return RegionImage(encoded, 'material_crop_rotated' if rotated else 'material_crop', transform, tuple(map(float, box)), selected)
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning, MemoryError) as exc:
+        raise ImageTooLargeError('소재 영역 이미지가 안전한 처리 범위를 넘습니다.') from exc
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise InvalidImageError('소재 영역 이미지 처리에 실패했습니다.') from exc
 
 
 def material_region_word_boxes(
@@ -219,70 +471,6 @@ def _material_ink_threshold(
     return threshold
 
 
-def find_material_region(candidates: list[OcrCandidate], width: int, height: int) -> tuple[int, int, int, int] | None:
-    """Locate observed material/unknown percentage rows in original geometry."""
-
-    # Cropping a thumbnail does not restore its missing source pixels.
-    if max(width, height) < 512:
-        return None
-    seen = set()
-    words = []
-    for candidate in candidates:
-        if not candidate.image_key or not candidate.image_variant_key or len(candidate.image_region) != 4:
-            continue
-        for word in candidate.image_words:
-            key = (word.text, word.left, word.top, word.right, word.bottom, word.page)
-            if key in seen or word.page != 0 or not (0 <= word.left < word.right <= width and 0 <= word.top < word.bottom <= height):
-                continue
-            seen.add(key)
-            words.append(word)
-    if not words:
-        return None
-    geometry = _supported_geometry([word for word in words if extract_materials(word.text)])
-    if geometry is not None and 60 <= abs(geometry[0]) <= 120:
-        return _fallback_material_region(words, width, height)
-    care_headers = {'shrinkage', '수축률', '수축율'}
-    percentages = [word for word in words if '%' in normalize_text(word.text) and not any(
-        normalize_text(other.text).strip(':') in care_headers
-        and abs(word.center_y - other.center_y) <= max(word.height, other.height)
-        for other in words
-    )]
-    anchors = [word for word in words if extract_materials(word.text) or declared_part(word.text)
-               or unresolved_material_tokens(word.text)
-               or normalize_text(word.text).strip(':()') in {'composition', 'content', '혼용률', '혼용', '소재', '섬유'}]
-    # An unreadable name alone has no composition evidence. Use its observed
-    # neighbouring percentage to locate the row without accepting the name.
-    for ratio in percentages:
-        row = [word for word in words if abs(word.center_y-ratio.center_y) <= max(word.height, ratio.height)
-               and abs(word.center_x-ratio.center_x) <= 30 * max(word.height, ratio.height)]
-        names = [word for word in row if sum(character.isalpha() for character in word.text) >= 2]
-        # Unknown rows are allowed as crop locations, never as valid fibers.
-        anchors.extend(names)
-    if not percentages or not anchors:
-        return _fallback_material_region(words, width, height)
-    font_height = float(median(word.height for word in anchors + percentages))
-    nearby_percentages = [word for word in percentages if any(
-        abs(word.center_y - anchor.center_y) <= 6 * max(font_height, anchor.height, word.height)
-        for anchor in anchors
-    )]
-    anchors = [word for word in anchors if any(
-        abs(word.center_y - ratio.center_y) <= 6 * max(font_height, word.height, ratio.height)
-        for ratio in nearby_percentages
-    )]
-    if not nearby_percentages or not anchors:
-        return _fallback_material_region(words, width, height)
-    top = min(word.top for word in anchors + nearby_percentages) - 2.5 * font_height
-    bottom = max(word.bottom for word in anchors + nearby_percentages) + 2.5 * font_height
-    # Keep complete neighbouring rows, including separate numbers and part names.
-    context = [word for word in words if top <= word.center_y <= bottom]
-    left = max(0, math.floor(min(word.left for word in context) - 2 * font_height))
-    right = min(width, math.ceil(max(word.right for word in context) + 2 * font_height))
-    top, bottom = max(0, math.floor(top)), min(height, math.ceil(bottom))
-    if right - left < 128 or bottom - top < 32 or (right-left) * (bottom-top) >= width * height * 0.85:
-        return _fallback_material_region(words, width, height)
-    return left, top, right, bottom
-
-
 def find_complete_material_region(candidates: list[OcrCandidate], region: tuple[int, int, int, int]) -> tuple[int, int, int, int] | None:
     """End a crop before a complete care heading instead of cutting its letters."""
     from apps.text.ocr_corrections import _row_words
@@ -326,71 +514,3 @@ def find_complete_material_region(candidates: list[OcrCandidate], region: tuple[
             or max(word.bottom for word in retained) + 2 > adjusted):
         return None
     return left, top, right, adjusted
-
-
-def prepare_material_region(
-    content: bytes, box: tuple[int, int, int, int], *, rotated: bool = False,
-    font_height: float | None = None, rotation_degrees: float | None = None,
-    word_boxes: tuple[tuple[int, int, int, int], ...] = (),
-) -> RegionImage:
-    """Crop and enhance, returning an inverse affine map to original pixels."""
-
-    validated = validate_image_bytes(content)
-    if len(box) != 4 or any(type(value) is not int for value in box):
-        raise InvalidImageError('소재 영역의 좌표가 올바르지 않습니다.')
-    if font_height is not None and (
-        type(font_height) not in {int, float} or not math.isfinite(font_height) or font_height <= 0
-    ):
-        raise InvalidImageError('소재 글자 높이가 올바르지 않습니다.')
-    if rotation_degrees is not None and (
-        type(rotation_degrees) not in {int, float} or not math.isfinite(rotation_degrees)
-        or abs(rotation_degrees) > 180
-    ):
-        raise InvalidImageError('소재 회전 각도가 올바르지 않습니다.')
-    turn_angle = (rotation_degrees if rotation_degrees is not None else -3) if rotated else 0
-    left, top, right, bottom = box
-    if not (0 <= left < right <= validated.width and 0 <= top < bottom <= validated.height):
-        raise InvalidImageError('소재 영역의 좌표가 올바르지 않습니다.')
-    try:
-        with Image.open(BytesIO(validated.content)) as image:
-            if image.getexif().get(274, 1) != 1:
-                raise InvalidImageError('방향이 확인되지 않은 이미지의 소재 영역은 자르지 않습니다.')
-            crop = image.crop(box).convert('L')
-        width, height = crop.size
-        threshold = _material_ink_threshold(crop, box, word_boxes) if rotated else None
-        if threshold is not None:
-            crop = crop.point(lambda value: 255 if value > threshold else 0)
-        # 작은 글자는 목표 48픽셀 높이까지 확대하되 기존 픽셀·크기 한도를 유지한다.
-        font_scale = 48.0 / font_height if font_height is not None else 1.0
-        scale = min(max(1.0, MIN_OCR_WIDTH / width, font_scale), MAX_OCR_WIDTH / width,
-                    math.sqrt(MAX_PREPROCESSED_PIXELS / (width * height)),
-                    MAX_PREPROCESSED_DIMENSION / max(width, height))
-        prepared_width, prepared_height = max(1, int(width*scale)), max(1, int(height*scale))
-        crop = crop.resize((prepared_width, prepared_height), Image.Resampling.LANCZOS)
-        if rotated:
-            crop = crop.rotate(turn_angle, resample=Image.Resampling.BICUBIC, expand=True, fillcolor=255)
-        canvas_width, canvas_height = crop.size
-        final_scale = min(1.0, math.sqrt(MAX_PREPROCESSED_PIXELS / (canvas_width*canvas_height)),
-                          MAX_PREPROCESSED_DIMENSION / max(canvas_width, canvas_height))
-        if final_scale < 1:
-            crop = crop.resize((max(1, int(canvas_width*final_scale)), max(1, int(canvas_height*final_scale))), Image.Resampling.LANCZOS)
-        output_width, output_height = crop.size
-        crop = ImageOps.autocontrast(crop)
-        if threshold is None:
-            crop = crop.filter(ImageFilter.UnsharpMask(radius=1.4, percent=150, threshold=3))
-        encoded = _encode_preprocessed_image(crop, image_format='JPEG')
-        if len(encoded) > MAX_IMAGE_BYTES:
-            raise ImageTooLargeError('소재 영역 이미지의 용량이 안전한 범위를 넘습니다.')
-        ox, oy = width / prepared_width, height / prepared_height
-        sx, sy = canvas_width / output_width, canvas_height / output_height
-        angle = math.radians(turn_angle)
-        cosine, sine = math.cos(angle), math.sin(angle)
-        transform = (
-            cosine*sx*ox, -sine*sy*ox, left + (prepared_width/2-cosine*canvas_width/2+sine*canvas_height/2)*ox,
-            sine*sx*oy, cosine*sy*oy, top + (prepared_height/2-sine*canvas_width/2-cosine*canvas_height/2)*oy,
-        )
-        return RegionImage(encoded, 'material_crop_rotated' if rotated else 'material_crop', transform, tuple(map(float, box)))
-    except (Image.DecompressionBombError, Image.DecompressionBombWarning, MemoryError) as exc:
-        raise ImageTooLargeError('소재 영역 이미지가 안전한 처리 범위를 넘습니다.') from exc
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
-        raise InvalidImageError('소재 영역 이미지 처리에 실패했습니다.') from exc

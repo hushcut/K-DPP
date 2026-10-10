@@ -9,8 +9,8 @@ from apps.service.label_analysis import analyze_ocr_result
 
 
 @pytest.mark.parametrize("text", ["POLY 100%", "100% POLY", "poly 100%", "POLY 60% COTTON 40%"])
-def test_team_approved_poly_abbreviation(text):
-    result = analyze_label_text(text)
+def test_explicitly_confirmed_poly_abbreviation(text):
+    result = analyze_label_text(text, confirmed_polyester_poly=True)
     assert result["status"] == "success"
     assert result["materials"] == ({"polyester": 60, "cotton": 40} if "60" in text else {"polyester": 100})
     assert "poly_abbreviation_as_polyester" in result["warnings"]
@@ -24,7 +24,7 @@ def test_poly_is_not_a_prefix_alias(text):
 
 @pytest.mark.parametrize("text", ["POLY 95% OLEFIN 5%", "POLY 95%", "POLY 100% UNKNOWN 5%", "POLY 1100%"])
 def test_abbreviation_does_not_relax_ratio_or_unknown_fiber_policy(text):
-    assert parse_label(text)["status"] == "failed"
+    assert parse_label(text, confirmed_polyester_poly=True)["status"] == "failed"
 
 
 def test_yarn_country_clauses_are_auxiliary_not_shell_materials():

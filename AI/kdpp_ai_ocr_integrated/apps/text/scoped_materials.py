@@ -113,7 +113,8 @@ def confirmed_yarn_declaration(text: str) -> tuple[str, dict] | None:
         return None
     unconfirmed = observed["unconfirmed_clauses"]
     if unconfirmed:
-        if not ("KR" in languages and languages & {"UK", "US"} and len(languages) >= 3):
+        if not (languages & {"UK", "US"} and len(languages) >= 3
+                and ("KR" in languages or len(languages) >= 4)):
             return None
         for item in unconfirmed:
             clause = normalize_text(item["text"])

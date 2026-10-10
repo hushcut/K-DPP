@@ -268,13 +268,17 @@ def _assess_candidates(candidates: list[OcrCandidate]) -> _CandidateDecision:
 def _needs_composition_retry(decision: _CandidateDecision) -> bool:
     """최종 성공은 중단하고, 연결 누락을 복원할 기회가 남으면 재시도한다."""
 
-    if decision.status == "success":
-        return False
-    if decision.best.parser_status != "success":
-        return True
     from apps.text.parse_label import PART_PRIORITY
 
     selected = decision.best.selected_part
+    if decision.status == "success":
+        higher_parts = PART_PRIORITY[:PART_PRIORITY.index(selected)] if selected in PART_PRIORITY else ()
+        # Preserve the confirmed fallback, but use the existing candidate budget
+        # to recover a higher part whose known material simply lacks a ratio.
+        return any(set(decision.rejected_composition_parts.get(part, ())) == {"unpaired_material_rows"}
+                   for part in higher_parts)
+    if decision.best.parser_status != "success":
+        return True
     relevant_parts = set(
         PART_PRIORITY[:PART_PRIORITY.index(selected) + 1]
         if selected in PART_PRIORITY else PART_PRIORITY
@@ -894,6 +898,8 @@ def run_ocr_bytes(
                         validated.content, region, rotated=rotated,
                         font_height=font_height, rotation_degrees=rotation_degrees,
                         word_boxes=word_boxes,
+                        enhancement=(("mild_contrast" if _prefer_mild_region_contrast(candidates)
+                                      else "adaptive_mild") if rotated and complete_region is None else "standard"),
                     )
                     if remaining_timeout_seconds() <= 0:
                         record_total_timeout(source)
@@ -1021,3 +1027,27 @@ def run_ocr(
         if parsed["status"] != "success":
             raise OcrCompositionError(parsed["message"])
     return result.text
+
+
+def _prefer_mild_region_contrast(candidates: list[OcrCandidate]) -> bool:
+    """실제 한글 소재가 읽힌 단일 조성에서 누락된 가는 획 보정을 우선한다."""
+    import re
+
+    from apps.text.ratio_contract import has_exact_total
+    from apps.text.material_extraction import extract_materials
+
+    for candidate in candidates:
+        ratios = candidate.observed_ratios.get("generic", [])
+        materials = candidate.observed_materials.get("generic", [])
+        reasons = candidate.rejected_composition_parts.get("generic", ())
+        if (
+            reasons and set(reasons) <= {"unpaired_material_rows", "unresolved_material_token"}
+            and not candidate.conflicting_parts
+            and set(candidate.observed_ratios) == {"generic"}
+            and set(candidate.observed_materials) <= {"generic"}
+            and 2 <= len(ratios) <= 3 and 0 < len(materials) < len(ratios)
+            and all(0 < ratio <= 100 for ratio in ratios) and has_exact_total(ratios)
+            and any(extract_materials(token) for token in re.findall(r"[가-힣]+", candidate.text))
+        ):
+            return True
+    return False
