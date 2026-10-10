@@ -89,6 +89,40 @@ def _matching_word_tokens(text: str, layout_text: str, words: tuple[OcrWord, ...
     )
 
 
+def literal_yarn_table_over_failed_layout(raw: OcrCandidate, layout: OcrCandidate) -> bool:
+    """Keep a complete provider language table when row grouping breaks it.
+
+    This is one response with identical complete annotations, not an extra
+    OCR supporter. A different successful composition or any missing box is
+    never discarded. Unreadable foreign clauses remain in the raw evidence.
+    """
+    if (raw.layout_used or not layout.layout_used or raw.parser_status != "success"
+            or layout.parser_status != "failed" or layout.parts or layout.conflicting_parts
+            or raw.selected_part != "embroidery_yarn"
+            or "country_labelled_yarn_translations" not in raw.parser_warnings
+            or not raw.image_key or not raw.image_variant_key or not raw.image_words
+            or len(raw.image_region) != 4 or raw.source != layout.source
+            or raw.image_key != layout.image_key or raw.image_variant_key != layout.image_variant_key
+            or raw.image_words != layout.image_words or raw.image_region != layout.image_region
+            or len({word.page for word in raw.image_words}) != 1):
+        return False
+    from apps.text.scoped_materials import confirmed_yarn_declaration
+    from apps.text.ocr_corrections import _annotation_tokens, _covers_row_tokens
+
+    declaration = confirmed_yarn_declaration(raw.text)
+    if not declaration or len({item["language"] for item in declaration[1]["observations"]}) < 3:
+        return False
+    left, top, right, bottom = raw.image_region
+    if any(not (left - 2 <= word.left and word.right <= right + 2
+                and top - 2 <= word.top and word.bottom <= bottom + 2) for word in raw.image_words):
+        return False
+    return (Counter(_annotation_tokens(raw.text)) == Counter(_annotation_tokens(layout.text))
+            and _covers_row_tokens(_annotation_tokens(raw.text), list(raw.image_words),
+                                   tokenise=_annotation_tokens)
+            and _covers_row_tokens(_annotation_tokens(layout.text), list(layout.image_words),
+                                   tokenise=_annotation_tokens))
+
+
 def _upright_rotated_rows(words: tuple[OcrWord, ...]) -> str | None:
     """Use every polygon to prove one direction before checking upright rows."""
 
@@ -273,7 +307,10 @@ def find_unpaired_ratio_parts(candidates: list[OcrCandidate]) -> tuple[str, ...]
 
                 resolved = any(same_region_recovery(candidate, alternative, part, candidates) for alternative in candidates)
             if not resolved:
-                unresolved.add(part)
+                from apps.text.ocr_corrections import located_generic_rejection_parts
+
+                located = located_generic_rejection_parts(candidate, candidates) if part == "generic" else ()
+                unresolved.update(located or (part,))
     return tuple(sorted(unresolved))
 
 
@@ -451,13 +488,17 @@ def find_rejected_composition_parts(
                         resolved = True
                         break
             if not resolved:
-                rejected.setdefault(part, set()).update(reasons)
+                from apps.text.ocr_corrections import located_generic_rejection_parts
+
+                located = located_generic_rejection_parts(candidate, candidates) if part == "generic" else ()
+                for affected in located or (part,):
+                    rejected.setdefault(affected, set()).update(reasons)
                 # An isolated second-shell heading is still an unresolved outer
                 # boundary; another candidate's unnumbered shell cannot erase it.
                 if part == "outer_2" and selected_part == "outer" and "outer" not in candidate.observed_materials:
                     rejected.setdefault("outer", set()).update(reasons)
     # 부위명이 없는 거절 근거를 다른 후보의 OUTER 표기로 숨기지 않는다.
-    if "generic" in rejected and selected_part:
+    if "generic" in rejected and selected_part in {"outer", "generic"}:
         rejected.setdefault(selected_part, set()).update(rejected["generic"])
     return {part: tuple(sorted(reasons)) for part, reasons in sorted(rejected.items())}
 
@@ -493,6 +534,7 @@ def score_candidate(
         "rib": 2,
         "sleeve": 1,
         "color_block": 0,
+        "embroidery_yarn": -1,
     }.get(selected_part, 0)
     explicit_percent_count = len(re.findall(r"\d{1,3}(?:\.\d+)?\s*[%％]", text))
     source_priority = 1 if source == "original" else 0

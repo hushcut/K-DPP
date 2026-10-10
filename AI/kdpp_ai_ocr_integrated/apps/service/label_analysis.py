@@ -35,6 +35,13 @@ def _merge_ocr_metadata(parsed: dict[str, Any], metadata: OcrMetadata) -> dict[s
         if warning not in warnings:
             warnings.append(warning)
     result["warnings"] = warnings
+    if metadata.scoped_materials:
+        result["parse_evidence"] = {
+            **result.get("parse_evidence", {}),
+            "scoped_materials": metadata.scoped_materials,
+        }
+        if "yarn_materials_are_not_primary_composition" not in warnings:
+            warnings.append("yarn_materials_are_not_primary_composition")
     # 원문 전체는 raw_ocr_preview로 제한하고, 여기에는 재현에 필요한 메타데이터만 둔다.
     result["ocr"] = {
         "source": metadata.source,

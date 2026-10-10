@@ -1033,6 +1033,8 @@ def same_region_recovery(
         return True
     if _same_response_metadata_recovery(candidate, alternative, part, target_part):
         return True
+    if _same_response_ratio_order_recovery(candidate, alternative, part, candidates or []):
+        return True
     if ((_has_unclassified_context(candidate) and not _literal_raw_context(candidate, candidates or []))
             or (_has_unclassified_context(alternative) and not _literal_raw_context(alternative, candidates or []))):
         return False
@@ -1193,3 +1195,219 @@ def same_region_recovery(
             continue
         return False
     return True
+
+
+def _verified_layout_rows(candidate: OcrCandidate):
+    """Keep the provider's boxes and require the same geometry-derived rows."""
+    if (not candidate.layout_used or not candidate.image_words
+            or not candidate.image_variant_key or len(candidate.image_region) != 4):
+        return []
+    left, top, right, bottom = candidate.image_region
+    if any(not (left - 2 <= word.left and word.right <= right + 2
+                and top - 2 <= word.top and word.bottom <= bottom + 2)
+           for word in candidate.image_words):
+        return []
+    from dataclasses import replace
+    from apps.text.ocr_layout import spatial_text_from_words
+
+    # Temporary IDs expose the existing row grouping without changing its
+    # geometry or duplicating the layout algorithm. No text is added to OCR.
+    tagged = [replace(word, text=str(index)) for index, word in enumerate(candidate.image_words)]
+    grouped = spatial_text_from_words(tagged).splitlines()
+    lines = candidate.text.splitlines()
+    if len(grouped) != len(lines):
+        return []
+    rows = []
+    for line, ids in zip(lines, grouped):
+        words = tuple(candidate.image_words[int(index)] for index in ids.split())
+        if _tokens(line) != _tokens(" ".join(word.text for word in words)):
+            return []
+        rows.append((line, words))
+    return rows
+
+def _same_response_ratio_order_recovery(candidate, alternative, part, candidates):
+    """Reassign repeated ratio boxes only to explicit, valid physical rows."""
+    if (candidate.layout_used or not alternative.layout_used or part == "generic"
+            or part not in alternative.parts or alternative.parser_status != "success"
+            or part not in candidate.unpaired_ratio_parts
+            or set(candidate.rejected_composition_parts.get(part, ())) - {"invalid_composition_evidence"}
+            or not candidate.image_key or candidate.image_key != alternative.image_key
+            or not candidate.image_variant_key or candidate.image_variant_key != alternative.image_variant_key
+            or candidate.source != alternative.source
+            or candidate.image_words != alternative.image_words
+            or len(candidate.image_region) != 4 or candidate.image_region != alternative.image_region
+            or Counter(_annotation_tokens(candidate.text)) != Counter(_annotation_tokens(alternative.text))
+            or not _covers_row_tokens(_annotation_tokens(candidate.text), list(candidate.image_words),
+                                      tokenise=_annotation_tokens)):
+        return False
+    rows = _verified_layout_rows(alternative)
+    if not rows:
+        # Mapping a scaled crop back to image coordinates can move an
+        # isolated percent box across a row boundary by one rounded pixel.
+        # Re-group only unchanged annotation tokens; the checked ratio rows
+        # below must still exist verbatim in the provider's layout text.
+        from apps.text.ocr_layout import spatial_text_from_words
+
+        mapped_text = spatial_text_from_words(list(alternative.image_words))
+        if (Counter(_annotation_tokens(mapped_text)) == Counter(_annotation_tokens(alternative.text))
+                and tuple(t for t in _annotation_tokens(mapped_text) if t != "%")
+                == tuple(t for t in _annotation_tokens(alternative.text) if t != "%")):
+            rows = _verified_layout_rows(replace(alternative, text=mapped_text))
+    if not rows:
+        return False
+    left, top, right, bottom = alternative.image_region
+    if any(not (left - 2 <= word.left and word.right <= right + 2
+                and top - 2 <= word.top and word.bottom <= bottom + 2)
+           for _line, words in rows for word in words):
+        return False
+    from apps.text.parse_label import build_line_infos, _is_metadata_line
+
+    source_infos = [info for info in build_line_infos(candidate.text)
+                    if info.part == part and not _is_metadata_line(info)]
+    identifier_indices = set()
+    for info in source_infos:
+        if info.unresolved_materials:
+            return False
+        if not info.invalid_evidence:
+            continue
+        # Vision can split a product identifier into a signed numeric row.
+        # Exempt it only if these exact boxes belong to a labelled product
+        # code in the geometry-derived view of this very same response.
+        if not re.fullmatch(r"\s*-\s*\d{3,}\s*", info.normalized):
+            return False
+        words = _row_words(info.raw, candidate.image_words, tokenise=_annotation_tokens)
+        identifier_rows = [row_words for line, row_words in rows
+            if re.match(r"\s*(?:품\s*번|product\s*(?:code|number)|style\s*(?:no|number))\s*:",
+                        normalize_text(line))
+            and not re.search(r"%", line)
+            and not any(find_material_key(token) for token in _tokens(line))]
+        if not words or not any(set(words) <= set(row_words) for row_words in identifier_rows):
+            return False
+        identifier_indices.add(info.index)
+    source_infos = [info for info in source_infos if info.index not in identifier_indices]
+    if (Counter(candidate.observed_materials.get(part, ()))
+            != Counter(alternative.observed_materials.get(part, ()))
+            or not Counter(tuple(pair) for pair in candidate.paired_material_ratios.get(part, ()))
+            <= Counter(alternative.parts[part].items())):
+        return False
+    required = Counter(str(int(number)) for info in source_infos for number in info.numbers
+                       if number == int(number))
+    if (not required or sum(required.values()) != sum(len(info.numbers) for info in source_infos)
+            or any(re.search(r"[-+−]\s*\d", info.normalized) for info in source_infos)):
+        return False
+    located = Counter(token for word in candidate.image_words for token in _tokens(word.text)
+                      if token in required)
+    # A repeated value elsewhere on the label would make its origin ambiguous.
+    if located != required:
+        return False
+    infos = build_line_infos(alternative.text)
+    used_parts = set()
+    for line, words in rows:
+        if not any(token in required for word in words for token in _tokens(word.text)):
+            continue
+        matching = [info for info in infos if _tokens(info.raw) == _tokens(line)]
+        if len(matching) != 1:
+            return False
+        info = matching[0]
+        if (_is_metadata_line(info) or info.invalid_evidence
+                or info.unresolved_materials or not info.explicit_percent
+                or len(info.materials) != 1 or len(info.numbers) != 1):
+            return False
+        if info.part == "generic":
+            # A damaged upper heading may also be located by an independent
+            # reread. Its error remains on those parts; only the ratio's raw
+            # paragraph order is resolved here.
+            located_parts = located_generic_rejection_parts(alternative, candidates or [])
+            if part != "lining" or not located_parts or part in located_parts:
+                return False
+            used_parts.update(located_parts)
+        elif any(other.marker_part == info.part for other in infos):
+            used_parts.add(info.part)
+        else:
+            return False
+    return part in used_parts and len(used_parts) > 1
+
+
+def located_generic_rejection_parts(candidate, candidates):
+    """Preserve generic errors under parts independently located beside lining."""
+    from apps.text.parse_label import build_line_infos, _is_metadata_line
+
+    peers = [candidate] if candidate.layout_used else [peer for peer in candidates
+        if peer.layout_used and peer.source == candidate.source
+        and candidate.image_variant_key and peer.image_variant_key == candidate.image_variant_key
+        and peer.image_key == candidate.image_key and peer.image_region == candidate.image_region
+        and peer.image_words == candidate.image_words
+        and Counter(_annotation_tokens(peer.text)) == Counter(_annotation_tokens(candidate.text))
+        and _covers_row_tokens(_annotation_tokens(candidate.text), list(candidate.image_words),
+                              tokenise=_annotation_tokens)]
+    for peer in peers:
+        if not peer.image_key or 'lining' not in peer.parts:
+            continue
+        rows = _verified_layout_rows(peer)
+        infos = build_line_infos(peer.text)
+        evidence = [index for index, info in enumerate(infos)
+                    if info.part == 'generic' and not _is_metadata_line(info)
+                    and (info.materials or info.numbers or info.explicit_percent
+                         or info.invalid_evidence or info.unresolved_materials)]
+        if not rows or not evidence:
+            continue
+        source_words = []
+        for info in infos[min(evidence):max(evidence) + 1]:
+            if info.part != 'generic':
+                continue
+            matching = [words for line, words in rows if _tokens(line) == _tokens(info.raw)]
+            if len(matching) != 1:
+                break
+            source_words.extend(matching[0])
+        else:
+            for alternative in candidates:
+                if (not alternative.layout_used or alternative.parser_status != 'success'
+                        or alternative.selected_part != 'lining'
+                        or alternative.parts.get('lining') != peer.parts['lining']
+                        or alternative.image_key != peer.image_key
+                        or not alternative.image_variant_key
+                        or alternative.image_variant_key == peer.image_variant_key
+                        or len(alternative.image_region) != 4):
+                    continue
+                target_rows = _verified_layout_rows(alternative)
+                target_infos = build_line_infos(alternative.text)
+                declared = {info.marker_part for info in target_infos if info.marker_part}
+                if not {'outer', 'lining'} <= declared or not target_rows:
+                    continue
+                located = []
+                headings = []
+                for line, words in target_rows:
+                    matching = [info for info in target_infos if _tokens(info.raw) == _tokens(line)]
+                    if len(matching) == 1 and not _is_metadata_line(matching[0]):
+                        located.append((matching[0].part, words))
+                        if matching[0].marker_part:
+                            headings.append((matching[0].marker_part, words))
+                left, top, right, bottom = alternative.image_region
+                parts = set()
+                for word in source_words:
+                    if not (left - 2 <= word.left and word.right <= right + 2
+                            and top - 2 <= word.top and word.bottom <= bottom + 2):
+                        break
+                    matches = {target_part for target_part, words in located
+                               if any(_overlaps(word, other) for other in words)}
+                    if not matches:
+                        # A damaged source word can be absent from the reread.
+                        # Keep its rejection within a vertically bounded part,
+                        # never below the last heading or across two columns.
+                        # Both bordering headings must be physically ordered
+                        # and on the same page as the missing source box.
+                        for (section, first), (_next, following) in zip(headings, headings[1:]):
+                            if (len({w.page for w in (*first, *following, word)}) == 1
+                                    and max(w.bottom for w in first) < min(w.top for w in following)
+                                    and min(w.top for w in first) <= word.top
+                                    and word.bottom < min(w.top for w in following)):
+                                matches.add(section)
+                    if not matches or 'generic' in matches or not matches <= declared:
+                        break
+                    parts.update(matches)
+                else:
+                    # Keep the reasons on every located part. In particular an
+                    # error aligned with lining still invalidates that lining.
+                    if parts:
+                        return tuple(sorted(parts))
+    return ()

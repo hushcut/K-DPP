@@ -4,6 +4,7 @@ import pytest
 
 from apps.text.composition_candidates import _translated_line_candidates
 from apps.text.parse_label import build_line_infos, parse_label
+from part_policy_assertions import assert_selected_part
 
 
 @pytest.mark.parametrize("text,expected", [
@@ -74,6 +75,9 @@ def test_complete_preceding_translations_share_last_alias_explicit_ratio(text, e
 ])
 def test_preceding_translations_keep_unknown_numeric_and_boundary_evidence(text):
     result = parse_label(f"{text}\nHAND WASH")
+    if "LINING" in text:
+        assert_selected_part(result, 'lining', {'cotton': 100}, unconfirmed='generic')
+        return
     assert result["status"] == "failed", result
     assert result["materials"] == {}
 

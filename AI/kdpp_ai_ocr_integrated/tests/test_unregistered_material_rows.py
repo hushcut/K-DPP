@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from apps.service.label_analysis import analyze_label_text
 from apps.service.main import app
 from apps.text.parse_label import parse_label, parse_materials
+from part_policy_assertions import assert_selected_part
 
 @pytest.mark.parametrize("unknown_row", [
     "OLEFIN 50%", "POLYPROPYLENE 50%", "올레핀 50%", "아라미드 50%",
@@ -55,10 +56,9 @@ def test_metadata_on_unknown_percentage_row_cannot_hide_composition(unknown_row,
 @pytest.mark.parametrize("unknown_row", [
     "OLEFIN 101%", "OLEFIN 1..5%", "품번 AB123 OLEFIN 50%",
 ])
-def test_invalid_unknown_outer_cannot_fall_back_to_lining(unknown_row):
+def test_invalid_unknown_outer_stays_rejected_when_confirmed_lining_is_selected(unknown_row):
     result = parse_label(f"OUTER {unknown_row}\nLINING COTTON 100%")
-    assert result["status"] == "failed", result
-    assert result["materials"] == {}
+    assert_selected_part(result, 'lining', {'cotton': 100}, unconfirmed='outer')
 
 
 @pytest.mark.parametrize("unknown_row", [
@@ -73,15 +73,13 @@ def test_invalid_unknown_lining_keeps_confirmed_outer(unknown_row):
     assert any(warning.startswith("lining:") for warning in result["warnings"])
 
 
-def test_unknown_outer_does_not_fall_back_to_confirmed_lining():
+def test_unknown_outer_stays_rejected_when_confirmed_lining_is_selected():
     result = parse_label("OUTER OLEFIN 100%\nLINING COTTON 100%")
-    assert result["status"] == "failed"
-    assert result["materials"] == {}
+    assert_selected_part(result, 'lining', {'cotton': 100}, unconfirmed='outer')
 
-def test_unknown_generic_does_not_fall_back_to_confirmed_lining():
+def test_unknown_generic_stays_rejected_when_confirmed_lining_is_selected():
     result = parse_label("OLEFIN 100%\nLINING COTTON 100%")
-    assert result["status"] == "failed"
-    assert result["materials"] == {}
+    assert_selected_part(result, 'lining', {'cotton': 100}, unconfirmed='generic')
 
 def test_unknown_lining_keeps_confirmed_outer_and_warning():
     result = parse_label("OUTER COTTON 100%\nLINING OLEFIN 100%")
@@ -132,8 +130,15 @@ def test_supported_compositions_are_preserved(text, materials):
     "COTTON 100%\n품번 AB123 OLEFIN 50%",
     "COTTON 100%\nOLEFIN 50% 2024",
 ])
-def test_unregistered_fiber_failure_preserves_service_response_contract(text):
+def test_unregistered_fiber_evidence_and_confirmed_part_preserve_service_contract(text):
     response = analyze_label_text(text)
+    if "LINING" in text:
+        assert_selected_part(response, "lining", {"cotton": 100}, unconfirmed="outer")
+        with TestClient(app, raise_server_exceptions=False) as client:
+            result = client.post("/v1/parse-text", json={"text": text})
+        assert result.status_code == 200
+        assert_selected_part(result.json(), "lining", {"cotton": 100}, unconfirmed="outer")
+        return
     assert response["status"] == "failed"
     assert response["materials"] == {}
     assert response["parts"] == {}

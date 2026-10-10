@@ -34,6 +34,7 @@ RUNTIME_FILES = (
     "apps/text/parse_label.py",
     "apps/text/ratio_contract.py",
     "apps/text/rules.py",
+    "apps/text/scoped_materials.py",
     "apps/text/translation_alternatives.py",
 )
 

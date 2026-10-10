@@ -51,8 +51,15 @@ MATERIAL_ALIASES = {
     ],
     "polyester": [
         "polyester",
+        # Team-approved apparel-label abbreviation; match a complete token.
+        "poly",
         "poliester",
         "poliéster",
+        # Annex I, item 35 of EU 1007/2011 (IT/FI/LT/LV/ET editions).
+        "poliestere",
+        "polyesteri",
+        "poliesteris",
+        "polüester",
         "polyestere",
         "polyestera",
         "polyster",

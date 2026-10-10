@@ -6,6 +6,7 @@ import pytest
 
 from apps.service.label_analysis import analyze_ocr_result
 from apps.text import ocr_text
+from part_policy_assertions import assert_selected_part
 
 
 INCOMPLETE = ocr_text.OcrPayload("COTTON 100%\nPOLYESTER", "COTTON 100%")
@@ -62,6 +63,11 @@ def test_final_rejection_triggers_basic_recovery(monkeypatch, original, restored
     )
     analysis = analyze_ocr_result(result)
 
+    if original.text.startswith("OUTER"):
+        assert calls == [b"original"]
+        assert_selected_part(analysis, "lining", {"cotton": 100}, unconfirmed="outer")
+        assert "outer" in analysis["ocr"]["rejected_composition_parts"]
+        return
     assert calls == [b"original", b"basic"]
     assert analysis["status"] == "success"
     assert analysis["materials"] == materials
@@ -140,6 +146,11 @@ def test_irreversible_rejections_remain_failed_without_extra_calls(monkeypatch, 
     )
 
     assert calls == [b"original"]
+    if "LINING" in original.text:
+        analysis = analyze_ocr_result(result)
+        assert_selected_part(analysis, "lining", {"polyester": 100}, unconfirmed="outer")
+        assert "outer" in analysis["ocr"]["conflicting_parts"]
+        return
     assert analyze_ocr_result(result)["status"] == "failed"
     assert result.metadata.confidence == "low"
 

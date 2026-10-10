@@ -49,7 +49,7 @@ def test_region_keeps_complete_rows_and_is_independent_of_candidate_order():
     assert find_material_region(list(reversed(candidates)), 800, 600) == region
 
 
-@pytest.mark.parametrize('label', ['POLY 100%', 'KAY:1100%', 'Adorable 40%'])
+@pytest.mark.parametrize('label', ['POLYPROPYLENE 100%', 'KAY:1100%', 'Adorable 40%'])
 def test_unknown_percentage_rows_can_be_located_without_becoming_valid_materials(label):
     words = (OcrWord(label, 100, 240, 400, 260),)
     assert find_material_region(located_candidates(words), 800, 600) is not None

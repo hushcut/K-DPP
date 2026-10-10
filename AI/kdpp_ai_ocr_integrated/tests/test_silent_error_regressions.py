@@ -5,6 +5,7 @@ import pytest
 
 from apps.text import ocr_text
 from apps.text.parse_label import build_line_infos, parse_label
+from part_policy_assertions import assert_selected_part
 
 
 def test_cached_silent_error_cases_fail_safely() -> None:
@@ -154,6 +155,9 @@ def test_orphan_ratio_cannot_be_hidden_by_another_complete_block(text: str) -> N
     # leaving its 100% beside a complete contrast composition.
     result = parse_label(text)
 
+    if "LINING" in text:
+        assert_selected_part(result, 'lining', {'polyester': 100}, unconfirmed='generic')
+        return
     assert result["status"] == "failed"
     assert result["materials"] == {}
 

@@ -4,6 +4,7 @@ from decimal import Decimal, InvalidOperation
 
 from apps.text.ratio_contract import EXACT_RATIO_TOTAL, has_exact_total
 from apps.text.translation_alternatives import prepare_translation_alternatives
+from apps.text.scoped_materials import read_yarn_materials, confirmed_yarn_declaration
 
 from apps.text.composition_candidates import (
     CompositionCandidate,
@@ -44,6 +45,7 @@ PART_PRIORITY = [
     "rib",
     "sleeve",
     "color_block",
+    "embroidery_yarn",
 ]
 
 NON_COMPOSITION_WORDS = {
@@ -421,7 +423,9 @@ _LANGUAGE_RATIO_PREFIX_PATTERN = re.compile(
     r"sk|se|si|hr|lt|lv|ee|kr|ru|tr|el)\s*:\s*(?=[0-9]+(?:[.,][0-9]+)?\s*%)"
 )
 _WRAPPED_ALIAS_WORD_PATTERN = re.compile(r"(?<!\w)[^\W\d_]+(?!\w)")
-_SINGLE_WORD_ALIASES = frozenset(alias for alias in ALIAS_TO_MATERIAL if alias.isalpha())
+_SINGLE_WORD_ALIASES = frozenset(
+    alias for alias in ALIAS_TO_MATERIAL if alias.isalpha() and alias != "poly"
+)
 _SINGLE_WORD_ALIAS_PREFIXES = frozenset(
     alias[:length] for alias in _SINGLE_WORD_ALIASES for length in range(1, len(alias) + 1)
 )
@@ -436,7 +440,7 @@ def _restore_multiline_alias_fragments(text: str) -> str:
     for position, first in enumerate(words):
         joined = first.group()
         if (
-            first.start() < consumed_until or joined in _SINGLE_WORD_ALIASES
+            first.start() < consumed_until or joined in ALIAS_TO_MATERIAL
             or joined not in _SINGLE_WORD_ALIAS_PREFIXES
         ):
             continue
@@ -508,7 +512,7 @@ def _prepare_multilingual_rows(text: str) -> str:
         # A complete table entry is required; partial or fuzzy words stay put.
         return (
             joined if match.group(1) not in ALIAS_TO_MATERIAL
-            and joined in ALIAS_TO_MATERIAL else match.group()
+            and joined in ALIAS_TO_MATERIAL and joined != "poly" else match.group()
         )
 
     for _ in range(3):
@@ -1445,10 +1449,27 @@ def parse_label(
             message="OCR에서 라벨 텍스트를 추출하지 못했습니다.",
         )
 
+    yarn_declaration = confirmed_yarn_declaration(text)
+    composition_text = yarn_declaration[0] if yarn_declaration else text
     parts, candidates, warnings, expected_parts, ratio_evidence = _best_candidates_by_part(
-        text, conflicting_parts=conflicting_parts, unpaired_ratio_parts=unpaired_ratio_parts,
+        composition_text, conflicting_parts=conflicting_parts, unpaired_ratio_parts=unpaired_ratio_parts,
         rejected_composition_parts=rejected_composition_parts,
     )
+    yarn_materials = yarn_declaration[1] if yarn_declaration else read_yarn_materials(text)
+    if yarn_materials is not None:
+        ratio_evidence["scoped_materials"] = yarn_materials
+        warnings.append("yarn_materials_are_not_primary_composition")
+        if yarn_declaration:
+            warnings.append("country_labelled_yarn_translations")
+            ratio_evidence["yarn_language_selection"] = {
+                "language": yarn_materials["selected_language"],
+                "basis": yarn_materials["selection_basis"],
+                "foreign_translations_unconfirmed": yarn_materials["foreign_translations_unconfirmed"],
+            }
+            if yarn_materials["foreign_translations_unconfirmed"]:
+                warnings.append("unconfirmed_foreign_yarn_translations")
+    if re.search(r"(?<![\w])poly(?![\w])", normalize_text(text)):
+        warnings.append("poly_abbreviation_as_polyester")
     selected_part, materials = choose_representative_materials(parts)
     if not materials:
         error_code = (
@@ -1473,70 +1494,31 @@ def parse_label(
             parse_evidence=ratio_evidence,
         )
 
-    # Numbered outer fabrics describe peer panels, rather than a lower-priority
-    # lining. A missing second panel must not make the first panel representative
-    # by default; different complete panels also have no single composition.
-    outer_parts = [part for part in ("outer", "outer_2") if part in expected_parts]
-    if selected_part in outer_parts and len(outer_parts) > 1:
-        unconfirmed_outer_parts = [part for part in outer_parts if part not in parts]
-        if unconfirmed_outer_parts:
-            return failed_response(
-                text,
-                error_code="incomplete_part_composition",
-                message="여러 겉감 중 확인되지 않은 조성이 있어 대표 소재를 선택하지 않았습니다.",
-                warnings=[
-                    *warnings,
-                    *(f"{part}:composition_not_confirmed" for part in unconfirmed_outer_parts),
-                ],
-                parse_evidence=ratio_evidence,
-            )
-        if len({_equivalent_composition(parts[part]) for part in outer_parts}) > 1:
-            # Preserve this rejection for candidate aggregation. A later crop
-            # containing only one panel cannot erase a complete peer panel.
-            rejections = {
-                part: set(reasons)
-                for part, reasons in ratio_evidence["rejected_composition_parts"].items()
-            }
-            for part in outer_parts:
-                rejections.setdefault(part, set()).add("ambiguous_outer_compositions")
-            return failed_response(
-                text,
-                error_code="ambiguous_composition",
-                message="서로 다른 겉감 조성이 있어 대표 소재를 자동으로 선택하지 않았습니다.",
-                warnings=[
-                    *warnings,
-                    *(f"{part}:ambiguous_outer_compositions" for part in outer_parts),
-                ],
-                parse_evidence={
-                    **ratio_evidence,
-                    "rejected_composition_parts": {
-                        part: sorted(reasons) for part, reasons in sorted(rejections.items())
-                    },
-                },
-            )
+    # Unlabelled damage in another OCR view cannot acquire a part merely
+    # because the winning crop has discarded that row or its heading.
+    if "generic" in (rejected_composition_parts or {}) and not any(
+        info.part == "generic" and not _is_metadata_line(info)
+        and (info.materials or info.numbers or info.unresolved_materials)
+        for info in build_line_infos(text)
+    ):
+        return failed_response(
+            text,
+            message="부위가 확인되지 않은 OCR 근거가 남아 소재를 확정하지 못했습니다.",
+            warnings=warnings,
+            parse_evidence=ratio_evidence,
+        )
 
-    # The label names a more representative part (an outer shell above a
-    # lining) whose composition never resolved. Substituting the part that
-    # happened to add up would report a lining as the whole garment.
+    # A result describes exactly selected_part, never an inferred whole garment.
+    # Keep rejected higher parts visible while choosing the first confirmed part.
+    missing_parts = [part for part in PART_PRIORITY if part in expected_parts and part not in parts]
+    warnings.extend(f"{part}:composition_not_confirmed" for part in missing_parts)
     unconfirmed_parts = [
         part
         for part in PART_PRIORITY[: PART_PRIORITY.index(selected_part)]
         if part in expected_parts and part not in parts
     ]
     if unconfirmed_parts:
-        return failed_response(
-            text,
-            error_code="incomplete_part_composition",
-            message=(
-                "겉감 등 대표 부위의 혼용률을 확인하지 못해 "
-                "다른 부위 값을 대신 사용하지 않았습니다."
-            ),
-            warnings=[
-                *warnings,
-                *(f"{part}:composition_not_confirmed" for part in unconfirmed_parts),
-            ],
-            parse_evidence=ratio_evidence,
-        )
+        warnings.append(f"representative_part_fallback:{selected_part}")
 
     selected_candidate = candidates[selected_part]
     parser_confidence = (
@@ -1546,6 +1528,9 @@ def parse_label(
         and selected_candidate.source == "same_line"
         and "unlabeled_garment_size_inferred" not in warnings
         and "damaged_translation_fragment" not in warnings
+        and "poly_abbreviation_as_polyester" not in warnings
+        and "unconfirmed_foreign_yarn_translations" not in warnings
+        and not unconfirmed_parts
         else "medium"
     )
     care_instruction = parse_care(text)

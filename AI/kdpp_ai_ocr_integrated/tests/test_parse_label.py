@@ -2,6 +2,7 @@ import pytest
 
 from apps.text.composition_candidates import CompositionCandidate
 from apps.text.parse_label import build_line_infos, parse_label
+from part_policy_assertions import assert_selected_part
 
 
 def test_same_line_composition_is_parsed() -> None:
@@ -204,20 +205,17 @@ def test_multimaterial_and_standalone_declarations_conflict() -> None:
     assert result["materials"] == {}
 
 
-def test_incomplete_outer_does_not_promote_lining_to_the_whole_garment() -> None:
+def test_incomplete_outer_returns_confirmed_lining_with_its_own_scope() -> None:
     result = parse_label("OUTER COTTON 95%\nLINING NYLON 100%")
 
-    assert result["status"] == "failed"
-    assert result["error_code"] == "incomplete_part_composition"
-    assert result["materials"] == {}
+    assert_selected_part(result, 'lining', {'nylon': 100}, unconfirmed='outer')
     assert "outer:composition_not_confirmed" in result["warnings"]
 
 
-def test_unreadable_outer_material_does_not_promote_lining() -> None:
+def test_unreadable_outer_keeps_warning_and_returns_confirmed_lining() -> None:
     result = parse_label("겉감: 인조모피\n안감: 폴리에스터 100%")
 
-    assert result["status"] == "failed"
-    assert result["materials"] == {}
+    assert_selected_part(result, 'lining', {'polyester': 100}, unconfirmed='outer')
 
 
 def test_trailing_part_marker_keeps_each_ratio_with_its_own_part() -> None:
@@ -511,11 +509,10 @@ def test_trailing_marker_owns_the_entire_composition_block(text: str) -> None:
 @pytest.mark.parametrize(
     "main", ["COTTON 80%\nPOLYESTER", "MODACRYLIC\nCOTTON\n100%"]
 )
-def test_incomplete_trailing_outer_block_does_not_promote_lining(main: str) -> None:
+def test_incomplete_trailing_outer_block_returns_confirmed_lining(main: str) -> None:
     result = parse_label(f"{main}\nOUTER\nNYLON 100%\nLINING")
 
-    assert result["status"] == "failed"
-    assert result["materials"] == {}
+    assert_selected_part(result, 'lining', {'nylon': 100}, unconfirmed='outer')
 
 
 def test_trailing_marker_does_not_split_an_explicitly_named_block() -> None:
@@ -535,12 +532,10 @@ def test_body_measurements_between_material_and_ratio_are_skipped() -> None:
 
 
 @pytest.mark.parametrize("main", ["COTTON 80%", "COTTON", "COTTON 100%\nNYLON 20%"])
-def test_unconfirmed_unlabeled_main_does_not_fall_back_to_lining(main: str) -> None:
+def test_unconfirmed_unlabeled_main_remains_rejected_beside_confirmed_lining(main: str) -> None:
     result = parse_label(f"{main}\nLINING\nPOLYESTER 100%")
 
-    assert result["status"] == "failed"
-    assert result["error_code"] == "incomplete_part_composition"
-    assert result["materials"] == {}
+    assert_selected_part(result, 'lining', {'polyester': 100}, unconfirmed='generic')
     assert "generic:composition_not_confirmed" in result["warnings"]
 
 
@@ -575,6 +570,9 @@ def test_complete_candidate_does_not_hide_unpaired_material_rows(text: str) -> N
 def test_unlisted_fiber_on_its_own_row_cannot_be_ignored(text: str) -> None:
     result = parse_label(text)
 
+    if "LINING" in text:
+        assert_selected_part(result, 'lining', {'polyester': 100}, unconfirmed='generic')
+        return
     assert result["status"] == "failed"
     assert result["materials"] == {}
 

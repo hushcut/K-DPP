@@ -7,6 +7,7 @@ import pytest
 
 from apps.service.label_analysis import analyze_ocr_result
 from apps.text import ocr_text
+from part_policy_assertions import assert_selected_part
 
 
 def run_with_payloads(monkeypatch, payloads):
@@ -250,15 +251,14 @@ def test_lining_conflict_does_not_invalidate_an_agreed_outer(monkeypatch):
     assert "lining:ambiguous_composition_candidates" in analysis["warnings"]
 
 
-def test_outer_conflict_cannot_fall_back_to_an_agreed_lining(monkeypatch):
+def test_outer_conflict_stays_rejected_when_agreed_lining_is_selected(monkeypatch):
     result, _calls = run_with_payloads(monkeypatch, [ocr_text.OcrPayload(
         "OUTER COTTON 100%\nLINING POLYESTER 100%",
         "OUTER WOOL 100%\nLINING POLYESTER 100%",
     )])
     analysis = analyze_ocr_result(result)
 
-    assert analysis["status"] == "failed"
-    assert analysis["materials"] == {}
+    assert_selected_part(analysis, 'lining', {'polyester': 100}, unconfirmed='outer')
     assert "outer:ambiguous_composition_candidates" in analysis["warnings"]
 
 
@@ -316,6 +316,10 @@ def test_rejected_composition_cannot_disappear_in_another_candidate(
     result, calls = run_with_payloads(monkeypatch, payloads)
     analysis = analyze_ocr_result(result)
 
+    if raw == "OUTER POLYESTER\nLINING COTTON 100%":
+        assert_selected_part(analysis, "lining", {"cotton": 100}, unconfirmed="outer")
+        assert "outer" in analysis["parse_evidence"]["rejected_composition_parts"]
+        return
     assert analysis["status"] == "failed"
     assert analysis["materials"] == {}
     assert analysis["confidence"]["ocr"] == "low"
@@ -711,5 +715,8 @@ def test_empty_heading_recovery_cannot_erase_raw_or_other_part_evidence(
     )
     analysis = analyze_ocr_result(result)
 
+    if raw == "LINING POLYESTER 100%":
+        assert_selected_part(analysis, "lining", {"polyester": 100}, unconfirmed="outer")
+        return
     assert analysis["status"] == "failed"
     assert analysis["materials"] == {}

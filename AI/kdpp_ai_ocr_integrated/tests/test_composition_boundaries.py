@@ -5,6 +5,7 @@ from apps.service.label_analysis import analyze_ocr_result
 from apps.text.material_extraction import declared_part
 from apps.text.ocr_text import OcrMetadata, OcrResult, _assess_candidates, _build_candidate
 from apps.text.parse_label import build_line_infos, parse_label, parse_parts
+from part_policy_assertions import assert_selected_part
 
 
 @pytest.mark.parametrize('glyph', ['(300', '( 300', '(300)', '(400'])
@@ -90,9 +91,7 @@ def test_inline_measurement_percent_cannot_hide_a_ratio(header, ratio):
 def test_numbered_outer_fabrics_keep_separate_compositions(first, second):
     text = f'{first} Cotton 100%\n{second} Cotton 70% Polyester 30%'
     result = parse_label(text)
-    assert result['status'] == 'failed'
-    assert result['error_code'] == 'ambiguous_composition'
-    assert result['materials'] == result['parts'] == {}
+    assert_selected_part(result, 'outer', {'cotton': 100})
     assert parse_parts(text) == {'outer': {'cotton': 100}, 'outer_2': {'cotton': 70, 'polyester': 30}}
 
 
@@ -100,24 +99,21 @@ def test_numbered_outer_fabrics_keep_separate_compositions(first, second):
 def test_numbered_heading_indices_are_not_plain_ratios(first, second):
     text = f'{first} Cotton 100\n{second} Cotton 70 Polyester 30'
     result = parse_label(text)
-    assert result['status'] == 'failed'
-    assert result['error_code'] == 'ambiguous_composition'
-    assert result['parts'] == {}
+    assert_selected_part(result, 'outer', {'cotton': 100})
+    assert result['parts'] == {'outer': {'cotton': 100}, 'outer_2': {'cotton': 70, 'polyester': 30}}
     assert parse_parts(text) == {'outer': {'cotton': 100}, 'outer_2': {'cotton': 70, 'polyester': 30}}
 
 
 @pytest.mark.parametrize('first', ['OUTSHELL Cotton', 'OUTSHELL Cotton 70%', '겉감1 UNKNOWN 100%'])
-def test_second_outer_cannot_substitute_an_unconfirmed_primary(first):
+def test_second_outer_is_selected_when_primary_is_unconfirmed(first):
     result = parse_label(first + '\nOUTSHELL2 Polyester 100%')
-    assert result['status'] == 'failed'
-    assert result['materials'] == {}
+    assert_selected_part(result, 'outer_2', {'polyester': 100}, unconfirmed='outer')
 
 
-def test_conflicting_secondary_fabric_blocks_representative_outer():
+def test_conflicting_secondary_fabric_is_rejected_without_blocking_confirmed_outer():
     text = 'OUTSHELL Cotton 100%\nOUTSHELL2 Cotton 70% Polyester 30%\nOUTSHELL2 Nylon 100%'
     result = parse_label(text)
-    assert result['status'] == 'failed'
-    assert result['materials'] == result['parts'] == {}
+    assert_selected_part(result, 'outer', {'cotton': 100})
     assert parse_parts(text) == {'outer': {'cotton': 100}}
     assert 'outer_2:ambiguous_composition_candidates' in result['warnings']
 
@@ -126,31 +122,37 @@ def test_candidate_assessment_and_response_keep_numbered_parts():
     text = 'OUTSHELL Cotton 100%\nOUTSHELL2 Cotton 70% Polyester 30%'
     candidates = [_build_candidate('original', text), _build_candidate('preprocessed', text)]
     decision = _assess_candidates(candidates)
-    assert decision.status == 'failed'
+    assert decision.status == 'success'
     metadata = OcrMetadata('original', 'high', 2, 'JPEG', 100, 100,
                            conflicting_parts=decision.conflicting_parts,
                            unpaired_ratio_parts=decision.unpaired_ratio_parts,
                            rejected_composition_parts=decision.rejected_composition_parts)
     response = analyze_ocr_result(OcrResult(decision.best.text, metadata))
-    assert response['status'] == 'failed'
-    assert response['materials'] == response['parts'] == {}
+    assert_selected_part(response, 'outer', {'cotton': 100})
     assert response['parse_evidence']['paired_material_ratios']['outer_2'] == [['cotton', 70.0], ['polyester', 30.0]]
     assert parse_parts(text)['outer_2'] == {'cotton': 70, 'polyester': 30}
 
 
-def test_unconfirmed_secondary_outer_blocks_representative_and_preserves_warning():
+def test_unconfirmed_secondary_outer_preserves_warning_without_blocking_confirmed_outer():
     text = 'OUTSHELL Cotton 100%\nOUTSHELL2 Polyester'
     decision = _assess_candidates([_build_candidate('original', text)])
-    assert decision.status == 'failed'
+    assert decision.status == 'success'
+    assert decision.best.selected_part == 'outer'
+    assert decision.best.materials == {'cotton': 100}
     assert decision.rejected_composition_parts == {'outer_2': ('unpaired_material_rows',)}
 
 
-def test_missing_primary_ratio_does_not_make_distinct_numbered_parts_representative():
+def test_complete_candidate_can_restore_primary_ratio_and_keep_distinct_numbered_parts():
     raw = 'OUTSHELL Cotton\nOUTSHELL2 Polyester 100%'
     complete = 'OUTSHELL Cotton 100%\nOUTSHELL2 Polyester 100%'
     decision = _assess_candidates([_build_candidate('original', raw), _build_candidate('layout', complete, layout_used=True)])
-    assert decision.status == 'failed'
-    assert 'outer' in decision.rejected_composition_parts
+    assert decision.status == 'success'
+    response = parse_label(decision.best.text, rejected_composition_parts=decision.rejected_composition_parts,
+                           unpaired_ratio_parts=decision.unpaired_ratio_parts,
+                           conflicting_parts=decision.conflicting_parts)
+    assert_selected_part(response, 'outer', {'cotton': 100})
+    assert not decision.rejected_composition_parts
+    assert response['parts'] == {'outer': {'cotton': 100}, 'outer_2': {'polyester': 100}}
     assert parse_parts(complete) == {'outer': {'cotton': 100}, 'outer_2': {'polyester': 100}}
 
 

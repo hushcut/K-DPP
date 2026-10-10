@@ -82,6 +82,10 @@ PART_PATTERNS = {
     "rib": ["립", "리브", "rib", "罗纹", "羅紋"],
     "sleeve": ["소매", "sleeve", "袖子", "袖部", "袖"],
     "color_block": ["배색", "contrast", "配色", "拼接", "別布"],
+    "embroidery_yarn": [
+        "자수실", "자수", "embroidery yarn", "embroidery thread",
+        "embroidery", "yarn", "실", "刺绣", "刺繍",
+    ],
 }
 
 EXCLUDED_SEGMENT_WORDS = {
@@ -91,7 +95,6 @@ EXCLUDED_SEGMENT_WORDS = {
     "무늬",
     "밴드",
     "레이스",
-    "자수",
     "장식",
     "부자재",
     "제외",
@@ -99,13 +102,10 @@ EXCLUDED_SEGMENT_WORDS = {
     "excluding",
     "exclusive of decoration",
     "decoration",
-    "embroidery",
     "accessory",
     "trim",
     "装饰",
     "裝飾",
-    "刺绣",
-    "刺繍",
     "辅料",
     "輔料",
     "配件",
@@ -313,12 +313,26 @@ _PART_MARKER_PATTERNS = {
 
 # These short labels also appear inside fiber names, product descriptions,
 # or care instructions without naming a composition part.
-_SHORT_PART_MARKERS = {"솜", "립", "袖", "표면"}
+_SHORT_PART_MARKERS = {"솜", "립", "袖", "표면", "실", "자수", "자수실", "刺绣", "刺繍"}
 
 
 def is_part_marker_match(text: str, match: re.Match[str]) -> bool:
     """Reject short markers embedded in words, but keep joined marker+fiber OCR."""
     marker = match.group().casefold()
+    if marker in PART_PATTERNS["embroidery_yarn"]:
+        # Exclusion captions are not yarn compositions. Keep the caption intact
+        # so the existing exclusion parser can remove it before reading ratios.
+        for bracket in re.finditer(r"[\(\[][^\)\]]*[\)\]]", text):
+            if bracket.start() <= match.start() < bracket.end() and any(
+                word in bracket.group().casefold() for word in EXCLUDED_SEGMENT_WORDS
+            ):
+                return False
+        # A wrapped parenthesis may start on the preceding OCR line. A caption
+        # such as "자수 장식 제외)" still supplies no yarn composition.
+        suffix = text[match.end():].split("\n", 1)[0].casefold()
+        exclusions = [suffix.find(word) for word in EXCLUDED_SEGMENT_WORDS if word in suffix]
+        if exclusions and not re.search(r"[0-9%]", suffix[:min(exclusions)]):
+            return False
     if marker in {*PART_PATTERNS["outer"], *PART_PATTERNS["outer_2"]}:
         suffix = text[match.end():]
         if marker[-1].isdigit():

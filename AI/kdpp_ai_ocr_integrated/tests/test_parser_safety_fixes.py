@@ -9,6 +9,7 @@ from apps.text.parse_label import (
     parse_materials,
 )
 from apps.text.qa_dataset import parse_answer_materials
+from part_policy_assertions import assert_selected_part
 
 
 @pytest.mark.parametrize(
@@ -63,6 +64,10 @@ def test_decimal_ratios_keep_input_precision_in_output_and_answer_key():
     ],
 )
 def test_invalid_ratios_cannot_be_discarded_to_confirm_composition(text):
+    result = parse_label(text)
+    if "LINING" in text:
+        assert_selected_part(result, 'lining', {'polyester': 100}, unconfirmed='outer')
+        return
     assert parse_label(text)["status"] == "failed"
     assert parse_materials(text) == {}
 

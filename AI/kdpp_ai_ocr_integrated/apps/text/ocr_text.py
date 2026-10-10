@@ -58,6 +58,7 @@ from apps.text.ocr_regions import (
     find_complete_material_region, find_material_region, material_region_options,
     material_region_word_boxes, prepare_material_region,
 )
+from apps.text.scoped_materials import read_yarn_materials
 
 __all__ = [
     "ImageTooLargeError",
@@ -155,6 +156,7 @@ class OcrMetadata:
     conflicting_parts: tuple[str, ...] = ()
     unpaired_ratio_parts: tuple[str, ...] = ()
     rejected_composition_parts: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    scoped_materials: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -501,6 +503,11 @@ def _build_payload_candidates(
         words = transform_words(payload.layout_words, image_transform)
         candidates = [replace(candidate, image_key=image_key, image_variant_key=image_variant_key, image_words=words,
                               image_region=image_region) for candidate in candidates]
+        if len(candidates) == 2:
+            from apps.text.ocr_candidates import literal_yarn_table_over_failed_layout
+
+            if literal_yarn_table_over_failed_layout(candidates[0], candidates[1]):
+                candidates = candidates[:1]
     return candidates
 
 
@@ -947,6 +954,16 @@ def run_ocr_bytes(
     if not best.text:
         result_warnings.append("OCR에서 텍스트를 추출하지 못했습니다.")
 
+    # A crop can omit the YARN heading. Preserve observations from the full
+    # original response without changing candidate choice or primary status.
+    scoped_materials = {}
+    for candidate in candidates:
+        if candidate.source == "original" and not candidate.layout_used:
+            observation = read_yarn_materials(candidate.text)
+            if observation is not None:
+                scoped_materials = {**observation, "source": "original", "image_key": candidate.image_key}
+                break
+
     return OcrResult(
         text=best.text,
         metadata=OcrMetadata(
@@ -967,6 +984,7 @@ def run_ocr_bytes(
             conflicting_parts=conflicting_parts,
             unpaired_ratio_parts=unpaired_ratio_parts,
             rejected_composition_parts=rejected_composition_parts,
+            scoped_materials=scoped_materials,
         ),
     )
 

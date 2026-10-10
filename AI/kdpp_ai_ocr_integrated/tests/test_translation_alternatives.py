@@ -8,6 +8,7 @@ from apps.text.ocr_candidates import (
     agreed_original_composition, build_candidate, find_rejected_composition_parts,
 )
 from apps.text.ocr_layout import OcrWord
+from part_policy_assertions import assert_selected_part
 
 
 @pytest.mark.parametrize("text, expected", [
@@ -59,6 +60,14 @@ def test_unresolved_or_extra_evidence_is_not_a_translation(tail):
 ])
 def test_primary_part_conflicts_and_incomplete_compositions_still_fail(text):
     result = parse_label(text)
+    if "LINING" in text:
+        materials = {"nylon": 100} if "NYLON" in text else {"cotton": 100}
+        assert_selected_part(result, "lining", materials, unconfirmed="outer")
+        return
+    if "OUTER 2" in text:
+        assert_selected_part(result, "outer", {"cotton": 100})
+        assert result["parts"]["outer_2"] == {"nylon": 100}
+        return
     assert result["status"] == "failed", result
     assert result["materials"] == {}
 

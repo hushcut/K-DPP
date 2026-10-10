@@ -3,6 +3,7 @@
 import pytest
 
 from apps.text.parse_label import parse_label, parse_materials
+from part_policy_assertions import assert_selected_part
 
 
 @pytest.mark.parametrize(
@@ -22,6 +23,9 @@ from apps.text.parse_label import parse_label, parse_materials
 )
 def test_conflict_is_rejected_despite_candidate_rank(text):
     result = parse_label(text)
+    if "LINING" in text:
+        assert_selected_part(result, 'lining', {'polyester': 100}, unconfirmed='outer')
+        return
     assert result["status"] == "failed"
     assert result["materials"] == {}
     assert any("ambiguous_composition_candidates" in warning for warning in result["warnings"])
@@ -110,6 +114,5 @@ def test_unclassified_percentage_text_is_not_silently_discarded():
 
 def test_outer_heading_residual_cannot_be_replaced_by_complete_lining():
     result = parse_label("OUTER 混用率 57% 38% 5%\nLINING POLYESTER 100%")
-    assert result["status"] == "failed"
-    assert result["materials"] == {}
+    assert_selected_part(result, 'lining', {'polyester': 100}, unconfirmed='outer')
     assert "outer:unpaired_ratio_rows" in result["warnings"]
