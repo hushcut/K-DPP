@@ -5,19 +5,16 @@ SCAN_DAILY_MAX 번(환경변수, 비우면 없음)에서 막는다. 하루는 �
 상한은 사용자 id 만 보므로, 인증은 get_current_user 를 바꿔 끼워 건너뛴다(인증은 다른 테스트가 본다).
 """
 
-import os
-import subprocess
-import sys
 import threading
 import time
 from datetime import datetime
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
 import main
+from process_helpers import run_python
 
 
 LABEL = ("label.jpg", b"test-image", "image/jpeg")
@@ -309,13 +306,6 @@ def test_parse_scan_daily_max_rejects_other_values(value):
 
 def test_invalid_scan_daily_max_stops_startup():
     # 상수는 import 때 읽으므로 환경변수를 바꾼 별도 프로세스에서 본다.
-    result = subprocess.run(
-        [sys.executable, "-c", "import main"],
-        cwd=Path(main.__file__).parent,
-        env=dict(os.environ, K_DPP_SCAN_DAILY_MAX="unlimited"),
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    result = run_python("import main", K_DPP_SCAN_DAILY_MAX="unlimited")
     assert result.returncode != 0
     assert "K_DPP_SCAN_DAILY_MAX" in result.stderr

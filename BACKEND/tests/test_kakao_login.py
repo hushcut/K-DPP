@@ -6,15 +6,11 @@
 """
 
 import json
-import os
 import ssl
-import subprocess
-import sys
 import threading
 import time
 from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 
 import httpx
 import pytest
@@ -26,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 import database
 import main
 from auth_helpers import signup
+from process_helpers import run_python
 
 APP_ID = 424242
 SOCIAL_REVISION = "19b7eee3b75c"
@@ -980,14 +977,7 @@ def test_parse_kakao_app_id():
 
 def _import_main_with(**env):
     # 설정은 import 때 읽으므로 환경변수를 바꾼 별도 프로세스에서 봅니다.
-    return subprocess.run(
-        [sys.executable, "-c", "import main; print(main.KAKAO_APP_ID)"],
-        cwd=Path(main.__file__).parent,
-        env=dict(os.environ, **env),
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    return run_python("import main; print(main.KAKAO_APP_ID)", **env)
 
 
 def test_kakao_app_id_setting_at_startup():
