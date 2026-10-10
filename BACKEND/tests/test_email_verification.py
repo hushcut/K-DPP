@@ -2,13 +2,9 @@
 
 import hashlib
 import hmac
-import os
-import subprocess
-import sys
 import threading
 import time
 from datetime import timedelta
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,6 +13,7 @@ import auth_helpers
 import database
 import main
 from auth_helpers import fix_next_code, latest_email, request_code, signup
+from process_helpers import run_python
 
 
 def _request(client, email, purpose="signup"):
@@ -681,14 +678,7 @@ def test_parse_email_daily_max():
 
 def _import_main_with(**env):
     # 설정은 import 때 읽으므로 환경변수를 바꾼 별도 프로세스에서 봅니다.
-    return subprocess.run(
-        [sys.executable, "-c", "import main"],
-        cwd=Path(main.__file__).parent,
-        env=dict(os.environ, **env),
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    return run_python("import main", **env)
 
 
 def test_unknown_email_settings_stop_startup():
