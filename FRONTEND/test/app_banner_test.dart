@@ -420,7 +420,7 @@ void main() {
       expect(sheetGoneFrame, isNotNull);
       expect(liveFrame, isNotNull);
       // TalkBack 은 시트가 빠진 뒤 시트를 연 버튼으로 초점을 되돌리며 그 버튼을 읽는다(약 0.3초 뒤).
-      // 그보다 먼저 낭독 칸이 생기면 배너를 읽다가 끊긴다(DECISIONS 194).
+      // 그보다 먼저 낭독 칸이 생기면 배너를 읽다가 끊긴다(DECISIONS 195).
       expect(
         (liveFrame! - sheetGoneFrame!) * 16,
         greaterThanOrEqualTo(AppBanner.announceSettleDelay.inMilliseconds),
