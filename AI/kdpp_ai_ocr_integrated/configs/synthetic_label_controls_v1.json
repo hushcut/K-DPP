@@ -1,0 +1,57 @@
+{
+  "version": "synthetic-label-controls-v1",
+  "seed": 20260916,
+  "base_label_count": 20,
+  "variants_per_label": 5,
+  "languages": ["ko", "en", "ja", "zh"],
+  "conditions": ["clean"],
+  "layouts": ["material_first", "ratio_first", "stacked_columns"],
+  "themes": ["white", "ivory", "black"],
+  "materials": ["cotton", "polyester", "rayon", "nylon", "acrylic", "wool", "cashmere", "lyocell", "modal", "spandex", "polyurethane"],
+  "lining_probability": 0.35,
+  "image_width": 1200,
+  "image_height": 800,
+  "font_size": 38,
+  "jpeg_quality_min": 90,
+  "jpeg_quality_max": 90,
+  "variant_plan": [
+    {
+      "role": "baseline",
+      "condition": "clean",
+      "layout": "material_first",
+      "theme": "white"
+    },
+    {
+      "role": "layout_ratio_first",
+      "condition": "clean",
+      "layout": "ratio_first",
+      "theme": "white",
+      "comparison_axis": "layout",
+      "comparison_value": "ratio_first"
+    },
+    {
+      "role": "layout_stacked_columns",
+      "condition": "clean",
+      "layout": "stacked_columns",
+      "theme": "white",
+      "comparison_axis": "layout",
+      "comparison_value": "stacked_columns"
+    },
+    {
+      "role": "theme_ivory",
+      "condition": "clean",
+      "layout": "material_first",
+      "theme": "ivory",
+      "comparison_axis": "theme",
+      "comparison_value": "ivory"
+    },
+    {
+      "role": "theme_black",
+      "condition": "clean",
+      "layout": "material_first",
+      "theme": "black",
+      "comparison_axis": "theme",
+      "comparison_value": "black"
+    }
+  ]
+}
