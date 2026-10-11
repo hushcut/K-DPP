@@ -44,13 +44,13 @@ class NumberKeyboardToolbar extends StatelessWidget {
   /// 캡슐 바깥 여백입니다. 화면 가장자리와 키보드에 붙지 않게 띄웁니다.
   static const EdgeInsets margin = EdgeInsets.fromLTRB(8, 4, 8, 4);
 
-  // 키보드와 같은 계열의 회색 띠입니다. 화살표·[완료] 색은 막대 위에서 글자 대비 4.5:1 을 넘깁니다
-  // (라이트 4.6·다크 4.9). 사진처럼 다크 #666666 에 파랑을 두면 2:1 이 안 돼 띠를 더 어둡게 했습니다.
+  // 키보드와 같은 계열의 회색 띠입니다. 화살표·[완료] 색은 링크와 같은 글자 강조색([AppPalette.accentText],
+  // DECISIONS 187)이고 막대 위에서 글자 대비 4.5:1 을 넘깁니다(라이트 4.6·다크 4.9).
+  // 사진처럼 다크 #666666 에 파랑을 두면 2:1 이 안 돼 띠를 더 어둡게 했습니다.
   static const Color _lightBar = Color(0xFFE9EAEE);
   static const Color _darkBar = Color(0xFF3A3A3C);
   static const Color _lightSeparator = Color(0xFFC6C6C8);
   static const Color _darkSeparator = Color(0xFF48484A);
-  static const Color _darkAccent = Color(0xFF9EA1FF);
   static const Color _lightDisabled = Color(0xFFA1A1A8);
   static const Color _darkDisabled = Color(0xFF6E6E73);
 
@@ -61,8 +61,9 @@ class NumberKeyboardToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = AppPalette.of(context).isDark;
-    final accent = isDark ? _darkAccent : AppPalette.accent;
+    final palette = AppPalette.of(context);
+    final isDark = palette.isDark;
+    final accent = palette.accentText;
     final disabled = isDark ? _darkDisabled : _lightDisabled;
 
     Widget arrow({

@@ -26,6 +26,9 @@ android {
         val kdppAppIdSuffix = (project.findProperty("kdppAppIdSuffix") as String?) ?: ""
         applicationId = "com.example.k_dpp$kdppAppIdSuffix"
         manifestPlaceholders["kdppAppLabel"] = (project.findProperty("kdppAppLabel") as String?) ?: "k_dpp"
+        // 카카오 네이티브 앱 키는 커밋하지 않고 FRONTEND/kakao.env(gitignore)에서 읽는다(DECISIONS 181).
+        // 파일이 없으면 none 으로 둬 로그인 복귀 스킴이 'kakao' 하나만 남지 않게 한다.
+        manifestPlaceholders["kakaoNativeAppKey"] = readKakaoNativeAppKey() ?: "none"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -45,4 +48,17 @@ android {
 
 flutter {
     source = "../.."
+}
+
+/** FRONTEND/kakao.env 의 KAKAO_NATIVE_APP_KEY 값(Dart 의 --dart-define-from-file 과 같은 파일). */
+fun readKakaoNativeAppKey(): String? {
+    val envFile = rootProject.file("../kakao.env")
+    if (!envFile.isFile) return null
+
+    return envFile.readLines()
+        .map { it.trim() }
+        .firstOrNull { it.startsWith("KAKAO_NATIVE_APP_KEY=") }
+        ?.substringAfter("=")
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
 }

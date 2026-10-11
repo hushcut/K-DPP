@@ -323,7 +323,9 @@ class _ThrowingProfileClosetProvider extends ClosetProvider {
   @override
   Future<void> setUserProfile({
     required String nickname,
-    required String email,
+    required String? email,
+    int? userId,
+    List<String>? loginMethods,
   }) async {
     throw StateError('setUserProfile 강제 실패 (테스트)');
   }

@@ -117,30 +117,49 @@ class AuthSubmitButton extends StatelessWidget {
   }
 }
 
-/// 인증 화면 아래쪽의 밑줄 친 이동 링크입니다(예: '계정이 없으신가요? 회원가입').
+/// 인증 화면 아래쪽의 이동 링크입니다(예: '계정이 없으신가요? **회원가입**').
+///
+/// 밑줄 없이(사용자 요청, DECISIONS 183 ①) 동작 글자 [action] 만 진한 강조색으로 보여 눌리는
+/// 곳임을 알립니다. 앞의 [prompt] 는 회색입니다. 낭독기는 둘을 이어 한 문장의 버튼으로 읽습니다.
 class AuthLinkButton extends StatelessWidget {
   const AuthLinkButton({
     super.key,
-    required this.label,
+    this.prompt,
+    required this.action,
     required this.onPressed,
   });
 
-  final String label;
-  final VoidCallback onPressed;
+  final String? prompt;
+  final String action;
+
+  /// null 이면 눌리지 않습니다(다른 요청이 진행 중일 때).
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.of(context);
 
     return TextButton(
       onPressed: onPressed,
       style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
-      child: Text(
-        label,
+      child: Text.rich(
+        TextSpan(
+          children: [
+            if (prompt case final prompt?) TextSpan(text: '$prompt '),
+            TextSpan(
+              text: action,
+              style: TextStyle(
+                color: palette.accentText,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+        textAlign: TextAlign.center,
         style: TextStyle(
           color: isDark ? const Color(0xFFB8B8BE) : const Color(0xFF5F6368),
           fontSize: 14,
-          decoration: TextDecoration.underline,
         ),
       ),
     );
