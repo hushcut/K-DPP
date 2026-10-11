@@ -48,7 +48,8 @@ class AppBanner {
   /// 읽기 프로그램이 켜졌을 때 평소 시간에 곱하는 배수입니다. 배너를 다시 찾아
   /// 듣거나 닫을 여유이며 스위치 제어도 포함합니다. 10초 고정은 그동안 앱바 아래를
   /// 훑으면 그 밑 내용 대신 배너가 읽혀 길었다(DECISIONS 97). 소리는 배너가 사라져도
-  /// 끊기지 않는다.
+  /// 끊기지 않는다. 이 시간은 낭독 칸을 붙인 때부터 셉니다([announceWaitLimit]·
+  /// [announceSettleDelay] 만큼 기다린 몫이 빠지면 배너 소리가 닫힐 무렵에야 끝났다 — DECISIONS 216).
   static const int accessibleNavigationMultiplier = 2;
 
   /// 낭독 칸을 붙이기 전에 화면이 멈추기를 기다리는 최대 시간입니다.
@@ -93,7 +94,7 @@ class AppBanner {
   ///
   /// 하한은 1초 + 공백을 뺀 글자당 0.1초라 긴 성공 문구나 서버가 보낸 길이를 모르는
   /// 문장도 따라갑니다. 읽기 프로그램이 켜지면 그 시간의
-  /// [accessibleNavigationMultiplier] 배입니다(성공 5초, 실패·안내 8초).
+  /// [accessibleNavigationMultiplier] 배이고(성공 5초, 실패·안내 8초) 낭독 칸을 붙인 때부터 셉니다.
   static Duration durationFor(
     String message,
     AppBannerKind kind, {
@@ -149,6 +150,10 @@ class AppBannerHostState extends State<AppBannerHost>
   /// 지금 배너에 낭독 칸을 붙였는지입니다([AppBanner.announceWaitLimit]).
   bool _announced = false;
   Timer? _announceTimer;
+
+  /// 읽기 프로그램이 켜졌을 때, 낭독 칸을 붙이면 그때부터 셀 표시 시간입니다
+  /// ([AppBanner.accessibleNavigationMultiplier]). 붙이기 전에 닫히면 비웁니다.
+  Duration? _durationAfterAnnounce;
 
   /// 지금 배너가 다른 애니메이션(화면 전환·대화상자·시트)이 멈추기를 기다렸는지입니다
   /// ([AppBanner.announceSettleDelay]).
@@ -231,6 +236,18 @@ class AppBannerHostState extends State<AppBannerHost>
       _controller.forward();
     }
 
+    // 읽기 프로그램 사용자에게 배너는 낭독 칸이 붙어야 생긴다. 붙기를 기다린 시간(시트 닫힘 약 1초)까지
+    // 표시 시간에서 빼면 배너 소리가 닫힐 무렵에야 끝났다(DECISIONS 216).
+    if (accessibleNavigation) {
+      _durationAfterAnnounce = duration;
+    } else {
+      _durationAfterAnnounce = null;
+      _startDismissTimer(duration);
+    }
+  }
+
+  void _startDismissTimer(Duration duration) {
+    _dismissTimer?.cancel();
     _dismissTimer = Timer(
       duration,
       () => _dismiss(AppBannerDismissReason.timer),
@@ -277,9 +294,13 @@ class AppBannerHostState extends State<AppBannerHost>
     if (!mounted || _current?.serial != serial || _announced) return;
 
     setState(() => _announced = true);
+    final duration = _durationAfterAnnounce;
+    _durationAfterAnnounce = null;
+    if (duration != null) _startDismissTimer(duration);
     _log(
       '낭독 칸 #$serial 표시 뒤 ${_shownFor.elapsedMilliseconds}ms'
-      '${_waitedForMotion ? ' (애니메이션 뒤 틈)' : ''}',
+      '${_waitedForMotion ? ' (애니메이션 뒤 틈)' : ''}'
+      '${duration != null ? ' 이때부터 ${duration.inMilliseconds}ms' : ''}',
     );
   }
 
@@ -289,6 +310,7 @@ class AppBannerHostState extends State<AppBannerHost>
   void _dismiss(AppBannerDismissReason reason) {
     _dismissTimer?.cancel();
     _dismissTimer = null;
+    _durationAfterAnnounce = null;
 
     final current = _current;
     // 닫히는 중에 다시 불려도(타이머 직후 탭 등) 한 번만 닫고 한 번만 기록한다.
