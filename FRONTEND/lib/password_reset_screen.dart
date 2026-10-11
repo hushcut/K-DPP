@@ -41,6 +41,7 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
       TextEditingController();
+  final FocusNode _emailFocusNode = FocusNode();
   final FocusNode _codeFocusNode = FocusNode();
   final FocusNode _passwordFocusNode = FocusNode();
   final FocusNode _confirmPasswordFocusNode = FocusNode();
@@ -77,6 +78,7 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
     _codeController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _emailFocusNode.dispose();
     _codeFocusNode.dispose();
     _passwordFocusNode.dispose();
     _confirmPasswordFocusNode.dispose();
@@ -148,6 +150,7 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
         if (!_codeFocusNode.hasFocus) return const SizedBox.shrink();
 
         return NumberKeyboardToolbar(
+          onPrevious: _emailFocusNode.requestFocus,
           onNext: _passwordFocusNode.requestFocus,
           onDone: _codeFocusNode.unfocus,
         );
@@ -236,6 +239,7 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
                               TextFormField(
                                 key: _emailFieldKey,
                                 controller: _emailController,
+                                focusNode: _emailFocusNode,
                                 keyboardType: TextInputType.emailAddress,
                                 textInputAction: TextInputAction.next,
                                 autofillHints: const [

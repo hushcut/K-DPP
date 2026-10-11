@@ -4,6 +4,7 @@ import 'package:k_dpp/email_login_screen.dart';
 import 'package:k_dpp/password_reset_screen.dart';
 import 'package:k_dpp/services/auth_api_service.dart';
 import 'package:k_dpp/widgets/app_banner.dart';
+import 'package:k_dpp/widgets/number_keyboard_toolbar.dart';
 
 import 'helpers/app_banner_expect.dart';
 import 'helpers/fake_auth_backend.dart';
@@ -158,6 +159,38 @@ void main() {
     );
     expect(confirmEditable.focusNode.hasFocus, isTrue);
   });
+
+  testWidgets('iOS 에서 번호 칸 막대의 ∧ 는 이메일, ∨ 는 새 비밀번호로 옮긴다', (tester) async {
+    await pumpLoginWithReset(tester);
+    await tapVisible(tester, find.text('비밀번호를 잊으셨나요?'));
+
+    Finder arrow(String label) => find.descendant(
+      of: find.byType(NumberKeyboardToolbar),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is Icon && widget.semanticLabel == label,
+      ),
+    );
+    bool hasFocus(String label) => tester
+        .widget<EditableText>(
+          find.descendant(
+            of: field(label),
+            matching: find.byType(EditableText),
+          ),
+        )
+        .focusNode
+        .hasFocus;
+
+    await tapVisible(tester, field('인증번호'));
+    await tester.tap(arrow('이전 칸'));
+    await tester.pumpAndSettle();
+    expect(hasFocus('이메일'), isTrue);
+    expect(find.byType(NumberKeyboardToolbar), findsNothing);
+
+    await tapVisible(tester, field('인증번호'));
+    await tester.tap(arrow('다음 칸'));
+    await tester.pumpAndSettle();
+    expect(hasFocus('새 비밀번호'), isTrue);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
   testWidgets('새 비밀번호도 가입과 같은 규칙으로 먼저 거른다', (tester) async {
     await pumpLoginWithReset(tester);

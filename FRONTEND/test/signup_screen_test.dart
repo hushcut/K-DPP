@@ -451,6 +451,28 @@ void main() {
     expect(find.byType(NumberKeyboardToolbar), findsNothing);
   }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
+  testWidgets('iOS 에서 번호 칸 막대의 ∧ 로 이메일에 옮긴다', (tester) async {
+    await pumpSignupScreen(tester);
+    await tester.tap(field('인증번호'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NumberKeyboardToolbar),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is Icon && widget.semanticLabel == '이전 칸',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final emailEditable = tester.widget<EditableText>(
+      find.descendant(of: field('이메일'), matching: find.byType(EditableText)),
+    );
+    expect(emailEditable.focusNode.hasFocus, isTrue);
+    expect(find.byType(NumberKeyboardToolbar), findsNothing);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
   testWidgets('비밀번호 칸에서 자판의 다음은 눈 아이콘을 건너뛰고 비밀번호 확인 칸으로 간다', (
     tester,
   ) async {
