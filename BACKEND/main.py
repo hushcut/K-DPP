@@ -51,14 +51,23 @@ if AI_MODULE_PATH.exists() and str(AI_MODULE_PATH) not in sys.path:
     sys.path.append(str(AI_MODULE_PATH))
 
 try:
-    from apps.text.ocr_text import run_ocr
+    # 글자만 돌려주는 run_ocr 는 후보 충돌·짝 없는 비율 같은 근거를 버리므로, 근거를 담은
+    # OcrResult 를 받아 analyze_ocr_result 로 넘깁니다(AI 담당 기준 커밋 1648c38, DECISIONS 210).
+    from apps.text.ocr_text import run_ocr_with_metadata as run_ocr
+    from apps.text.ocr_errors import OcrTimeoutError
 except Exception:
     run_ocr = None
+    OcrTimeoutError = None
 
 try:
     from apps.text.parse_label import parse_label
 except Exception:
     parse_label = None
+
+try:
+    from apps.service.label_analysis import analyze_ocr_result
+except Exception:
+    analyze_ocr_result = None
 
 ACCESS_TOKEN_EXPIRE_DAYS = 30
 # 계정마다 살아 있는 로그인 토큰(기기) 수 상한 — 넘으면 가장 오래된 토큰부터 지운다(add_access_token).
@@ -74,6 +83,7 @@ DEFAULT_ERROR_CODES = {
     429: "TOO_MANY_ATTEMPTS",
     502: "OCR_FAILED",
     503: "AI_MODULE_FAILED",
+    504: "OCR_TIMEOUT",
 }
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 SCAN_IMAGE_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
@@ -2062,13 +2072,14 @@ def validate_scan_upload(image: UploadFile) -> None:
     image.file.seek(0)
 
 
-def extract_label_text(image: UploadFile, raw_ocr_text: str | None, user_id: int) -> str:
+def extract_label_input(image: UploadFile, raw_ocr_text: str | None, user_id: int) -> str | dict:
+    """파싱할 라벨 글자(str), 또는 사진이면 OCR 근거까지 합쳐 분석한 결과(dict)를 돌려줍니다."""
     validate_scan_upload(image)
 
     if raw_ocr_text and raw_ocr_text.strip():
         return raw_ocr_text.strip()
 
-    if run_ocr is None:
+    if run_ocr is None or analyze_ocr_result is None:
         raise HTTPException(
             status_code=503,
             detail={
@@ -2112,14 +2123,24 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None, user_id: int
             / "kdpp_ai_ocr_integrated"
             / "key.json"
         )
-        return run_ocr(
+        ocr_result = run_ocr(
             temp_path,
             credential_path=str(credential_path) if credential_path.exists() else "",
         )
     except Exception as exc:
         # 예외 원문에는 서버 경로·계정 식별자 등이 섞일 수 있어
         # 서버 로그에만 남기고 클라이언트에는 고정 메시지만 돌려줍니다.
+        # 설정·한도·일시 장애 같은 원인은 예외 이름으로 이 로그에서 구분합니다(DECISIONS 211).
         print(f"[scan] OCR 실패: {exc!r}", file=sys.stderr)
+        if OcrTimeoutError is not None and isinstance(exc, OcrTimeoutError):
+            # 앱은 504 를 '시간 초과' 안내로 받습니다. 시간 상한(후보마다 5~10초·스캔 전체 25초)은 AI 쪽에 있습니다.
+            raise HTTPException(
+                status_code=504,
+                detail={
+                    "message": "라벨 인식 시간이 초과되었습니다.",
+                    "error": "잠시 후 다시 시도하거나 소재를 직접 입력해 주세요.",
+                },
+            ) from exc
         raise HTTPException(
             status_code=502,
             detail={
@@ -2129,6 +2150,12 @@ def extract_label_text(image: UploadFile, raw_ocr_text: str | None, user_id: int
         ) from exc
     finally:
         Path(temp_path).unlink(missing_ok=True)
+
+    # 글자만 돌려주는 OCR(테스트의 가짜 OCR 등)은 raw_ocr_text 와 같은 길로 파싱합니다.
+    if isinstance(ocr_result, str):
+        return ocr_result
+    # 분석은 Vision 실패가 아니라 위 502·504 변환 밖에서 합니다.
+    return analyze_ocr_result(ocr_result)
 
 
 def ensure_label_parser() -> None:
@@ -2142,10 +2169,13 @@ def ensure_label_parser() -> None:
         )
 
 
-def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
-    ensure_label_parser()
-
-    parsed = parse_label(label_text)
+def parse_label_materials(label_input: str | dict) -> tuple[dict[str, float], str, str, list[str]]:
+    if isinstance(label_input, dict):
+        # 사진 스캔: analyze_ocr_result 가 OCR 근거(후보 충돌·짝 없는 비율)까지 넣어 이미 파싱했습니다.
+        parsed = label_input
+    else:
+        ensure_label_parser()
+        parsed = parse_label(label_input)
     materials = parsed.get("materials") or {}
     raw_ocr_preview = parsed.get("raw_ocr_preview", "")
     # AI 파서는 버전마다 관리 지침 키가 다릅니다(develop: care_text,
@@ -2156,22 +2186,32 @@ def parse_label_materials(label_text: str) -> tuple[dict[str, float], str, str]:
         or parsed.get("care_instruction")
         or "라벨 표기법에 맞춰 관리하세요."
     )
+    # 앱에 내보내는 AI 메타데이터는 warnings 뿐입니다(DECISIONS 210). confidence·parse_evidence·ocr 는
+    # 공개 범위를 아직 협의 중이고, ocr(호출 수·후보·처리 시간)는 운영용이라 응답에 넣지 않습니다.
+    warnings = [item for item in parsed.get("warnings") or [] if isinstance(item, str)]
 
-    if not materials:
+    # 앱은 ai_success 를 읽지 않아 200 이면 성공으로 보입니다. 그래서 파서가 확정하지 못했거나
+    # 합계가 100 이 아닌 부분 인식은 200 이 아니라 422 로 보냅니다(DECISIONS 200). 합계 허용 폭은
+    # 탄소 계산과 같은 99.5~100.5 입니다.
+    ratio_total = sum(materials.values()) if materials else 0
+    if parsed.get("status") != "success" or not materials or not 99.5 <= ratio_total <= 100.5:
         raise HTTPException(
             status_code=422,
             detail={
                 "message": "라벨에서 소재 혼용률을 찾지 못했습니다.",
                 "error_code": "MATERIAL_EXTRACTION_FAILED",
-                "materials": materials,
+                # 확정하지 못한 비율은 materials 로 내보내지 않고, 직접 입력 폼이 채울 값만 남깁니다.
+                "materials": {},
                 "partial_materials": materials,
                 "care_instruction": care_instruction,
                 "raw_ocr_preview": raw_ocr_preview,
                 "ai_success": False,
+                "parser_error_code": parsed.get("error_code") or "",
+                "warnings": warnings,
             },
         )
 
-    return materials, care_instruction, raw_ocr_preview
+    return materials, care_instruction, raw_ocr_preview, warnings
 
 # --- API 엔드포인트 시작 ---
 
@@ -2692,25 +2732,23 @@ def scan_label(
     # 스캔 1회가 곧 외부 OCR 호출 비용이므로 로그인 사용자만 허용하고, 사용자마다 하루 횟수를 셉니다.
     current_user: database.User = Depends(get_current_user),
 ):
-    label_text = extract_label_text(image, raw_ocr_text, current_user.id)
-    materials, care_instruction, raw_ocr_preview = parse_label_materials(label_text)
+    label_input = extract_label_input(image, raw_ocr_text, current_user.id)
+    # 부분 인식(합계가 100 이 아님)은 여기서 422 로 끝나므로, 아래는 소재를 확정한 경우뿐입니다.
+    materials, care_instruction, raw_ocr_preview, warnings = parse_label_materials(label_input)
     title = "스캔한 의류"
     category = "상의"
 
-    # 라벨 일부만 읽혀 합계가 100이 아니면, 이 값 그대로는 탄소 계산이
-    # 거부되므로(99.5~100.5 검사) 부분 인식임을 응답에 명시합니다.
-    total_ratio = sum(materials.values())
-    ratio_complete = 99.5 <= total_ratio <= 100.5
-
     return {
         "status": "success",
-        "message": "라벨 인식 완료" if ratio_complete else "라벨을 일부만 인식했습니다. 비율을 확인해 주세요.",
-        "ai_success": ratio_complete,
-        "analysis_failure_reason": None if ratio_complete else "RATIO_INCOMPLETE",
+        "message": "라벨 인식 완료",
+        # 두 필드는 예전 계약(200 + RATIO_INCOMPLETE)과의 호환으로 남깁니다 — 이제 늘 성공 값입니다.
+        "ai_success": True,
+        "analysis_failure_reason": None,
         "materials": materials,
         "material_details": build_material_details(materials, db),
         "care_instruction": care_instruction,
         "raw_ocr_preview": raw_ocr_preview,
+        "warnings": warnings,
         "clothing": {
             "name": title,
             "category": category,

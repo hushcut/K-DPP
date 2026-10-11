@@ -421,6 +421,7 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional, 4000자 이하)
   ],
   "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
   "raw_ocr_preview": "COTTON 80% POLYESTER 20%",
+  "warnings": [],
   "clothing": {
     "name": "스캔한 의류",
     "category": "상의"
@@ -429,6 +430,14 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional, 4000자 이하)
   "category": "상의"
 }
 ```
+
+- 200 은 소재를 확정했을 때만입니다 — AI 파서가 `success` 이고 합계가 99.5~100.5(탄소 계산과 같은 폭).
+  `ai_success`·`analysis_failure_reason` 은 예전 계약과의 호환으로 남아 있고 이제 늘 `true`·`null` 입니다.
+- `warnings`: AI 가 붙인 주의 메모(`list[str]`, 없으면 `[]`, 422 `detail` 에도 있음). 두 종류가 섞여 있습니다 —
+  `<부위>:<코드>` 모양의 소재 판정 경고(예: `generic:unpaired_ratio_rows`, `generic:ambiguous_composition_candidates`)와
+  한국어 처리 안내(예: "OCR 좌표를 바탕으로 재구성한 줄 순서를 사용했습니다."). 앱에 보일 때는 아는 코드만 문구로
+  바꾸고 나머지는 무시합니다. AI 의 `confidence`·`parse_evidence`·`ocr`(호출 수·후보·처리 시간)는 응답에 넣지 않습니다
+  (DECISIONS 210 — 앞의 둘은 공개 범위 협의 중, `ocr` 는 운영용).
 
 ### Material Extraction Failure
 
@@ -442,12 +451,34 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional, 4000자 이하)
     "error_code": "MATERIAL_EXTRACTION_FAILED",
     "materials": {},
     "partial_materials": {},
-    "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
+    "care_instruction": "표백 금지; 찬물 세탁; 평평하게 뉘어서 건조",
     "raw_ocr_preview": "wash cold do not bleach dry flat",
-    "ai_success": false
+    "ai_success": false,
+    "parser_error_code": "composition_not_found",
+    "warnings": []
   }
 }
 ```
+
+- 소재를 못 찾았을 때뿐 아니라 **부분 인식**(AI 가 확정하지 못함 — 합계가 불완전한 혼용률, 짝 없는 비율 줄,
+  후보끼리 다른 조성 등 — 또는 합계가 100 이 아님)도 422 입니다(DECISIONS 200 — 이전에는 200 + `RATIO_INCOMPLETE`).
+- `materials` 는 늘 `{}` 입니다(확정하지 못한 비율을 확정 소재로 내보내지 않음). `partial_materials` 는 직접 입력 폼이
+  채울 값으로, AI 가 실패하면 비우므로 보통 `{}` 입니다.
+- `parser_error_code`: AI 파서의 실패 코드(`composition_not_found`·`ambiguous_composition` 등, 없으면 `""`).
+  화면 분기는 상태 코드로 합니다.
+
+### OCR Failure (502 / 504)
+
+Vision 을 부른 뒤 실패하면 예외 원문은 서버 로그(`[scan] OCR 실패: …` — 예외 이름으로 원인 구분)에만 남기고
+고정 문구를 돌려줍니다(DECISIONS 211).
+
+| HTTP | error_code | 경우 |
+| --- | --- | --- |
+| 502 | `OCR_FAILED` | Vision 설정·인증 문제, Vision 사용량 한도, Vision 일시 장애, 그 밖의 실패 |
+| 504 | `OCR_TIMEOUT` | 원본 사진 Vision 요청이 10초, 또는 스캔 전체 OCR 이 25초를 넘음(AI 의 `OCR_CANDIDATE_TIMEOUT_SECONDS`·`OCR_TOTAL_TIMEOUT_SECONDS` — 전처리·소재 영역 후보는 8·5초에서 끊고 그 후보만 건너뜀) |
+
+Vision 일시 장애를 503 으로 내지 않는 것은 503 이 이미 서버 전체 하루 상한(`SCAN_UNAVAILABLE`)·AI 모듈 없음
+(`AI_MODULE_FAILED`)에 쓰이기 때문입니다.
 
 ### Daily Limit (429 / 503)
 
@@ -457,9 +488,9 @@ Google Vision 을 부르는 스캔(`raw_ocr_text` 없이 보낸 요청)은 하�
 - 한 계정 하루 **20번**(`main.SCAN_USER_DAILY_MAX`)을 넘으면 `429 SCAN_DAILY_LIMIT`.
 - 서버 전체 하루 `K_DPP_SCAN_DAILY_MAX` 번(환경변수, 비우면 없음 — 배포는 필수)을 넘으면
   `503 SCAN_UNAVAILABLE`. 둘 다 닿았으면 429 를 줍니다.
-- Vision 을 부르기 직전에 세고 결과(성공·422·502)와 상관없이 되돌리지 않습니다.
-  `raw_ocr_text` 로 OCR 을 건너뛴 요청과 업로드 검사(413·415)·OCR 또는 라벨 파서 모듈 없음(503
-  `AI_MODULE_FAILED` — 둘 다 Vision 전에 확인)으로 끝난 요청은 세지 않습니다. 막힌 요청은 Vision 을
+- Vision 을 부르기 직전에 세고 결과(성공·422·502·504)와 상관없이 되돌리지 않습니다.
+  `raw_ocr_text` 로 OCR 을 건너뛴 요청과 업로드 검사(413·415)·OCR·분석·라벨 파서 모듈 없음(503
+  `AI_MODULE_FAILED` — 모두 Vision 전에 확인)으로 끝난 요청은 세지 않습니다. 막힌 요청은 Vision 을
   부르지 않습니다.
 
 ```json
@@ -823,3 +854,15 @@ Authorization: Bearer <token>
   앱 변경 없음). `"v@x.com"`·`v@x.com(1)` 같은 표기는 전에는 통과했는데, 메일 서버로 보낼 때는 모두 같은 `v@x.com` 으로 읽혀
   이메일당 발송 한도(1시간 5회·24시간 10회)를 표기 수만큼 넘겨 한 메일함에 몰아 보낼 수 있었다. 한글 주소는 메일 서버가
   SMTPUTF8 을 지원해야만 보내져 200 인데 메일이 오지 않을 수 있었다. 로그인은 바뀌지 않는다(형식 검사를 하지 않음).
+
+## 변경 이력 — AI 통합 (DECISIONS 199·200·210~212)
+
+- 사진 스캔이 AI 담당 기준 커밋(`ai-integration` 1648c38)의 `run_ocr_with_metadata` → `analyze_ocr_result` 를 거친다.
+  OCR 후보끼리 조성이 다르거나 짝 없는 비율 줄이 있으면 AI 가 소재를 확정하지 않는다.
+- **부분 인식은 200 이 아니라 422 `MATERIAL_EXTRACTION_FAILED`**: 이전에는 합계가 100 이 아니면 200 +
+  `ai_success=false`·`analysis_failure_reason="RATIO_INCOMPLETE"` 였는데, 앱이 `ai_success` 를 읽지 않아 성공처럼 보였다.
+  422 `detail.materials` 는 늘 `{}`, `parser_error_code`·`warnings` 를 더했다. 앱은 422 를 전처럼 소재 직접 입력으로 보낸다.
+- 200 응답에 `warnings`(`list[str]`)를 더했다. AI 의 `confidence`·`parse_evidence`·`ocr` 는 넣지 않는다.
+- **Vision 시간 초과는 504 `OCR_TIMEOUT`**(앱에 시간 초과 안내가 이미 있음). 나머지 Vision 실패는 전처럼 502.
+- 분석 함수(`analyze_ocr_result`)를 불러오지 못하면 OCR·파서 모듈 없음과 같이 Vision 전에 503 `AI_MODULE_FAILED`(세지 않음).
+- `raw_ocr_text` 요청은 전처럼 AI 파서(`parse_label`)로 바로 파싱한다 — 같은 422·`warnings` 규칙.
