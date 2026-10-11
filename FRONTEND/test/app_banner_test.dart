@@ -353,14 +353,18 @@ void main() {
       navigator.pushNamedAndRemoveUntil('/no-app-bar', (route) => false);
 
       int? routeFrame;
+      int? oldRouteGoneFrame;
       int? liveFrame;
       var oldRouteGoneAtLive = false;
-      for (var frame = 1; frame <= 90 && liveFrame == null; frame++) {
+      for (var frame = 1; frame <= 120 && liveFrame == null; frame++) {
         await tester.pump(const Duration(milliseconds: 16));
         if (frame == 1) expect(find.text(message), findsOneWidget);
 
         if (routeFrame == null && _hasSemanticsLabel('앱바 없는 화면')) {
           routeFrame = frame;
+        }
+        if (oldRouteGoneFrame == null && !_hasSemanticsLabel('첫 화면')) {
+          oldRouteGoneFrame = frame;
         }
         if (_isAnnounced(message)) {
           liveFrame = frame;
@@ -371,11 +375,19 @@ void main() {
       expect(routeFrame, isNotNull);
       expect(liveFrame, greaterThan(routeFrame!));
       expect(oldRouteGoneAtLive, isTrue, reason: '전환이 끝나 앞 화면이 빠진 뒤');
+      expect(oldRouteGoneFrame, isNotNull, reason: '전환이 끝난 프레임을 찾아야 틈을 잰다');
+      expect(
+        (liveFrame! - oldRouteGoneFrame!) * 16,
+        greaterThanOrEqualTo(AppBanner.announceSettleDelay.inMilliseconds),
+        reason: '새 화면의 첫 초점 낭독이 먼저 오게',
+      );
 
       handle.dispose();
     });
 
-    testWidgets('시트를 닫으며 뜬 배너는 시트가 다 내려간 뒤에 낭독 칸이 생긴다', (tester) async {
+    testWidgets('시트를 닫으며 뜬 배너는 시트가 다 내려가고 초점이 돌아갈 틈을 둔 뒤에 낭독 칸이 생긴다', (
+      tester,
+    ) async {
       const message = '의류 정보가 수정됐어요.';
       final handle = tester.ensureSemantics();
       tester.platformDispatcher.accessibilityFeaturesTestValue =
@@ -395,19 +407,59 @@ void main() {
       Navigator.of(tester.element(find.text('수정 시트'))).pop();
       _banner(tester).show(message, kind: AppBannerKind.success);
 
+      int? sheetGoneFrame;
       int? liveFrame;
-      var sheetGoneAtLive = false;
-      for (var frame = 1; frame <= 90 && liveFrame == null; frame++) {
+      for (var frame = 1; frame <= 120 && liveFrame == null; frame++) {
         await tester.pump(const Duration(milliseconds: 16));
-        if (_isAnnounced(message)) {
-          liveFrame = frame;
-          sheetGoneAtLive = !_hasSemanticsLabel('수정 시트');
+        if (sheetGoneFrame == null && !_hasSemanticsLabel('수정 시트')) {
+          sheetGoneFrame = frame;
         }
+        if (_isAnnounced(message)) liveFrame = frame;
       }
 
+      expect(sheetGoneFrame, isNotNull);
       expect(liveFrame, isNotNull);
-      expect(sheetGoneAtLive, isTrue);
+      // TalkBack 은 시트가 빠진 뒤 시트를 연 버튼으로 초점을 되돌리며 그 버튼을 읽는다(약 0.3초 뒤).
+      // 그보다 먼저 낭독 칸이 생기면 배너를 읽다가 끊긴다(DECISIONS 195).
+      expect(
+        (liveFrame! - sheetGoneFrame!) * 16,
+        greaterThanOrEqualTo(AppBanner.announceSettleDelay.inMilliseconds),
+      );
+      expect(
+        (liveFrame - sheetGoneFrame) * 16,
+        lessThan(AppBanner.announceSettleDelay.inMilliseconds + 100),
+      );
 
+      handle.dispose();
+    });
+
+    testWidgets('시트 뒤 배너 다음에 바로 띄운 배너는 틈 없이 낭독 칸이 생긴다', (tester) async {
+      final handle = tester.ensureSemantics();
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(accessibleNavigation: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      await _pumpApp(tester);
+
+      showModalBottomSheet<void>(
+        context: tester.element(find.text('첫 화면')),
+        builder: (_) => const SizedBox(height: 200, child: Text('수정 시트')),
+      );
+      await tester.pumpAndSettle();
+      Navigator.of(tester.element(find.text('수정 시트'))).pop();
+      _banner(tester).show('의류 정보가 수정됐어요.', kind: AppBannerKind.success);
+      await tester.pumpAndSettle();
+      await tester.pump(AppBanner.announceSettleDelay);
+      expect(_isAnnounced('의류 정보가 수정됐어요.'), isTrue);
+
+      // 아무것도 움직이지 않을 때 띄운 다음 배너는 앞 배너의 기다림을 물려받지 않는다.
+      _banner(tester).show('저장하지 못했어요.', kind: AppBannerKind.failure);
+      await tester.pump();
+      await tester.pump();
+      expect(_isAnnounced('저장하지 못했어요.'), isTrue);
+
+      await tester.pump(const Duration(seconds: 10));
       handle.dispose();
     });
 

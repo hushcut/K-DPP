@@ -59,6 +59,13 @@ class AppBanner {
   /// 애니메이션이 있어도 이 시간이 지나면 붙입니다.
   static const Duration announceWaitLimit = Duration(seconds: 1);
 
+  /// 화면 전환·대화상자·시트 애니메이션을 기다렸다면, 멈춘 뒤 낭독 칸을 붙이기까지 더 두는 틈입니다.
+  ///
+  /// 시트·대화상자가 닫히면 TalkBack 은 그 경로가 빠진 뒤 약 0.3초에 연 버튼으로 초점을 되돌리며
+  /// 그 버튼을 읽는다. 멈추자마자 붙이면 배너를 읽다가 그 낭독에 끊겼다(DECISIONS 195). 기다릴
+  /// 애니메이션이 없던 배너(배너 자신의 미끄러짐만 있던 경우 포함)는 틈 없이 바로 붙입니다.
+  static const Duration announceSettleDelay = Duration(milliseconds: 800);
+
   /// 표시·닫힘을 로그에 남길지입니다. debug·profile 빌드에서 켜지고, release 와
   /// `flutter test`(배너가 뜨는 테스트마다 줄이 쌓인다)에서는 꺼집니다.
   @visibleForTesting
@@ -143,6 +150,10 @@ class AppBannerHostState extends State<AppBannerHost>
   bool _announced = false;
   Timer? _announceTimer;
 
+  /// 지금 배너가 다른 애니메이션(화면 전환·대화상자·시트)이 멈추기를 기다렸는지입니다
+  /// ([AppBanner.announceSettleDelay]).
+  bool _waitedForMotion = false;
+
   @override
   void initState() {
     super.initState();
@@ -197,6 +208,7 @@ class AppBannerHostState extends State<AppBannerHost>
       _current = entry;
       _announced = false;
     });
+    _waitedForMotion = false;
     _shownFor
       ..reset()
       ..start();
@@ -229,12 +241,28 @@ class AppBannerHostState extends State<AppBannerHost>
   ///
   /// 화면 전환을 띄우는 코드가 배너보다 뒤에 와도 같은 프레임 안이면 그 프레임 끝에는
   /// 전환 애니메이션이 돌고 있다. 배너 자신의 미끄러짐(읽기 프로그램이 꺼졌을 때)도 함께 기다린다.
+  /// 배너 말고 다른 애니메이션을 기다렸다면 멈춘 뒤 [AppBanner.announceSettleDelay] 만큼 더 둔다.
   void _announceWhenStill(int serial) {
     if (!mounted || _current?.serial != serial || _announced) return;
 
-    if (SchedulerBinding.instance.transientCallbackCount > 0) {
+    final running = SchedulerBinding.instance.transientCallbackCount;
+    // 배너 자신의 미끄러짐은 틈을 둘 까닭이 아니다(경로가 빠지지 않는다).
+    final others = running - (_controller.isAnimating ? 1 : 0);
+    if (others > 0) _waitedForMotion = true;
+
+    if (running > 0) {
       SchedulerBinding.instance.addPostFrameCallback(
         (_) => _announceWhenStill(serial),
+      );
+      return;
+    }
+
+    if (_waitedForMotion) {
+      // 상한 타이머를 틈 타이머로 바꾼다. 멈춘 것을 봤으니 상한은 필요 없다.
+      _announceTimer?.cancel();
+      _announceTimer = Timer(
+        AppBanner.announceSettleDelay,
+        () => _announce(serial),
       );
       return;
     }
@@ -249,7 +277,10 @@ class AppBannerHostState extends State<AppBannerHost>
     if (!mounted || _current?.serial != serial || _announced) return;
 
     setState(() => _announced = true);
-    _log('낭독 칸 #$serial 표시 뒤 ${_shownFor.elapsedMilliseconds}ms');
+    _log(
+      '낭독 칸 #$serial 표시 뒤 ${_shownFor.elapsedMilliseconds}ms'
+      '${_waitedForMotion ? ' (애니메이션 뒤 틈)' : ''}',
+    );
   }
 
   /// 지금 배너를 닫습니다. 없으면 아무 일도 하지 않습니다.
