@@ -1258,8 +1258,12 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
             style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
             child: _isBusy
                 ? const _SubmitProgress()
+                // 카카오 계정도 화면엔 '탈퇴' 한 단어만 둡니다. 긴 문구는 보통 폭·글자 크기에서도
+                // [취소]와 한 줄에 안 들어가 세로로 쌓였습니다. 카카오 확인은 바로 위 안내문이
+                // 알리고, 낭독기에는 버튼만 골라 들어도 알 수 있게 긴 이름을 남깁니다(DECISIONS 214).
                 : Text(
-                    _usesKakao ? '카카오로 확인하고 탈퇴' : '탈퇴',
+                    '탈퇴',
+                    semanticsLabel: _usesKakao ? '카카오로 확인하고 탈퇴' : null,
                     style: const TextStyle(color: Colors.white),
                   ),
           ),
