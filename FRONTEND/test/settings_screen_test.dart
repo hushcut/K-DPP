@@ -625,7 +625,7 @@ void main() {
       // 비밀번호 칸 대신 카카오로 확인하는 버튼 하나다.
       expect(find.byType(TextField), findsNothing);
 
-      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
       await tester.pumpAndSettle();
 
       // 로그인 때 저장된 토큰이 아니라, 카카오계정 로그인 화면에서 다시 받은 토큰이다.
@@ -644,6 +644,36 @@ void main() {
       expectAppBanner(tester, '회원 탈퇴가 완료됐어요.', AppBannerKind.success);
     });
 
+    testWidgets('탈퇴 버튼은 좁은 폰·큰 글자에서도 취소와 한 줄에 두고, 낭독기엔 카카오로 확인한다고 읽힌다', (
+      tester,
+    ) async {
+      // 폭 360·글자 크기 1.3 에서 옛 문구 '카카오로 확인하고 탈퇴'는 취소 아래로 쌓였습니다.
+      tester.view.physicalSize = const Size(360 * 3, 800 * 3);
+      tester.view.devicePixelRatio = 3;
+      tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+      addTearDown(tester.view.reset);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      final semantics = tester.ensureSemantics();
+
+      await _pumpSettings(
+        tester,
+        account: _kakaoAccount,
+        kakao: FakeKakaoSdk(),
+        client: MockClient((_) async => http.Response('{}', 200)),
+      );
+      await _openAccountMenu(tester, '회원 탈퇴');
+
+      final withdraw = tester.getRect(
+        find.widgetWithText(ElevatedButton, '탈퇴'),
+      );
+      final cancel = tester.getRect(find.widgetWithText(TextButton, '취소'));
+      expect((withdraw.center.dy - cancel.center.dy).abs(), lessThan(1));
+      expect(withdraw.left, greaterThan(cancel.right));
+      expect(find.bySemanticsLabel('카카오로 확인하고 탈퇴'), findsOneWidget);
+
+      semantics.dispose();
+    });
+
     testWidgets('카카오 재로그인을 취소하면 탈퇴 요청 없이 대화상자를 그대로 둔다', (tester) async {
       var requestCount = 0;
       final kakao = FakeKakaoSdk()..nextAccountLogin = FakeKakaoSdk.cancelled();
@@ -658,17 +688,17 @@ void main() {
       );
 
       await _openAccountMenu(tester, '회원 탈퇴');
-      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
       await tester.pumpAndSettle();
 
       expect(requestCount, 0);
       expect(harness.isAuthenticated, isTrue);
-      expect(find.text('카카오로 확인하고 탈퇴'), findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, '탈퇴'), findsOneWidget);
       expect(find.byType(AppBannerView), findsNothing);
 
       // 다시 누를 수 있다.
       kakao.nextAccountLogin = FakeKakaoSdk.cancelled();
-      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
       await tester.pumpAndSettle();
 
       expect(kakao.accountLoginPrompts, hasLength(2));
@@ -690,12 +720,12 @@ void main() {
       );
 
       await _openAccountMenu(tester, '회원 탈퇴');
-      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
       await tester.pumpAndSettle();
 
       expect(requestCount, 0);
       expect(find.text('카카오 로그인을 마치지 못했어요. 잠시 후 다시 시도해 주세요.'), findsOneWidget);
-      expect(find.text('카카오로 확인하고 탈퇴'), findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, '탈퇴'), findsOneWidget);
     });
 
     testWidgets('가입한 카카오 계정이 아니면 대화상자에 알리고 기기 데이터를 건드리지 않는다', (tester) async {
@@ -716,14 +746,14 @@ void main() {
       );
 
       await _openAccountMenu(tester, '회원 탈퇴');
-      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
       await tester.pumpAndSettle();
 
       expect(
         find.text('가입한 카카오 계정이 아니에요. 가입한 카카오 계정으로 다시 확인해 주세요.'),
         findsOneWidget,
       );
-      expect(find.text('카카오로 확인하고 탈퇴'), findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, '탈퇴'), findsOneWidget);
       expect(harness.isAuthenticated, isTrue);
       expect(await storage.hasSavedClothesListFor('user:7'), isTrue);
       expect(kakao.logoutCount, 0);
@@ -752,7 +782,7 @@ void main() {
       );
 
       await _openAccountMenu(tester, '회원 탈퇴');
-      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
       await tester.pumpAndSettle();
 
       expect(
@@ -760,7 +790,7 @@ void main() {
         findsOneWidget,
       );
 
-      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
       await tester.pumpAndSettle();
 
       expect(requestCount, 2);
@@ -788,7 +818,7 @@ void main() {
       );
 
       await _openAccountMenu(tester, '회원 탈퇴');
-      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
       await tester.pumpAndSettle();
 
       expect(find.text('지금은 카카오로 확인할 수 없어 탈퇴되지 않았어요.'), findsOneWidget);
@@ -806,7 +836,7 @@ void main() {
       );
 
       await _openAccountMenu(tester, '회원 탈퇴');
-      await tester.tap(find.text('카카오로 확인하고 탈퇴'));
+      await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
       await tester.pump();
 
       await tester.tap(find.text('취소'));
@@ -819,7 +849,7 @@ void main() {
       pendingLogin.completeError(FakeKakaoSdk.cancelled());
       await tester.pumpAndSettle();
 
-      expect(find.text('카카오로 확인하고 탈퇴'), findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, '탈퇴'), findsOneWidget);
     });
 
     testWidgets('카카오 계정 로그아웃은 기기의 카카오 토큰도 지운다', (tester) async {
