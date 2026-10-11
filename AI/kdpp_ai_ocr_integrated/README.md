@@ -1,132 +1,664 @@
-# K-DPP AI OCR Integrated
+# K-DPP AI OCR 통합 모듈
 
-This is a standalone AI-part draft that keeps the modular `kyh/ai-ocr` direction and folds in the useful preprocessing ideas from `feat/ai-ocr`.
+## 2026-10-10 IN·승우 코드 통합 보완
 
-It does not modify the original `C:\KDPP\K-DPP` project.
+소재 칸별 독립 확인을 추가했습니다. 두 저장 실사진 OCR 기록을 재생하면 모두
+43/48(89.58%)이며, 이 수치는 보완 후 새 Vision 정확도가 아닙니다.
+변경 범위·검증·남은 실패는 [통합 보완 정리](reports/ai_integration_improvement_20261010.md)를 참고합니다.
 
-## Goals
+K-DPP의 OCR 소재·혼용률 분석과 텍스트 관리 지침 파싱을 제공하는 AI 모듈입니다.
 
-- Keep symbol recognition and text OCR/parsing separate.
-- Reuse the richer material alias idea from `feat/ai-ocr`.
-- Fix the parser/result shape mismatch.
-- Add a more reliable training loop for overfitting checks.
-- Save experiment models separately from the current model.
-- Provide evaluation output beyond a single accuracy number.
+## 2026-10-02 AI 통합 기준
 
-## Suggested Layout
+`ai-integration`의 기존 앱 코드를 기준으로 팀원 `kyh/ai`의 OCR·파서 구조와
+사용자 `ksw/ai-ocr-enhancement`의 소재 안전 규칙·백엔드 검증을 결합했습니다.
+프런트엔드, 탄소 계산, DB 구조 및 원래 개인 브랜치는 통합 범위에 포함하지
+않습니다. 원본 커밋은 각각 `947c5f7`, `38537b0`, 파일럿은 `1974920`입니다.
+
+- OCR 원문·배치·전처리 후보의 충돌 및 미연결 비율을 `/api/scan`까지 전달합니다.
+  소재를 확정할 수 없으면 422로 반환하며, 성공 응답은 근거가 확인되고
+  소재 비율 합계가 **정확히 100%**인 경우에만 제공합니다. 합계를 보정하지
+  않습니다. 이 기준은 QA 결과 비교의 허용 오차와 별개입니다.
+- 앱의 OCR 설정·한도 오류는 502, 시간 초과는 504, 일시 서비스 장애는 503입니다.
+- 사용자 회귀 사례와 팀원 OCR 후보·서비스 테스트를 함께 유지합니다.
+  생성 데이터의 정답 문구 검사와 실제 이미지 OCR 정확도는 별도 평가입니다.
+- 추가 반사·노이즈·회전 보정 옵션은 기존 기본값인 **꺼짐**을 유지합니다.
+  과거 실사진 보고서의 특정 옵션 결과를 기본 설정의 정확도로 사용하지 않습니다.
+- 사용자 파일럿 v1.0.3 생성기는 `apps/synthetic/pilot_v1_0_3.py`와
+  `configs/pilot_v1_0_3/`에 별도 보존합니다. 기존 이미지 80장과 정답표를
+  재생성하거나 덮어쓰지 않습니다. 해당 폴더의 README에 실행 방법이 있습니다.
+- `/api/scan` 배치 QA의 인증 방법은 `../../QA/README.md`를 참고합니다.
+  서비스 계정, 로그인 토큰, 이미지·OCR 캐시·학습 모델은 Git에 포함하지 않습니다.
+
+기존 보고서와 날짜별 결과는 당시 코드·옵션의 기록입니다. 통합된 코드의 실사진
+성능은 같은 정답지·OCR 캐시 또는 별도의 실제 OCR 평가로 다시 확인해야 합니다.
+
+## 2026-10-09 다국어 반복 표기 독립 보완
+
+팀원 브랜치의 다국어 처리 방식을 참고하여 `ai-integration` 기준 작업본에서
+슬래시로 병기한 소재명 처리와 원문·좌표 일치 검사를 별도로 보완했습니다.
+최신 `kyh/ai`를 병합하거나 파일 전체를 교체한 변경은 아닙니다.
+
+- 완전하게 읽힌 첫 소재명과 명시된 `%`를 유지합니다. 같은 소재의 등록된
+  번역이 반복된 목록에서만 제한적인 단어 잘림·짧은 중간 OCR 조각을 처리합니다.
+  다른 소재, 미등록 소재, 불확실한 약어, 추가 숫자·비율은 성공으로 보정하지 않습니다.
+- 읽을 수 있는 기존 번역 행과 근거 개수는 유지합니다. 손상된 반복 표기를
+  처리한 결과에는 `damaged_translation_fragment` 경고와 중간 파서 신뢰도를 남깁니다.
+- 같은 Google Vision 응답의 원문·좌표 결과가 모든 소재·비율·부위에 동의하고,
+  직접 연결된 명시 비율과 원본 글자·좌표 근거를 확인한 경우에는 번역 경고만으로
+  추가 OCR을 요청하지 않습니다. 다른 응답의 충돌·미등록 소재를 지우지 않습니다.
+- 확인된 부위를 KYH와 같은 우선순위로 선택합니다. 안감·자수실을 반환할 때는
+  `selected_part`에 실제 부위를 표시하며, 비율 합계 검증과 숫자 근거는 유지합니다.
+
+이 변경의 성능은 같은 사진·정답지·저장 OCR을 사용하는 기본 실행 경로로 비교하며,
+파서 단독 검사나 수동 진단 후보 전체를 합친 결과와 구분합니다.
+
+## 팀 공통 규칙
+
+- 의존성 선언은 `requirements*.txt`, 실제 설치는 실행 범위에 맞는
+  `requirements-*.lock`을 사용합니다. 개발 가상환경은 `.venv`입니다.
+- 코드 변경 후에는 Ruff와 pytest를 모두 통과해야 합니다.
+- AI·BACKEND·QA 변경을 푸시하거나 풀 리퀘스트를 만들면 GitHub Actions가 AI Ruff와 전체 pytest를 실행합니다.
+- 서비스 계정 JSON, 실제 데이터셋, 모델, OCR 캐시·출력물은 커밋하지 않습니다.
+- `ruff check --fix`나 `ruff format`으로 기존 코드를 일괄 변경하지 않습니다. 검사
+  결과를 검토해 필요한 변경만 적용합니다.
+- Python 3.12 환경은 텍스트 OCR·개발/CI 잠금 파일에서 필요한 설치 범위를 선택합니다.
+
+## 현재 서비스 범위
+
+현재 DPP 서비스 흐름에서 사용하는 기능은 의류 라벨의 **소재명과 혼용률
+추출**입니다.
+
+```text
+라벨 이미지 -> Google Vision OCR -> 소재/혼용률 파서 -> 소재 분석 결과
+```
+
+## 폴더 구조
 
 ```text
 kdpp_ai_ocr_integrated/
   apps/
-    symbol/
-      class_map.py
-      dataset_csv.py
-      evaluate_symbol.py
-      predict_symbol.py
-      train_symbol_experiment.py
-    text/
-      ocr_text.py
-      parse_label.py
-      rules.py
+    service/                 # FastAPI 서비스 경계와 응답 형식
+    text/                    # 이미지 검증, OCR, 소재/혼용률 파싱, OCR QA 계약
   scripts/
-    check_split_leakage.py
-    run_combined_batch.py
-  data/
-    train/
-    valid/
-    test/
-  models/
-    symbol/
-  outputs/
+    audit_ocr_qa_dataset.py   # OCR QA 정답지 품질 감사
+    run_ai_checks.py         # 문법, 테스트, 데이터 검사 실행 도구
+    run_combined_batch.py    # 이미지 폴더 일괄 분석 도구
+    run_qa_batch.py          # OCR/파서 단위 QA 도구
+  outputs/                   # QA·평가 결과와 OCR 캐시 위치, Git 추적 제외
 ```
 
-## Data
+## 설치와 로컬 검증
 
-Copy your Roboflow-style folders into:
+아래 명령은 **Windows PowerShell** 기준입니다. 저장소 루트에서 AI 폴더로 이동한 뒤
+이 문서의 AI 명령을 실행합니다.
 
-```text
-data/train
-data/valid
-data/test
+```powershell
+Set-Location .\AI\kdpp_ai_ocr_integrated
 ```
 
-Each split should contain `_classes.csv` and the referenced image files.
+Python 3.12 가상환경을 만든 뒤 용도에 맞는 잠금 파일 하나를 선택합니다. 자격증명 파일, 모델 가중치, 실제
+데이터셋은 저장소에 포함하지 않습니다.
 
-## Train
-
-```bash
-python -m apps.symbol.train_symbol_experiment
+```powershell
+py -3.12 -m venv .venv
 ```
 
-The experiment model is saved to:
+개발·전체 테스트 환경을 설치하고 검사하려면 다음 명령을 사용합니다.
 
-```text
-models/symbol/best_symbol_model_exp.pt
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-ci.lock
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
-## Evaluate
+텍스트 OCR과 소재 파서만 실행할 때는 기본 의존성을 설치합니다.
 
-```bash
-python -m apps.symbol.evaluate_symbol --model models/symbol/best_symbol_model_exp.pt --split valid
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-text.lock
 ```
 
-Outputs include overall accuracy, class accuracy, confusion matrix CSV, and wrong predictions CSV.
+### 의존성 잠금 정책
 
-## Combined Batch
+`requirements.txt`, `requirements-dev.txt`와
+`BACKEND/requirements.txt`는 직접 의존성의 허용 범위를 정하는 입력입니다.
+설치에는 Python 3.12 기준의 정확한 버전을 기록한 잠금 파일을 사용합니다.
 
-Requires Google Vision credentials:
+- `requirements-text.lock`: 기본 OCR 서비스와 파서만 설치합니다.
+- `requirements-ci.lock`: AI 개발·전체 테스트와 백엔드 의존성을 함께 설치합니다.
 
-```bash
-python scripts/run_combined_batch.py --split valid --credentials key.json
+잠금 파일은 `uv==0.12.18`로 Windows와 Linux에 공통인 버전을 해석해 생성했습니다.
+직접 의존성이나 백엔드 요구사항을 바꾸면 해당 잠금 파일을 다시 만들고 함께 검증합니다.
+기존 잠금 파일을 출력 대상으로 쓰면 기존 버전을 유지하며, 의도적으로 올릴 때만
+`--upgrade-package`를 지정합니다. 잠금 파일을 손으로 고치지 않습니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install uv==0.12.18
+.\.venv\Scripts\uv.exe pip compile requirements.txt --universal --python-version 3.12 --no-header --no-annotate -o requirements-text.lock
+.\.venv\Scripts\uv.exe pip compile requirements-dev.txt ..\..\BACKEND\requirements.txt --universal --python-version 3.12 --no-header --no-annotate -o requirements-ci.lock
 ```
 
+CI는 두 잠금 파일이 입력 요구사항과 맞는지 검사하고 `requirements-ci.lock`으로
+설치합니다. 잠금 파일은 패키지 **버전**을 고정하며 배포 파일 해시까지 고정하지는 않습니다.
 
+### 텍스트 OCR 운영 번들
 
-## Accuracy Improvement Version
+운영 배포물은 저장소 전체를 복사하지 않고 명시된 텍스트 서비스 파일만 구성합니다.
 
-This copy adds a more robust material parser for real QA images.
+```powershell
+.\.venv\Scripts\python.exe -m scripts.build_text_runtime --output dist\text-runtime
+```
 
-### What changed
+생성된 `dist/text-runtime`에는 텍스트 OCR 서비스, 기본 `requirements.txt`와
+`requirements-text.lock`이 포함됩니다. 배포 환경은 잠금 파일로 의존성을 설치합니다.
+합성 데이터 생성, QA 스크립트, 테스트, 데이터셋과 출력물은
+포함되지 않습니다. 배포 환경에서는 번들 디렉터리에서 다음 진입점을 사용합니다.
 
-- Parses material composition by line instead of only adjacent tokens.
-- Detects garment sections such as outer fabric, lining, filling, rib, sleeve, and pocket.
-- Uses outer/generic material as the representative `materials` result while preserving detailed `parts`.
-- Avoids blindly normalizing unrelated sections into one 100% total.
-- Adds Japanese/Chinese/Korean material aliases and common OCR corrections.
-- Adds a QA batch script for comparing OCR results against an answer key CSV.
+```powershell
+python -m apps.service
+```
 
-### Expected response shape
+pytest에는 `/api/scan`의 AI 연결 검사도 포함되므로, 전체 검증에는 백엔드 의존성이
+필요합니다. 연결 검사는 테스트 수집 단계에서 백엔드를 import하지 않고, 실행 시 임시
+SQLite DB를 설정한 뒤 불러옵니다. `raw_ocr_text`와 모의 OCR로 현재 스캔 응답·업로드
+검증·파싱 실패를 확인하며, Google Vision 실호출이나 사용자 DB 저장을 하지 않습니다.
+
+`GOOGLE_APPLICATION_CREDENTIALS` 또는 `--credentials`에 지정하는 Google Vision
+서비스 계정 JSON은 개인 로컬 경로에서만 사용해야 하며, 저장소에 추가하면 안 됩니다.
+
+## AI HTTP 서비스 실행
+
+AI 폴더에서 다음 명령으로 실행합니다. 이미지 OCR은 실행 환경의
+`GOOGLE_APPLICATION_CREDENTIALS`에 유효한 서비스 계정 JSON이 설정되어 있어야 합니다.
+텍스트 파싱 API는 Google Vision을 호출하지 않습니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m apps.service
+```
+
+기본 주소는 `http://127.0.0.1:8100`입니다. 호스트는 `KDPP_AI_HOST`, 포트는
+`KDPP_AI_PORT`로 변경합니다. API 문서는 `/docs`, 스키마는 `/openapi.json`에서 확인합니다.
+
+| 메서드·경로 | 입력·역할 |
+| --- | --- |
+| `GET /health` | 서비스 상태와 API 버전 확인 |
+| `POST /v1/parse-text` | JSON의 `text` 필드로 이미 추출한 텍스트 파싱 |
+| `POST /v1/analyze-label` | multipart의 `file` 필드로 이미지 업로드·OCR·파싱 |
+
+텍스트 파싱 요청 예시입니다.
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8100/v1/parse-text" -Method Post -ContentType "application/json" -Body '{"text":"COTTON 80% POLYESTER 20%"}'
+```
+
+백엔드 `/api/scan`은 포트 8000의 별도 경로이며 업로드 필드는 `image`입니다.
+인증·탄소 계산·이력 저장은 [백엔드 API 계약](../../BACKEND/API_CONTRACT.md)을 따릅니다.
+
+### 독립 AI 서비스의 요청 제한
+
+전체 HTTP 본문은 **11MiB**, 이미지 파일 하나는 **10MiB**까지 허용합니다.
+1MiB 차이는 multipart 경계·헤더·부가 필드용이며 이미지 파일 한도를 늘리지 않습니다.
+두 POST API(`/v1/analyze-label`, `/v1/parse-text`)를 포함해 HTTP 요청 전체에 적용합니다.
+크기 헤더가 상한을 넘으면 본문을 읽기 전에 413을 반환하고, 헤더가 없거나 작게
+신고돼도 실제 수신량을 검사합니다. 전체 본문 검사가 끝나기 전에는 multipart 파서와
+OCR을 실행하지 않으므로 파일 여러 개의 합산 크기도 제한됩니다.
+잘못되거나 서로 충돌하는 `Content-Length`는 400 `invalid_request`, 크기 초과는
+413 `payload_too_large`로 반환하며 같은 라벨 실패 응답 계약을 유지합니다.
+
+본문은 상한 안에서 메모리에 버퍼링하고 1MiB 단위로 파서에 전달합니다. 마지막 청크를
+전달하면 버퍼를 해제해 OCR 대기 동안 보유하지 않습니다. 이 제한은 요청 하나의 본문
+상한이며 동시 요청 수·업로드 대기 시간·프로세스 전체 메모리 상한을 뜻하지 않습니다.
+실배포의 프록시/ASGI 서버에도 업로드 크기와 수신 시간 제한을 설정해야 합니다.
+
+## OCR 소재 분석
+
+### 처리 방식
+
+1. 업로드 이미지의 형식, 크기, 해상도를 먼저 검증합니다.
+2. 원본 이미지를 Google Vision OCR로 읽습니다.
+3. 원본에서 세탁 제목을 자르지 않는 완전한 소재 영역을 증명할 수 있으면 회전 영역을 먼저 재인식합니다.
+4. 최종 판단에 복원 가능한 누락이 남으면 기본 전처리와 필요한 소재 영역 재인식을 이어갑니다.
+5. 후보 전체의 소재·혼용률·거절 근거를 비교하고, 파서는 소재명·혼용률·의류 부위·세탁 지침을 구조화된 응답으로 반환합니다.
+
+원본 OCR 후보의 충돌·거절 근거까지 합친 최종 판단이 성공하고 신뢰도가 충분하면
+전처리 OCR을 생략합니다. 불필요한 외부 API 호출 비용과 지연을 줄이기 위한 정책입니다.
+
+일반 텍스트·좌표 재구성·전처리 후보가 같은 부위에 서로 다른 완성 조성을 제시하면
+점수로 하나를 확정하지 않습니다. 후보 안에서 파서가 이미 확인한 조성 충돌도 유지하며,
+`ocr.conflicting_parts`에 해당 부위를 기록합니다. 충돌하거나 비율이 불완전한 부위는
+확정 조성에서 제외하고, 다음 우선순위의 확인된 부위를 선택합니다.
+
+대표 부위 우선순위는 `outer → generic → outer_2 → lining → filling → pocket → rib
+→ sleeve → color_block → embroidery_yarn`입니다. 상위 부위가 미확정이면
+`부위:composition_not_confirmed`와 `representative_part_fallback:선택부위` 경고를 남깁니다.
+`materials`는 정확히 `parts[selected_part]`의 조성이며, 의류 전체의 평균 조성이 아닙니다.
+예를 들어 겉감 비율이 없고 안감이 폴리에스터 100%이면 `lining`을 반환합니다.
+겉감1과 겉감2가 서로 달라도 겉감1을 선택하고, 확인된 두 조성을 `parts`에 보존합니다.
+겉감1이 미확정이면 확인된 겉감2를 선택할 수 있습니다. 자수실은 최하위 부위로만
+반환하며 겉감으로 표시하지 않습니다. 부위를 알 수 없는 다른 OCR 후보의 손상 근거는
+선택한 후보가 이를 버렸다는 이유로 무시하지 않습니다.
+
+기존 동등 섬유 규칙에 맞는 다국어 반복과, 실패 원본의 정상적인 배치 복구는 허용합니다.
+`run_ocr_bytes()`·`run_ocr_with_metadata()`의 텍스트는 원문 확인용으로 보존하므로,
+소재 판단에는 `analyze_ocr_result()`로 충돌 메타데이터까지 전달해야 합니다.
+
+소재와 연결되지 않은 `%` 행은 `혼용률`, `COMPOSITION` 등의 제목이나 부위명이 붙어도
+완성된 조성의 근거로 사용하지 않습니다. 세탁·제품 정보·홍보 문구는 구분합니다.
+다른 후보에서 연결되지 않은 비율이 발견되면, 성공 후보가 그 값과 개수를 모두
+유효한 조성에 연결한 경우에만 배치 복구로 인정합니다. 해소되지 않은 부위는
+`ocr.unpaired_ratio_parts`에 기록하며 대표 소재를 확정하지 않습니다.
+AI 서비스는 대표 부위의 후보 충돌을 422 실패 응답으로 반환합니다. 문자열 전용
+`run_ocr()`도 `OcrCompositionError`로 자동 선택을 차단합니다. 백엔드 `/api/scan`은
+이 오류도 소재 미확정으로 처리해 422를 반환합니다.
+
+같은 위치의 재인식으로 거절을 해소하려면 원문 행의 모든 문자·숫자·부호가 단어 상자와
+빠짐없이 대응해야 합니다. 상자가 없는 소재나 비율, 같은 상자를 여러 행에 재사용한 경우는
+보류합니다. 반복 행도 실제 폴리곤의 방향·기준선·읽는 순서와 전체 토큰 분할을 확인합니다.
+번역 조성을 복원하거나 보관 문구를 제외해도 주변 미등록 소재·추가 숫자는 지우지 않습니다.
+`DRY CLEANING`과 `ONLY`가 바로 이웃한 두 줄이면 완전한 세탁 문구로 연결하여
+소재 영역의 경계를 확인합니다. 단독 `ONLY`나 중간에 미등록 소재·추가 숫자가 끼어 있는
+문구는 경계로 인정하지 않으며, 소재 영역의 반대쪽에 남은 숫자도 계속 검사합니다.
+
+아랍어 소재명은 정확한 전체 표기 `قطن`·`القطن`(면), `بوليستر`·`البوليستر`(폴리에스터)를
+지원합니다. 명시된 혼용률과 같은 소재의 번역 연결에는 기존 규칙을 적용합니다.
+아랍어 소재가 포함된 행은 소재·비율 외의 단어와 남은 숫자·부호를 함께 확인하며,
+같은 부위의 인접 행에 해석되지 않은 단어나 추가 숫자가 있으면 확정을 보류합니다.
+확인된 상품 정보·세탁 문구·원산지·다른 부위의 경계는 구분합니다. 좌표 근거 검사는 유지하며, OCR 오독인
+`all`·`jail`·`E` 등을 아랍어 소재명으로 치환하지 않습니다. 이 사전 지원은
+실제 OCR이 해당 문자를 읽은 경우에 적용되며, 실사진 인식률 상승을 보장하지 않습니다.
+
+등록 소재명이 최대 여덟 개의 인접 행 조각으로 끊겼다면 문자를 그대로 이어 전체 등록명과
+일치하는 경우만 복원합니다. 이미 완성된 소재명에 다음 행을 붙이거나 중간 문자·숫자를
+삭제하지 않습니다. 단독 `/` 행은 앞뒤 전체 행이 같은 등록 소재명이고 뒤 행에 비율이
+없을 때만 앞 행의 번역 구분자로 연결합니다. 비율 없는 번역 행 뒤의 같은 소재 `100%` 등
+명시 비율 행도 앞선 실제 `/`·`-` 구분자가 있으면 연결할 수 있습니다. 다른 소재·부위,
+미등록 문자·추가 비율과 주변 문맥 검사는 그대로 적용하며 OCR 원문과 좌표는 보존합니다.
+복원된 행의 모든 숫자·퍼센트는 실제 비율 근거와 대응해야 하며, 그 밖에 남은 불확실성
+부호는 보류합니다. 복원 행을 사용하는 직접 조성 후보에도 주변 문맥 검사를 적용하고
+같은 부위의 독립 부호 행을 임의로 장식으로 처리하지 않습니다.
+비공백 문자의 값과 순서를 원문 행에 대응해 복원 행의 출처를 추적합니다. 동일 문구가
+여러 부위에 반복돼도 복원 여부를 문구의 개수로 추정해 주변 검사를 생략하지 않습니다.
+
+소재의 의미를 검사하는 토큰화와 상자에 나뉜 CJK 문자를 비교하는 토큰화는 구분합니다.
+일반 소재 영역 재인식에서도 등록 중국어 소재명이 여러 OCR 상자로 나뉘면,
+원문과 전체 상자의 문자 보존을 먼저 확인한 뒤 물리 행·읽는 순서·좌표 겹침으로 연결합니다.
+문자 상자를 다른 행에 재사용하거나 추가·누락 문자를 숨기는 경우는 보류합니다.
+미등록 소재·부정 표현의 의미 검사와 소수·개별 숫자·퍼센트 검증은 유지합니다.
+같은 응답의 세탁 온도 복원도 한 페이지·같은 입력·영역·전체 문자·상자·소재·비율을 보존하고,
+원문에서 세탁 근거로 확인된 숫자만 처리합니다. 미등록 소재나 불명 문맥을 함께 제거하지 않습니다.
+
+등록 소재명에 점과 한 자리 비율이 붙은 경우에는 서로 다른 입력·재인식 방식 두 개가
+같은 위치에서 명시적 소재·비율과 전체 조성을 증명할 때만 구분자로 복원합니다. 일반 복원은
+실제 `.5%`·`0.5%`를 보존합니다. 작은 한 자리 숫자·퍼센트 상자의 좌표 오차도 소재 행에 대한
+양쪽 변의 수직 오차가 각각 1픽셀 이내이고 방향·기준선·순서가 맞을 때만 제한적으로 허용합니다.
+
+정수 끝의 `96`을 퍼센트로 잘못 읽어 100을 넘긴 행은 서로 다른 실제 재인식 입력 두 개가
+같은 위치에서 보존된 숫자 접두부와 별도 `%` 상자를 확인할 때만 복원합니다. 전체 문자·상자,
+소재 행의 방향·순서와 각 숫자/퍼센트 상자의 독립 대응을 확인하고 합계에 맞춰 값을 바꾸지
+않습니다. 원본 단어 상자 안에 재인식 상자가 대응하는 증거이며, 원본의 문자별 좌표나 폴리곤
+전체 면적을 복원했다는 뜻은 아닙니다. 부호·소수·누락 상자·미등록 소재·불명 주변 문맥은
+계속 보류하며, 같은 응답의 원문/좌표 후보를 두 번의 독립 확인으로 세지 않습니다.
+
+전체 OCR 문자와 상자가 일치하고 제조국·품질표시·세탁 안내 경계로 소재 블록이 구분되면,
+경계 밖의 브랜드·안내 문구가 해당 블록의 좌표 복원을 막지 않도록 처리합니다. 경계 안의
+불명 문구와 경계 밖의 소재명·비율·부위·명시적 미등록 소재는 계속 보류합니다.
+분리된 한 개의 `%`를 공유하는 소재·숫자 행은 서로 다른 입력에서 숫자와 물리 위치가
+모두 일치할 때만 연결 누락을 해소합니다. 추가 숫자·퍼센트나 다른 조성을 숨기지 않습니다.
+
+단일 소재 100%를 여러 언어로 반복한 라벨에서는 읽힌 기본 소재·100% 행과 세 개 이상의
+동일 소재 별칭, 전체 문자·상자 및 재인식 위치를 확인해 손상된 반복 문구를 구분합니다.
+이름이나 비율이 다른 번역, 추가 혼용률, 미등록 소재, 불명 기본 선언은 보류합니다.
+짧은 번역 손상은 경고를 유지하며 기본 선언을 추정하거나 외국어 전체를 복원하지 않습니다.
+
+소재 영역의 끝이 완전한 세탁 주의사항 제목을 걸치면 모든 제목 상자와 남은 상자를 확인해
+제목 위의 빈 간격에서 자릅니다. 소재·비율·부위·미등록 문자를 제외할 수 없습니다. 이 영역의
+조기 회전 재인식이 성공하면 일반 전처리를 생략하고, 실패하면 전처리와 비회전 영역을 이어갑니다.
+같은 회전 입력을 다시 요청하지 않으며 기본 4입력·25초 예산을 유지합니다. 적응형 확대·회전
+옵션은 조기·후기 소재 영역 모두에 적용하고, 같은 물리 상자를 다른 문구로 읽어도 한 근거로 셉니다.
+관측 기울기가 5도 미만이면 기존 -3도 미세 회전 입력을 유지하고, 5도 이상일 때
+일관된 관측 방향으로 회전합니다. 작은 기울기에서도 글자 높이에 따른 확대는 유지합니다.
+
+회전 영역은 원본 픽셀과 완전히 포함된 관측 상자로 이진화의 품질을 확인합니다. 서로 다른
+물리 상자가 두 개 이상이고, 모든 관측 상자에서 어두운 획이 5~55%이며 주변 여백의 90% 이상이
+밝게 유지될 때만 Otsu 이진화를 적용하고 추가 선명화를 생략합니다. 숫자·기호·미등록 문구
+상자도 같은 조건을 확인하며, 흐린 글자·그림자·좌표 불일치·검사량 초과는 기존 전처리를
+사용합니다. 검사량은 상자 256개·누적 1,600만 픽셀 이내입니다. 영역에 이미 걸쳐 잘린 글자나
+작은 소수점·부호의 보존까지 보장하는 검사는 아니므로, 최종 문맥·개별 숫자·퍼센트 검증을
+계속 적용합니다. 전처리 선택에는 정답 비율이나 사진 번호를 사용하지 않습니다.
+
+반복 문구로 실패한 좌표 후보는 같은 응답 원문의 증명을 참조할 수 있습니다. 입력·방식·영역·상자,
+전체 문자·조성 토큰·관측 소재·정수 비율이 그대로이고 원문 자체가 기존 물리 복원 검증을 통과해야
+합니다. 원문·좌표를 독립 확인 두 번으로 세지 않습니다. 회전 좌표 후보를 제외하는 경우에도 원문과
+복원 조성이 같고 명시적 소재·비율 및 일관된 폴리곤 방향이 확인되어야 합니다.
+
+기본 실행은 원본·기본 전처리·소재 영역·소재 영역 회전까지 이미지당 최대 4개의 OCR 요청 후보를 사용합니다.
+소재 영역은 `KDPP_ENABLE_MATERIAL_REGION_OCR=1`로 기본 활성화되며 `0`으로 끌 수 있습니다.
+관측 소재명·비율 좌표가 부족하거나 영역이 이미지 대부분을 차지하면 자르지 않습니다.
+퍼센트 오독 시 등록 소재 두 개와 가까운 숫자 행으로 위치만 찾고, 그 숫자를 정답 비율로 승인하지 않습니다.
+작은 글자는 안전한 크기 한도에서 확대하며 서로 다른 단어 상자의 일관된 각도가 있으면 회전합니다.
+`candidate_count`는 같은 응답의 원문·좌표 복원 후보까지 포함하므로 OCR 요청 수와 다릅니다.
+기본 전처리는 대비·선명화 결과를 JPEG 품질 92로 인코딩해 PNG 생성·전송 시간을 줄입니다.
+후보 전체의 최종 판단이 실패하고 복원할 여지가 있으면 반사 보정·노이즈 완화·미세 회전을
+추가하도록 설정할 수 있습니다. 개별 후보가 성공했더라도 소재·비율의 연결 누락이 남으면
+다음 후보로 복원을 시도합니다. 이미 확인한 조성 충돌·미등록 소재·잘못된 수치의 근거는
+다른 후보에서 해당 행이 사라졌다는 이유로 지우지 않습니다.
+세 옵션의 기본값은 꺼짐이며, 소재 영역까지 함께 켜면 이미지당 최대 7개의 OCR 요청 후보를 순서대로 시도합니다.
+후보 전체의 최종 안전 판단이 성공하면 추가 후보는 생략합니다.
+
+```powershell
+$env:KDPP_ENABLE_REFLECTION_OCR = "1"
+$env:KDPP_ENABLE_DENOISED_OCR = "1"
+$env:KDPP_ENABLE_ROTATED_OCR = "1"
+```
+
+노이즈 완화는 전체 사진을 최대 1800×2400 범위로 축소하고 3×3 중앙값 필터로 천 무늬를
+줄인 뒤 대비를 보정합니다. 라벨을 자르거나 글자·숫자를 생성하지 않습니다.
+2026-09-30의 실사진 89장 비교에서 기본 70장, 반사 보정·노이즈 완화 사용 시 73장이 정답지와 일치했습니다
+(소재 집합 및 혼용률 ±3%p). 기존 정답 70장은 유지됐으며 독립 평가 결과는 아닙니다.
+비교 방법·추가 호출 수·지연은 [전처리 실험 보고서](reports/qa_preprocessing_20260930.md)를 참고합니다.
+
+미세 회전은 전체 이미지를 -3도 회전한 후보로 행 분할을 다시 시도합니다. 실제 기울기를
+추정하는 기능은 아니며, 확장된 캔버스에도 크기 제한을 적용합니다. 글자 변경 이미지의
+검수 가능한 고유 16장에서는 기본 13장→미세 회전 추가 15장으로 개선됐습니다.
+이 집합에서는 반사·노이즈 완화 없이 미세 회전만 켜도 같은 결과였습니다.
+중복·조성 충돌·파서 실패는 [편집 이미지 검증 보고서](reports/qa_edited_labels_20260930.md)를 참고합니다.
+이 보고서는 작성 당시의 결과를 보존합니다. 2026-10-02의 후보 충돌·잔여 비율 보완 후
+저장 OCR 재검증에서는 실사진 73/89·검수 가능한 편집 15/16을 유지했고, 조성이 모호해
+제외한 고유 7장은 모두 안전 실패로 처리했습니다. 새로운 Vision 실호출 정확도 측정은 아닙니다.
+
+전체 처리 시작 후 25초 예산의 남은 시간을 각 후보에 적용합니다. 후보별 설정은 원본
+10초·기본 전처리 8초·반사 보정 7초·노이즈 완화 5초·미세 회전 5초·소재 영역 5초·영역 회전 5초이며, 남은 시간이 없으면 다음 후보를
+생략하고 `total_timeout`을 기록합니다. 이미지 검증·전처리 시간도 남은 예산을 소모합니다.
+25초는 `run_ocr_bytes()` 진입 후의 OCR 예산이며 HTTP 업로드 수신·본문 검사·multipart 파싱·최종 서비스 응답 전체를 포함하지 않습니다.
+AI HTTP 경로의 동기 OCR은 작업 스레드에서 실행하며, 기다리는 동안 이벤트 루프를 막지 않습니다.
+Google SDK 자동 재시도는 끄고 각 RPC에 후보·전체 예산의 남은 시간만 전달합니다.
+재시도 대기와 클라이언트 준비 시간도 예산에 포함하며, 기한 이후 도착한 응답은 성공으로
+사용하지 않습니다. 이 예산은 새 작업의 시작과 원격 호출 제한 시간을 제어합니다. 이미 실행 중인
+동기 전처리나 제한 시간을 지키지 않는 외부 호출을 강제 종료하는 절대 시간 상한은 아닙니다.
+`external_call_count`는 외부 OCR을 실행한 후보 수, `rpc_attempt_count`는 재시도를 포함한
+실제 원격 호출(RPC) 시도 수, `retry_count`는 실제 시작한 추가 RPC 수입니다. 후보별 `attempts`에도
+RPC 시도 수를 기록하고 QA CSV의 `ocr_rpc_attempt_count`로 내보냅니다. 캐시 적중·오프라인
+실행의 RPC 시도 수는 0이며, RPC 시도 수가 청구된 요청 수를 보장하지는 않습니다.
+
+### 라벨 분석 응답 계약
+
+성공과 실패는 같은 기본 필드를 제공합니다. 대표 소재와 부위별 혼용률은 실제 정수·실수만
+허용하며 각 값은 유한한 `0 초과 100 이하`, 각 조성의 합계는 정확히 `100%`여야 합니다.
+숫자 문자열·불리언·NaN·무한대는 허용하지 않습니다. 정수·소수 표기는 유지합니다.
+부위 정보가 있으면 `materials`는 `selected_part`의 조성과 같아야 합니다.
+실패 응답의 `materials`·`parts`는 빈 객체이며 `selected_part`는 빈 문자열입니다.
+
+`confidence.ocr`·`confidence.parser`는 규칙에 따른 등급입니다. 교정된 성공 확률이나
+Google Vision이 제공한 신뢰도 점수로 해석하지 않습니다.
+
+아래는 `/v1/parse-text`에 `COTTON 80% POLYESTER 20%`를 보낸 전체 응답 예시입니다.
+부위명이 없는 입력이므로 대표 부위는 `generic`, OCR 등급은 `unknown`입니다.
 
 ```json
 {
+  "api_version": "1.0",
   "status": "success",
+  "error_code": "",
+  "message": "",
   "materials": {
     "cotton": 80,
     "polyester": 20
   },
-  "materials_korean": "? 80%, ????? 20%",
+  "materials_korean": "면 80%, 폴리에스터 20%",
   "raw_ocr_preview": "COTTON 80% POLYESTER 20%",
   "confidence": {
-    "ocr": "high"
+    "ocr": "unknown",
+    "parser": "high"
   },
-  "selected_part": "outer",
+  "warnings": [],
+  "care_instruction": "",
+  "care_instructions": [],
+  "selected_part": "generic",
   "parts": {
-    "outer": {
+    "generic": {
       "cotton": 80,
       "polyester": 20
     }
-  }
+  },
+  "parse_evidence": {
+    "observed_ratios": {"generic": [80.0, 20.0]},
+    "unpaired_ratio_parts": [],
+    "composition_status": "confirmed",
+    "source": "same_line",
+    "ratio_total_before_normalization": 100.0,
+    "explicit_percent": true
+  },
+  "ocr": {}
 }
 ```
 
-### QA batch test
+소재 구성을 신뢰할 수 없으면 임의의 100% 소재를 만들지 않고 `status: "failed"`와
+오류 코드를 반환합니다. 프론트엔드는 이 경우 사용자 수동 입력 흐름을 제공해야 합니다.
 
-```bash
-python scripts/run_qa_batch.py --image-dir "C:\Users\hany0\OneDrive\?? ??\kdpp-dataset" --answer-key "C:\K-DPP QA\K-DPP\QA\answer_key_template.csv" --credentials key.json
-```
+| HTTP 상태 | 라벨 API의 의미 |
+| --- | --- |
+| 200 | 소재·혼용률 분석 성공 |
+| 400 / 413 / 415 | 잘못된 이미지·크기 헤더 / 전체 본문·이미지 크기 초과 / 지원하지 않는 형식 |
+| 422 | 요청 형식 오류 또는 조성 미확정·충돌 |
+| 500 | 내부 처리·응답 계약 오류 |
+| 502 | OCR 제공자의 처리 실패 |
+| 503 | OCR 설정·사용량 한도·일시적인 가용성 오류 |
+| 504 | OCR 응답 시간 초과 |
 
-Output:
+위 표는 AI 라벨 API 기준입니다. 앱의 백엔드 `/api/scan`은 조성 실패를 422,
+OCR 설정·사용 한도 오류를 502, 일시 서비스 장애를 503, 시간 초과를 504로 반환합니다.
+
+### 2026-10-04 개발 평가와 한계
+
+| 평가 범위 | 결과 | 측정 조건 |
+| --- | --- | --- |
+| 합성 200장 | 181/200, 90.5% | 앞선 후보 판정 보완의 저장 OCR 재생; 새 소재 영역 전처리로 200장을 다시 평가한 수치는 아님 |
+| 실사진 비교 47장 | 31/47, 65.96% | 원본 50장 중 3장 제외; 기존 원본 OCR와 새 영역 OCR 7회가 포함된 캐시 평가 |
+
+두 집합은 합산하지 않습니다. 합성은 원본 10장 × 4언어 × 5환경의 변형이며 독립 실사진
+200장이 아닙니다. 실사진 정답도 임시 상태이고 반복 라벨·약칭이 있으므로 실사용
+80~90% 목표를 달성했다고 해석하지 않습니다. 영역 보완 후 실패 16장에서 영역 검출은
+13→15장, 완전 일치 정답 후보가 있는 사진은 1→2장으로 늘었지만 최종 정답 수는 유지됐습니다.
+숫자·미등록 소재·부위 검증을 풀어 점수를 올리지 않습니다. 독립 확정 정답과 별도 실사진
+검증 세트가 필요하며, 과거 보고서의 점수·지연은 해당 코드·옵션·실행 범위의 기록입니다.
+
+## OCR QA 정답지 형식
+
+`scripts/run_qa_batch.py`는 OCR과 소재 파서 자체를 측정합니다. 백엔드
+`/api/scan`까지 포함한 통합 QA는 저장소 루트의 `QA/run_qa_batch.py`를
+사용합니다. 두 도구는 정답 CSV의 핵심 열, 소재 별칭 표준화, 실패 코드를
+공유하지만 기본 허용 오차가 각각 `±3%p`, `±5%p`이므로 점수를 합치거나
+직접 비교하지 않습니다. 통합 QA는 환경변수의 로그인 토큰으로 Bearer 인증을 지원합니다.
+설정 방법은 [QA README](../../QA/README.md)를 확인합니다.
+
+파서 규칙이나 OCR 전처리의 회귀만 확인할 때는 `scripts/run_qa_batch.py`를
+사용합니다. 실제 백엔드 요청 형식과 응답 계약까지 확인할 때는 저장소 루트의
+`QA/run_qa_batch.py`를 사용합니다. 두 결과는 측정 범위가 달라 각각 기록합니다.
+
+OCR QA 정답 CSV의 필수 열은 다음과 같습니다.
 
 ```text
-outputs/qa_batch_results.csv
+file_name, answer_materials, answer_ratios
 ```
+
+소재명에는 `cotton`, `polyester`, `spandex`, `polyurethane`처럼 표준 영문 키를
+사용합니다. 아래 두 형식을 지원합니다.
+
+```text
+cotton;polyester       / 80;20
+cotton:80;polyester:20
+```
+
+정확도에 포함하는 일반 라벨의 원문 혼용률 합계는 `100%`여야 합니다.
+합계에 오차가 있으면 100%로 정규화하지 않고 실패 처리합니다. OCR이 일부
+숫자를 잘못 읽은 결과를 확정 혼용률처럼 사용하지 않기 위한 정책입니다. 복합/부위별
+표기인 라벨은 대표 소재 정답을 별도로 적거나 `include_in_accuracy=FALSE`로 제외합니다.
+
+원인별 실패를 분석하려면 다음 열도 기록하는 것을 권장합니다.
+
+```text
+split, source_group, capture_condition, label_layout
+```
+
+- `split`: `train`, `valid`, `test` 중 하나입니다.
+- `source_group`: 같은 원본 라벨 또는 그 파생 이미지에 공통으로 부여하는 그룹입니다.
+- `capture_condition`: `indoor`, `night`, `reflection`, `blur`, `wrinkle` 등의 촬영 조건입니다.
+- `label_layout`: `same_line`, `alternating_lines`, `stacked`, `multi_part` 등의 라벨 배치입니다.
+
+규칙을 변경하기 전에는 정답지 형식과 누수를 먼저 점검합니다. 이 명령은 데이터를
+읽기만 하며 Google Vision을 호출하지 않습니다.
+
+아래 예시는 저장소 루트의 `QA_DATASET/images`와 `QA_DATASET/answer_key.csv`를
+준비한 경우입니다. `$dataset`을 실제 데이터셋 폴더에 맞게 변경합니다.
+
+```powershell
+$dataset = "..\..\QA_DATASET"
+.\.venv\Scripts\python.exe -m scripts.audit_ocr_qa_dataset `
+  --image-dir "$dataset\images" `
+  --answer-key "$dataset\answer_key.csv" `
+  --strict
+```
+
+OCR·파서 회귀 검사는 먼저 저장된 캐시로 실행합니다. 캐시가 준비되어 있어야 하며,
+캐시 누락은 외부 호출 대신 오류로 기록합니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.run_qa_batch `
+  --image-dir "$dataset\images" `
+  --answer-key "$dataset\answer_key.csv" `
+  --offline `
+  --strict-coverage
+```
+
+기본값은 정답 CSV의 `file_name`에 있는 이미지만 처리합니다. 폴더에 섞인
+미정답 이미지를 함께 점검할 때만 `--include-unanswered`를 사용합니다.
+동일한 `file_name`이 하위 폴더에 중복되면 어느 이미지를 평가할지 알 수 없으므로
+실행을 중단합니다. 이때는 QA 실행 결과 폴더 전체가 아니라 정확한 `images` 폴더를
+`--image-dir`에 지정합니다.
+`--strict-coverage`는 이미지와 정답의 누락을 OCR 호출 전에 실패 처리하므로,
+데이터셋 계약을 감사할 때 함께 사용합니다. OCR·파서에서 예상 밖 예외가 발생하면
+결과 CSV와 요약 파일을 남긴 뒤 프로세스는 실패 종료합니다.
+
+새 Vision OCR 측정이 필요하면 자격증명을 설정한 뒤 `--offline`을 빼고 실행합니다.
+기본 실행은 캐시 적중을 재사용하고 누락 후보는 실제 호출하므로 비용이 발생할 수 있습니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.run_qa_batch `
+  --image-dir "$dataset\images" `
+  --answer-key "$dataset\answer_key.csv" `
+  --strict-coverage
+```
+
+새 OCR 캐시에는 원문·읽기 순서와 함께 단어의 사각형 꼭짓점·페이지를 저장합니다.
+좌표가 있는 항목은 오프라인 실행에서도 현재 행 복원 코드로 읽기 순서를 다시 만듭니다.
+여러 단어가 같은 기울기를 보이는 영역만 보정하며, 방향이 크게 다르거나 근거가
+부족한 영역은 기존 방식으로 처리합니다. 소재명·비율·합계로 기울기를 선택하지 않습니다.
+기존 문자열 전용 캐시도 사용할 수 있지만, 그 항목에는 새 좌표 복원 효과가 적용되지
+않으므로 실제 효과를 평가하려면 별도 캐시에서 좌표를 다시 확보해야 합니다.
+
+`--refresh-ocr-cache`는 OCR 전처리·언어 힌트 변경이나 좌표가 없는 기존 캐시를
+갱신할 때 사용합니다. 캐시는 OCR 파이프라인 버전을
+기록하므로, 다른 버전의 캐시를 발견하면 기본 실행은 안전하게 중단하고 이 옵션으로
+새 캐시를 만들도록 안내합니다. 여러 QA 실행이 같은 캐시를 갱신해도 파일 잠금과 병합
+저장으로 서로 다른 이미지 항목을 보존합니다. 같은 이미지의 갱신은 기존 값을 교체합니다.
+캐시 경로는 `--ocr-cache`로 지정하며 기본값은 `outputs/qa_ocr_cache.json`입니다.
+`--offline`과 `--refresh-ocr-cache`는 함께 사용할 수 없습니다.
+`--tolerance`는 0 이상의 유한한 숫자만 허용하며 기본값은 `3.0`입니다.
+내용 버전은 코드에서 관리하며 모든 코드·설정 변경을 자동으로 추적하지 않습니다.
+실험 설정을 바꿀 때는 캐시 경로를 구분하거나 실제 OCR 재측정이 필요한지 판단합니다.
+`outputs/`의 OCR 캐시에는 라벨 텍스트가 포함될 수 있으므로 커밋하지 않습니다.
+
+## 합성 소재 라벨 데이터
+
+실사진 QA와 별도로, 재현 가능한 파서 회귀 입력을 만들기 위한 Pillow 기반 도구입니다.
+기본 설정은 난수 시드(seed)가 고정된 20개 원본 라벨과 각 4개 이미지 조건 변형(총 80장)을
+생성합니다. 변형에는 언어·조명·흐림·반사뿐 아니라 소재/비율 순서, 세로 열 레이아웃,
+배경 테마, JPEG 품질, 혼합 조건이 포함됩니다. 목록 파일(`manifest.csv`)에는 정답 소재·비율,
+`source_group`, 언어, 조건, 레이아웃, 테마, JPEG 품질, 변환 정보, 이미지 SHA-256을
+저장하며 모든 행은 `include_in_accuracy=false`로 기록됩니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.generate_synthetic_labels
+```
+
+생성물은 `outputs/synthetic/`에 저장되고 Git에서 제외됩니다. 같은 난수 시드·설정·폰트 환경에서는
+동일한 이미지 해시가 재생성됩니다. 합성 데이터 점수는 실제 라벨 사진의 OCR 정확도와
+별도로 기록해야 합니다.
+
+기본 설정에는 한국어·일본어·중국어가 포함됩니다. Windows는 기본 CJK 폰트를 사용하며,
+Ubuntu/Debian 환경에서는 생성 전에 `sudo apt-get install fonts-noto-cjk`를 실행합니다.
+AI CI는 이 폰트를 설치한 뒤 네 언어 생성 테스트를 실행합니다. 다른 운영체제에서는
+Noto CJK 또는 시스템 CJK 폰트를 설치해야 합니다.
+
+합성 목록 파일의 `original_text`를 파서에 직접 넣어 회귀를 측정하려면 다음 명령을 사용합니다.
+이 평가는 Google Vision이나 이미지 OCR을 호출하지 않으며, 결과를 실사진 QA 정확도로
+해석하면 안 됩니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.evaluate_synthetic_labels
+```
+
+`image_results.csv`에는 이미지 행별 파서 결과를, `source_group_results.csv`에는 같은 원본의
+모든 변형이 통과했는지의 그룹 점수를 저장합니다. `summary.json`의
+`evaluation_type`은 항상 `synthetic_parser_only`입니다.
+실사진을 AI로 편집한 이미지는 이 Pillow 생성물과 별도 데이터셋입니다.
+AI 편집본도 같은 원본을 공유하므로 독립 실사진 평가로 계산하지 않습니다.
+
+### 레이아웃·테마 대조군
+
+기본 80장은 여러 스트레스 조건을 함께 섞어 회귀 범위를 넓히는 용도입니다. 따라서 기본
+결과의 레이아웃·테마별 집계는 조건 효과의 원인으로 해석하지 않습니다. 조건 효과는 별도
+대조군 설정으로 확인합니다. 이 설정은 같은 `source_group`의 소재·비율·언어를 유지한 채
+기준 라벨 1장과 레이아웃 2종·테마 2종만 각각 바꾼 총 100장을 생성합니다. 모든 대조군은
+`clean` 조건과 JPEG 품질 90을 사용합니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.generate_synthetic_labels --config configs/synthetic_label_controls_v1.json --output outputs/synthetic/label_controls_v1
+.\.venv\Scripts\python.exe -m scripts.evaluate_synthetic_labels --manifest outputs/synthetic/label_controls_v1/manifest.csv --output-dir outputs/synthetic_evaluation/label_controls_v1
+```
+
+대조군 `summary.json`의 `controlled_comparisons`는 같은 원본의 기준 라벨과 비교 대상만
+짝지어 집계합니다. 이 역시 `original_text`를 파서에 넣는 검사이므로, 시각 OCR 성능의
+증거가 아니라 파서 규칙의 회귀 지표입니다.
+
+## 알려진 한계와 다음 작업
+
+- 현재 DPP 사용자 흐름은 소재 OCR 분석만 사용합니다.
+- AI 단위 QA와 `/api/scan` 통합 QA는 위에 명시한 측정 범위·허용 오차를 각각 적용합니다.
+- 백엔드의 조성 실패 오류 매핑과 통합 QA의 인증 헤더 지원은 반영되어 있습니다.
+- 신뢰도 등급의 보정과 독립 실사진 데이터셋 평가는 아직 완료되지 않았습니다.
+# 2026-10-09 사용자 확인 라벨 기준 보완
+
+- 팀에서 확인한 의류 라벨 약어 `POLY`를 완전한 토큰으로만 폴리에스터에 연결한다. 약어 사용 경고를 남기고 파서 신뢰도를 medium으로 유지한다. `POLYAMIDE`·`POLYURETHANE`·`POLYPROPYLENE` 등의 접두어를 폴리에스터로 읽지 않는다.
+- 실(YARN) 전용 라벨에서 완전하게 읽힌 `100% + 등록 소재명` 언어별 문구를 `parse_evidence.scoped_materials`에 별도 기록한다. 자수실 정보는 `embroidery_yarn` 범위로 남기며, 읽지 못한 번역과 상충하는 소재도 보존한다. 주 원단의 대표 조성으로 대체하지 않는다. 이 근거의 앱 표시는 별도 연동이 필요하다.
+- KYH와 동일하게 확인된 부위를 우선순위로 반환한다. 겉감1·겉감2는 별개 부위로 보존하고, 겉감이 미확정이면 확인된 안감 등을 실제 부위명과 함께 반환한다. 장식 문구의 소재 오인식과 비율 추정은 계속 금지한다.
+
+### 2026-10-10 부위별 비율과 다국어 자수실 표기 보완
+
+- 같은 Vision 응답의 원문에서 반복된 `100%`가 안감에 몰리면, 모든 단어·숫자와 좌표를 보존한 레이아웃의 명시적인 부위 행으로 연결한다. 분리된 품번 숫자는 같은 좌표에서 `품번`·`STYLE NO` 등으로 확인된 경우만 소재 비율에서 제외한다. 다른 이미지의 숫자를 가져오거나 비율을 보정하지 않는다.
+- 별도 재인식에서 겉감·배색의 위치가 확인되면 해당 부위의 미확정 근거를 유지한다. 겉감·배색의 오류를 안감으로 옮기지 않으며, 안감 위치의 오류는 계속 안감에 남긴다.
+- 이탈리아어·핀란드어·리투아니아어/라트비아어·에스토니아어의 완전한 폴리에스터 표기를 추가했다. 언어 코드가 붙은 자수실 전용 라벨은 각 언어의 `100% + 소재명`을 같은 조성의 반복 선언으로 처리한다.
+- 외국어 일부가 읽히지 않아도 **한국어와 영어 및 제3 언어의 완전한 선언이 일치**하면, 읽힌 한국어 선언을 자수실 결과로 선택할 수 있다. 미확정 외국어 문구는 추정해 변환하지 않고 `scoped_materials.unconfirmed_clauses`와 `unconfirmed_foreign_yarn_translations` 경고로 보존하며 신뢰도는 `medium`이다. 다른 등록 소재와의 충돌, 모르는 라틴 소재명, 추가 비율·부위·부정 표현은 계속 실패한다.
+- 같은 응답의 좌표 재배열이 언어별 선언을 깨뜨렸을 때는, 이미지·입력·전체 단어 근거가 동일하고 재배열 후보에 별도의 성공 조성이 없는 경우에만 완전한 원문 선언을 유지한다. 다른 OCR 입력의 실패 근거를 이 규칙으로 지우지 않는다.
+
+### 다국어 번역 목록 검증
+
+- 하이픈으로 연결된 번역 목록은 완전한 소재명·명시적 비율과 동일 소재의
+  등록된 별칭 3개 이상을 확인할 때 처리합니다. 미등록 단어·추가 숫자·다른
+  소재가 포함된 목록은 거절하며, 손상된 외국어를 임의의 소재로 바꾸지 않습니다.
+- 슬래시 번역 목록 끝의 한 글자 손상은 완전한 별칭 4개 이상과 명시적
+  구분자를 확인할 때 경고를 유지하고 처리합니다.
+- 두 소재의 번역 반복이 OCR 후보마다 다르게 손상된 경우, 소재명·비율의
+  기본 선언과 좌표가 일치하고 모든 문자 상자가 확인될 때만 거절 근거를
+  해소합니다. 분리된 세탁 온도는 같은 위치의 숫자와 실제 세탁 안내 문구를
+  확인하며, 추가 비율·소재·부위·좌표 누락은 계속 거절합니다.
+- 하이픈 번역 목록에서 완전한 별칭 6개 이상, 처음과 끝의 동일한 `100%`
+  선언, `EXCLUSIVE OF DECORATION` 경계가 확인되면 주 소재 표기를 유지합니다.
+  등록된 키릴 문자 별칭의 제한된 글자 모양 혼동은 목록 내부에서만 검증하며,
+  미등록 소재·다른 비율·추가 숫자를 추측해 제거하지 않습니다.
+- 같은 OCR 입력의 원문·좌표 재배열 후보가 모든 단어 상자를 보존하고,
+  주 선언·번역 행·반복 선언·경계 문구의 위치와 읽기 방향까지 일치하면
+  재배열 실패만으로 추가 전처리를 호출하지 않습니다. 손상 경고와 `medium`
+  신뢰도는 유지하며, 이미 관측된 다른 OCR 입력의 실패 근거는 보존합니다.
+- 소재나 `%`가 붙지 않은 독립적인 통화 금액 중 100보다 큰 값은 메타데이터로
+  구분합니다. 부호·소재명·추가 숫자가 붙은 금액은 이 규칙으로 제외하지 않습니다.

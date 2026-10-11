@@ -362,7 +362,9 @@ def test_scan_accepts_either_care_key_from_parser(client, monkeypatch):
     monkeypatch.setattr(
         main,
         "parse_label",
+        # 서버는 파서의 status 가 success 일 때만 소재를 확정합니다(DECISIONS 200).
         lambda text: {
+            "status": "success",
             "materials": {"cotton": 100},
             "care_instruction": "손세탁; 표백 금지",
             "raw_ocr_preview": "COTTON 100%",

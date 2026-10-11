@@ -1,6 +1,6 @@
 """BACKEND가 AI 모듈과 실제로 결합되는지 확인합니다 (CI 백엔드 잡·배포 이미지 빌드에서 실행).
 
-main.py는 AI 모듈 import 실패를 try/except로 삼켜 run_ocr / parse_label을 None으로 둡니다.
+main.py는 AI 모듈 import 실패를 try/except로 삼켜 run_ocr / parse_label / analyze_ocr_result를 None으로 둡니다.
 그러면 실사진 스캔이 전부 503(AI_MODULE_FAILED)이 되는데, pytest는 raw_ocr_text를 보내거나
 스텁을 쓰기 때문에 이 경로에 들어가지 않아 결합이 끊겨도 전건 초록입니다. 그 사각지대를 메웁니다.
 
@@ -23,9 +23,20 @@ def main() -> int:
     problems = []
 
     if backend_main.run_ocr is None:
-        problems.append("apps.text.ocr_text.run_ocr import 실패 - 실사진 스캔이 전부 503이 됩니다")
+        problems.append("apps.text.ocr_text.run_ocr_with_metadata import 실패 - 실사진 스캔이 전부 503이 됩니다")
     if backend_main.parse_label is None:
         problems.append("apps.text.parse_label.parse_label import 실패 - 소재 파싱이 전부 503이 됩니다")
+    if backend_main.analyze_ocr_result is None:
+        problems.append("apps.service.label_analysis.analyze_ocr_result import 실패 - 실사진 스캔이 전부 503이 됩니다")
+
+    if backend_main.run_ocr is not None:
+        # main.py 가 sys.path 에 AI 경로를 넣은 뒤에야 직접 import 할 수 있습니다.
+        from apps.text import ocr_text  # noqa: PLC0415
+
+        # 글자만 돌려주는 run_ocr 에 붙으면 후보 충돌·짝 없는 비율 근거가 사라져, 부분 인식이
+        # 확정 소재로 넘어갈 수 있습니다(DECISIONS 210).
+        if backend_main.run_ocr is not ocr_text.run_ocr_with_metadata:
+            problems.append("run_ocr 가 run_ocr_with_metadata 가 아닙니다 - OCR 근거가 분석에 전달되지 않습니다")
 
     try:
         # 06-04 판 ocr_text가 쓰는 세 모듈입니다.
@@ -51,7 +62,7 @@ def main() -> int:
         print("BACKEND/requirements.txt를 확인하세요.", file=sys.stderr)
         return 1
 
-    print("AI 모듈 결합 OK (run_ocr / parse_label / Pillow / google-cloud-vision)")
+    print("AI 모듈 결합 OK (run_ocr_with_metadata / analyze_ocr_result / parse_label / Pillow / google-cloud-vision)")
     return 0
 
 

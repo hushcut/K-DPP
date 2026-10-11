@@ -113,7 +113,8 @@ def test_expired_token_returns_401_instead_of_anonymous_save(client):
     assert response.status_code == 401
 
 
-def test_scan_flags_partial_ratio(client):
+def test_scan_rejects_partial_ratio(client):
+    # 앱은 ai_success 를 읽지 않아 200 이면 성공으로 보이므로, 부분 인식은 422 다(DECISIONS 200).
     token = _login_token(client)
     response = client.post(
         "/api/scan",
@@ -123,9 +124,10 @@ def test_scan_flags_partial_ratio(client):
     )
     body = response.json()
 
-    assert response.status_code == 200
-    assert body["ai_success"] is False
-    assert body["analysis_failure_reason"] == "RATIO_INCOMPLETE"
+    assert response.status_code == 422
+    assert body["error_code"] == "MATERIAL_EXTRACTION_FAILED"
+    assert body["detail"]["materials"] == {}
+    assert body["detail"]["ai_success"] is False
 
 
 def test_scan_rejects_missing_content_type(client):

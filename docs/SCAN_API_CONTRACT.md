@@ -67,6 +67,7 @@ Authorization: Bearer <token>
   ],
   "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
   "raw_ocr_preview": "COTTON 80% POLYESTER 20%",
+  "warnings": [],
   "clothing": {
     "name": "스캔한 의류",
     "category": "상의"
@@ -77,6 +78,14 @@ Authorization: Bearer <token>
 ```
 
 스캔 API는 탄소배출량을 계산하거나 저장하지 않습니다. 최종 계산은 사용자가 의류 종류 또는 직접 무게를 선택한 뒤 `/api/carbon/calculate`에서 수행합니다.
+
+200 은 AI 가 소재를 확정했을 때만 나갑니다(2026-10-11부터 — 부분 인식은 422, 2절). `ai_success`·`analysis_failure_reason`
+은 이제 늘 `true`·`null` 입니다.
+
+`warnings`(2026-10-11 추가, 422 `detail` 에도 있음)는 AI 가 붙인 주의 메모 목록입니다. `generic:unpaired_ratio_rows` 같은
+`<부위>:<코드>` 모양의 소재 판정 경고와 "OCR 좌표를 바탕으로 재구성한 줄 순서를 사용했습니다." 같은 한국어 처리 안내가
+섞여 있어, 화면에 보이려면 아는 코드만 문구로 바꾸고 나머지는 무시해야 합니다. **지금 앱은 읽지 않습니다**(표시 여부는 앱 몫 —
+DECISIONS 211). AI 의 `confidence`·`parse_evidence`·`ocr` 는 응답에 없습니다(DECISIONS 210).
 
 ### `material_details`의 프론트 사용 (2026-09-08 추가)
 
@@ -120,7 +129,9 @@ Authorization: Bearer <token>
     "partial_materials": {},
     "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
     "raw_ocr_preview": "CARE LABEL TEXT",
-    "ai_success": false
+    "ai_success": false,
+    "parser_error_code": "composition_not_found",
+    "warnings": []
   }
 }
 ```
@@ -144,25 +155,26 @@ Authorization: Bearer <token>
 | 403 | `AUTH_REQUIRED` | **권한 없음 안내만 표시(로그아웃하지 않음)** |
 | 413 | `PAYLOAD_TOO_LARGE` | 사진 용량 초과 안내 (상한 10MB) |
 | 415 | `UNSUPPORTED_IMAGE_FORMAT` | 지원하지 않는 이미지 안내 (JPEG/PNG/WebP만 허용) ※ |
-| 422 | `MATERIAL_EXTRACTION_FAILED` | 소재 직접 입력 흐름 |
+| 422 | `MATERIAL_EXTRACTION_FAILED` | 소재 직접 입력 흐름 (소재를 못 찾았거나 부분 인식 — 2026-10-11부터 부분 인식도 422) |
 | 429 | `SCAN_DAILY_LIMIT` | **전용 분기 없음** — '사진을 분석하지 못했어요. 직접 입력해 주세요.'(`unknown`) + 소재 직접 입력 흐름 (2-5절) |
 | 502 | `OCR_FAILED` | 소재 직접 입력 안내 + `다시 촬영` 버튼 제공 |
 | 503 | `AI_MODULE_FAILED`·`SCAN_UNAVAILABLE` | **전용 분기 없음** — 아래 '그 외 5xx'와 같게 처리됨 (`SCAN_UNAVAILABLE` 은 2-5절) |
-| 504 | `OCR_TIMEOUT` | 시간 초과 안내 + 직접 입력 유도 (**백엔드 미구현, 프론트만 준비됨**) |
+| 504 | `OCR_TIMEOUT` | 시간 초과 안내 + 직접 입력 유도 (2026-10-11부터 백엔드가 냄 — Vision 시간 초과) |
 | 500 · 그 외 5xx | — | 일시적 서버 문제 안내 (`statusCode >= 500` 폴백) |
 
 **503에 대한 주의**: 프론트에 503 전용 case가 없어 `statusCode >= 500` 폴백을 타고
 500·504와 **똑같은 문구**가 나옵니다. 이전 판에 적혀 있던 "서버/AI 모듈 문제 안내"는
 구현되지 않은 내용이었습니다(2026-09-08 정정).
 
-**503이 실제로 나는 경우**: 서버 기동 시 `from apps.text...` import 실패(`BACKEND/main.py` 의
-`extract_label_text`·`ensure_label_parser`), 그리고 2026-10-07부터 서버 전체 하루 사진 분석 상한
-(`SCAN_UNAVAILABLE`, 2-5절) 두 가지입니다. OCR 미설정·Vision 쪽 한도 초과·Vision 장애는 전부 **502 `OCR_FAILED`**로
-나갑니다(`extract_label_text` 가 `run_ocr` 실행 중 모든 예외를 `except Exception`으로 잡음).
+**503이 실제로 나는 경우**: 서버 기동 시 `from apps...` import 실패(`BACKEND/main.py` 의
+`extract_label_input`·`ensure_label_parser` — OCR·분석·라벨 파서 모듈), 그리고 2026-10-07부터 서버 전체 하루 사진 분석 상한
+(`SCAN_UNAVAILABLE`, 2-5절) 두 가지입니다. OCR 미설정·Vision 쪽 한도 초과·Vision 일시 장애는 전부 **502 `OCR_FAILED`**로
+나갑니다(`extract_label_input` 가 `run_ocr` 실행 중 예외를 잡아 시간 초과만 504, 나머지는 502 — DECISIONS 211).
+Vision 일시 장애를 503 으로 내지 않는 것은 위 두 경우와 섞이지 않게 하려는 것입니다.
 
-**504는 현재 백엔드가 내지 않고, 프론트에만 처리 경로가 있습니다**(403과 같은 형태).
-AI 계층에는 타임아웃이 있으나(`ksw/ai-ocr-enhancement`의 `OCR_TIMEOUT_SECONDS = 20`)
-develop에는 없고, 프론트 상한은 35초입니다.
+**504는 2026-10-11부터 백엔드가 냅니다**: AI 가 원본 사진 Vision 요청을 10초, 스캔 한 번의 OCR 전체를 25초
+(`OCR_CANDIDATE_TIMEOUT_SECONDS`·`OCR_TOTAL_TIMEOUT_SECONDS`)에서 끊으면 504 `OCR_TIMEOUT` 입니다(전처리·소재 영역
+후보는 8·5초에서 끊고 그 후보만 건너뜀). 프론트 상한은 35초라 보통은 서버의 504 가 먼저 옵니다.
 
 `AI_REQUESTS.md` F-4 요청에 따라 2026-09-08에 프론트에 `case 504:`를 추가했습니다
 (`scan_api_service.dart`, 브랜치 `jw/scan-partial-prefill`). 예고대로 새 enum은 만들지
@@ -177,26 +189,21 @@ develop에는 없고, 프론트 상한은 35초입니다.
 
 | 필드 | 폼 반영 | 현재 실제로 오는 값 |
 | --- | --- | --- |
-| `partial_materials` | 소재·혼용률 입력 줄 | **항상 `{}`** |
-| `care_instruction` | 관리 지침 문구 | 항상 상수 `'라벨 표기법에 맞춰 관리하세요.'` |
+| `partial_materials` | 소재·혼용률 입력 줄 | **거의 늘 `{}`** |
+| `care_instruction` | 관리 지침 문구 | AI 가 읽은 관리 지침(예: `'표백 금지; 찬물 세탁'`), 못 읽으면 상수 `'라벨 표기법에 맞춰 관리하세요.'` |
 | `raw_ocr_preview` | '인식된 라벨 원문' 카드 | AI가 읽어낸 라벨 글자 (상한 220자) |
 
-**`partial_materials`는 이 경로에서 채워질 수 없습니다.** 422는 `materials`가 비었을
-때만 나고(`main.py:951`), 실패 응답을 만드는 AI `failed_response`도 `materials`·`parts`를
-`{}`로 고정합니다(develop·enhancement 공통). 즉 오늘 이 필드로 프리필되는 값은 없습니다.
-프론트는 값이 오면 그대로 채우도록 배선만 해 뒀으므로, AI 파서가 부분 인식 결과를
-실패 응답에 담기 시작하면 프론트 변경 없이 동작합니다.
+**`partial_materials`는 거의 늘 비어 있습니다.** 2026-10-11 AI 통합부터 부분 인식도 422 지만, AI 는 확정하지 못한
+비율을 실패 응답에 담지 않고 `materials`·`parts` 를 `{}` 로 비웁니다(합계를 맞추거나 나머지 소재를 추측하지 않음 —
+AI 담당 10-11 전달). 서버가 값을 채우는 것은 AI 가 성공이라고 했는데 합계가 100 이 아닌 드문 경우뿐입니다.
+422 `detail.materials` 는 늘 `{}` 입니다. 프론트는 값이 오면 그대로 채우도록 배선만 해 뒀으므로 변경이 필요 없습니다.
 
-`care_instruction`도 마찬가지로 지금은 상수입니다 — develop `failed_response`에는
-`care_text` 키 자체가 없습니다. enhancement는 실패 시에도 `parse_care()`를 돌려 실제
-지침을 담지만 키 이름이 `care_instruction`이라, 백엔드가 두 키를 모두 읽도록 함께
-고쳤습니다(`main.py:950-956`).
+`care_instruction` 은 백엔드가 `care_text`·`care_instruction` 두 키를 모두 읽습니다(AI 판마다 키 이름이 달랐음 —
+지금 AI 는 `care_instruction`).
 
-**실제로 부분 인식이 일어나는 경로는 422가 아니라 200입니다.** 소재를 찾았으나 합계가
-100이 아니면 `ai_success: false` + `analysis_failure_reason: "RATIO_INCOMPLETE"`로
-**200**이 나가고, 프론트는 이미 그 소재를 폼에 채웁니다. 다만 프론트가 `ai_success`를
-읽지 않아 화면에는 "스캔 완료!"로 표시되고, 저장 단계에서야 합계 경고를 만납니다
-(미해결, 백로그).
+**이전(~2026-10-10)에는 부분 인식이 200 이었습니다.** 소재를 찾았으나 합계가 100이 아니면 `ai_success: false` +
+`analysis_failure_reason: "RATIO_INCOMPLETE"` 로 200 이 나갔고, 프론트가 `ai_success` 를 읽지 않아 화면에는
+"스캔 완료!"로 표시됐습니다. 2026-10-11부터 이 경우가 422 라 직접 입력 흐름으로 갑니다(DECISIONS 200).
 
 ※ **415의 WebP 허용은 백엔드 상수(`main.py:52`) 기준입니다.** AI 계층은 JPEG/PNG만 받습니다
 (`ksw/ai-ocr-enhancement`의 `SUPPORTED_IMAGE_FORMATS`). 현재는 백엔드가 OCR 텍스트를
@@ -415,7 +422,9 @@ SQLite 때 있던 두 경합 — 지워진 `user_id`로 고아 행이 남는 것
 
 ## 2-5. 사진 분석 하루 상한 (429 / 503)
 
-스캔 한 번이 Google Vision 호출 1~4건이고 월 1,000건을 넘으면 요금이 나가므로(2026-10-07부터),
+스캔 한 번이 Google Vision 후보 1~4건(원본·전처리·소재 영역 두 방식 — 2026-10-11 AI 통합 판, 기본 설정)이고 월 1,000건을
+넘으면 요금이 나가므로(2026-10-07부터 — Vision 이 일시 장애(503 등)를 내면 후보 안에서 재시도 요청이 더 나갈 수 있고 횟수가
+아니라 스캔 전체 25초로만 묶임, 실패한 요청이 청구되는지는 확인 못 함),
 **Vision 을 부르는 스캔**의 하루 횟수를 셉니다.
 
 | 항목 | 값 |
@@ -423,8 +432,8 @@ SQLite 때 있던 두 경합 — 지워진 `user_id`로 고아 행이 남는 것
 | 한 계정 | 하루 **20번** → 넘으면 `429 SCAN_DAILY_LIMIT` |
 | 서버 전체 | 하루 `K_DPP_SCAN_DAILY_MAX` 번(배포 서버 기본 100, 로컬은 비우면 없음) → 넘으면 `503 SCAN_UNAVAILABLE` |
 | 하루 | 한국 자정(00:00 KST)에 0 부터. 두 응답 모두 `detail.retry_after` = 다음 자정까지 초 |
-| 세는 것 | Vision 을 부르기 직전에 센다. 성공·422·502 모두 세고 되돌리지 않음(키가 없는 로컬·리허설 서버의 502 도 세므로 한 계정 21번째부터 429) |
-| 세지 않는 것 | `raw_ocr_text` 로 OCR 을 건너뛴 요청, 413·415, OCR·라벨 파서 모듈 없음(503 `AI_MODULE_FAILED` — Vision 전에 확인), 막힌 요청 |
+| 세는 것 | Vision 을 부르기 직전에 센다. 성공·422·502·504 모두 세고 되돌리지 않음(키가 없는 로컬·리허설 서버의 502 도 세므로 한 계정 21번째부터 429) |
+| 세지 않는 것 | `raw_ocr_text` 로 OCR 을 건너뛴 요청, 413·415, OCR·분석·라벨 파서 모듈 없음(503 `AI_MODULE_FAILED` — Vision 전에 확인), 막힌 요청 |
 
 **프론트 처리(앱 변경 없음)**: 429 는 전용 case 가 없어 `ScanApiErrorType.unknown`
 ('사진을 분석하지 못했어요. 직접 입력해 주세요.'), 503 은 '그 외 5xx'('분석 서비스에 일시적인

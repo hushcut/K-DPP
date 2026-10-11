@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "review_date": "2026-09-28",
+  "baseline_commit": "adddac4",
+  "source_answer_key": "QA_DATASET/real_qa_163/answer_key_legacy_partial.csv",
+  "source_sha256_before": "a44b0f42d086f4f3f3c9da0d41762c5eb968d26a3c5694bb227dcc4394a541f8",
+  "source_sha256_after": "9308b85fab8ef8d3c75d8053cc631e35d9e2a6b4fdc0510a88acd422119f5408",
+  "historical_answer_key": ".test-artifacts/vision-qa-20260923/real89_answer_key.csv",
+  "historical_sha256": "e146faa43c67b8d3a82ce6a5c34a1db48ed52a403cb71b24b87dc3d629ad4c59",
+  "corrected_evaluation_answer_key": ".test-artifacts/qa-answer-corrections-20260928/real89_answer_key_corrected.csv",
+  "corrected_evaluation_sha256": "3e11000aa82614ad8c3e373385b6d9905519e19f4eab09e33ad350f1a36f74bc",
+  "corrections": [
+    {
+      "file_name": "QA001.jpg",
+      "image_sha256": "e65def9c8e2607524fd70882112bbe697d1ceae90542908ad78755dfbf50803e",
+      "selected_part": "outer",
+      "before": {
+        "answer_materials": "cotton;polyester",
+        "answer_ratios": "80;20"
+      },
+      "after": {
+        "answer_materials": "cotton;polyurethane",
+        "answer_ratios": "98;2"
+      },
+      "evidence": "사진의 表布(겉감)는 綿 98%·ポリウレタン 2%. 裏布(안감) 68·17·15는 대표 소재에서 제외."
+    },
+    {
+      "file_name": "QA003.jpg",
+      "image_sha256": "ad4477b345b42ded6f036a1db248e76548d8b340efbaa1f8fd400ac7186997c9",
+      "selected_part": "outer",
+      "before": {
+        "answer_materials": "polyester;polyurethane",
+        "answer_ratios": "95;5"
+      },
+      "after": {
+        "answer_materials": "cotton",
+        "answer_ratios": "100"
+      },
+      "evidence": "사진의 OUTSHELL 표기는 100% COTTON."
+    }
+  ]
+}
