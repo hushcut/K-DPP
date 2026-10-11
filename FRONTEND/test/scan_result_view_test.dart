@@ -3,6 +3,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/services/material_catalog_api_service.dart';
 import 'package:k_dpp/services/material_catalog_controller.dart';
+import 'package:k_dpp/services/scan_api_service.dart';
 import 'package:k_dpp/utils/clothing_type_catalog.dart';
 import 'package:k_dpp/utils/scan_form_validator.dart';
 import 'package:k_dpp/widgets/material_edit_controller.dart';
@@ -96,6 +97,80 @@ void main() {
     expect(find.text('직접 입력 모드'), findsOneWidget);
     expect(find.textContaining('AI가 라벨을 정확히 인식하지 못했어요.'), findsWidgets);
   });
+
+  // DECISIONS 207: 맨 위 부제가 원인과 상관없이 'AI가 라벨을…'이라, 인터넷·서버 오류 때
+  // 아래 카드의 원인 문장과 다른 원인을 말했다. 원인은 카드 하나만 말한다.
+  testWidgets('스캔 실패 화면 맨 위는 원인을 말하지 않고, 원인 문장은 직접 입력 모드 카드에만 한 번 나온다', (
+    tester,
+  ) async {
+    final materialInputs = MaterialInputCollection()..addEmpty();
+    final titleController = TextEditingController(text: '새로 스캔한 의류');
+    addTearDown(materialInputs.dispose);
+    addTearDown(titleController.dispose);
+
+    final failureMessages = {
+      for (final type in ScanApiErrorType.values)
+        ScanApiException(type: type, message: '').userMessage,
+    };
+
+    for (final message in failureMessages) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ScanResultView(
+              formKey: GlobalKey<FormState>(),
+              hasTriedSubmit: false,
+              isSaving: false,
+              isScanFailed: true,
+              scanFailureMessage: message,
+              titleController: titleController,
+              selectedClothingType: ClothingTypeCatalog.defaultOption,
+              materialInputs: materialInputs,
+              scannedCare: '라벨의 세탁 지침을 확인해 주세요.',
+              originalMaterials: const {},
+              validateTitle: (_) => null,
+              validateMaterialName: (_) => null,
+              validateMaterialValue: (_) => null,
+              onSelectClothingType: () {},
+              onAddMaterial: () {},
+              onRemoveMaterial: (_) {},
+              onSubmit: () {},
+              onReset: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // '기본 정보 수정' 위에 놓인 글은 제목과 할 일 한 문장뿐이다.
+      final sectionTop = tester.getTopLeft(find.text('기본 정보 수정')).dy;
+      final headerTexts = [
+        for (final element in find.byType(Text).evaluate())
+          if ((element.renderObject! as RenderBox)
+                  .localToGlobal(Offset.zero)
+                  .dy <
+              sectionTop)
+            (element.widget as Text).data,
+      ];
+      expect(headerTexts, ['스캔 실패', '소재와 혼용률을 직접 입력해 주세요.'], reason: message);
+
+      expect(
+        find.descendant(
+          of: find
+              .ancestor(
+                of: find.text('직접 입력 모드'),
+                matching: find.byType(Container),
+              )
+              .first,
+          matching: find.text(message),
+        ),
+        findsOneWidget,
+        reason: message,
+      );
+      expect(find.text(message), findsOneWidget, reason: message);
+    }
+  });
+
   testWidgets('새 소재 칸의 0% 뒤에 숫자를 쳐도 맨 앞 0이 붙지 않는다', (tester) async {
     // 2026-09-19 폰 확인: 새 칸이 '0'으로 시작해 100을 치면 '0100%'가 됐다.
     final materialInputs = MaterialInputCollection()..addEmpty();

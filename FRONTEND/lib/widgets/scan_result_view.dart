@@ -112,8 +112,10 @@ class ScanResultView extends StatelessWidget {
     final statusColor = isScanFailed ? Colors.orangeAccent : Colors.green;
     final statusIcon = isScanFailed ? Icons.error_outline : Icons.check_circle;
     final statusTitle = isScanFailed ? '스캔 실패' : '스캔 완료!';
+    // 실패 원인은 아래 '직접 입력 모드' 카드만 말합니다. 여기서 원인을 정해 말하면
+    // 인터넷·서버 오류 때 카드와 다른 원인이 됩니다(DECISIONS 207).
     final statusSubtitle = isScanFailed
-        ? 'AI가 라벨을 정확히 인식하지 못했어요. 소재와 혼용률을 직접 입력해 주세요.'
+        ? '소재와 혼용률을 직접 입력해 주세요.'
         : '의류 무게 기준과 분석 결과를 확인해 주세요.';
 
     final form = Container(
