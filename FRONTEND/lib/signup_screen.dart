@@ -45,6 +45,7 @@ class _SignupScreenState extends State<SignupScreen> {
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
       TextEditingController();
+  final FocusNode _emailFocusNode = FocusNode();
   final FocusNode _codeFocusNode = FocusNode();
   final FocusNode _nicknameFocusNode = FocusNode();
   final FocusNode _passwordFocusNode = FocusNode();
@@ -68,6 +69,7 @@ class _SignupScreenState extends State<SignupScreen> {
     _codeController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _emailFocusNode.dispose();
     _codeFocusNode.dispose();
     _nicknameFocusNode.dispose();
     _passwordFocusNode.dispose();
@@ -161,6 +163,7 @@ class _SignupScreenState extends State<SignupScreen> {
         if (!_codeFocusNode.hasFocus) return const SizedBox.shrink();
 
         return NumberKeyboardToolbar(
+          onPrevious: _emailFocusNode.requestFocus,
           onNext: _nicknameFocusNode.requestFocus,
           onDone: _codeFocusNode.unfocus,
         );
@@ -247,6 +250,7 @@ class _SignupScreenState extends State<SignupScreen> {
                               TextFormField(
                                 key: _emailFieldKey,
                                 controller: _emailController,
+                                focusNode: _emailFocusNode,
                                 keyboardType: TextInputType.emailAddress,
                                 textInputAction: TextInputAction.next,
                                 autofillHints: const [AutofillHints.email],
