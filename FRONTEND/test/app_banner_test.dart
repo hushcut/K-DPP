@@ -495,6 +495,102 @@ void main() {
       handle.dispose();
     });
 
+    // 낭독 칸을 기다린 시간(시트 닫힘 약 1초)까지 표시 시간에서 빼면, TalkBack 이 연 버튼을 다시
+    // 읽은 뒤에 시작한 배너 소리가 5초 닫힘 무렵에야 끝났다(#45 Windows, DECISIONS 216).
+    testWidgets('읽기 프로그램이 켜지면 표시 시간은 낭독 칸을 붙인 때부터 센다', (tester) async {
+      const message = '의류 정보가 수정됐어요.';
+      final handle = tester.ensureSemantics();
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(accessibleNavigation: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      await _pumpApp(tester);
+
+      showModalBottomSheet<void>(
+        context: tester.element(find.text('첫 화면')),
+        builder: (_) => const SizedBox(height: 200, child: Text('수정 시트')),
+      );
+      await tester.pumpAndSettle();
+      Navigator.of(tester.element(find.text('수정 시트'))).pop();
+      _banner(tester).show(message, kind: AppBannerKind.success);
+
+      var liveMs = 0;
+      for (var frame = 1; frame <= 120 && !_isAnnounced(message); frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        liveMs += 16;
+      }
+      expect(_isAnnounced(message), isTrue);
+      expect(
+        liveMs,
+        greaterThan(AppBanner.announceSettleDelay.inMilliseconds),
+        reason: '낭독 칸을 기다린 몫이 있는 경우다',
+      );
+
+      await tester.pump(const Duration(milliseconds: 4900));
+      expect(find.text(message), findsOneWidget, reason: '표시한 때부터는 5초가 넘었다');
+
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump();
+      expect(find.text(message), findsNothing);
+
+      handle.dispose();
+    });
+
+    testWidgets('읽기 프로그램이 꺼져 있으면 낭독 칸을 기다려도 표시한 때부터 센다', (tester) async {
+      const message = '의류 정보가 수정됐어요.';
+      await _pumpApp(tester);
+
+      showModalBottomSheet<void>(
+        context: tester.element(find.text('첫 화면')),
+        builder: (_) => const SizedBox(height: 200, child: Text('수정 시트')),
+      );
+      await tester.pumpAndSettle();
+      Navigator.of(tester.element(find.text('수정 시트'))).pop();
+      _banner(tester).show(message, kind: AppBannerKind.success);
+      await tester.pump();
+
+      await tester.pump(const Duration(milliseconds: 2400));
+      expect(find.text(message), findsOneWidget);
+
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pumpAndSettle();
+      expect(find.text(message), findsNothing);
+    });
+
+    testWidgets('읽기 프로그램이 켜졌을 때 새 배너가 낭독 칸을 기다리는 동안 앞 배너의 시간으로 닫히지 않는다', (
+      tester,
+    ) async {
+      const message = '의류 정보가 수정됐어요.';
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(accessibleNavigation: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      await _pumpApp(tester);
+
+      // 앞 배너(실패 8초)는 아무것도 움직이지 않아 바로 붙고 시간이 흐른다.
+      _banner(tester).show('저장하지 못했어요.', kind: AppBannerKind.failure);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 7));
+
+      showModalBottomSheet<void>(
+        context: tester.element(find.text('첫 화면')),
+        builder: (_) => const SizedBox(height: 200, child: Text('수정 시트')),
+      );
+      await tester.pumpAndSettle();
+      Navigator.of(tester.element(find.text('수정 시트'))).pop();
+      _banner(tester).show(message, kind: AppBannerKind.success);
+
+      // 앞 배너의 8초가 지나도, 새 배너는 낭독 칸을 붙이기 전이든 뒤든 남는다.
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.text(message), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pump();
+      expect(find.text(message), findsNothing);
+    });
+
     testWidgets('평소엔 위에서 미끄러져 내려온다', (tester) async {
       _useIPhoneView(tester);
       await _pumpApp(tester);
@@ -608,6 +704,13 @@ void main() {
       expect(
         logs.first,
         '[AppBanner] 표시 #0 success 5000ms 읽기프로그램=true "의류 정보가 수정됐어요."',
+      );
+      expect(
+        logs,
+        anyElement(
+          matches(RegExp(r'^\[AppBanner\] 낭독 칸 #0 표시 뒤 \d+ms 이때부터 5000ms$')),
+        ),
+        reason: '닫힘 시간을 어디서부터 세는지 logcat 에서 보인다(DECISIONS 216)',
       );
 
       final closes = logs
