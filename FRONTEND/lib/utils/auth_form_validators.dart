@@ -1,6 +1,6 @@
-// 회원가입·비밀번호 찾기 화면이 함께 쓰는 입력 검사입니다.
-// 서버(main.py `ensure_email_format`·`ensure_password_rules`)보다 느슨하거나 같게 두어
-// 서버가 받는 값을 앱이 막지 않게 합니다.
+// 회원가입·비밀번호 찾기·카카오 닉네임 화면이 함께 쓰는 입력 검사입니다.
+// 서버(main.py `ensure_email_format`·`ensure_password_rules`·`nickname_rule_error`)보다
+// 느슨하거나 같게 두어 서버가 받는 값을 앱이 막지 않게 합니다.
 
 /// 이메일이 비었거나 '@'·'.' 이 없으면 오류 문장을 돌려줍니다.
 String? validateEmailInput(String? value) {
@@ -63,6 +63,30 @@ String? validateVerificationCode(String? value) {
 
   if (!RegExp(r'^\d{6}$').hasMatch(text)) {
     return '인증번호 6자리를 입력해 주세요';
+  }
+
+  return null;
+}
+
+/// 닉네임의 길이 규칙(2자 이상·50자 이하)을 검사합니다.
+///
+/// 서버(main.py `nickname_rule_error`)처럼 앞뒤 공백을 지운 값을 글자(코드 포인트) 단위로
+/// 셉니다 — 이모지 하나를 두 글자로 세지 않게. 쓸 수 없는 문자는 서버가 거절합니다.
+String? validateNicknameInput(String? value) {
+  final text = value?.trim() ?? '';
+
+  if (text.isEmpty) {
+    return '닉네임을 입력해 주세요';
+  }
+
+  final length = text.runes.length;
+
+  if (length < 2) {
+    return '닉네임은 2자 이상 입력해 주세요';
+  }
+
+  if (length > 50) {
+    return '닉네임은 50자 이하로 입력해 주세요';
   }
 
   return null;

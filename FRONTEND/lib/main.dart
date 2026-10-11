@@ -2,8 +2,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
+import 'config/kakao_config.dart';
 import 'login_screen.dart';
 import 'main_screen.dart';
 import 'splash_screen.dart';
@@ -22,6 +24,17 @@ import 'widgets/app_banner.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+
+  // 키가 있는 빌드에서만 카카오 SDK 를 준비합니다(KakaoConfig). 실패해도 앱은 띄우고,
+  // 그때 카카오 로그인은 실패 안내로 끝납니다.
+  if (KakaoConfig.isEnabled) {
+    try {
+      await KakaoSdk.init(nativeAppKey: KakaoConfig.nativeAppKey);
+    } catch (error, stackTrace) {
+      debugPrint('카카오 SDK 를 준비하지 못했습니다: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
 
   final closetProvider = ClosetProvider();
   final themeProvider = ThemeProvider();

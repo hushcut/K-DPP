@@ -9,8 +9,8 @@ import 'api_http.dart';
 
 part 'auth_api_models.dart';
 
-/// 인증번호 요청, 회원가입, 로그인, 로그아웃, 비밀번호 변경·찾기, 회원 탈퇴, 세션 검증을
-/// 수행하는 HTTP 인증 클라이언트다.
+/// 인증번호 요청, 회원가입, 로그인(이메일·카카오), 로그아웃, 비밀번호 변경·찾기, 회원 탈퇴,
+/// 세션 검증을 수행하는 HTTP 인증 클라이언트다.
 class AuthApiService {
   AuthApiService({
     String? baseUrl,
@@ -84,6 +84,22 @@ class AuthApiService {
     }, requiresAccessToken: true);
   }
 
+  /// 카카오 SDK 로그인으로 받은 카카오 액세스 토큰으로 로그인한다. 처음 오는 카카오 계정이면
+  /// 가입도 함께 되고 [AuthResult.isNewUser] 가 참이다.
+  ///
+  /// [nickname] 은 서버가 `SOCIAL_NICKNAME_REQUIRED` 로 닉네임을 요구한 뒤 같은 토큰으로 다시
+  /// 보낼 때만 넣는다. 첫 요청에 넣으면 서버가 카카오 사용자 정보를 조회하지 않아, 카카오가
+  /// 24시간 뒤 '가입 미완료'로 연결을 끊는다(DECISIONS 163).
+  Future<AuthResult> kakaoLogin({
+    required String accessToken,
+    String? nickname,
+  }) {
+    return _post('/auth/kakao', {
+      'access_token': accessToken,
+      if (nickname != null) 'nickname': nickname.trim(),
+    }, requiresAccessToken: true);
+  }
+
   /// Bearer 토큰으로 서버 세션 종료를 요청하고 통신 실패를 인증 예외로 변환한다.
   Future<void> logout({required String accessToken}) async {
     try {
@@ -136,6 +152,27 @@ class AuthApiService {
   Future<void> withdraw({
     required String accessToken,
     required String password,
+  }) {
+    return _withdraw(accessToken: accessToken, body: {'password': password});
+  }
+
+  /// 비밀번호가 없는 카카오 계정의 탈퇴다. [kakaoAccessToken] 은 탈퇴 확인 단계에서 카카오계정
+  /// 로그인을 다시 해 받은 토큰이어야 한다(`KakaoLoginService.reauthenticate`) — 로그인 때 받아
+  /// SDK 에 저장된 토큰을 쓰면 사용자 입력 없이 탈퇴된다(`docs/SCAN_API_CONTRACT.md` 2-3).
+  /// 카카오 연결 끊기는 서버가 한다.
+  Future<void> withdrawWithKakao({
+    required String accessToken,
+    required String kakaoAccessToken,
+  }) {
+    return _withdraw(
+      accessToken: accessToken,
+      body: {'kakao_access_token': kakaoAccessToken},
+    );
+  }
+
+  Future<void> _withdraw({
+    required String accessToken,
+    required Map<String, String> body,
   }) async {
     try {
       final response = await runJsonApiRequest(
@@ -143,7 +180,7 @@ class AuthApiService {
         uri: _buildUri('/auth/withdraw'),
         headers: requestHeaders,
         timeout: requestTimeout,
-        jsonBody: {'password': password},
+        jsonBody: body,
         accessToken: accessToken,
         client: client,
       );
@@ -420,6 +457,7 @@ class AuthApiService {
       accessToken: accessToken,
       tokenType: payload['token_type']?.toString(),
       expiresInSeconds: expiresInSeconds,
+      isNewUser: payload['is_new_user'] == true,
     );
   }
 

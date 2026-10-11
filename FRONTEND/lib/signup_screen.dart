@@ -383,7 +383,8 @@ class _SignupScreenState extends State<SignupScreen> {
                               ),
                               const SizedBox(height: 18),
                               AuthLinkButton(
-                                label: '이미 계정이 있으신가요? 로그인',
+                                prompt: '이미 계정이 있으신가요?',
+                                action: '로그인',
                                 onPressed: () => _navigateBackToEmailLogin(),
                               ),
                               const Spacer(),
