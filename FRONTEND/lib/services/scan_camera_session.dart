@@ -8,11 +8,15 @@ class ScanCameraSession extends ChangeNotifier {
   CameraController? _controller;
   bool _isInitializing = false;
   String? _errorMessage;
+  bool _isPermissionDenied = false;
   int _requestId = 0;
 
   CameraController? get controller => _controller;
   bool get isInitializing => _isInitializing;
   String? get errorMessage => _errorMessage;
+
+  /// 마지막 초기화가 카메라 권한 거부로 실패해 권한 안내를 보여 주는 중인지 알려 준다.
+  bool get isPermissionDenied => _isPermissionDenied;
 
   bool get isReady => _controller?.value.isInitialized ?? false;
   bool get isTakingPicture => _controller?.value.isTakingPicture ?? false;
@@ -27,6 +31,7 @@ class ScanCameraSession extends ChangeNotifier {
 
     _isInitializing = true;
     _errorMessage = null;
+    _isPermissionDenied = false;
     notifyListeners();
 
     // 초기화에 실패한 컨트롤러도 기기 방향 스트림 구독 등을 잡고 있으므로
@@ -73,6 +78,7 @@ class ScanCameraSession extends ChangeNotifier {
       pendingController = null;
       _isInitializing = false;
       _errorMessage = null;
+      _isPermissionDenied = false;
       notifyListeners();
 
       await oldController?.dispose();
@@ -87,6 +93,7 @@ class ScanCameraSession extends ChangeNotifier {
 
       _isInitializing = false;
       _errorMessage = _buildCameraErrorMessage(e);
+      _isPermissionDenied = _isPermissionError(e);
       notifyListeners();
     }
   }
@@ -115,14 +122,21 @@ class ScanCameraSession extends ChangeNotifier {
     }
   }
 
+  bool _isPermissionError(Object error) {
+    if (error is! CameraException) return false;
+
+    switch (error.code) {
+      case 'CameraAccessDenied':
+      case 'CameraAccessDeniedWithoutPrompt':
+      case 'CameraAccessRestricted':
+        return true;
+    }
+    return false;
+  }
+
   String _buildCameraErrorMessage(Object error) {
-    if (error is CameraException) {
-      switch (error.code) {
-        case 'CameraAccessDenied':
-        case 'CameraAccessDeniedWithoutPrompt':
-        case 'CameraAccessRestricted':
-          return '카메라 권한이 꺼져 있어요.\n기기 설정에서 K-DPP의 카메라 권한을 허용해 주세요.';
-      }
+    if (_isPermissionError(error)) {
+      return '카메라 권한이 꺼져 있어요.\n기기 설정에서 K-DPP의 카메라 권한을 허용해 주세요.';
     }
 
     return '카메라를 시작하지 못했어요.\n잠시 후 다시 시도해 주세요.';
@@ -136,6 +150,7 @@ class ScanCameraSession extends ChangeNotifier {
     _controller = null;
     _isInitializing = false;
     _errorMessage = null;
+    _isPermissionDenied = false;
     notifyListeners();
 
     await controller?.dispose();

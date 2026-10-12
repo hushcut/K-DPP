@@ -106,6 +106,54 @@ void main() {
       expect(initializeCount, 0);
     });
 
+    test('잠깐 가려질 때(inactive) 초기화 중이면 끊지 않고, 돌아와도 다시 시작하지 않는다', () async {
+      var initializeCount = 0;
+      var disposeCount = 0;
+      final lifecycle = ScanCameraLifecycleService(
+        canUseCamera: () => true,
+        isCameraReady: () => false,
+        initializeCamera: ({required canUseCamera}) async {
+          initializeCount++;
+        },
+        disposeCamera: () async {
+          disposeCount++;
+        },
+        isCameraInitializing: () => true,
+      );
+
+      // 권한 창이 떠 있는 동안의 상태를 흉내 냅니다.
+      lifecycle.handleAppLifecycleState(AppLifecycleState.inactive);
+      lifecycle.handleAppLifecycleState(AppLifecycleState.resumed);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(disposeCount, 0);
+      expect(initializeCount, 0);
+    });
+
+    test('열린 카메라는 잠깐 가려질 때 닫고, 돌아오면 다시 연다', () async {
+      var initializeCount = 0;
+      var disposeCount = 0;
+      var isReady = true;
+      final lifecycle = ScanCameraLifecycleService(
+        canUseCamera: () => true,
+        isCameraReady: () => isReady,
+        initializeCamera: ({required canUseCamera}) async {
+          initializeCount++;
+        },
+        disposeCamera: () async {
+          disposeCount++;
+          isReady = false;
+        },
+      );
+
+      lifecycle.handleAppLifecycleState(AppLifecycleState.inactive);
+      expect(disposeCount, 1);
+
+      lifecycle.handleAppLifecycleState(AppLifecycleState.resumed);
+      await Future<void>.delayed(Duration.zero);
+      expect(initializeCount, 1);
+    });
+
     test('앨범에서 돌아오면 이미 준비된 세션이라도 새로 연다', () async {
       var initializeCount = 0;
       var disposeCount = 0;

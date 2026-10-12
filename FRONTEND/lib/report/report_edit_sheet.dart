@@ -10,9 +10,7 @@ Future<void> _showEditBottomSheet(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    backgroundColor: Theme.of(context).brightness == Brightness.dark
-        ? const Color(0xFF121212)
-        : Colors.white,
+    // 배경색은 테마(AppTheme.bottomSheetTheme)에 맡깁니다. 여는 순간에 정하면 열린 채 밝기가 바뀔 때 굳습니다.
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
     ),
@@ -33,18 +31,18 @@ Future<void> _showEditBottomSheet(
     // 저장 실패 시 Provider가 이전 값으로 되돌리므로 재시도만 안내합니다.
     if (!context.mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('수정 내용을 저장하지 못했어요. 다시 시도해 주세요.')),
+    AppBanner.of(context).show(
+      '수정 내용을 저장하지 못했어요. 다시 시도해 주세요.',
+      kind: AppBannerKind.failure,
     );
     return;
   }
 
   if (!context.mounted) return;
 
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text(success ? '의류 정보가 수정되었습니다.' : '수정할 의류를 찾지 못했습니다.'),
-    ),
+  AppBanner.of(context).show(
+    success ? '의류 정보가 수정됐어요.' : '수정할 의류를 찾지 못했어요.',
+    kind: success ? AppBannerKind.success : AppBannerKind.failure,
   );
 }
 
@@ -165,31 +163,19 @@ class _ReportEditSheetState extends State<_ReportEditSheet> {
                   ),
                 ),
                 const SizedBox(height: 14),
-                DropdownButtonFormField<String>(
-                  initialValue: _category,
-                  items: _categoryOptions
-                      .map(
-                        (category) => DropdownMenuItem(
-                          value: category,
-                          child: Text(category),
-                        ),
-                      )
-                      .toList(),
-                  dropdownColor: inputFillColor,
-                  style: TextStyle(color: primaryText),
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: inputFillColor,
-                    labelText: '분류',
-                    labelStyle: TextStyle(color: secondaryText),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    prefixIcon: const Icon(Icons.category_outlined),
+                Text(
+                  '분류',
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
                   ),
+                ),
+                const SizedBox(height: 10),
+                ClothingCategorySegmentedControl(
+                  options: _categoryOptions,
+                  selected: _category,
                   onChanged: (value) {
-                    if (value == null) return;
-
                     setState(() {
                       _category = value;
                     });

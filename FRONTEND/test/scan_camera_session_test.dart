@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:k_dpp/services/scan_camera_lifecycle_service.dart';
 import 'package:k_dpp/services/scan_camera_session.dart';
 
 // 초기화에 실패한 CameraController가 해제되는지 확인한다.
@@ -96,6 +98,91 @@ void main() {
     expect(session.isInitializing, isFalse);
     expect(session.errorMessage, isNull);
   });
+
+  test('권한 거부로 실패할 때만 권한 거부 상태를 알리고, 다른 실패나 성공이면 알리지 않는다', () async {
+    platform.permissionDenied = true;
+    await session.initialize(canUseCamera: () => true);
+    expect(session.isPermissionDenied, isTrue);
+
+    platform
+      ..permissionDenied = false
+      ..failInitialize = true;
+    await session.initialize(canUseCamera: () => true);
+    expect(session.isPermissionDenied, isFalse);
+    expect(session.errorMessage, contains('카메라를 시작하지 못했어요'));
+
+    platform.failInitialize = false;
+    await session.initialize(canUseCamera: () => true);
+    expect(session.isReady, isTrue);
+    expect(session.isPermissionDenied, isFalse);
+  });
+
+  // 2026-09-18 폰 확인(SM-N986N): 설정에서 카메라 권한을 끈 뒤 스캔 탭을 열면
+  // 로딩 원만 돌고 권한 안내가 끝내 뜨지 않았다(약 2분에 초기화 실패 182번).
+  group('생명주기 서비스와 함께 — 카메라 권한 거부', () {
+    late ScanCameraLifecycleService lifecycle;
+
+    setUp(() {
+      lifecycle = ScanCameraLifecycleService(
+        canUseCamera: () => true,
+        isCameraReady: () => session.isReady,
+        initializeCamera: session.initialize,
+        disposeCamera: session.disposeCamera,
+        isCameraInitializing: () => session.isInitializing,
+        isCameraPermissionDenied: () => session.isPermissionDenied,
+      );
+    });
+
+    test('권한 창에 잠깐 가려졌다 돌아와도 다시 요청하지 않고 권한 안내를 남긴다', () async {
+      // 거부된 권한을 요청하면 안드로이드가 권한 창을 띄웠다 곧바로 닫아,
+      // 앱은 inactive → resumed를 거친 뒤에 거부 결과를 받는다.
+      // 고치기 전에는 이 반복이 끝나지 않으므로 20번에서 끊는다.
+      platform
+        ..permissionDenied = true
+        ..onPermissionRequest = () {
+          if (platform.permissionRequestCount > 20) return;
+          lifecycle.handleAppLifecycleState(AppLifecycleState.inactive);
+          lifecycle.handleAppLifecycleState(AppLifecycleState.resumed);
+        };
+
+      lifecycle.startIfNeeded();
+      await _settle();
+
+      expect(platform.permissionRequestCount, 1);
+      expect(session.isInitializing, isFalse);
+      expect(session.errorMessage, contains('카메라 권한이 꺼져 있어요'));
+    });
+
+    test('권한이 거부된 뒤 설정에 다녀오면(백그라운드) 다시 열어 허용된 카메라를 켠다', () async {
+      platform.permissionDenied = true;
+      lifecycle.startIfNeeded();
+      await _settle();
+      expect(session.isPermissionDenied, isTrue);
+
+      // 설정에서 허용하고 돌아오는 순서(안드로이드)
+      platform.permissionDenied = false;
+      for (final state in [
+        AppLifecycleState.inactive,
+        AppLifecycleState.hidden,
+        AppLifecycleState.paused,
+        AppLifecycleState.hidden,
+        AppLifecycleState.inactive,
+        AppLifecycleState.resumed,
+      ]) {
+        lifecycle.handleAppLifecycleState(state);
+      }
+      await _settle();
+
+      expect(session.isReady, isTrue);
+      expect(session.errorMessage, isNull);
+    });
+  });
+}
+
+Future<void> _settle() async {
+  for (var i = 0; i < 200; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
 }
 
 Future<void> _waitUntil(bool Function() condition) async {
@@ -128,6 +215,8 @@ class _CountedStream<T> {
 /// 이미 해제된 미리보기를 다시 해제하면 IllegalStateException을 던진다.
 class _FakeCameraX extends CameraPlatform {
   bool permissionDenied = false;
+  int permissionRequestCount = 0;
+  void Function()? onPermissionRequest;
   bool failCreateBeforePreview = false;
   bool failInitialize = false;
   bool holdInitialize = false;
@@ -159,6 +248,8 @@ class _FakeCameraX extends CameraPlatform {
     MediaSettings mediaSettings,
   ) async {
     if (permissionDenied) {
+      permissionRequestCount++;
+      onPermissionRequest?.call();
       throw CameraException('CameraAccessDenied', 'camera permission denied');
     }
 

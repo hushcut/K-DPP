@@ -3,10 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'closet_provider.dart';
+import 'material_name_display_provider.dart';
 import 'models/clothes.dart';
 import 'theme/app_palette.dart';
 import 'utils/material_name.dart';
 import 'utils/scan_form_validator.dart';
+import 'widgets/app_banner.dart';
+import 'widgets/clothing_category_segmented_control.dart';
 
 part 'report/report_body.dart';
 part 'report/report_actions.dart';

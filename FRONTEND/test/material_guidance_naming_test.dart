@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
 import 'package:k_dpp/home_screen.dart';
+import 'package:k_dpp/material_name_display_provider.dart';
 import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/report_screen.dart';
 import 'package:provider/provider.dart';
@@ -30,8 +31,11 @@ void main() {
     await provider.addClothes(item);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: provider,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
         child: const MaterialApp(home: Scaffold(body: ReportScreen())),
       ),
     );

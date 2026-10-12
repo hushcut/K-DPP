@@ -7,7 +7,8 @@ void main() {
   const clothingType = ClothingTypeOption(
     label: 'Test top',
     category: 'Top',
-    weightRangeLabel: '500g',
+    minWeightGram: 500,
+    maxWeightGram: 500,
     estimatedWeightGram: 500,
     icon: Icons.checkroom_outlined,
   );
@@ -27,6 +28,17 @@ void main() {
         'cotton': 66.7,
         'polyester': 33.3,
       }),
+      isTrue,
+    );
+  });
+
+  test('isMaterialsTotalOver is true only above the 100.5 tolerance', () {
+    expect(
+      ClothingEstimator.isMaterialsTotalOver({'cotton': 60, 'polyester': 40.5}),
+      isFalse,
+    );
+    expect(
+      ClothingEstimator.isMaterialsTotalOver({'cotton': 60, 'polyester': 40.6}),
       isTrue,
     );
   });

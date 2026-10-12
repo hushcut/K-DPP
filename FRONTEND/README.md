@@ -46,6 +46,26 @@ flutter run `
   --dart-define=CARBON_API_ENDPOINT=https://api.example.com/api/carbon/calculate
 ```
 
+## 카카오 로그인 키
+
+카카오 로그인 버튼은 카카오 **네이티브 앱 키**를 넣은 빌드에만 보입니다. 저장소가 공개라
+키는 커밋하지 않고 `FRONTEND/kakao.env`(gitignore) 한 파일에 둡니다.
+
+1. `kakao.env.example`을 `kakao.env`로 복사하고 `KAKAO_NATIVE_APP_KEY=` 뒤에 키를 붙입니다
+   (따옴표·주석·다른 값 없이 이 한 줄만 — iOS xcconfig 가 `//` 뒤를 주석으로 읽습니다).
+2. 실행·빌드할 때 같은 파일을 넘깁니다.
+
+```bash
+flutter run --dart-define-from-file=kakao.env
+```
+
+- iOS(`ios/Flutter/*.xcconfig`)와 Android(`android/app/build.gradle.kts`)는 이 파일을 직접 읽어
+  카카오 로그인에서 돌아오는 주소(`kakao<키>`)를 앱에 등록합니다. `--dart-define-from-file`을
+  빼면 버튼이 숨겨집니다.
+- 파일이 없어도 빌드는 됩니다(카카오 버튼만 숨김).
+- 로그인이 되려면 카카오 개발자 콘솔의 네이티브 앱 키에 Android 패키지명·키 해시와 iOS 번들 ID가
+  등록돼 있어야 합니다.
+
 ## Android 네트워크 정책
 
 - Debug/Profile 빌드는 로컬 FastAPI 연결을 위해 HTTP 통신을 허용합니다.
@@ -65,7 +85,9 @@ cd ..
 flutter run
 ```
 
-- iOS 최소 버전은 13.0입니다.
+- iOS 최소 버전은 15.0입니다. Xcode 27이 15.0 미만 배포 타깃을 더 이상 빌드하지
+  못해 13.0에서 올렸습니다(2026-09-20). iOS 13을 지원하는 기기는 모두 iOS 15를
+  지원하므로 지원 기기 범위는 그대로입니다.
 - 카메라, 앨범, 로컬 네트워크 권한 설명이 등록되어 있습니다.
 - 로그인 세션은 iOS Keychain에 저장됩니다.
 - 화면 방향은 iPhone과 iPad 모두 세로로 고정됩니다.

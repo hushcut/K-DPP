@@ -66,8 +66,14 @@ class ScanCameraView extends StatelessWidget {
             final buttonAreaGap = (availableHeight * 0.082)
                 .clamp(24.0, 56.0)
                 .toDouble();
+            // 권한 안내 같은 오류 문구는 라벨 틀보다 길어, 오류를 보여 줄 때는 틀을 화면 폭까지
+            // 키워(세로 공간이 허락하는 만큼) 스크롤 없이 보이게 합니다(2026-09-19 폰 확인).
+            final showsCameraError =
+                cameraErrorMessage != null &&
+                !isCameraInitializing &&
+                !isScanning;
             final frameSizeByWidth = (constraints.maxWidth - 40)
-                .clamp(180.0, 250.0)
+                .clamp(180.0, showsCameraError ? double.infinity : 250.0)
                 .toDouble();
             // 비율로 계산하되, 남는 공간을 넘지 않게 해 짧은 화면에서도
             // 문구·버튼이 잘리지 않도록 합니다.
@@ -96,9 +102,11 @@ class ScanCameraView extends StatelessWidget {
                 height: availableHeight,
                 child: Column(
                   children: [
-                    // 남는 여백을 위쪽에 더 두어 촬영 UI가 화면 아래쪽에
-                    // 자리 잡도록 합니다.
-                    const Spacer(flex: 3),
+                    // 남는 높이를 위 2 : 아래 3으로 나눠 라벨 틀과 촬영 버튼을 화면 가운데보다
+                    // 위에 둡니다. 이전 3 : 1은 남는 높이가 큰 긴 화면(iPhone 16 Pro Max)에서
+                    // 촬영 UI가 지나치게 아래로 내려갔고, 3 : 2로는 달라진 것을 못 느꼈습니다
+                    // (2026-09-23 폰 확인 2회). 기종별 값 대신 비율로 두어 어느 화면이든 같은 인상을 줍니다.
+                    const Spacer(flex: 2),
                     const Text(
                       '케어 라벨을 프레임 안에 맞춰 촬영해 주세요',
                       textAlign: TextAlign.center,
@@ -193,27 +201,37 @@ class ScanCameraView extends StatelessWidget {
                                   height: 74,
                                   child: Align(
                                     alignment: Alignment.bottomCenter,
+                                    // 누름 효과는 보이는 네모에 그립니다. 네모 밖 여백을
+                                    // 누르면 바깥 GestureDetector 가 받습니다.
                                     child: ExcludeSemantics(
-                                      child: Container(
-                                        width: 54,
-                                        height: 54,
-                                        decoration: BoxDecoration(
-                                          color: Colors.white.withValues(
-                                            alpha: 0.14,
-                                          ),
+                                      child: Material(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.14,
+                                        ),
+                                        shape: RoundedRectangleBorder(
                                           borderRadius: BorderRadius.circular(
                                             14,
                                           ),
-                                          border: Border.all(
+                                          side: BorderSide(
                                             color: Colors.white.withValues(
                                               alpha: 0.45,
                                             ),
                                           ),
                                         ),
-                                        child: const Icon(
-                                          Icons.photo_library_outlined,
-                                          color: Colors.white,
-                                          size: 25,
+                                        clipBehavior: Clip.antiAlias,
+                                        child: InkWell(
+                                          onTap: isScanning
+                                              ? null
+                                              : onPickFromGallery,
+                                          child: const SizedBox(
+                                            width: 54,
+                                            height: 54,
+                                            child: Icon(
+                                              Icons.photo_library_outlined,
+                                              color: Colors.white,
+                                              size: 25,
+                                            ),
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -234,19 +252,12 @@ class ScanCameraView extends StatelessWidget {
                                 child: GestureDetector(
                                   behavior: HitTestBehavior.opaque,
                                   onTap: isScanning ? null : onTakePicture,
+                                  // 누름 효과는 원에 그리고, 원 밖 모서리를 누르면
+                                  // 바깥 GestureDetector 가 받습니다.
                                   child: ExcludeSemantics(
-                                    child: Container(
-                                      width: 74,
-                                      height: 74,
+                                    child: DecoratedBox(
                                       decoration: BoxDecoration(
-                                        color: isScanning
-                                            ? const Color(0xFF6B6B6B)
-                                            : AppPalette.accent,
                                         shape: BoxShape.circle,
-                                        border: Border.all(
-                                          color: Colors.white,
-                                          width: 4,
-                                        ),
                                         boxShadow: [
                                           BoxShadow(
                                             color: AppPalette.accent
@@ -256,10 +267,39 @@ class ScanCameraView extends StatelessWidget {
                                           ),
                                         ],
                                       ),
-                                      child: const Icon(
-                                        Icons.camera_alt,
-                                        color: Colors.white,
-                                        size: 30,
+                                      child: Material(
+                                        color: isScanning
+                                            ? const Color(0xFF6B6B6B)
+                                            : AppPalette.accent,
+                                        shape: const CircleBorder(
+                                          side: BorderSide(
+                                            color: Colors.white,
+                                            width: 4,
+                                          ),
+                                        ),
+                                        clipBehavior: Clip.antiAlias,
+                                        child: InkWell(
+                                          onTap: isScanning
+                                              ? null
+                                              : onTakePicture,
+                                          // 가운데 스캔 원과 같이 누름 강조·물결을
+                                          // 모두 진한 파랑으로 칠합니다
+                                          // (이유는 main_screen.dart).
+                                          highlightColor:
+                                              AppPalette.accentPressed,
+                                          splashColor: AppPalette.accentPressed,
+                                          splashFactory:
+                                              InkRipple.splashFactory,
+                                          child: const SizedBox(
+                                            width: 74,
+                                            height: 74,
+                                            child: Icon(
+                                              Icons.camera_alt,
+                                              color: Colors.white,
+                                              size: 30,
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -270,7 +310,7 @@ class ScanCameraView extends StatelessWidget {
                         ],
                       ),
                     ),
-                    const Spacer(),
+                    const Spacer(flex: 3),
                   ],
                 ),
               ),
@@ -310,7 +350,7 @@ class ScanCameraView extends StatelessWidget {
       return Semantics(
         liveRegion: true,
         child: Padding(
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.all(12),
           child: Center(
             child: SingleChildScrollView(
               child: Column(
@@ -319,9 +359,9 @@ class ScanCameraView extends StatelessWidget {
                   const Icon(
                     Icons.no_photography_outlined,
                     color: Colors.white70,
-                    size: 34,
+                    size: 28,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   Text(
                     errorMessage,
                     textAlign: TextAlign.center,
@@ -331,28 +371,36 @@ class ScanCameraView extends StatelessWidget {
                       height: 1.4,
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  TextButton(
-                    onPressed: onRetryCamera,
-                    style: TextButton.styleFrom(
-                      minimumSize: const Size(0, 36),
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: const Text('다시 시도'),
+                  const SizedBox(height: 8),
+                  // 두 버튼을 한 줄에 두어 카메라 틀 안에서 스크롤 없이 보이게 합니다.
+                  // 글자가 커져 한 줄에 안 들어가면 자동으로 줄을 바꿉니다(2026-09-19 폰 확인).
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 4,
+                    children: [
+                      TextButton(
+                        onPressed: onRetryCamera,
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(0, 36),
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text('다시 시도'),
+                      ),
+                      if (isPermissionError)
+                        TextButton(
+                          onPressed: () => _showCameraPermissionGuide(context),
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size(0, 36),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: const Text('권한 확인 방법'),
+                        ),
+                    ],
                   ),
                   if (isPermissionError) ...[
-                    const SizedBox(height: 6),
-                    TextButton(
-                      onPressed: () => _showCameraPermissionGuide(context),
-                      style: TextButton.styleFrom(
-                        minimumSize: const Size(0, 36),
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: const Text('권한 확인 방법'),
-                    ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 4),
                     const Text(
                       '앨범 사진 선택은 계속 사용할 수 있어요.',
                       textAlign: TextAlign.center,

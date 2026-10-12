@@ -79,7 +79,9 @@ extension _ClosetActions on _ClosetScreenState {
       item.title,
       item.category,
       item.careInstruction,
-      ...item.materials.keys,
+      // 저장 키만 비교하면 리포트에 '면'으로 보이는 'cotton' 키 옷이 '면'으로 검색되지 않습니다.
+      // 서버 표에 있는 소재는 표시 설정과 무관하게 한글명·영문명으로도 찾습니다.
+      ...item.materials.keys.expand(MaterialName.searchNames),
     ];
 
     return searchTargets.any(
@@ -94,15 +96,20 @@ extension _ClosetActions on _ClosetScreenState {
     return '"${_searchController.text.trim()}"에 맞는 의류가 없습니다.';
   }
 
-  /// 길게 누른 항목을 선택하고 순서 변경 모드는 종료합니다.
-  void _enterSelectionMode(Clothes item) {
+  /// 선택 모드를 켜거나 끕니다. 모든 전환이 이곳을 지나며, 켜든 끄든 고른 것은 비우고 시작합니다.
+  ///
+  /// 켜면 검색창이 비활성이 되어 Flutter 가 초점을 거두므로 키보드도 함께 내려갑니다.
+  /// 목록이 바뀌며 끝나지 못한 끌기가 있으면 틱 추적이 남지 않게 멈춥니다.
+  void _setSelectionMode(bool selecting) {
+    _reorderBumps.stop();
+
     _updateState(() {
-      _reorderMode = false;
-      _selectedItems.add(item);
+      _selectedItems.clear();
     });
+    _selectionModeNotifier.value = selecting;
   }
 
-  /// 항목 선택을 전환합니다. 선택이 모두 해제되면 선택 모드도 함께 끝납니다.
+  /// 항목 선택을 전환합니다. 마지막 하나를 풀어도 선택 모드는 '취소'를 누를 때까지 남습니다.
   void _toggleSelection(Clothes item) {
     _updateState(() {
       if (_selectedItems.contains(item)) {
@@ -110,13 +117,6 @@ extension _ClosetActions on _ClosetScreenState {
       } else {
         _selectedItems.add(item);
       }
-    });
-  }
-
-  /// 선택 상태를 모두 초기화합니다.
-  void _exitSelectionMode() {
-    _updateState(() {
-      _selectedItems.clear();
     });
   }
 
@@ -162,10 +162,14 @@ extension _ClosetActions on _ClosetScreenState {
       },
     );
 
-    if (confirmed != true || !mounted) return;
+    if (confirmed != true || !mounted || _selectedItems.isEmpty) return;
 
     final targets = _selectedItems.toList();
     final deleteCount = targets.length;
+
+    // 목록에서 먼저 빠지고 저장이 끝나므로, 그 사이 '취소'·뒤로·옷장 비움으로 모드가 끝나면
+    // 저장 실패로 옷이 되돌아왔을 때 고른 것을 다시 보여 줄 자리가 없습니다.
+    _updateState(() => _deleteInProgress = true);
 
     try {
       await context.read<ClosetProvider>().removeClothesBatch(targets);
@@ -176,36 +180,27 @@ extension _ClosetActions on _ClosetScreenState {
       // 되돌아온 항목 기준으로 선택 상태를 복원해 바로 재시도할 수 있게 합니다.
       final restoredItems = context.read<ClosetProvider>().items;
       _updateState(() {
+        _deleteInProgress = false;
         _selectedItems
           ..clear()
           ..addAll(targets.where(restoredItems.contains));
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('의류 삭제를 저장하지 못했어요. 다시 시도해 주세요.')),
+      AppBanner.of(context).show(
+        '의류 삭제를 저장하지 못했어요. 다시 시도해 주세요.',
+        kind: AppBannerKind.failure,
       );
       return;
     }
 
     if (!mounted) return;
 
-    _updateState(() {
-      _selectedItems.clear();
-    });
+    _updateState(() => _deleteInProgress = false);
+    _setSelectionMode(false);
 
-    ScaffoldMessenger.of(
+    AppBanner.of(
       context,
-    ).showSnackBar(SnackBar(content: Text('$deleteCount개의 의류가 삭제되었습니다.')));
-  }
-
-  /// 순서 변경 모드와 다중 선택 모드가 동시에 켜지지 않게 전환합니다.
-  void _toggleReorderMode() {
-    _updateState(() {
-      _reorderMode = !_reorderMode;
-      if (_reorderMode) {
-        _selectedItems.clear();
-      }
-    });
+    ).show('$deleteCount개의 의류가 삭제됐어요.', kind: AppBannerKind.success);
   }
 
   /// 보이는 항목만 재정렬해도 숨겨진 항목의 상대 위치는 그대로 보존합니다.
@@ -220,6 +215,10 @@ extension _ClosetActions on _ClosetScreenState {
     if (newIndex > oldIndex) {
       newIndex -= 1;
     }
+
+    // 아래로 반 칸 넘게 갔다가 덜 돌아와 놓으면 카드는 그대로인데 (i, i + 1) 로 들어옵니다
+    // (2026-10-01 실측). 보정하면 같은 자리이니 다시 저장하지 않습니다.
+    if (newIndex == oldIndex) return;
 
     final movedItem = reorderedDisplayed.removeAt(oldIndex);
     reorderedDisplayed.insert(newIndex, movedItem);
@@ -245,10 +244,10 @@ extension _ClosetActions on _ClosetScreenState {
     } catch (_) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('변경한 순서를 저장하지 못했어요. 다시 시도해 주세요.')),
+      AppBanner.of(context).show(
+        '변경한 순서를 저장하지 못했어요. 다시 시도해 주세요.',
+        kind: AppBannerKind.failure,
       );
     }
   }
-
 }

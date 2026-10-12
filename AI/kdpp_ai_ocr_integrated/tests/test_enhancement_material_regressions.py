@@ -3,7 +3,6 @@
 import pytest
 
 from apps.text.parse_label import parse_label, parse_materials
-from part_policy_assertions import assert_selected_part
 
 
 def assert_rejected(text: str, *, error_code: str = "composition_not_found") -> None:
@@ -131,9 +130,13 @@ def test_explicit_metadata_does_not_invalidate_composition(
 )
 def test_metadata_does_not_hide_or_supply_composition_evidence(text) -> None:
     if text.startswith("OUTER"):
-        assert_selected_part(parse_label(text), "lining", {"nylon": 100}, unconfirmed="outer")
-        return
-    assert_rejected(text)
+        result = parse_label(text)
+        assert result["status"] == "success"
+        assert result["selected_part"] == "lining"
+        assert result["materials"] == {"nylon": 100}
+        assert "outer" not in result["parts"]
+    else:
+        assert_rejected(text)
 
 
 def test_metadata_header_does_not_consume_a_garment_part() -> None:
@@ -271,16 +274,18 @@ def test_descriptors_punctuation_and_metadata_do_not_invalidate_ratios(
     assert result["materials"] == expected
 
 
-def test_ambiguous_outer_keeps_warning_when_confirmed_lining_is_selected() -> None:
-    assert_selected_part(parse_label('OUTER COTTON 100%\nPOLYESTER 100%\nLINING NYLON 100%'), "lining", {'nylon': 100}, unconfirmed="outer")
-
-
-def test_incomplete_outer_keeps_warning_when_confirmed_lining_is_selected() -> None:
-    assert_selected_part(parse_label('OUTER COTTON 95%\nLINING NYLON 100%'), "lining", {'nylon': 100}, unconfirmed="outer")
-
-
-def test_unrecognized_outer_keeps_warning_when_confirmed_lining_is_selected() -> None:
-    assert_selected_part(parse_label('겉감: 인조모피\n안감: 폴리에스터 100%'), "lining", {'polyester': 100}, unconfirmed="outer")
+@pytest.mark.parametrize("text,expected", [
+    ("OUTER COTTON 100%\nPOLYESTER 100%\nLINING NYLON 100%", {"nylon": 100}),
+    ("OUTER COTTON 95%\nLINING NYLON 100%", {"nylon": 100}),
+    ("겉감: 인조모피\n안감: 폴리에스터 100%", {"polyester": 100}),
+])
+def test_unconfirmed_outer_selects_a_separate_confirmed_lining(text, expected) -> None:
+    result = parse_label(text)
+    assert result["status"] == "success"
+    assert result["selected_part"] == "lining"
+    assert result["materials"] == expected
+    assert "outer" not in result["parts"]
+    assert "outer:composition_not_confirmed" in result["warnings"]
 
 
 @pytest.mark.parametrize(
@@ -407,8 +412,12 @@ def test_suffix_part_marker_supports_multi_material_composition() -> None:
     }
 
 
-def test_incomplete_suffix_outer_returns_confirmed_lining() -> None:
-    assert_selected_part(parse_label('COTTON 95% SHELL\nNYLON 100% LINING'), "lining", {'nylon': 100}, unconfirmed="outer")
+def test_incomplete_suffix_outer_selects_confirmed_lining() -> None:
+    result = parse_label("COTTON 95% SHELL\nNYLON 100% LINING")
+    assert result["status"] == "success"
+    assert result["selected_part"] == "lining"
+    assert result["materials"] == {"nylon": 100}
+    assert "outer" not in result["parts"]
 
 
 def test_inline_part_transition_remains_supported() -> None:

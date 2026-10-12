@@ -7,7 +7,6 @@ import pytest
 
 from apps.service.label_analysis import analyze_ocr_result
 from apps.text import ocr_text
-from part_policy_assertions import assert_selected_part
 
 
 def run_with_payloads(monkeypatch, payloads):
@@ -251,14 +250,17 @@ def test_lining_conflict_does_not_invalidate_an_agreed_outer(monkeypatch):
     assert "lining:ambiguous_composition_candidates" in analysis["warnings"]
 
 
-def test_outer_conflict_stays_rejected_when_agreed_lining_is_selected(monkeypatch):
+def test_outer_conflict_keeps_confirmed_lining_and_outer_evidence(monkeypatch):
     result, _calls = run_with_payloads(monkeypatch, [ocr_text.OcrPayload(
         "OUTER COTTON 100%\nLINING POLYESTER 100%",
         "OUTER WOOL 100%\nLINING POLYESTER 100%",
     )])
     analysis = analyze_ocr_result(result)
 
-    assert_selected_part(analysis, 'lining', {'polyester': 100}, unconfirmed='outer')
+    assert analysis["status"] == "success"
+    assert analysis["selected_part"] == "lining"
+    assert analysis["materials"] == {"polyester": 100}
+    assert "outer" not in analysis["parts"]
     assert "outer:ambiguous_composition_candidates" in analysis["warnings"]
 
 
@@ -317,8 +319,12 @@ def test_rejected_composition_cannot_disappear_in_another_candidate(
     analysis = analyze_ocr_result(result)
 
     if raw == "OUTER POLYESTER\nLINING COTTON 100%":
-        assert_selected_part(analysis, "lining", {"cotton": 100}, unconfirmed="outer")
-        assert "outer" in analysis["parse_evidence"]["rejected_composition_parts"]
+        assert analysis["status"] == "success"
+        assert analysis["selected_part"] == "lining"
+        assert analysis["materials"] == {"cotton": 100}
+        assert "outer" not in analysis["parts"]
+        assert analysis["ocr"]["rejected_composition_parts"]["outer"]
+        assert len(calls) == 2
         return
     assert analysis["status"] == "failed"
     assert analysis["materials"] == {}
@@ -716,7 +722,11 @@ def test_empty_heading_recovery_cannot_erase_raw_or_other_part_evidence(
     analysis = analyze_ocr_result(result)
 
     if raw == "LINING POLYESTER 100%":
-        assert_selected_part(analysis, "lining", {"polyester": 100}, unconfirmed="outer")
+        assert analysis["status"] == "success"
+        assert analysis["selected_part"] == "lining"
+        assert analysis["materials"] == {"polyester": 100}
+        assert "outer" not in analysis["parts"]
+        assert analysis["ocr"]["rejected_composition_parts"]["outer"]
         return
     assert analysis["status"] == "failed"
     assert analysis["materials"] == {}

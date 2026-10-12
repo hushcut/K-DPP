@@ -35,48 +35,34 @@ void main() {
     expect(ClothingTypeCatalog.hasDefaultTitle('새 옷'), isFalse);
   });
 
-  group('무게 범위 표기 방어', () {
-    // weightRangeLabel의 표기가 흔들리면(공백·단위 표기·전각 물결 등)
-    // ClothingTypeOption의 정규식이 매치에 실패해 min/max가 대표 무게로
-    // 조용히 폴백한다. 이 그룹은 그 폴백이 일어나지 않는지 지킨다.
-    final rangeLabelPattern = RegExp(r'^(\d+(?:\.\d+)?)~(\d+(?:\.\d+)?)g$');
-
+  group('앱 내장 무게표', () {
+    // 2026-09-16부터 무게는 숫자로 들고 있고 화면 문구는 숫자에서 만든다.
+    // 서버 표(BACKEND/main.py CLOTHING_TYPE_OPTIONS)와 같은 값인지는
+    // 백엔드 계약 테스트(test_clothing_type_contract.py)가 맞대어 본다.
     List<ClothingTypeOption> rangeOptions() => ClothingTypeCatalog.options
         .where(
           (option) => !option.isDirectWeightPlaceholder && !option.isDirectWeight,
         )
         .toList();
 
-    test('범위 옵션 8종은 라벨 그대로 파싱되고 대표 무게로 폴백하지 않는다', () {
+    test('범위 옵션 8종은 서버 식별자를 갖고, 문구는 숫자 범위와 같고, 아이콘은 식별자 규칙과 같다', () {
       final options = rangeOptions();
       expect(options.length, 8);
+      expect(options.map((option) => option.id).toSet(), hasLength(8));
 
       for (final option in options) {
-        final match = rangeLabelPattern.firstMatch(option.weightRangeLabel);
+        expect(option.id, isNotNull, reason: option.label);
         expect(
-          match,
-          isNotNull,
-          reason:
-              '${option.label}의 weightRangeLabel "${option.weightRangeLabel}"'
-              '이(가) "숫자~숫자g" 형식이 아니다',
+          option.weightRangeLabel,
+          '${ClothingTypeOption.formatWeightGram(option.minWeightGram)}~'
+          '${ClothingTypeOption.formatWeightGram(option.maxWeightGram)}g',
+          reason: option.label,
         );
-
-        final expectedMin = double.parse(match!.group(1)!);
-        final expectedMax = double.parse(match.group(2)!);
-
+        // 서버 표로 바뀌어도 같은 종류가 같은 아이콘으로 보여야 한다.
         expect(
-          option.minWeightGram,
-          expectedMin,
-          reason:
-              '${option.label}의 minWeightGram이 라벨 파싱값이 아니라 '
-              '대표 무게(${option.estimatedWeightGram})로 폴백했다',
-        );
-        expect(
-          option.maxWeightGram,
-          expectedMax,
-          reason:
-              '${option.label}의 maxWeightGram이 라벨 파싱값이 아니라 '
-              '대표 무게(${option.estimatedWeightGram})로 폴백했다',
+          option.icon,
+          ClothingTypeOption.iconForId(option.id!),
+          reason: option.label,
         );
       }
     });

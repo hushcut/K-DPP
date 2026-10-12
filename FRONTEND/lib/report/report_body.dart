@@ -41,6 +41,9 @@ Widget _buildReportBody(
   final item =
       _resolveDisplayItem(closetProvider, passedItem) ??
       closetProvider.currentReportItem;
+  final materialNameDisplay = context
+      .watch<MaterialNameDisplayProvider>()
+      .display;
 
   final isDark = Theme.of(context).brightness == Brightness.dark;
   final palette = AppPalette.of(context);
@@ -59,19 +62,27 @@ Widget _buildReportBody(
     );
   }
 
-  final materialsText = item.materials.entries
-      .map((e) => '${e.key.toUpperCase()} ${_formatMaterialValue(e.value)}%')
+  // 같은 소재가 '면'·'cotton' 두 키로 들어 있어도 한 항목으로 합친 뒤 설정 언어로 표시합니다.
+  final materialEntries = MaterialName.displayEntries(
+    item.materials,
+    materialNameDisplay,
+  );
+  final materialsText = materialEntries
+      .map((e) => '${e.key} ${_formatMaterialValue(e.value)}%')
       .join(', ');
 
   final careTips = _buildCareTips(item);
   final storageTip = _buildStorageTip(item);
   final disposalGuide = _buildDisposalGuide(item);
-  final mainMaterial = _mainMaterialLabel(item);
+  final mainMaterial = _mainMaterialLabel(materialEntries);
+
+  // 리포트는 하단 메뉴까지 덮는 라우트라 메뉴 자리 없이 기기 안전 영역만 비웁니다.
+  final bottomContentPadding = MediaQuery.paddingOf(context).bottom + 24;
 
   return Container(
     color: backgroundColor,
     child: SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 140),
+      padding: EdgeInsets.fromLTRB(24, 24, 24, bottomContentPadding),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -193,6 +204,40 @@ Widget _buildReportBody(
           const SizedBox(height: 24),
 
           Text(
+            '맞춤 관리 가이드',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: primaryText,
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          _buildGuideSection(
+            title: '세탁 및 관리 팁',
+            icon: Icons.local_laundry_service_outlined,
+            color: Colors.blue,
+            children: careTips,
+            primaryText: primaryText,
+            secondaryText: secondaryText,
+            cardColor: cardColor,
+            borderColor: borderColor,
+          ),
+          const SizedBox(height: 12),
+
+          _buildGuideSection(
+            title: '보관 팁',
+            icon: Icons.inventory_2_outlined,
+            color: Colors.deepPurple,
+            children: [storageTip],
+            primaryText: primaryText,
+            secondaryText: secondaryText,
+            cardColor: cardColor,
+            borderColor: borderColor,
+          ),
+          const SizedBox(height: 24),
+
+          Text(
             '생산·제조 탄소 배출량',
             style: TextStyle(
               fontSize: 18,
@@ -236,40 +281,6 @@ Widget _buildReportBody(
 
           _buildCalculationBasisCard(
             item,
-            primaryText: primaryText,
-            secondaryText: secondaryText,
-            cardColor: cardColor,
-            borderColor: borderColor,
-          ),
-          const SizedBox(height: 24),
-
-          Text(
-            '맞춤 관리 가이드',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: primaryText,
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          _buildGuideSection(
-            title: '세탁 및 관리 팁',
-            icon: Icons.local_laundry_service_outlined,
-            color: Colors.blue,
-            children: careTips,
-            primaryText: primaryText,
-            secondaryText: secondaryText,
-            cardColor: cardColor,
-            borderColor: borderColor,
-          ),
-          const SizedBox(height: 12),
-
-          _buildGuideSection(
-            title: '보관 팁',
-            icon: Icons.inventory_2_outlined,
-            color: Colors.deepPurple,
-            children: [storageTip],
             primaryText: primaryText,
             secondaryText: secondaryText,
             cardColor: cardColor,

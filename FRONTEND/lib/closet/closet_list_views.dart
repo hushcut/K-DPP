@@ -21,7 +21,7 @@ extension _ClosetListViews on _ClosetScreenState {
     final isSearching = _searchQuery.isNotEmpty;
     final action = isSearching ? _searchController.clear : widget.onStartScan;
 
-    return Center(
+    final content = Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -84,15 +84,32 @@ extension _ClosetListViews on _ClosetScreenState {
         ),
       ),
     );
+
+    // 키보드가 올라와 목록 칸이 안내보다 낮아지면 넘치지 않게 스크롤하고,
+    // 자리가 넉넉하면 지금처럼 가운데에 둡니다(2026-09-18 폰 확인).
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight: constraints.hasBoundedHeight ? constraints.maxHeight : 0,
+          ),
+          child: content,
+        ),
+      ),
+    );
   }
 
-  /// 사용자 지정 순서를 드래그로 바꾸는 목록입니다.
+  /// 내 설정 순에서 카드 오른쪽 ≡ 손잡이를 잡아 끌면 바로 순서가 바뀌는 목록입니다.
+  ///
+  /// 카드 어디를 꾹 눌러도 끌리던 기본 동작(모바일의 지연 리스너)은 끕니다. 꾹 누르기가 정렬마다
+  /// 다른 뜻이 되지 않게, 끌기는 손잡이에서만 시작합니다(2026-10-01 DECISIONS 74).
   Widget _buildReorderableClothesList(
     BuildContext context,
     List<Clothes> clothes,
     List<Clothes> originalOrder, {
     required String emptyMessage,
     required _ClosetPalette palette,
+    required Key storageKey,
   }) {
     if (clothes.isEmpty) {
       return _buildEmptyListState(
@@ -102,8 +119,20 @@ extension _ClosetListViews on _ClosetScreenState {
     }
 
     return ReorderableListView.builder(
+      key: storageKey,
       padding: _listPadding(context),
       itemCount: clothes.length,
+      buildDefaultDragHandles: false,
+      // 집어 드는 순간 진동해 들렸다는 걸 손으로도 알게 하고(2026-09-24 사용자 요청),
+      // 끄는 동안 다른 카드를 밀어낼 때마다 더 가벼운 틱을 줍니다(2026-09-25 사용자 요청).
+      // 2026-10-01 둘 다 한 단계 강하게(medium → heavy, 틱 selectionClick → lightImpact).
+      onReorderStart: (_) {
+        HapticFeedback.heavyImpact();
+        _reorderBumps.start();
+      },
+      onReorderEnd: (_) => _reorderBumps.stop(),
+      proxyDecorator: (child, index, animation) =>
+          _buildLiftedCard(child, animation, palette),
       onReorder: (oldIndex, newIndex) async {
         await _handleReorder(
           displayedItems: clothes,
@@ -118,25 +147,78 @@ extension _ClosetListViews on _ClosetScreenState {
         return Padding(
           key: ValueKey(item),
           padding: const EdgeInsets.only(bottom: 12.0),
-          child: _buildClosetItem(
-            context,
-            item: item,
-            title: item.title,
-            category: item.category,
-            status: item.health > 20
-                ? '건강 상태: ${item.health}%'
-                : '수명 만료 (배출 권장)',
-            statusColor: item.health > 20 ? Colors.green : Colors.redAccent,
-            statusIcon: item.health > 20
-                ? Icons.sentiment_satisfied_alt
-                : Icons.warning_amber_rounded,
-            isWarning: item.health <= 20,
-            showDragHandle: true,
-            disableTap: true,
-            palette: palette,
+          child: ReorderBumpProbe(
+            tracker: _reorderBumps,
+            child: _buildClosetItem(
+              context,
+              item: item,
+              title: item.title,
+              category: item.category,
+              status: item.health > 20
+                  ? '건강 상태: ${item.health}%'
+                  : '수명 만료 (배출 권장)',
+              statusColor: item.health > 20 ? Colors.green : Colors.redAccent,
+              statusIcon: item.health > 20
+                  ? Icons.sentiment_satisfied_alt
+                  : Icons.warning_amber_rounded,
+              isWarning: item.health <= 20,
+              dragHandleIndex: index,
+              palette: palette,
+            ),
           ),
         );
       },
+    );
+  }
+
+  /// 순서를 바꾸려고 집어 든 카드를 카드 모양 그대로 살짝 띄워 그립니다.
+  ///
+  /// 기본 모양은 카드와 아래 여백 12 를 배경색 네모 판(`Material(elevation: 6)`)째 들어 올려
+  /// 블럭처럼 보였습니다. 판 없이 카드만 3% 키우고 모서리 16 을 따라 그림자를 길게 드리웁니다
+  /// (2026-09-24 비교판 B, 사용자 선택). 내려놓을 때는 같은 애니메이션이 거꾸로 재생됩니다.
+  Widget _buildLiftedCard(
+    Widget child,
+    Animation<double> animation,
+    _ClosetPalette palette,
+  ) {
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, child) {
+        final t = Curves.easeOut.transform(animation.value);
+        final liftShadow = Colors.black.withValues(
+          alpha: (palette.isDark ? 0.45 : 0.14) * t,
+        );
+
+        // 오버레이에는 Material 조상이 없으므로 글자 스타일만 이어 주는 투명 Material 을 둡니다.
+        return Material(
+          type: MaterialType.transparency,
+          child: Transform.scale(
+            scale: 1 + 0.03 * t,
+            child: Stack(
+              children: [
+                // 아래 여백(12)을 뺀 카드 자리에만 그림자를 둡니다.
+                Positioned.fill(
+                  bottom: 12,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: liftShadow,
+                          blurRadius: 22 * t,
+                          offset: Offset(0, 10 * t),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                child!,
+              ],
+            ),
+          ),
+        );
+      },
+      child: child,
     );
   }
 
@@ -146,6 +228,7 @@ extension _ClosetListViews on _ClosetScreenState {
     List<Clothes> clothes, {
     required String emptyMessage,
     required _ClosetPalette palette,
+    required Key storageKey,
   }) {
     if (clothes.isEmpty) {
       return _buildEmptyListState(
@@ -155,6 +238,7 @@ extension _ClosetListViews on _ClosetScreenState {
     }
 
     return ListView.builder(
+      key: storageKey,
       padding: _listPadding(context),
       itemCount: clothes.length,
       itemBuilder: (context, index) {
@@ -183,6 +267,8 @@ extension _ClosetListViews on _ClosetScreenState {
   }
 
   /// 의류의 분류·건강 상태와 선택·경고·재정렬 상태를 한 행에 표시합니다.
+  ///
+  /// [dragHandleIndex] 가 있으면(내 설정 순 평소) 오른쪽 끝에 그 위치의 ≡ 손잡이를 둡니다.
   Widget _buildClosetItem(
     BuildContext context, {
     required Clothes item,
@@ -193,147 +279,185 @@ extension _ClosetListViews on _ClosetScreenState {
     required IconData statusIcon,
     required _ClosetPalette palette,
     bool isWarning = false,
-    bool showDragHandle = false,
-    bool disableTap = false,
+    int? dragHandleIndex,
   }) {
     final isSelected = _selectedItems.contains(item);
+    final Widget? trailing;
+    if (_selectionMode) {
+      trailing = Icon(
+        isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+        color: isSelected ? AppPalette.accent : palette.secondaryText,
+      );
+    } else if (dragHandleIndex != null) {
+      // 손잡이가 '>' 자리에 섭니다.
+      trailing = null;
+    } else {
+      trailing = Icon(Icons.chevron_right, color: palette.secondaryText);
+    }
 
-    return Semantics(
-      selected: isSelected,
-      child: Container(
-        decoration: BoxDecoration(
-          color: isSelected
-              ? palette.selectedBgColor
-              : (isWarning ? palette.warningBgColor : palette.cardColor),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
+    // 카드 색을 Container 로 칠하면 ListTile 의 누름 효과가 그 아래에 그려져 보이지 않습니다.
+    // 그림자만 바깥 상자에 두고, 색·테두리는 카드 전용 Material 위에 Ink 로 칠해 효과가 위에 보이게 합니다.
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: palette.shadowColor,
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: Ink(
+          decoration: BoxDecoration(
             color: isSelected
-                ? AppPalette.accent
-                : (isWarning
-                      ? Colors.redAccent.shade200
-                      : palette.borderColor),
-            width: isSelected ? 2 : (isWarning ? 2 : 1),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: palette.shadowColor,
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 8,
-          ),
-          leading: Container(
-            width: 60,
-            height: 60,
-            decoration: BoxDecoration(
-              color: isSelected
-                  ? (palette.isDark
-                        ? const Color(0xFF1C1C1E)
-                        : Colors.white)
-                  : (isWarning
-                        ? (palette.isDark
-                              ? const Color(0xFF1C1C1E)
-                              : Colors.white)
-                        : palette.leadingBgColor),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              Icons.checkroom,
+                ? palette.selectedBgColor
+                : (isWarning ? palette.warningBgColor : palette.cardColor),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
               color: isSelected
                   ? AppPalette.accent
                   : (isWarning
-                        ? Colors.redAccent
-                        : palette.secondaryText),
-              size: 30,
+                        ? Colors.redAccent.shade200
+                        : palette.borderColor),
+              width: isSelected ? 2 : (isWarning ? 2 : 1),
             ),
           ),
-          title: Text(
-            title,
-            maxLines: 2,
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-              color: palette.primaryText,
-            ),
-          ),
-          subtitle: Padding(
-            padding: const EdgeInsets.only(top: 8.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  category,
-                  style: TextStyle(
-                    color: palette.secondaryText,
-                    fontSize: 12,
-                  ),
+          child: _withDragHandle(
+            dragHandleIndex: dragHandleIndex,
+            palette: palette,
+            child: ListTile(
+              // 선택 상태는 ListTile 이 낭독기에 알립니다. 카드를 Semantics(selected:) 로 따로 감싸면
+              // ListTile 자체의 selected 와 겹쳐 칸이 둘로 갈라지고, '선택됨'·순서 이동이 이름 없는
+              // 바깥 칸에 붙어 iOS VoiceOver 가 읽지 못하거나 말 없이 멈춥니다(2026-10-02).
+              // 안쪽 글자·아이콘 색은 모두 직접 지정이라 selected 의 기본 색은 화면에 드러나지 않습니다.
+              selected: isSelected,
+              contentPadding: EdgeInsets.fromLTRB(
+                16,
+                8,
+                dragHandleIndex == null ? 16 : 0,
+                8,
+              ),
+              leading: Container(
+                width: 60,
+                height: 60,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? (palette.isDark
+                            ? const Color(0xFF1C1C1E)
+                            : Colors.white)
+                      : (isWarning
+                            ? (palette.isDark
+                                  ? const Color(0xFF1C1C1E)
+                                  : Colors.white)
+                            : palette.leadingBgColor),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                const SizedBox(height: 4),
-                Row(
+                child: Icon(
+                  Icons.checkroom,
+                  color: isSelected
+                      ? AppPalette.accent
+                      : (isWarning ? Colors.redAccent : palette.secondaryText),
+                  size: 30,
+                ),
+              ),
+              title: Text(
+                title,
+                maxLines: 2,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  color: palette.primaryText,
+                ),
+              ),
+              subtitle: Padding(
+                padding: const EdgeInsets.only(top: 8.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(statusIcon, color: statusColor, size: 16),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        status,
-                        maxLines: 2,
-                        style: TextStyle(
-                          color: statusColor,
-                          fontWeight: isWarning
-                              ? FontWeight.bold
-                              : FontWeight.normal,
-                          fontSize: 13,
-                        ),
+                    Text(
+                      category,
+                      style: TextStyle(
+                        color: palette.secondaryText,
+                        fontSize: 12,
                       ),
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(statusIcon, color: statusColor, size: 16),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            status,
+                            maxLines: 2,
+                            style: TextStyle(
+                              color: statusColor,
+                              fontWeight: isWarning
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
+              ),
+              trailing: trailing,
+              // 꾹 누르기에는 따로 뜻을 두지 않습니다. 꾹 눌렀다 그 자리에서 떼면 탭과 같습니다
+              // (iOS 목록 기본, Flutter 탭 인식기는 오래 눌러도 거절하지 않음 — gestures/tap.dart).
+              onTap: () {
+                if (_selectionMode) {
+                  _toggleSelection(item);
+                  return;
+                }
+
+                context.read<ClosetProvider>().selectClothes(item);
+                widget.onOpenReport(item);
+              },
             ),
           ),
-          trailing: showDragHandle
-              ? Icon(Icons.drag_handle, color: palette.secondaryText)
-              : (_selectionMode
-                    ? Icon(
-                        isSelected
-                            ? Icons.check_circle
-                            : Icons.radio_button_unchecked,
-                        color: isSelected
-                            ? AppPalette.accent
-                            : palette.secondaryText,
-                      )
-                    : Icon(
-                        Icons.chevron_right,
-                        color: palette.secondaryText,
-                      )),
-          onTap: disableTap
-              ? null
-              : () {
-                  if (_selectionMode) {
-                    _toggleSelection(item);
-                    return;
-                  }
-
-                  context.read<ClosetProvider>().selectClothes(item);
-                  widget.onOpenReport(item);
-                },
-          onLongPress: disableTap
-              ? null
-              : () {
-                  if (_selectionMode) {
-                    _toggleSelection(item);
-                    return;
-                  }
-
-                  _enterSelectionMode(item);
-                },
         ),
       ),
+    );
+  }
+
+  /// 카드 오른쪽 끝에 ≡ 손잡이를 붙입니다. 손잡이가 없으면 카드를 그대로 돌려줍니다.
+  ///
+  /// 손잡이는 카드 누름 영역(ListTile) 밖의 형제라서 탭만 하면 아무 일도 없고, 카드 누름 효과도
+  /// 번쩍이지 않습니다. 잡고 움직이면 기다림 없이 바로 끌립니다.
+  Widget _withDragHandle({
+    required int? dragHandleIndex,
+    required _ClosetPalette palette,
+    required Widget child,
+  }) {
+    if (dragHandleIndex == null) return child;
+
+    return Row(
+      children: [
+        Expanded(child: child),
+        ReorderableDragStartListener(
+          index: dragHandleIndex,
+          // 아이콘 글자 모양만이 아니라 48×48 칸 전체에서 잡히게 바탕을 채웁니다(투명).
+          child: ColoredBox(
+            color: Colors.transparent,
+            child: Padding(
+              // 아이콘 오른쪽 끝을 다른 정렬의 '>' 와 같은 자리(카드 안쪽 16)에 맞춥니다.
+              padding: const EdgeInsets.only(right: 4),
+              child: SizedBox.square(
+                dimension: 48,
+                child: Icon(Icons.drag_handle, color: palette.secondaryText),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

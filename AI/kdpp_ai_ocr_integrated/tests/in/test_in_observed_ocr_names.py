@@ -34,7 +34,6 @@ def test_complete_observed_long_names_resolve_without_inserting_a_ratio(text, ex
     '프리에스터80%, MODACRYLIC20%',
     '프리에스터80%, OLEFIN20%',
     'FAUX 프리에스터100%',
-    '100% POLY',
     '관리 에스터 100%',
     '리에스터100%',
 ])

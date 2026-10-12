@@ -1,19 +1,23 @@
 """전면 점검(2026-08-29)에서 확정된 결함들의 회귀 테스트."""
 
+import hashlib
+import json
 import threading
+import time
 from datetime import timedelta
 
 import pytest
+from fastapi.testclient import TestClient
+from starlette.middleware.cors import CORSMiddleware
 
 import database
 import main
+from auth_helpers import fix_next_code, request_code, signup
+from process_helpers import run_python
 
 
 def _login_token(client, email="hardening@example.com"):
-    client.post(
-        "/auth/signup",
-        json={"email": email, "password": "password123", "nickname": "tester"},
-    )
+    signup(client, email)
     login = client.post(
         "/auth/login",
         json={"email": email, "password": "password123"},
@@ -68,6 +72,7 @@ def test_password_with_surrounding_whitespace_is_rejected(client):
             "email": "space@example.com",
             "password": "password1 ",
             "nickname": "space-user",
+            "code": "123456",
         },
     )
 
@@ -77,7 +82,7 @@ def test_password_with_surrounding_whitespace_is_rejected(client):
 def test_invalid_email_format_is_rejected(client):
     response = client.post(
         "/auth/signup",
-        json={"email": "@.", "password": "password123", "nickname": "tester"},
+        json={"email": "@.", "password": "password123", "nickname": "tester", "code": "123456"},
     )
 
     assert response.status_code == 400
@@ -108,40 +113,21 @@ def test_expired_token_returns_401_instead_of_anonymous_save(client):
     assert response.status_code == 401
 
 
-@pytest.mark.parametrize(
-    ("raw_text", "expected_status", "expected_materials"),
-    [
-        ("COTTON 50% POLYESTER 30%", 422, {}),
-        ("COTTON 50% POLYESTER 50%", 200, {"cotton": 50, "polyester": 50}),
-    ],
-)
-def test_scan_requires_complete_enhancement_composition(
-    client, raw_text, expected_status, expected_materials
-):
+def test_scan_rejects_partial_ratio(client):
+    # 앱은 ai_success 를 읽지 않아 200 이면 성공으로 보이므로, 부분 인식은 422 다(DECISIONS 200).
     token = _login_token(client)
     response = client.post(
         "/api/scan",
         files={"image": ("label.jpg", b"test-image", "image/jpeg")},
-        data={"raw_ocr_text": raw_text},
+        data={"raw_ocr_text": "COTTON 50% POLYESTER 30%"},
         headers={"Authorization": f"Bearer {token}"},
     )
     body = response.json()
 
-    assert response.status_code == expected_status
-    if expected_status == 422:
-        # enhancement 파서는 합계 80%를 조성 후보로 확정하지 않는다.
-        assert body["status"] == "error"
-        assert body["error_code"] == "MATERIAL_EXTRACTION_FAILED"
-        payload = body["detail"]
-        assert payload["partial_materials"] == {}
-        assert payload["ai_success"] is False
-    else:
-        assert body["status"] == "success"
-        assert body["ai_success"] is True
-        assert body["analysis_failure_reason"] is None
-        payload = body
-    assert payload["materials"] == expected_materials
-    assert payload["raw_ocr_preview"] == raw_text
+    assert response.status_code == 422
+    assert body["error_code"] == "MATERIAL_EXTRACTION_FAILED"
+    assert body["detail"]["materials"] == {}
+    assert body["detail"]["ai_success"] is False
 
 
 def test_scan_rejects_missing_content_type(client):
@@ -202,10 +188,7 @@ def test_access_token_is_stored_hashed(client):
 
 def test_login_locks_after_repeated_failures(client):
     email = "lockout@example.com"
-    client.post(
-        "/auth/signup",
-        json={"email": email, "password": "password123", "nickname": "lock-user"},
-    )
+    signup(client, email, nickname="lock-user")
 
     for _ in range(main.LOGIN_MAX_ATTEMPTS):
         response = client.post(
@@ -223,10 +206,7 @@ def test_login_locks_after_repeated_failures(client):
 
 def test_login_success_resets_failure_count(client):
     email = "reset-count@example.com"
-    client.post(
-        "/auth/signup",
-        json={"email": email, "password": "password123", "nickname": "reset-user"},
-    )
+    signup(client, email, nickname="reset-user")
 
     for _ in range(main.LOGIN_MAX_ATTEMPTS - 1):
         client.post("/auth/login", json={"email": email, "password": "nope-nope"})
@@ -397,6 +377,30 @@ def test_carbon_calculate_rejects_overlong_raw_ocr_text(client):
     assert within_limit.status_code == 200
 
 
+def test_scan_rejects_overlong_raw_ocr_text(client):
+    # /api/scan 은 폼 필드라 JSON 요청의 RawOcrText 상한이 걸리지 않던 누락분입니다.
+    token = _login_token(client, "scanocrlimit@example.com")
+
+    def scan(raw_ocr_text):
+        return client.post(
+            "/api/scan",
+            files={"image": ("label.jpg", b"test-image", "image/jpeg")},
+            data={"raw_ocr_text": raw_ocr_text},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    over_limit = scan("x" * (main.MAX_RAW_OCR_TEXT_LENGTH + 1))
+    # 상한은 앞뒤 공백을 지우기 전 길이로 셉니다.
+    label = "COTTON 100%"
+    within_limit = scan(label + " " * (main.MAX_RAW_OCR_TEXT_LENGTH - len(label)))
+
+    assert over_limit.status_code == 422
+    assert over_limit.json()["error_code"] == "VALIDATION_ERROR"
+    assert len(over_limit.content) < 2000
+    assert within_limit.status_code == 200
+    assert within_limit.json()["materials"] == {"cotton": 100}
+
+
 def test_normal_material_input_still_calculates(client):
     """상한을 넣으면서 정상 입력의 계산 결과가 달라지면 안 된다."""
     response = client.post(
@@ -463,3 +467,548 @@ def test_me_history_reports_no_more_when_under_the_cap(client):
     assert response.status_code == 200
     assert body["history"] == []
     assert body["has_more"] is False
+
+
+# --- 비밀번호 해시 반복 수 (2026-10-04 보안 손질, DECISIONS 139) ---------------
+
+
+def _legacy_hash(password, iterations=120_000):
+    """반복 수를 올리기 전 형식 그대로 만든 해시."""
+    salt = "legacy-salt-0001"
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations
+    ).hex()
+    return f"pbkdf2_sha256${iterations}${salt}${digest}"
+
+
+def _stored_hash(email):
+    session = database.SessionLocal()
+    try:
+        return (
+            session.query(database.User.password_hash)
+            .filter(database.User.email == email)
+            .scalar()
+        )
+    finally:
+        session.close()
+
+
+def _set_stored_hash(email, password_hash):
+    session = database.SessionLocal()
+    try:
+        session.query(database.User).filter(database.User.email == email).update(
+            {"password_hash": password_hash}
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
+def _signup(client, email):
+    signup(client, email, nickname="iter-user")
+
+
+def test_signup_stores_hash_with_current_iterations(client):
+    email = "iter-new@example.com"
+    _signup(client, email)
+
+    # OWASP 권장 하한(PBKDF2-HMAC-SHA256 60만 회)보다 낮아지면 안 됩니다.
+    assert main.PASSWORD_HASH_ITERATIONS >= 600_000
+    prefix = f"pbkdf2_sha256${main.PASSWORD_HASH_ITERATIONS}$"
+    assert _stored_hash(email).startswith(prefix)
+    # 미가입 이메일의 타이밍 가드도 같은 반복 수여야 응답 시간이 맞습니다.
+    assert main.DUMMY_PASSWORD_HASH.startswith(prefix)
+
+
+def test_login_upgrades_legacy_iteration_hash(client):
+    email = "iter-legacy@example.com"
+    _signup(client, email)
+    _set_stored_hash(email, _legacy_hash("password123"))
+
+    first = client.post("/auth/login", json={"email": email, "password": "password123"})
+    assert first.status_code == 200
+
+    upgraded = _stored_hash(email)
+    assert upgraded.startswith(f"pbkdf2_sha256${main.PASSWORD_HASH_ITERATIONS}$")
+    assert main.verify_password("password123", upgraded)
+
+    # 이미 지금 반복 수면 다시 쓰지 않고, 같은 비밀번호로 계속 로그인됩니다.
+    second = client.post("/auth/login", json={"email": email, "password": "password123"})
+    assert second.status_code == 200
+    assert _stored_hash(email) == upgraded
+
+
+def test_failed_login_keeps_legacy_hash(client):
+    email = "iter-wrong@example.com"
+    _signup(client, email)
+    legacy = _legacy_hash("password123")
+    _set_stored_hash(email, legacy)
+
+    response = client.post("/auth/login", json={"email": email, "password": "wrong-password"})
+
+    assert response.status_code == 401
+    assert _stored_hash(email) == legacy
+
+
+def test_rehash_does_not_undo_a_concurrent_password_change(client, monkeypatch):
+    email = "iter-race@example.com"
+    _signup(client, email)
+    _set_stored_hash(email, _legacy_hash("password123"))
+    changed = main.hash_password("brand-new-pass1")
+    original_verify = main.verify_password
+
+    def verify_then_change(password, stored_hash):
+        ok = original_verify(password, stored_hash)
+        # 로그인이 옛 해시를 검증한 직후 다른 요청의 비밀번호 변경이 먼저 커밋된 상황.
+        _set_stored_hash(email, changed)
+        return ok
+
+    monkeypatch.setattr(main, "verify_password", verify_then_change)
+    response = client.post("/auth/login", json={"email": email, "password": "password123"})
+
+    # 옛 비밀번호로 확인한 로그인은 토큰을 받지 못하고(비밀번호 찾기 뒤에도 살아남는 토큰 방지),
+    # 먼저 커밋된 새 비밀번호를 재해시로 되돌리지도 않습니다.
+    assert response.status_code == 401
+    assert _stored_hash(email) == changed
+    session = database.SessionLocal()
+    try:
+        assert session.query(database.AccessToken).count() == 0
+    finally:
+        session.close()
+
+
+# --- CORS (2026-10-04 보안 손질, DECISIONS 139) ---------------------------------
+
+
+def _cors_middleware():
+    return next(m for m in main.app.user_middleware if m.cls is CORSMiddleware)
+
+
+def test_parse_cors_origins():
+    assert main.parse_cors_origins(None) == []
+    assert main.parse_cors_origins("") == []
+    assert main.parse_cors_origins(" http://localhost:5000/ , ,https://a.example") == [
+        "http://localhost:5000",
+        "https://a.example",
+    ]
+
+
+def test_cors_allows_no_origin_by_default(client):
+    simple = client.get("/", headers={"Origin": "https://evil.example"})
+    assert simple.status_code == 200
+    assert "access-control-allow-origin" not in simple.headers
+
+    preflight = client.options(
+        "/auth/login",
+        headers={
+            "Origin": "https://evil.example",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert preflight.status_code == 400
+    assert "access-control-allow-origin" not in preflight.headers
+
+
+def test_cors_configured_origin_can_call_the_api():
+    # 미들웨어는 import 때 정해지므로, main 의 CORS 설정에 출처만 넣은 같은 미들웨어로 감싸
+    # 허용 메서드·헤더가 실제 요청(Bearer 토큰·JSON POST)에 충분한지 본다.
+    allowed = "http://localhost:5000"
+    cors = _cors_middleware()
+    browser = TestClient(
+        CORSMiddleware(main.app, **{**cors.kwargs, "allow_origins": [allowed]})
+    )
+
+    preflight = browser.options(
+        "/auth/login",
+        headers={
+            "Origin": allowed,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == allowed
+
+    simple = browser.get("/", headers={"Origin": allowed})
+    assert simple.headers["access-control-allow-origin"] == allowed
+
+    other = browser.get("/", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in other.headers
+
+
+def test_cors_stays_outside_the_body_size_limit():
+    # 바깥층이어야 413 응답에도 CORS 헤더가 붙는다(user_middleware 는 바깥층부터).
+    classes = [m.cls for m in main.app.user_middleware]
+    assert classes.index(CORSMiddleware) < classes.index(main.BodySizeLimitMiddleware)
+
+
+# --- 로그인 IP 기준 (2026-10-04 보안 손질, DECISIONS 139) -------------------------
+
+
+def _count_hashes(monkeypatch, delay=0.0):
+    calls = []
+    original_verify = main.verify_password
+
+    def counting_verify(password, stored_hash):
+        calls.append(1)
+        if delay:
+            time.sleep(delay)
+        return original_verify(password, stored_hash)
+
+    monkeypatch.setattr(main, "verify_password", counting_verify)
+    return calls
+
+
+def _try_login(client, email, password="wrong-password"):
+    return client.post("/auth/login", json={"email": email, "password": password})
+
+
+def test_login_ip_limit_blocks_rotating_emails(client, monkeypatch):
+    monkeypatch.setattr(main, "LOGIN_IP_MAX_FAILURES", 3)
+    hashes = _count_hashes(monkeypatch)
+    _signup(client, "ip-victim@example.com")
+
+    for i in range(3):
+        assert _try_login(client, f"ip-spray-{i}@example.com").status_code == 401
+
+    # 처음 보는 이메일이라 이메일 잠금엔 안 걸리지만 IP 한도에 걸리고, 해시까지 가지 않습니다.
+    blocked = _try_login(client, "ip-spray-9@example.com")
+    assert blocked.status_code == 429
+    assert blocked.json()["error_code"] == "TOO_MANY_ATTEMPTS"
+    assert "15분 후" in blocked.json()["message"]
+    # 같은 IP 면 맞는 비밀번호여도 창이 끝날 때까지 막힙니다.
+    assert _try_login(client, "ip-victim@example.com", "password123").status_code == 429
+    assert len(hashes) == 3
+
+
+def test_successful_logins_do_not_count_toward_ip_limit(client, monkeypatch):
+    monkeypatch.setattr(main, "LOGIN_IP_MAX_FAILURES", 2)
+    email = "ip-ok@example.com"
+    _signup(client, email)
+
+    for _ in range(4):
+        assert _try_login(client, email, "password123").status_code == 200
+    assert _try_login(client, email).status_code == 401
+    # 실패는 1번뿐이라 아직 한도(2) 아래입니다.
+    assert _try_login(client, email, "password123").status_code == 200
+
+
+def test_concurrent_login_burst_hashes_only_up_to_the_ip_limit(client, monkeypatch):
+    # 실패를 해시가 끝난 뒤에 세면, 동시에 몰아친 요청이 모두 검사를 통과해 해시까지 갑니다.
+    monkeypatch.setattr(main, "LOGIN_IP_MAX_FAILURES", 3)
+    hashes = _count_hashes(monkeypatch, delay=0.3)
+    statuses = []
+
+    def attempt(i):
+        statuses.append(_try_login(client, f"burst-{i}@example.com").status_code)
+
+    threads = [threading.Thread(target=attempt, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert sorted(statuses) == [401] * 3 + [429] * 5
+    assert len(hashes) == 3
+
+
+def test_login_ip_failure_window_expires(client):
+    stale = database.utc_now() - timedelta(seconds=main.LOGIN_IP_WINDOW_SECONDS + 1)
+    with main._login_failures_lock:
+        main._login_ip_failures["testclient"] = (main.LOGIN_IP_MAX_FAILURES, stale)
+
+    assert _try_login(client, "after-window@example.com").status_code == 401
+    with main._login_failures_lock:
+        assert main._login_ip_failures["testclient"][0] == 1
+
+
+def test_client_ip_key_groups_ipv6_by_64_prefix():
+    assert main.client_ip_key("8.8.8.8") == "8.8.8.8"
+    assert main.client_ip_key("::ffff:8.8.8.8") == "8.8.8.8"
+    same_64 = main.client_ip_key("2001:4860:1:2:aaaa::1")
+    assert same_64 == "2001:4860:1:2::/64"
+    assert main.client_ip_key("2001:4860:1:2:bbbb:cccc:dddd:2") == same_64
+    assert main.client_ip_key("2001:4860:1:3::1") != same_64
+    assert main.client_ip_key("testclient") == "testclient"
+    assert main.client_ip_key(None) is None
+
+
+def test_client_ip_key_skips_non_public_addresses():
+    # Docker·프록시가 접속 주소를 가리면 모두가 게이트웨이 주소(리허설에서 172.19.0.1)로
+    # 보입니다. 그 주소 하나로 모두를 함께 막지 않도록 IP 기준을 건너뜁니다.
+    for host in ("172.19.0.1", "127.0.0.1", "10.0.0.5", "192.168.0.10", "::1", "fd00::1"):
+        assert main.client_ip_key(host) is None, host
+
+
+# --- 가입 IP 기준 (2026-10-04 보안 손질, DECISIONS 142) ---------------------------
+
+
+def _count_signup_hashes(monkeypatch, delay=0.0):
+    calls = []
+    original_hash = main.hash_password
+
+    def counting_hash(password):
+        calls.append(1)
+        if delay:
+            time.sleep(delay)
+        return original_hash(password)
+
+    monkeypatch.setattr(main, "hash_password", counting_hash)
+    return calls
+
+
+def _try_signup(client, email, password="password123", nickname="ip-user", code=None):
+    """번호를 받아 가입을 시도한다. code 를 주면 번호 요청 없이 그 값으로(형식 오류 시험 등)."""
+    return signup(client, email, password=password, nickname=nickname, code=code)
+
+
+def test_signup_ip_limit_counts_successes_and_conflicts(client, monkeypatch):
+    monkeypatch.setattr(main, "SIGNUP_IP_MAX_ATTEMPTS", 3)
+    monkeypatch.setattr(main, "EMAIL_CODE_RESEND_SECONDS", 0)
+    hashes = _count_signup_hashes(monkeypatch)
+
+    assert _try_signup(client, "signup-a@example.com").status_code == 200
+    # 이미 가입된 이메일(409)은 그 이메일이 가입돼 있는지를 알려 주므로 셉니다. 가입된 이메일엔
+    # 번호 대신 안내 메일이 가므로 번호를 고정해 맞는 번호를 가진 경우를 만듭니다.
+    code = fix_next_code(monkeypatch)
+    assert request_code(client, "signup-a@example.com") is None
+    assert _try_signup(client, "signup-a@example.com", code=code).status_code == 409
+    assert _try_signup(client, "signup-b@example.com").status_code == 200
+
+    blocked = _try_signup(client, "signup-c@example.com")
+    assert blocked.status_code == 429
+    assert blocked.json()["error_code"] == "TOO_MANY_ATTEMPTS"
+    assert blocked.json()["message"] == "가입 시도가 너무 많습니다. 60분 후 다시 시도해 주세요."
+    # 가입 여부 조회(409)도 창이 끝날 때까지 막히고, 막힌 시도는 해시·계정 생성까지 가지 않습니다.
+    assert _try_signup(client, "signup-a@example.com", code=code).status_code == 429
+    assert len(hashes) == 2
+    assert _try_login(client, "signup-c@example.com", "password123").status_code == 401
+
+
+def test_signup_format_errors_do_not_count_toward_ip_limit(client, monkeypatch):
+    # 형식 오류(400)는 DB·해시를 거치지 않으므로 세지 않습니다 — 입력 실수로 한도를 쓰지 않게.
+    monkeypatch.setattr(main, "SIGNUP_IP_MAX_ATTEMPTS", 1)
+
+    assert _try_signup(client, "not-an-email", code="123456").status_code == 400
+    assert _try_signup(client, "short-nick@example.com", nickname="a", code="123456").status_code == 400
+    assert _try_signup(client, "short-pw@example.com", password="short", code="123456").status_code == 400
+    # 번호가 숫자 6자리가 아닌 것도 형식 오류(400)라 세지 않습니다.
+    bad_code = _try_signup(client, "bad-code@example.com", code="12345")
+    assert bad_code.status_code == 400
+    assert bad_code.json()["error_code"] == "BAD_REQUEST"
+    assert _try_signup(client, "format-ok@example.com").status_code == 200
+    assert _try_signup(client, "format-next@example.com").status_code == 429
+
+
+def test_concurrent_signup_burst_hashes_only_up_to_the_ip_limit(client, monkeypatch):
+    # 해시가 끝난 뒤에 세면, 동시에 몰아친 가입이 모두 검사를 통과해 해시·계정 생성까지 갑니다.
+    monkeypatch.setattr(main, "SIGNUP_IP_MAX_ATTEMPTS", 3)
+    hashes = _count_signup_hashes(monkeypatch, delay=0.3)
+    statuses = []
+    codes = [request_code(client, f"signup-burst-{i}@example.com") for i in range(8)]
+
+    def attempt(i):
+        email = f"signup-burst-{i}@example.com"
+        statuses.append(_try_signup(client, email, code=codes[i]).status_code)
+
+    threads = [threading.Thread(target=attempt, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert sorted(statuses) == [200] * 3 + [429] * 5
+    assert len(hashes) == 3
+
+
+def test_signup_ip_window_expires(client):
+    stale = database.utc_now() - timedelta(seconds=main.SIGNUP_IP_WINDOW_SECONDS + 1)
+    with main._login_failures_lock:
+        main._signup_ip_attempts["testclient"] = (main.SIGNUP_IP_MAX_ATTEMPTS, stale)
+
+    assert _try_signup(client, "signup-after-window@example.com").status_code == 200
+    with main._login_failures_lock:
+        assert main._signup_ip_attempts["testclient"][0] == 1
+
+
+def test_signup_and_login_ip_limits_are_counted_separately(client, monkeypatch):
+    monkeypatch.setattr(main, "SIGNUP_IP_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(main, "LOGIN_IP_MAX_FAILURES", 1)
+    email = "separate@example.com"
+
+    assert _try_signup(client, email).status_code == 200
+    # 가입 시도는 로그인 실패로 세지 않습니다.
+    assert _try_login(client, email, "password123").status_code == 200
+    assert _try_login(client, email).status_code == 401
+    blocked_login = _try_login(client, email)
+    assert blocked_login.status_code == 429
+    assert blocked_login.json()["message"].startswith("로그인 시도가")
+    # 로그인 실패도 가입 시도로 세지 않습니다.
+    assert _try_signup(client, "separate-2@example.com").status_code == 200
+    blocked_signup = _try_signup(client, "separate-3@example.com")
+    assert blocked_signup.status_code == 429
+    assert blocked_signup.json()["message"].startswith("가입 시도가")
+
+
+def test_signup_ip_limit_uses_the_same_ip_key_as_login(client, monkeypatch):
+    # IPv6 는 /64 대역으로 묶고, 공인 주소가 아니면(게이트웨이·사설) 건너뜁니다.
+    monkeypatch.setattr(main, "SIGNUP_IP_MAX_ATTEMPTS", 1)
+    first = TestClient(main.app, client=("2001:4860:1:2::1", 50000))
+    same_64 = TestClient(main.app, client=("2001:4860:1:2:ffff::9", 50000))
+    other = TestClient(main.app, client=("8.8.4.4", 50000))
+    gateway = TestClient(main.app, client=("172.19.0.1", 50000))
+
+    assert _try_signup(first, "v6-a@example.com").status_code == 200
+    assert _try_signup(same_64, "v6-b@example.com").status_code == 429
+    assert _try_signup(other, "v4-a@example.com").status_code == 200
+    for i in range(3):
+        assert _try_signup(gateway, f"gateway-{i}@example.com").status_code == 200
+
+
+# --- 인증 입력 길이 상한 (2026-10-05, 계약 2-4절) ----------------------------------
+
+
+def _email_of_length(length):
+    domain = "@example.com"
+    return "a" * (length - len(domain)) + domain
+
+
+def test_signup_accepts_inputs_at_the_length_limits(client):
+    email = _email_of_length(main.MAX_EMAIL_LENGTH)
+    password = "p" * main.MAX_PASSWORD_LENGTH
+    nickname = "가" * main.MAX_NICKNAME_LENGTH
+
+    signup = _try_signup(client, email, password, nickname)
+
+    assert signup.status_code == 200
+    assert signup.json()["user"]["nickname"] == nickname
+    assert _try_login(client, email, password).status_code == 200
+
+
+def test_signup_rejects_overlong_inputs_before_hashing(client, monkeypatch):
+    hashes = _count_signup_hashes(monkeypatch)
+    email = "signup-limit@example.com"
+    cases = {
+        "email": {"email": _email_of_length(main.MAX_EMAIL_LENGTH + 1)},
+        "password": {"password": "p" * (main.MAX_PASSWORD_LENGTH + 1)},
+        "nickname": {"nickname": "가" * (main.MAX_NICKNAME_LENGTH + 1)},
+        "1MB nickname": {"nickname": "x" * 1_000_000},
+    }
+
+    for name, fields in cases.items():
+        # 형식이 맞는 번호를 넣어, 422 가 '번호 칸 없음'이 아니라 길이 상한에서 나는지 봅니다.
+        body = {
+            "email": email,
+            "password": "password123",
+            "nickname": "limit-user",
+            "code": "123456",
+            **fields,
+        }
+        response = client.post("/auth/signup", json=body)
+
+        assert response.status_code == 422, name
+        assert response.json()["error_code"] == "VALIDATION_ERROR", name
+        assert response.json()["detail"][0]["loc"] == ["body", next(iter(fields))], name
+        # 거부 응답은 입력을 되돌려주지 않습니다(증폭 방지).
+        assert len(response.content) < 2000, name
+
+    # 핸들러 전에 막혀 해시·계정 생성·가입 IP 카운트까지 가지 않습니다.
+    assert len(hashes) == 0
+    assert _stored_hash(email) is None
+    assert main._signup_ip_attempts == {}
+
+
+def test_login_rejects_overlong_inputs_without_keeping_them(client, monkeypatch):
+    # 상한이 없으면 긴 '이메일'로 실패할 때마다 그 문자열이 실패 기록의 키로 메모리에 남았습니다.
+    hashes = _count_hashes(monkeypatch)
+
+    for body in (
+        {"email": _email_of_length(main.MAX_EMAIL_LENGTH + 1), "password": "wrong-password"},
+        {"email": "x" * 1_000_000, "password": "wrong-password"},
+        {"email": "login-limit@example.com", "password": "p" * (main.MAX_PASSWORD_LENGTH + 1)},
+    ):
+        response = client.post("/auth/login", json=body)
+
+        assert response.status_code == 422
+        assert response.json()["error_code"] == "VALIDATION_ERROR"
+        assert len(response.content) < 2000
+
+    assert len(hashes) == 0
+    assert main._login_failures == {}
+    assert main._login_ip_failures == {}
+
+    # 상한 안의 실패는 그대로 셉니다(대조군).
+    at_limit = _email_of_length(main.MAX_EMAIL_LENGTH)
+    assert _try_login(client, at_limit).status_code == 401
+    assert list(main._login_failures) == [at_limit]
+
+
+def test_password_change_and_withdraw_reject_overlong_passwords(client):
+    email = "reauth-limit@example.com"
+    token = _login_token(client, email)
+    headers = {"Authorization": f"Bearer {token}"}
+    too_long = "p" * (main.MAX_PASSWORD_LENGTH + 1)
+
+    for path, body in (
+        ("/auth/password", {"current_password": too_long, "new_password": "new-password1"}),
+        ("/auth/password", {"current_password": "password123", "new_password": too_long}),
+        ("/auth/withdraw", {"password": too_long}),
+    ):
+        response = client.post(path, json=body, headers=headers)
+
+        assert response.status_code == 422, body
+        assert response.json()["error_code"] == "VALIDATION_ERROR", body
+
+    # 재인증 실패로 세지 않고, 비밀번호·계정·세션도 그대로입니다.
+    assert main._login_failures == {}
+    assert client.get("/me/history", headers=headers).status_code == 200
+    assert _try_login(client, email, "password123").status_code == 200
+
+
+# --- API 문서 끄기 (2026-10-04 보안 손질, DECISIONS 142) ----------------------------
+
+API_DOC_PATHS = ("/docs", "/redoc", "/openapi.json")
+
+
+def test_parse_api_docs_enabled():
+    for value in (None, "", "  ", "on", "TRUE", "1"):
+        assert main.parse_api_docs_enabled(value) is True, value
+    for value in ("off", "False", " 0 "):
+        assert main.parse_api_docs_enabled(value) is False, value
+    # 알 수 없는 값은 켬으로 넘기지 않고 시작을 막습니다(배포 설정 오타 대비).
+    for value in ("disable", "no", "offf"):
+        with pytest.raises(ValueError):
+            main.parse_api_docs_enabled(value)
+
+
+def test_api_docs_are_on_by_default(client):
+    for path in API_DOC_PATHS:
+        assert client.get(path).status_code == 200, path
+
+
+_API_DOCS_PROBE = """
+import json
+from fastapi.testclient import TestClient
+import main
+client = TestClient(main.app)
+print(json.dumps({p: client.get(p).status_code for p in ("/", "/docs", "/redoc", "/openapi.json")}))
+"""
+
+
+def _import_main_with_api_docs(value):
+    # 앱 객체는 import 때 만들어지므로 환경변수를 바꾼 별도 프로세스에서 봅니다.
+    return run_python(_API_DOCS_PROBE, K_DPP_API_DOCS=value)
+
+
+def test_api_docs_can_be_turned_off():
+    result = _import_main_with_api_docs("off")
+    assert result.returncode == 0, result.stderr
+    statuses = json.loads(result.stdout.strip().splitlines()[-1])
+    # 상태 확인(compose healthcheck)이 부르는 / 는 그대로입니다.
+    assert statuses == {"/": 200, "/docs": 404, "/redoc": 404, "/openapi.json": 404}
+
+
+def test_unknown_api_docs_value_stops_startup():
+    result = _import_main_with_api_docs("disable")
+    assert result.returncode != 0
+    assert "K_DPP_API_DOCS" in result.stderr

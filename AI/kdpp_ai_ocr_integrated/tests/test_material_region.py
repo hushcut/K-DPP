@@ -49,7 +49,7 @@ def test_region_keeps_complete_rows_and_is_independent_of_candidate_order():
     assert find_material_region(list(reversed(candidates)), 800, 600) == region
 
 
-@pytest.mark.parametrize('label', ['POLYPROPYLENE 100%', 'KAY:1100%', 'Adorable 40%'])
+@pytest.mark.parametrize('label', ['CUSTOMFIBER 100%', 'KAY:1100%', 'Adorable 40%'])
 def test_unknown_percentage_rows_can_be_located_without_becoming_valid_materials(label):
     words = (OcrWord(label, 100, 240, 400, 260),)
     assert find_material_region(located_candidates(words), 800, 600) is not None
@@ -134,8 +134,7 @@ def reread_fixture(monkeypatch, ratio='5%', material='Polyester', extra=False):
     region = find_material_region(located_candidates(raw_words), 800, 600)
     assert region is not None
     crop = prepare_material_region(content, region)
-    rotated = prepare_material_region(content, region, rotated=True, font_height=20,
-                                      enhancement='adaptive_mild')
+    rotated = prepare_material_region(content, region, rotated=True, enhancement='adaptive_mild')
     preprocessed = ocr_text.preprocess_image_bytes(content)
     with Image.open(BytesIO(preprocessed)) as image:
         sx, sy = image.width/800, image.height/600

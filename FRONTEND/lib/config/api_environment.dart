@@ -16,6 +16,9 @@ abstract final class ApiEnvironment {
   static const String _materialsEndpointOverride = String.fromEnvironment(
     'MATERIALS_API_ENDPOINT',
   );
+  static const String _clothingTypesEndpointOverride = String.fromEnvironment(
+    'CLOTHING_TYPES_API_ENDPOINT',
+  );
 
   // 정규화 결과가 비면("/", 공백 등) 기본 주소로 안전하게 되돌아가도록
   // 비어 있는지 검사도 정규화된 값 기준으로 수행한다.
@@ -68,4 +71,9 @@ abstract final class ApiEnvironment {
   static final String materialsEndpoint = _materialsEndpointOverride.isNotEmpty
       ? _materialsEndpointOverride
       : '$baseUrl/materials';
+
+  static final String clothingTypesEndpoint =
+      _clothingTypesEndpointOverride.isNotEmpty
+      ? _clothingTypesEndpointOverride
+      : '$baseUrl/clothing-types';
 }

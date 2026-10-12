@@ -7,7 +7,8 @@ void main() {
   const clothingType = ClothingTypeOption(
     label: '긴팔 / 맨투맨',
     category: '상의',
-    weightRangeLabel: '350~750g',
+    minWeightGram: 350,
+    maxWeightGram: 750,
     estimatedWeightGram: 520,
     icon: Icons.checkroom_outlined,
   );
@@ -82,7 +83,8 @@ void main() {
     const changedWeightType = ClothingTypeOption(
       label: '직접 입력',
       category: '상의',
-      weightRangeLabel: '600g',
+      minWeightGram: 600,
+      maxWeightGram: 600,
       estimatedWeightGram: 600,
       icon: Icons.scale_outlined,
       isDirectWeight: true,

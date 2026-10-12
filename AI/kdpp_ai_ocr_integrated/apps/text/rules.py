@@ -51,6 +51,8 @@ MATERIAL_ALIASES = {
     ],
     "polyester": [
         "polyester",
+        # Project policy (2026-10-12): a complete POLY token means polyester.
+        "poly",
         "poliester",
         "poliéster",
         "polyestere",

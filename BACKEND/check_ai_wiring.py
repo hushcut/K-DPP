@@ -1,8 +1,15 @@
-"""BACKEND가 AI 모듈과 실제로 결합되는지 확인합니다 (CI 백엔드 잡에서 실행).
+"""BACKEND가 AI 모듈과 실제로 결합되는지 확인합니다 (CI 백엔드 잡·배포 이미지 빌드에서 실행).
 
-main.py는 AI 모듈 import 실패를 try/except로 삼켜 OCR / 파서 / 조립 함수를 None으로 둡니다.
+main.py는 AI 모듈 import 실패를 try/except로 삼켜 run_ocr / parse_label / analyze_ocr_result를 None으로 둡니다.
 그러면 실사진 스캔이 전부 503(AI_MODULE_FAILED)이 되는데, pytest는 raw_ocr_text를 보내거나
 스텁을 쓰기 때문에 이 경로에 들어가지 않아 결합이 끊겨도 전건 초록입니다. 그 사각지대를 메웁니다.
+
+google-cloud-vision은 run_ocr가 스캔할 때에야 불러옵니다. 그때 import가 실패하면 main.py가
+키가 없을 때와 같은 502(OCR_FAILED)로 삼키므로, 서버에서 설치가 깨져도 평소처럼 보입니다.
+그래서 여기서 미리 불러 봅니다(키는 필요 없습니다).
+
+Pillow는 AI 모듈의 어느 파일이 불러오는지가 판마다 달라(06-04 판은 ocr_text가 없으면 조용히
+건너뛰고, 그 뒤 판은 ocr_image가 반드시 불러옴) AI 모듈 안을 들여다보지 않고 직접 불러 봅니다.
 
 BACKEND/requirements.txt만 설치된 상태(배포 런타임과 같은 조건)에서 돌려야 의미가 있습니다.
 """
@@ -20,22 +27,34 @@ def main() -> int:
     if backend_main.parse_label is None:
         problems.append("apps.text.parse_label.parse_label import 실패 - 소재 파싱이 전부 503이 됩니다")
     if backend_main.analyze_ocr_result is None:
-        problems.append("apps.service.label_analysis.analyze_ocr_result import 실패 - OCR 근거 조립이 불가능합니다")
+        problems.append("apps.service.label_analysis.analyze_ocr_result import 실패 - 실사진 스캔이 전부 503이 됩니다")
 
-    if not problems:
-        # main.py가 sys.path에 AI 경로를 넣은 뒤에야 직접 import할 수 있습니다.
-        from apps.text import ocr_image, ocr_text
-        from apps.service.label_analysis import analyze_ocr_result
+    if backend_main.run_ocr is not None:
+        # main.py 가 sys.path 에 AI 경로를 넣은 뒤에야 직접 import 할 수 있습니다.
+        from apps.text import ocr_text  # noqa: PLC0415
 
+        # 글자만 돌려주는 run_ocr 에 붙으면 후보 충돌·짝 없는 비율 근거가 사라져, 부분 인식이
+        # 확정 소재로 넘어갈 수 있습니다(DECISIONS 210).
         if backend_main.run_ocr is not ocr_text.run_ocr_with_metadata:
-            problems.append("백엔드가 메타데이터를 보존하는 OCR 함수에 연결되지 않았습니다")
-        if backend_main.analyze_ocr_result is not analyze_ocr_result:
-            problems.append("백엔드가 OCR 근거를 보존하는 서비스 조립 함수에 연결되지 않았습니다")
+            problems.append("run_ocr 가 run_ocr_with_metadata 가 아닙니다 - OCR 근거가 분석에 전달되지 않습니다")
 
-        if getattr(ocr_image, "Image", None) is None:
-            problems.append(
-                "Pillow 이미지 처리 의존성이 준비되지 않아 입력 검증·전처리를 수행할 수 없습니다"
-            )
+    try:
+        # 06-04 판 ocr_text가 쓰는 세 모듈입니다.
+        from PIL import Image, ImageFilter, ImageOps  # noqa: F401, PLC0415
+    except Exception as exc:  # noqa: BLE001
+        problems.append(
+            f"Pillow import 실패({exc!r}) - OCR 전처리 후보가 조용히 꺼지거나"
+            "(스캔당 Vision 호출이 2회에서 1회로 줄어 인식률이 달라짐) run_ocr import가 실패합니다"
+        )
+
+    try:
+        # protobuf·grpcio 버전이 맞지 않으면 ImportError가 아닌 TypeError 등으로 실패합니다.
+        from google.cloud import vision  # noqa: F401, PLC0415
+    except Exception as exc:  # noqa: BLE001
+        problems.append(
+            f"google-cloud-vision import 실패({exc!r}) - 스캔마다 run_ocr가 실패하고, "
+            "main.py가 키 없음과 같은 502로 삼켜 겉으로는 구분되지 않습니다"
+        )
 
     for problem in problems:
         print(f"[FAIL] {problem}", file=sys.stderr)
@@ -43,7 +62,7 @@ def main() -> int:
         print("BACKEND/requirements.txt를 확인하세요.", file=sys.stderr)
         return 1
 
-    print("AI 모듈 결합 OK (run_ocr_with_metadata / analyze_ocr_result / parse_label / Pillow)")
+    print("AI 모듈 결합 OK (run_ocr_with_metadata / analyze_ocr_result / parse_label / Pillow / google-cloud-vision)")
     return 0
 
 

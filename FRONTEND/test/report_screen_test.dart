@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
+import 'package:k_dpp/material_name_display_provider.dart';
 import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/report_screen.dart';
+import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:provider/provider.dart';
+import 'helpers/app_banner_expect.dart';
 import 'helpers/fake_closet_storage.dart';
 
 void main() {
@@ -24,9 +27,15 @@ void main() {
     await provider.addClothes(selected);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: provider,
-        child: const MaterialApp(home: Scaffold(body: ReportScreen())),
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: Scaffold(body: ReportScreen()),
+        ),
       ),
     );
 
@@ -47,7 +56,43 @@ void main() {
     expect(find.text('LED 전구'), findsOneWidget);
     expect(find.textContaining('라벨 지침: 찬물 세탁 후 자연 건조'), findsOneWidget);
     expect(find.text('찬물 세탁 후 자연 건조'), findsOneWidget);
-    expect(find.textContaining('COTTON 80%'), findsWidgets);
+    // 소재 이름의 기본 표시 언어는 한글이다(D16). 영문 키로 저장된 옷도 한글명으로 보인다.
+    expect(find.textContaining('면 80%'), findsWidgets);
+  });
+
+  // 2026-09-24 사용자 요청: 맞춤 관리 가이드를 탄소 배출량보다 위에 둔다.
+  testWidgets('맞춤 관리 가이드는 요약 카드 아래, 생산·제조 탄소 배출량 위에 있다', (tester) async {
+    final provider = ClosetProvider(storage: FakeClosetStorage());
+    await provider.addClothes(
+      Clothes(
+        title: '순서 확인 셔츠',
+        category: '상의',
+        health: 82,
+        materials: {'cotton': 100},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: 3.0,
+      ),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: Scaffold(body: ReportScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    double top(String text) => tester.getTopLeft(find.text(text)).dy;
+
+    expect(top('탄소 추정값'), lessThan(top('맞춤 관리 가이드')));
+    expect(top('맞춤 관리 가이드'), lessThan(top('생산·제조 탄소 배출량')));
+    expect(top('생산·제조 탄소 배출량'), lessThan(top('관리 정보')));
   });
 
   testWidgets('상세 리포트에서 의류 이름과 세탁 지침을 수정할 수 있다', (tester) async {
@@ -65,9 +110,15 @@ void main() {
     await provider.addClothes(selected);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: provider,
-        child: const MaterialApp(home: Scaffold(body: ReportScreen())),
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: Scaffold(body: ReportScreen()),
+        ),
       ),
     );
 
@@ -85,7 +136,87 @@ void main() {
     expect(provider.items.single.title, '수정 후 셔츠');
     expect(provider.items.single.careInstruction, '찬물 손세탁');
     expect(find.text('수정 후 셔츠'), findsOneWidget);
-    expect(find.text('의류 정보가 수정되었습니다.'), findsOneWidget);
+    expectAppBanner(tester, '의류 정보가 수정됐어요.', AppBannerKind.success);
+  });
+
+  group('수정 시트의 분류(결정 134)', () {
+    Future<ClosetProvider> openEditSheet(
+      WidgetTester tester, {
+      required String category,
+    }) async {
+      final provider = ClosetProvider(storage: FakeClosetStorage());
+
+      await provider.addClothes(
+        Clothes(
+          title: '분류 테스트 옷',
+          category: category,
+          health: 82,
+          materials: {'cotton': 100},
+          careInstruction: '찬물 세탁',
+          carbonFootprint: 3.2,
+        ),
+      );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: provider),
+            ChangeNotifierProvider(
+              create: (_) => MaterialNameDisplayProvider(),
+            ),
+          ],
+          child: const MaterialApp(
+            builder: AppBannerHost.builder,
+            home: Scaffold(body: ReportScreen()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.edit_outlined));
+      await tester.pumpAndSettle();
+
+      return provider;
+    }
+
+    Finder segment(String label) => find.descendant(
+      of: find.byType(SegmentedButton<String>),
+      matching: find.text(label),
+    );
+
+    testWidgets('드롭다운 대신 세그먼트로 고르고, 고른 분류로 저장된다', (tester) async {
+      final provider = await openEditSheet(tester, category: '상의');
+
+      expect(find.byType(DropdownButtonFormField<String>), findsNothing);
+      expect(segment('상의'), findsOneWidget);
+      expect(segment('하의'), findsOneWidget);
+
+      await tester.tap(segment('하의'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('수정 완료'));
+      await tester.pumpAndSettle();
+
+      expect(provider.items.single.category, '하의');
+      expectAppBanner(tester, '의류 정보가 수정됐어요.', AppBannerKind.success);
+    });
+
+    testWidgets('상의·하의가 아닌 옛 분류는 셋째 칸으로 남고, 그대로 두면 그대로 저장된다', (tester) async {
+      final provider = await openEditSheet(tester, category: '아우터');
+
+      expect(segment('아우터'), findsOneWidget);
+      expect(
+        tester
+            .widget<SegmentedButton<String>>(
+              find.byType(SegmentedButton<String>),
+            )
+            .selected,
+        {'아우터'},
+      );
+
+      await tester.tap(find.text('수정 완료'));
+      await tester.pumpAndSettle();
+
+      expect(provider.items.single.category, '아우터');
+    });
   });
 
   testWidgets('내장 리포트에서 의류를 삭제하면 콜백으로 옷장 화면 복귀를 요청한다', (tester) async {
@@ -103,9 +234,13 @@ void main() {
     await provider.addClothes(selected);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: provider,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
         child: MaterialApp(
+          builder: AppBannerHost.builder,
           home: Scaffold(
             body: ReportScreen(
               onDeleted: () {
@@ -133,6 +268,11 @@ void main() {
 
     expect(provider.items, isEmpty);
     expect(deleteCallbackCount, 1);
+    expectAppBanner(
+      tester,
+      '"삭제 테스트 셔츠"이(가) 삭제됐어요.',
+      AppBannerKind.success,
+    );
   });
 
   testWidgets('긴 소재명과 큰 글자에서도 리포트 요약 카드가 넘치지 않는다', (tester) async {
@@ -156,9 +296,13 @@ void main() {
     await provider.addClothes(selected);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: provider,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
         child: const MaterialApp(
+          builder: AppBannerHost.builder,
           home: MediaQuery(
             data: MediaQueryData(textScaler: TextScaler.linear(1.6)),
             child: Scaffold(body: ReportScreen()),
@@ -170,5 +314,57 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('긴 이름의 테스트용 친환경 혼방 아우터'), findsOneWidget);
+  });
+
+  // 리포트는 하단 메뉴까지 덮는 라우트라(6d9ed80) 예전 메뉴 자리 140 대신 안전 영역만 비운다.
+  testWidgets('끝까지 내리면 삭제 버튼 아래 여백은 안전 영역 + 24다', (tester) async {
+    tester.view.physicalSize = const Size(440, 956);
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = const FakeViewPadding(bottom: 34);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPadding);
+
+    final provider = ClosetProvider(storage: FakeClosetStorage());
+    await provider.addClothes(
+      Clothes(
+        title: '여백 확인용 셔츠',
+        category: '상의',
+        health: 82,
+        materials: {'cotton': 100},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: 5.0,
+      ),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: Scaffold(body: ReportScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final scrollable = tester.state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byType(SingleChildScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+    await tester.pump();
+
+    final deleteButton = tester.getRect(
+      find.widgetWithText(OutlinedButton, '이 의류 삭제하기'),
+    );
+    expect(956 - deleteButton.bottom, 34 + 24);
   });
 }

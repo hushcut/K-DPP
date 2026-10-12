@@ -19,6 +19,9 @@ from apps.text.parse_label import parse_label
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_ROOT = REPOSITORY_ROOT / "BACKEND"
+# The scan API exposes only `warnings` from the AI metadata (DECISIONS 210): confidence and
+# parse_evidence wait for an agreed scope, and ocr diagnostics stay in server logs.
+INTERNAL_KEYS = {"ocr", "confidence", "parse_evidence"}
 
 
 @pytest.fixture(scope="module")
@@ -171,13 +174,13 @@ def test_scan_rejects_conflicting_ocr_candidates_without_saving(
 
     assert raised.value.status_code == 422
     assert raised.value.detail["error_code"] == "MATERIAL_EXTRACTION_FAILED"
-    assert raised.value.detail["ocr"]["conflicting_parts"] == ["generic"]
-    assert raised.value.detail["confidence"]["ocr"] == "low"
+    assert "generic:ambiguous_composition_candidates" in raised.value.detail["warnings"]
+    assert not INTERNAL_KEYS & raised.value.detail.keys()
     assert scan_db.saved == []
     assert scan_db.committed is False
 
 
-def test_scan_preserves_successful_ocr_metadata_without_saving(
+def test_scan_returns_successful_ocr_materials_without_internal_metadata(
     backend_main, scan_db, monkeypatch,
 ) -> None:
     monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_args: object())
@@ -193,20 +196,15 @@ def test_scan_preserves_successful_ocr_metadata_without_saving(
     )
 
     assert response["materials"] == {"cotton": 80, "polyester": 20}
-    assert response["parse_evidence"]["composition_status"] == "confirmed"
-    assert response["confidence"]["ocr"] == "high"
-    assert response["ocr"]["source"] == "original"
-    assert response["ocr"]["candidate_count"] == 1
-    assert response["ocr"]["attempt_count"] == 1
-    assert response["ocr"]["conflicting_parts"] == []
-    assert response["ocr"]["unpaired_ratio_parts"] == []
-    assert response["ocr"]["width"] == response["ocr"]["height"] == 4
+    assert response["ai_success"] is True
+    assert response["warnings"] == []
+    assert not INTERNAL_KEYS & response.keys()
     assert scan_db.saved == []
     assert scan_db.committed is False
 
 
 @pytest.mark.parametrize("ratio_row", ["100%", "100", "50"])
-def test_scan_keeps_unpaired_ratio_evidence_on_material_failure(
+def test_scan_keeps_unpaired_ratio_warning_on_material_failure(
     backend_main, scan_db, monkeypatch, ratio_row,
 ) -> None:
     monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_args: object())
@@ -226,8 +224,8 @@ def test_scan_keeps_unpaired_ratio_evidence_on_material_failure(
     detail = raised.value.detail
     assert detail["error_code"] == "MATERIAL_EXTRACTION_FAILED"
     assert detail["materials"] == detail["partial_materials"] == {}
-    assert detail["ocr"]["unpaired_ratio_parts"] == ["generic"]
-    assert detail["parse_evidence"]["unpaired_ratio_parts"] == ["generic"]
+    assert "generic:unpaired_ratio_rows" in detail["warnings"]
+    assert not INTERNAL_KEYS & detail.keys()
     assert scan_db.saved == []
     assert scan_db.committed is False
 

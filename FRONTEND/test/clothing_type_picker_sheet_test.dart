@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/models/clothing_type_option.dart';
 import 'package:k_dpp/utils/clothing_type_catalog.dart';
 import 'package:k_dpp/widgets/clothing_type_picker_sheet.dart';
+import 'package:k_dpp/widgets/number_keyboard_toolbar.dart';
 
 // 유형 선택 시트의 닫기 경로를 경로별로 확인한다(C21).
 // PopScope는 시스템 뒤로가기만 막고, 드래그·손잡이·접근성 닫기는 Navigator.pop으로 가서
@@ -56,6 +57,104 @@ void main() {
       expect(_isSheetOpen(), isTrue);
       semantics.dispose();
     });
+
+    testWidgets('끌어서 닫을 수 없으므로 손잡이를 그리지 않는다', (tester) async {
+      _usePhoneView(tester);
+      await _openSheet(tester, discardPrompt: prompt);
+
+      expect(_dragHandles(), findsNothing);
+    });
+
+    testWidgets('직접 무게 입력에서 키보드가 올라와도 시트가 넘치지 않는다', (tester) async {
+      // 2026-09-18 폰 확인(SM-N986N): 'BOTTOM OVERFLOWED BY 122 PIXELS'.
+      // 키보드 높이는 그 폰 스크린샷에서 잰 삼성 키보드(숫자 줄·추천 줄 포함) 1098 물리 픽셀.
+      // (정정 2026-09-19: 처음엔 '실측 418'이라 적었는데, 418은 이 테스트 배율 2.625로 나눈 값이다.
+      // 그 폰의 실제 배율은 2.8125라 약 390dp — 물리 픽셀로 적어 배율과 무관하게 했다)
+      _usePhoneView(tester);
+      await _openSheet(tester, discardPrompt: prompt);
+      await tester.scrollUntilVisible(find.text('직접 입력'), 100);
+      await tester.tap(find.text('직접 입력'));
+      await tester.pumpAndSettle();
+
+      tester.view.viewInsets = const FakeViewPadding(bottom: 1098);
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('iOS 무게 칸에는 키보드 위에 막대가 뜨고(∧ 는 의류 종류로, ∨ 는 흐림), 키보드가 올라와도 시트가 넘치지 않는다', (
+      tester,
+    ) async {
+      // iOS 숫자 키패드에는 확인 키가 없다. 무게 뒤로 이어지는 입력란이 없어 ∨ 는 흐리다(DECISIONS 177).
+      _usePhoneView(tester);
+      EditableText.debugDeterministicCursor = true;
+      addTearDown(() => EditableText.debugDeterministicCursor = false);
+      await _openSheet(tester, discardPrompt: prompt);
+      await tester.scrollUntilVisible(find.text('직접 입력'), 100);
+      // iOS 스크롤은 멈춘 뒤에도 항목 중심이 화면 밖에 걸칠 수 있어 끝까지 끌어온다.
+      await tester.ensureVisible(find.text('직접 입력'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('직접 입력'));
+      await tester.pumpAndSettle();
+      expect(find.text('직접 무게 입력'), findsOneWidget);
+      // 의류 종류 칸이 먼저 포커스를 받으므로 아직 막대가 없다.
+      expect(find.byType(NumberKeyboardToolbar), findsNothing);
+
+      await tester.tap(find.widgetWithText(TextField, '실제 무게'));
+      tester.view.viewInsets = const FakeViewPadding(bottom: 1098);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(_toolbarButton('완료'), findsOneWidget);
+      expect(_toolbarIconButton('다음 칸').onPressed, isNull);
+
+      // ∧ 는 앞 칸인 의류 종류로 간다. 글자 칸이라 막대는 사라진다.
+      await tester.tap(_toolbarButton('이전 칸'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<EditableText>(
+              find.descendant(
+                of: find.widgetWithText(TextField, '의류 종류'),
+                matching: find.byType(EditableText),
+              ),
+            )
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
+      expect(find.byType(NumberKeyboardToolbar), findsNothing);
+
+      await tester.tap(find.widgetWithText(TextField, '실제 무게'));
+      await tester.pumpAndSettle();
+      await tester.tap(_toolbarButton('완료'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NumberKeyboardToolbar), findsNothing);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+    testWidgets('Android 무게 칸에는 키보드 위 막대를 그리지 않는다', (tester) async {
+      // Android 숫자 키보드의 동작 키가 막대와 하는 일이 겹친다(DECISIONS 185).
+      _usePhoneView(tester);
+      await _openSheet(tester, discardPrompt: prompt);
+      await tester.scrollUntilVisible(find.text('직접 입력'), 100);
+      await tester.tap(find.text('직접 입력'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(TextField, '실제 무게'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<EditableText>(
+              find.descendant(
+                of: find.widgetWithText(TextField, '실제 무게'),
+                matching: find.byType(EditableText),
+              ),
+            )
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
+      expect(find.byType(NumberKeyboardToolbar), findsNothing);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
 
     testWidgets('바깥을 탭해도 닫히지 않고 확인창도 뜨지 않는다', (tester) async {
       _usePhoneView(tester);
@@ -143,6 +242,32 @@ void main() {
       expect(_isSheetOpen(), isTrue);
       expect(sheet.completed, isFalse);
     });
+
+    testWidgets('직접 입력의 분류는 세그먼트로 고르고, 고른 분류로 닫힌다(결정 134)', (tester) async {
+      _usePhoneView(tester);
+      final sheet = await _openSheet(tester, discardPrompt: prompt);
+
+      await tester.scrollUntilVisible(find.text('직접 입력'), 100);
+      await tester.tap(find.text('직접 입력'));
+      await tester.pumpAndSettle();
+
+      final control = find.byType(SegmentedButton<String>);
+      expect(control, findsOneWidget);
+      expect(tester.widget<SegmentedButton<String>>(control).selected, {
+        ClothingTypeCatalog.defaultOption.category,
+      });
+
+      await tester.enterText(find.byType(TextField).at(0), '조끼');
+      await tester.enterText(find.byType(TextField).at(1), '300');
+      await tester.tap(find.descendant(of: control, matching: find.text('하의')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('적용하기'));
+      await tester.pumpAndSettle();
+
+      expect(sheet.completed, isTrue);
+      expect(sheet.result?.label, '조끼');
+      expect(sheet.result?.category, '하의');
+    });
   });
 
   testWidgets('분석 실패 후 직접 입력 시트는 실패 경로 문구로 확인한다', (tester) async {
@@ -166,6 +291,69 @@ void main() {
     );
   });
 
+  // DECISIONS 96: 분석이 실패하면 고른 뒤 띄우던 배너 대신 시트 맨 위에서 이유를 알린다.
+  // 시트가 열리면 VoiceOver 가 첫 칸부터 읽으므로 이유가 낭독 순서의 맨 앞이어야 한다.
+  group('분석 실패 이유 줄', () {
+    const failureMessage = '라벨을 읽지 못했어요. 직접 입력해 주세요.';
+
+    testWidgets(
+      '실패 이유를 주면 제목 위에 빨간 느낌표와 함께 보이고, 시트에서 가장 먼저 읽힌다',
+      (tester) async {
+        final semantics = tester.ensureSemantics();
+        _usePhoneView(tester);
+        await _openSheet(
+          tester,
+          discardPrompt: ClothingTypePickerDiscardPrompt.manualAfterFailure,
+          failureMessage: failureMessage,
+        );
+
+        final reason = find.descendant(
+          of: find.byType(BottomSheet),
+          matching: find.text(failureMessage),
+        );
+        expect(reason, findsOneWidget);
+        expect(
+          tester.getRect(reason).top,
+          lessThan(tester.getRect(find.text('의류 종류 선택')).top),
+        );
+
+        final icon = find.descendant(
+          of: find.byType(BottomSheet),
+          matching: find.byIcon(Icons.error_outline),
+        );
+        expect(icon, findsOneWidget);
+        expect(tester.widget<Icon>(icon).color, Colors.redAccent);
+
+        expect(_traversalLabels(tester).first, failureMessage);
+        semantics.dispose();
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+
+    testWidgets(
+      '실패 이유가 없으면(분석 성공·결과 화면의 유형 변경) 이유 줄 없이 제목부터 읽힌다',
+      (tester) async {
+        final semantics = tester.ensureSemantics();
+        _usePhoneView(tester);
+        await _openSheet(
+          tester,
+          discardPrompt: ClothingTypePickerDiscardPrompt.analysisResult,
+        );
+
+        expect(
+          find.descendant(
+            of: find.byType(BottomSheet),
+            matching: find.byIcon(Icons.error_outline),
+          ),
+          findsNothing,
+        );
+        expect(_traversalLabels(tester).first, '의류 종류 선택');
+        semantics.dispose();
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+  });
+
   group('결과 화면의 유형 변경(닫기 허용)', () {
     testWidgets("손잡이를 끌어내리면 지금처럼 null로 닫히고 '다시 촬영' 버튼은 없다", (tester) async {
       _usePhoneView(tester);
@@ -183,6 +371,13 @@ void main() {
       expect(_isSheetOpen(), isFalse);
       expect(sheet.completed, isTrue);
       expect(sheet.result, isNull);
+    });
+
+    testWidgets('끌어서 닫을 수 있으므로 손잡이를 보여 준다', (tester) async {
+      _usePhoneView(tester);
+      await _openSheet(tester);
+
+      expect(_dragHandles(), findsOneWidget);
     });
 
     testWidgets('바깥 탭과 뒤로가기로도 확인 없이 닫힌다', (tester) async {
@@ -219,9 +414,19 @@ void _usePhoneView(WidgetTester tester, {double bottomInset = 0}) {
   addTearDown(tester.view.reset);
 }
 
+/// 읽기 프로그램이 오른쪽으로 쓸어 넘기며 읽는 순서대로 이름(없으면 툴팁)을 모은다.
+List<String> _traversalLabels(WidgetTester tester) {
+  return tester.semantics
+      .simulatedAccessibilityTraversal()
+      .map((node) => node.label.isEmpty ? node.tooltip : node.label)
+      .where((label) => label.isNotEmpty)
+      .toList();
+}
+
 Future<_SheetResult> _openSheet(
   WidgetTester tester, {
   ClothingTypePickerDiscardPrompt? discardPrompt,
+  String? failureMessage,
 }) async {
   final sheet = _SheetResult();
 
@@ -237,6 +442,7 @@ Future<_SheetResult> _openSheet(
                   options: ClothingTypeCatalog.options,
                   initialSelection: ClothingTypeCatalog.defaultOption,
                   discardPrompt: discardPrompt,
+                  failureMessage: failureMessage,
                 ).then((value) {
                   sheet
                     ..completed = true
@@ -269,9 +475,32 @@ Rect _sheetRect(WidgetTester tester) {
 
 bool _isSheetOpen() => find.byType(BottomSheet).evaluate().isNotEmpty;
 
+// Flutter 손잡이(_DragHandle)와 직접 그린 손잡이 모양을 모두 찾는다.
+Finder _dragHandles() => find.byWidgetPredicate(
+  (widget) => widget.runtimeType.toString().contains('DragHandle'),
+);
+
 Finder _dialogButton(String label) {
   return find.descendant(
     of: find.byType(AlertDialog),
     matching: find.text(label),
   );
 }
+
+// 막대의 [완료]는 글자로, ∧·∨ 는 아이콘의 낭독 이름으로 찾는다.
+Finder _toolbarButton(String label) {
+  return find.descendant(
+    of: find.byType(NumberKeyboardToolbar),
+    matching: label == '완료'
+        ? find.text(label)
+        : find.byWidgetPredicate(
+            (widget) => widget is Icon && widget.semanticLabel == label,
+          ),
+  );
+}
+
+IconButton _toolbarIconButton(String label) => find
+    .ancestor(of: _toolbarButton(label), matching: find.byType(IconButton))
+    .evaluate()
+    .single
+    .widget as IconButton;

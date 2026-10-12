@@ -59,20 +59,21 @@ class ScanApiException implements Exception {
         return '사진 용량이 너무 커요. 사진을 줄이거나 다른 사진을 선택해 주세요.';
       case ScanApiErrorType.unsupportedMediaType:
         return '이 사진 형식은 분석할 수 없어요. JPG 또는 PNG 사진을 사용해 주세요.';
+      // DECISIONS 98: 원인 설명을 줄여 짧게. 이 문장은 종류 선택 시트 맨 위와
+      // 결과 화면 '직접 입력 모드' 카드에 나간다.
       case ScanApiErrorType.ocrFailed:
-        return '라벨을 자동으로 인식하지 못했어요. 소재와 혼용률을 직접 입력해 주세요.';
       case ScanApiErrorType.aiRecognitionFailed:
-        return 'AI가 라벨 정보를 정확히 인식하지 못했어요. 소재와 혼용률을 직접 입력해 주세요.';
+        return '라벨을 읽지 못했어요. 직접 입력해 주세요.';
       case ScanApiErrorType.server:
         return '분석 서비스에 일시적인 문제가 생겼어요. 다시 시도하거나 직접 입력해 주세요.';
       case ScanApiErrorType.network:
         return '인터넷에 연결할 수 없어요. 연결을 확인하거나 직접 입력해 주세요.';
       case ScanApiErrorType.timeout:
         return '분석이 예상보다 오래 걸렸어요. 다시 시도하거나 직접 입력해 주세요.';
+      // 응답이 깨졌거나 원인을 모르면 라벨을 못 읽은 것인지 알 수 없다.
       case ScanApiErrorType.invalidResponse:
-        return '분석 결과를 불러오지 못했어요. 소재와 혼용률을 직접 입력해 주세요.';
       case ScanApiErrorType.unknown:
-        return '사진 분석을 완료하지 못했어요. 소재와 혼용률을 직접 입력해 주세요.';
+        return '사진을 분석하지 못했어요. 직접 입력해 주세요.';
     }
   }
 
