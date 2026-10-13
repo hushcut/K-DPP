@@ -622,6 +622,57 @@ def _literal_raw_context(candidate: OcrCandidate, candidates: list[OcrCandidate]
                for peer in candidates)
 
 
+def _same_response_fenced_context(candidate: OcrCandidate, alternative: OcrCandidate,
+                                  context: list[str]) -> bool:
+    """Keep shuffled captions outside a physically verified composition band."""
+    from apps.text.parse_label import build_line_infos
+
+    view = _bounded_composition_context(alternative)
+    if view is None:
+        return False
+    infos = [info for info in build_line_infos(view.text)
+             if info.materials or info.numbers or re.search(r"[0-9%]", info.raw)]
+    rows = _locate_rows(infos, alternative.image_words,
+                        physical=True, tokenise=_annotation_tokens)
+    material_words = [word for info, words in rows if info.materials for word in words]
+    if not material_words:
+        return False
+    anchor = max(material_words, key=lambda word: word.right - word.left)
+    points = anchor.vertices or ((anchor.left, anchor.top), (anchor.right, anchor.top))
+    dx, dy = points[1][0] - points[0][0], points[1][1] - points[0][1]
+    length = math.hypot(dx, dy)
+    if not length:
+        return False
+    normal = (-dy / length, dx / length)
+
+    def extent(words):
+        values = [normal[0] * x + normal[1] * y for word in words
+                  for x, y in (word.vertices or ((word.left, word.top), (word.right, word.top),
+                                                (word.right, word.bottom), (word.left, word.bottom)))]
+        return min(values), max(values)
+
+    # Care glyphs can have a different baseline and a wide box reaching the
+    # next caption. Keep the already proved wash number in the band, rather
+    # than letting that non-composition glyph enlarge the material boundary.
+    band_words = tuple(set(material_words) | {word for _info, words in rows for word in words
+                                              if normalize_text(word.text).isdigit()})
+    low, high = extent(band_words)
+    for info in build_line_infos("\n".join(context)):
+        if not _has_unclassified_context(replace(candidate, text=info.raw), bounded=False):
+            continue
+        options = _row_options(info.raw, candidate.image_words, physical=True,
+                               tokenise=_annotation_tokens)
+        if len(options) != 1:
+            return False
+        words = tuple(candidate.image_words[index] for index in options[0])
+        start, end = extent(words)
+        # An opaque caption beside or between fibers remains composition
+        # evidence, even if paragraph order moved it beyond a metadata fence.
+        if not (end < low - 1 or start > high + 1):
+            return False
+    return True
+
+
 def _same_response_metadata_recovery(candidate: OcrCandidate, alternative: OcrCandidate,
                                      part: str, target_part: str) -> bool:
     """Classify literal wash numbers only from complete same-response rows."""
@@ -706,7 +757,10 @@ def _same_response_metadata_recovery(candidate: OcrCandidate, alternative: OcrCa
                 and not info.invalid_evidence and not info.unresolved_materials
                 and (not info.numbers or wash_number)):
             context.append(info.raw)
-    if not removed or _has_unclassified_context(replace(candidate, text="\n".join(context))):
+    if not removed or (
+        _has_unclassified_context(replace(candidate, text="\n".join(context)))
+        and not _same_response_fenced_context(candidate, alternative, context)
+    ):
         return False
     targets = [info for info in target_infos if info.part == target_part and not _is_metadata_line(info)]
     target_used = set()

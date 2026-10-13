@@ -244,3 +244,70 @@ def test_provider_polygon_is_retained_without_reordering_vertices():
     response = SimpleNamespace(full_text_annotation=SimpleNamespace(
         pages=[SimpleNamespace(blocks=[SimpleNamespace(paragraphs=[paragraph])])]))
     assert extract_response_words(response) == (original,)
+
+
+
+def table_with_flat_footer(tilt=-0.2, **kwargs):
+    replacements = {"COTTON": "RAYON", "POLYESTER": "NYLON", "POLYURETHANE": "ACRYLIC",
+                    "51": "62", "46": "23", "3": "15"}
+    words = [replace(value, text=replacements.get(value.text, value.text))
+             for value in composition_words(tilt=tilt, **kwargs)]
+    footer_y = 402 + max(0, tilt) * 370
+    return words + [word("CAPTION", 20, footer_y, tilt=0, **kwargs),
+                    word("DETAILS", 140, footer_y, tilt=0, **kwargs)]
+
+
+@pytest.mark.parametrize("tilt", [-0.2, -0.12, 0.12, 0.2])
+@pytest.mark.parametrize("scale", [1, 2])
+@pytest.mark.parametrize("offset", [(0, 0), (137, 91)])
+def test_local_table_angle_survives_a_differently_oriented_footer(tilt, scale, offset):
+    words = table_with_flat_footer(tilt, scale=scale, offset=offset)
+    layout = spatial_text_from_words(words)
+    assert layout == "OUTER\nRAYON 62 %\nNYLON 23 %\nACRYLIC 15 %\nCAPTION DETAILS"
+    assert Counter(layout.split()) == Counter(token for value in words for token in value.text.split())
+    assert parse_label(layout)["materials"] == {"rayon": 62, "nylon": 23, "acrylic": 15}
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_local_table_partition_does_not_depend_on_annotation_order(seed):
+    words = table_with_flat_footer()
+    expected = spatial_text_from_words(words)
+    Random(seed).shuffle(words)
+    assert spatial_text_from_words(words) == expected
+
+
+@pytest.mark.parametrize("defect", ["unknown", "missing_polygon", "opposing_direction"])
+def test_local_angle_cannot_move_unproved_evidence_out_of_the_table(defect):
+    words = table_with_flat_footer()
+    if defect == "unknown":
+        words.append(word("OLEFIN 10%", 20, 330, tilt=0))
+    elif defect == "missing_polygon":
+        words[2] = replace(words[2], vertices=())
+    else:
+        words[2] = word("62", 320, 300, 30, tilt=0.2)
+    layout = spatial_text_from_words(words)
+    assert Counter(layout.split()) == Counter(token for value in words for token in value.text.split())
+    assert "RAYON 62 %" not in layout
+
+
+def test_rebuilt_local_table_still_rejects_unknown_materials(monkeypatch, tmp_path):
+    words = table_with_flat_footer()
+    words = [replace(value, text="OLEFIN") if value.text == "NYLON" else value for value in words]
+    raw = "OUTER\nRAYON 62%\nOLEFIN 23%\nACRYLIC 15%\nCAPTION DETAILS"
+    result = offline_analysis(monkeypatch, tmp_path, raw, words)
+    assert result["status"] == "failed" and result["materials"] == {}
+
+
+def test_rebuilt_local_table_cannot_override_conflicting_raw_pairs(monkeypatch, tmp_path):
+    raw = "OUTER\nRAYON 23%\nNYLON 62%\nACRYLIC 15%\nCAPTION DETAILS"
+    result = offline_analysis(monkeypatch, tmp_path, raw, table_with_flat_footer())
+    assert result["status"] == "failed" and result["materials"] == {}
+
+
+
+def test_offline_local_table_reconnects_literal_columns(monkeypatch, tmp_path):
+    raw = "OUTER\nRAYON\nNYLON\nACRYLIC\n62%\n23%\n15%\nCAPTION DETAILS"
+    result = offline_analysis(monkeypatch, tmp_path, raw, table_with_flat_footer())
+    assert result["status"] == "success"
+    assert result["materials"] == {"rayon": 62, "nylon": 23, "acrylic": 15}
+    assert result["selected_part"] == "outer"
