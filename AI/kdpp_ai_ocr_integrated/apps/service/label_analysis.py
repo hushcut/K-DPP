@@ -30,11 +30,10 @@ def _with_part_uncertainty(parsed: dict[str, Any]) -> dict[str, Any]:
     if parsed.get("status") != "success" or parsed.get("selected_part") != "generic":
         return parsed
     result = dict(parsed)
-    warnings = list(result.get("warnings", []))
-    warning = "representative_part_unidentified:generic"
-    if warning not in warnings:
-        warnings.append(warning)
-    result["warnings"] = warnings
+    result["parse_evidence"] = {
+        **result.get("parse_evidence", {}),
+        "part_resolution": {"status": "unidentified", "selected_part": "generic"},
+    }
     return result
 
 

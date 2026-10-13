@@ -12,7 +12,7 @@ from apps.text import ocr_text
 from apps.text.parse_label import parse_label
 
 
-PART_WARNING = "representative_part_unidentified:generic"
+PART_RESOLUTION = {"status": "unidentified", "selected_part": "generic"}
 REVIEW_WARNING = "manual_composition_review_required:first_generic"
 MULTIPLE = "MATERIAL\nRAYON 45%\nNYLON 28%\nPOLYESTER 22%\nPOLYURETHANE 5%\nCUSTOMFIBER 60%\nPOLYESTER 40%"
 
@@ -36,8 +36,9 @@ def test_confirmed_materials_do_not_acquire_an_outer_part(text, ocr):
     assert result["materials"] == before["materials"] == result["parts"]["generic"]
     assert result["parts"] == before["parts"]
     assert result["confidence"]["parser"] == before["confidence"]["parser"]
-    assert PART_WARNING in result["warnings"]
-    assert PART_WARNING not in before["warnings"]  # Candidate scoring is unchanged.
+    assert result["parse_evidence"]["part_resolution"] == PART_RESOLUTION
+    assert "part_resolution" not in before["parse_evidence"]
+    assert result["warnings"] == before["warnings"]  # Public warnings and candidate scoring stay unchanged.
     assert REVIEW_WARNING not in result["warnings"]
 
 
@@ -49,7 +50,7 @@ def test_confirmed_materials_do_not_acquire_an_outer_part(text, ocr):
 def test_an_explicit_part_or_fallback_keeps_its_existing_meaning(text, part):
     result = analyze_ocr_result(ocr_result(text))
     assert result["status"] == "success" and result["selected_part"] == part
-    assert PART_WARNING not in result["warnings"]
+    assert "part_resolution" not in result["parse_evidence"]
     assert REVIEW_WARNING not in result["warnings"]
     assert "review" not in result["parse_evidence"]
 
@@ -64,7 +65,7 @@ def test_available_review_never_populates_the_automatic_failure():
     assert automatic["selected_part"] == ""
     assert automatic["error_code"] == before["error_code"]
     assert automatic["ocr"] == before["ocr"]
-    assert PART_WARNING not in automatic["warnings"]
+    assert "part_resolution" not in automatic["parse_evidence"]
     assert REVIEW_WARNING in automatic["warnings"]
     evidence = automatic["parse_evidence"]["review"]
     assert evidence["confirmed"] is False and evidence["confirmation_required"] is True
@@ -76,7 +77,8 @@ def test_available_review_never_populates_the_automatic_failure():
     reviewed = analyze_ocr_result(source, confirmed_review_id=option["id"])
     assert reviewed["status"] == "success"
     assert reviewed["materials"] == option["materials"]
-    assert reviewed["selected_part"] == "generic" and PART_WARNING in reviewed["warnings"]
+    assert reviewed["selected_part"] == "generic"
+    assert reviewed["parse_evidence"]["part_resolution"] == PART_RESOLUTION
     assert REVIEW_WARNING not in reviewed["warnings"]
     assert reviewed["parse_evidence"]["review"]["confirmed"] is True
     assert REVIEW_WARNING in reviewed["parse_evidence"]["review"]["automatic_warnings"]
@@ -117,14 +119,19 @@ def test_review_guidance_requires_the_identified_literal_original(change):
     assert "review" not in result["parse_evidence"]
 
 
-def test_part_guidance_is_not_duplicated_by_ocr_metadata():
+def test_part_guidance_preserves_existing_evidence_and_ocr_warnings():
     source = ocr_result("COTTON 100%")
-    source = replace(source, metadata=replace(source.metadata, warnings=(PART_WARNING,)))
-    assert analyze_ocr_result(source)["warnings"].count(PART_WARNING) == 1
+    source = replace(source, metadata=replace(source.metadata, warnings=("existing_warning",)))
+    before = parse_label(source.text)
+    result = analyze_ocr_result(source)
+    assert result["warnings"] == [*before["warnings"], "existing_warning"]
+    assert result["parse_evidence"] == {**before["parse_evidence"], "part_resolution": PART_RESOLUTION}
+    result["parse_evidence"]["part_resolution"]["status"] = "changed"
+    assert analyze_ocr_result(source)["parse_evidence"]["part_resolution"] == PART_RESOLUTION
 
 
 def test_text_only_confirmation_does_not_invent_a_photo_review_id():
     result = analyze_label_text(MULTIPLE, confirmed_first_generic=True)
     assert result["status"] == "success" and result["selected_part"] == "generic"
-    assert PART_WARNING in result["warnings"]
+    assert result["parse_evidence"]["part_resolution"] == PART_RESOLUTION
     assert "review" not in result["parse_evidence"]

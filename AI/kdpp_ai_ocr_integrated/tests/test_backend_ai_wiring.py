@@ -198,7 +198,7 @@ def test_scan_returns_successful_ocr_materials_without_internal_metadata(
 
     assert response["materials"] == {"cotton": 80, "polyester": 20}
     assert response["ai_success"] is True
-    assert response["warnings"] == ["representative_part_unidentified:generic"]
+    assert response["warnings"] == []
     assert not INTERNAL_KEYS & response.keys()
     assert scan_db.saved == []
     assert scan_db.committed is False

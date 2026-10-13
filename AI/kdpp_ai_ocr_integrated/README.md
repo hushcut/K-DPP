@@ -266,8 +266,9 @@ OCR을 실행하지 않으므로 파일 여러 개의 합산 크기도 제한됩
 선택한 후보가 이를 버렸다는 이유로 무시하지 않습니다.
 
 AI 분석 서비스에서 소재가 확정됐어도 부위명이 없으면 `selected_part=generic`과
-`representative_part_unidentified:generic` 경고를 반환합니다. 소재 비율은 유지하며
-겉감이나 의류 전체 조성으로 추정하지 않습니다. 이 표시는 후보 선택 이후에만 붙습니다.
+`parse_evidence.part_resolution`에 `status=unidentified`, `selected_part=generic`을
+기록합니다. 소재 비율과 기존 공개 경고는 유지하며 겉감이나 의류 전체 조성으로
+추정하지 않습니다. 이 내부 표시는 후보 선택 이후에만 붙습니다.
 
 자동 판정이 실패했지만 원본의 첫 조성을 명시적으로 확인할 수 있으면
 `manual_composition_review_required:first_generic` 경고와
@@ -277,8 +278,9 @@ AI 분석 서비스에서 소재가 확정됐어도 부위명이 없으면 `sele
 같은 `OcrResult`에 `analyze_ocr_result(..., confirmed_review_id=선택ID)`를 호출합니다.
 확인은 그 조성의 소재·비율에만 적용되며 부위는 계속 `generic`입니다. 확인 ID는 인증 수단이
 아니며 원본 OCR 결과의 보관·사용자 소유권 검사는 담당 백엔드에서 구현해야 합니다.
-추가 Vision 호출은 필요 없습니다. 앱 확인 화면·확인 API와 두 새 경고의 화면 문구 연결은
-아직 구현되지 않았습니다. 현재 백엔드는 `parse_evidence`를 공개하지 않고 경고만 전달합니다.
+추가 Vision 호출은 필요 없습니다. 앱 확인 화면·확인 API와 검토 필요 경고의 화면 문구 연결은
+아직 구현되지 않았습니다. 현재 백엔드는 `parse_evidence`를 공개하지 않고 경고만 전달하므로
+부위 미확정 근거의 앱 표시는 별도 계약 합의와 연동이 필요합니다.
 
 기존 동등 섬유 규칙에 맞는 다국어 반복과, 실패 원본의 정상적인 배치 복구는 허용합니다.
 `run_ocr_bytes()`·`run_ocr_with_metadata()`의 텍스트는 원문 확인용으로 보존하므로,
@@ -452,7 +454,7 @@ Google Vision이 제공한 신뢰도 점수로 해석하지 않습니다.
     "ocr": "unknown",
     "parser": "high"
   },
-  "warnings": ["representative_part_unidentified:generic"],
+  "warnings": [],
   "care_instruction": "",
   "care_instructions": [],
   "selected_part": "generic",
@@ -463,6 +465,7 @@ Google Vision이 제공한 신뢰도 점수로 해석하지 않습니다.
     }
   },
   "parse_evidence": {
+    "part_resolution": {"status": "unidentified", "selected_part": "generic"},
     "observed_ratios": {"generic": [80.0, 20.0]},
     "unpaired_ratio_parts": [],
     "composition_status": "confirmed",
