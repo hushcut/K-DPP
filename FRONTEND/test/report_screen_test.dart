@@ -367,4 +367,49 @@ void main() {
     );
     expect(956 - deleteButton.bottom, 34 + 24);
   });
+
+  // DECISIONS 227: 서버가 보내는 calculation_note 는 팀 내부 메모라 보이지 않고, 출처의 영어
+  // 개발용 이름은 한국어로 보입니다. 옷과 함께 저장된 값이라 옛 옷에도 그대로 남아 있습니다.
+  testWidgets('서버 계산 옷의 계산 기준에 팀 내부 메모가 보이지 않고, 출처는 한국어로 보인다', (tester) async {
+    final provider = ClosetProvider(storage: FakeClosetStorage());
+    await provider.addClothes(
+      Clothes(
+        title: '서버 계산 셔츠',
+        category: '상의',
+        health: 82,
+        materials: {'cotton': 100},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: 3.0,
+        carbonFootprintSource: CarbonFootprintSource.server,
+        calculationScope: 'material_production_estimate',
+        calculationBasis: '소재별 탄소배출계수(kg CO2eq/kg)와 의류 무게(g)를 곱해 계산했습니다.',
+        calculationSource:
+            'K-DPP backend material carbon factor table (development estimates)',
+        calculationNote: '현재 소재별 배출계수는 개발용 추정값입니다. 최종 발표 전 팀 승인 출처로 교체해야 합니다.',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: Scaffold(body: ReportScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('범위: 원료 및 소재 생산 단계 추정'), findsOneWidget);
+    expect(
+      find.text('소재별 탄소배출계수(kg CO2eq/kg)와 의류 무게(g)를 곱해 계산했습니다.'),
+      findsOneWidget,
+    );
+    expect(find.text('출처: K-DPP 소재별 배출계수 표(추정값)'), findsOneWidget);
+    expect(find.textContaining('팀 승인'), findsNothing);
+    expect(find.textContaining('development estimates'), findsNothing);
+  });
 }
