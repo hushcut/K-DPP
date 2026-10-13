@@ -144,3 +144,27 @@ def test_cli_writes_only_management_report(monkeypatch, tmp_path, capsys):
     assert "PRIVATE" not in output.read_text(encoding="utf8")
     assert source.read_text(encoding="utf8") == text
     assert "material_exact" in capsys.readouterr().out
+
+
+def test_service_failure_history_is_visible_without_hiding_composition_failure_or_recovery():
+    failed = row("QA001")
+    failed["result"]["error_code"] = "composition_not_found"
+    recovered = row("QA002", {"cotton": 100})
+    for item in (failed, recovered):
+        item["result"]["ocr"] = {"attempts": [{"outcome": "failed", "failure_code": "service_unavailable"}]}
+    report = tracking.track_failures([failed, recovered])
+    assert report["summary"]["evaluated"] == 2 and report["summary"]["material_exact"] == 1
+    assert report["summary"]["service_error_case_count"] == 2
+    assert report["summary"]["failure_stage_counts"] == {"composition": 1}
+    assert report["cases"][0]["failure_stage"] == "composition"
+    assert [event["failure_stage"] for event in report["ocr_events"]] == ["composition", "success"]
+
+
+def test_fatal_service_error_and_missing_cache_are_distinct_from_unread_text():
+    items = [row("QA001"), row("QA002"), row("QA003")]
+    for item, code in zip(items, ("OcrUnavailableError", "ocr_text_empty", "OcrCacheMissError")):
+        item["result"]["error_code"] = code
+    report = tracking.track_failures(items)
+    assert report["summary"]["failure_stage_counts"] == {"cache_incomplete": 1, "ocr_service": 1, "text_recognition": 1}
+    assert report["summary"]["evaluated"] == report["summary"]["material_unconfirmed"] == 3
+    assert report["summary"]["service_error_case_count"] == report["summary"]["cache_incomplete_case_count"] == 1

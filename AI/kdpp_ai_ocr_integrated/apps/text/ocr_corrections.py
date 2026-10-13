@@ -1690,6 +1690,109 @@ def _same_response_hyphen_recovery(candidate, alternative, part, target_part):
     return True
 
 
+def _same_region_placeholder_recovery(candidate, alternative, part, candidates):
+    """Replace one boxed placeholder only with a complete, overlapping material row."""
+    from apps.text.parse_label import build_line_infos, _is_metadata_line
+
+    if (not re.search(r"[*?]", candidate.text) or not alternative.layout_used
+            or not candidate.image_variant_key or not alternative.image_variant_key
+            or candidate.image_variant_key == alternative.image_variant_key
+            or candidate.source == alternative.source
+            or set(candidate.rejected_composition_parts.get(part, ())) != {"unpaired_material_rows"}
+            or set(alternative.parts) != {part}):
+        return False
+    # A raw paragraph may shuffle captions. Only its exact, geometry-derived
+    # layout may locate the damaged cell; retain every original annotation and
+    # every part's material/ratio evidence when using that view.
+    source = candidate if candidate.layout_used else _literal_layout_peer(candidate, candidates)[0]
+    if (source is None or source.rejected_composition_parts != candidate.rejected_composition_parts
+            or source.observed_materials != candidate.observed_materials
+            or source.observed_ratios != candidate.observed_ratios
+            or source.paired_material_ratios != candidate.paired_material_ratios
+            or Counter(_annotation_tokens(source.text)) != Counter(_annotation_tokens(candidate.text))):
+        return False
+    views = (candidate, source, alternative)
+    if any(any(len(word.vertices) != 4 for word in view.image_words)
+           or not _covers_row_tokens(_annotation_tokens(view.text), list(view.image_words),
+                                    tokenise=_annotation_tokens) for view in views):
+        return False
+    if (not _verified_layout_rows(source) or not _verified_layout_rows(alternative)
+            or _has_unclassified_context(source) or _has_unclassified_context(alternative)):
+        return False
+    rows = []
+    for view in (source, alternative):
+        if (set(view.observed_materials) | set(view.observed_ratios)) - {part}:
+            return False
+        infos = build_line_infos(view.text)
+        located = _locate_rows(infos, view.image_words, physical=True,
+                               allow_quantisation=True, tokenise=_annotation_tokens)
+        if len(located) != len(infos):
+            return False
+        composition = [(info, words) for info, words in located
+                       if not _is_metadata_line(info) and (info.materials or info.numbers
+                           or info.explicit_percent or info.invalid_evidence or info.unresolved_materials)]
+        if any(info.part != part or info.invalid_evidence or info.unresolved_materials
+               or not info.explicit_percent or len(info.numbers) != 1 or len(info.materials) > 1
+               or not _physical_row(info.raw, words, allow_quantisation=True, tokenise=_annotation_tokens)
+               for info, words in composition):
+            return False
+        rows.append(composition)
+    original, reread = rows
+    if len(original) < 2 or len(original) != len(reread) or any(not info.materials for info, _ in reread):
+        return False
+    missing = [info for info, _ in original if not info.materials]
+    if len(missing) != 1:
+        return False
+    placeholder = "".join(token for token in _annotation_tokens(missing[0].raw)
+                          if not token.isdigit() and token != "%")
+    if not re.fullmatch(r"[*?]{1,3}", placeholder):
+        return False
+    # No number is repaired here. Match complete rows bijectively so neither
+    # another percentage nor another part can lend its material to the cell.
+    def numeric(items):
+        return Counter(token for word in items for token in _annotation_tokens(word.text)
+                       if token.isdigit() or token == "%")
+
+    used = set()
+    for info, words in original:
+        matches = []
+        for index, (target, target_words) in enumerate(reread):
+            if index in used or info.numbers != target.numbers:
+                continue
+            if (numeric(words) != numeric(target_words)
+                    or not _numeric_components_align(words, target_words, (), corroborated=False)
+                    or not _numeric_components_align(target_words, words, (), corroborated=False)):
+                continue
+            if info.materials:
+                if (info.materials == target.materials
+                        and Counter(_annotation_tokens(info.raw)) == Counter(_annotation_tokens(target.raw))
+                        and _aligned_reading(words, target_words, literal_cjk=True)
+                        and _aligned_reading(target_words, words, literal_cjk=True)
+                        and _cjk_components_align(words, target_words)
+                        and _cjk_components_align(target_words, words)):
+                    matches.append(index)
+            else:
+                damaged = tuple(word for word in words if re.fullmatch(r"[*?]{1,3}", word.text))
+                names = tuple(word for word in target_words if _annotation_tokens(word.text)
+                              and all(token.isalpha() for token in _annotation_tokens(word.text)))
+                if (damaged and names
+                        and find_material_key("".join(word.text for word in names)) == target.materials[0]
+                        and all(any(_overlaps(word, name) for name in names) for word in damaged)
+                        and all(any(_overlaps(word, name) for word in damaged) for name in names)):
+                    matches.append(index)
+        if len(matches) != 1:
+            return False
+        used.add(matches[0])
+    original_words = tuple(word for _, words in original for word in words)
+    target_words = tuple(word for _, words in reread for word in words)
+    for words, region in ((original_words, alternative.image_region), (target_words, source.image_region)):
+        left, top, right, bottom = region
+        if any(not (left - 2 <= word.left and word.right <= right + 2
+                    and top - 2 <= word.top and word.bottom <= bottom + 2) for word in words):
+            return False
+    return Counter(candidate.paired_material_ratios.get(part, ())) <= Counter(alternative.parts[part].items())
+
+
 def same_region_recovery(
     candidate: OcrCandidate, alternative: OcrCandidate, part: str,
     candidates: list[OcrCandidate] | None = None,
@@ -1712,6 +1815,9 @@ def same_region_recovery(
     forbidden = NEGATING_MODIFIERS | UNPRICED_MATERIALS | {"unknown", "olefin", "未知繊維", "未知纤维"}
     if any(token in forbidden for token in _tokens(candidate.text) + _tokens(alternative.text)):
         return False
+
+    if _same_region_placeholder_recovery(candidate, alternative, part, candidates):
+        return True
 
     # Keep IN's independently confirmed decimal/ratio-cell recovery confined
     # to its explicit artifact shapes. Ordinary rereads use the stricter path.

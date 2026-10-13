@@ -15,6 +15,7 @@ from apps.text.qa_comparison import (
     validate_tolerance,
 )
 from apps.text.ratio_contract import has_exact_total
+from scripts.ocr_failure_diagnostics import failure_diagnostics
 
 
 class FailureSnapshotError(ValueError):
@@ -25,7 +26,7 @@ def _snapshot(rows: Any, tolerance: float) -> tuple[dict, dict, dict]:
     if not isinstance(rows, list) or not rows:
         raise FailureSnapshotError("평가 스냅샷은 비어 있지 않은 행 목록이어야 합니다.")
     states, annotations, groups = {}, {}, {}
-    cases = []
+    cases, ocr_events = [], []
     for row in rows:
         if not isinstance(row, dict):
             raise FailureSnapshotError("평가 행의 형식이 잘못됐습니다.")
@@ -72,6 +73,9 @@ def _snapshot(rows: Any, tolerance: float) -> tuple[dict, dict, dict]:
         part_matches = selected == part
         category = ("material_unconfirmed" if not success else exact.failure_category
                     if not material_exact else "part_mismatch" if not part_matches else "success")
+        diagnostics = failure_diagnostics(result)
+        if success and category != "success":
+            diagnostics["failure_stage"] = "part_mismatch" if material_exact else "composition_mismatch"
         state = {
             "image_id": image_id,
             "category": category,
@@ -81,12 +85,15 @@ def _snapshot(rows: Any, tolerance: float) -> tuple[dict, dict, dict]:
             "part_matches": part_matches,
             "selected_part": selected,
             "expected_part": part,
+            **diagnostics,
             "_composition": normalize_material_mapping(result["materials"]),
         }
         states[image_id] = state
         groups.setdefault(row["source_group"], []).append(material_exact)
         if category != "success":
             cases.append({key: value for key, value in state.items() if key != "_composition"})
+        if diagnostics["service_error_codes"] or diagnostics["cache_incomplete"] or diagnostics["budget_exhausted"]:
+            ocr_events.append({"image_id": image_id, "status": result["status"], **diagnostics})
     if not states:
         raise FailureSnapshotError("평가에 포함된 사진이 하나 이상 필요합니다.")
     summary = {
@@ -101,8 +108,13 @@ def _snapshot(rows: Any, tolerance: float) -> tuple[dict, dict, dict]:
         "material_unconfirmed": sum(s["status"] == "failed" for s in states.values()),
         "successful_wrong": sum(s["status"] == "success" and not s["material_exact"] for s in states.values()),
         "part_only_mismatch": sum(s["material_exact"] and not s["part_matches"] for s in states.values()),
+        "failure_stage_counts": {stage: sum(s["failure_stage"] == stage for s in states.values())
+                                 for stage in sorted({s["failure_stage"] for s in states.values()} - {"success"})},
+        "service_error_case_count": sum(bool(s["service_error_codes"]) for s in states.values()),
+        "cache_incomplete_case_count": sum(s["cache_incomplete"] for s in states.values()),
+        "budget_exhausted_case_count": sum(s["budget_exhausted"] for s in states.values()),
     }
-    return {"summary": summary, "cases": cases}, states, annotations
+    return {"summary": summary, "cases": cases, "ocr_events": ocr_events}, states, annotations
 
 
 def track_failures(current: Any, baseline: Any = None, *, tolerance: float = 3) -> dict:

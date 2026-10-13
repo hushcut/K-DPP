@@ -24,6 +24,20 @@ from apps.service.response_contract import normalize_label_response
 API_VERSION = "1.0"
 
 
+def _with_part_uncertainty(parsed: dict[str, Any]) -> dict[str, Any]:
+    """확정 소재와 부위 미확정을 구분하되 후보 선택에는 영향을 주지 않는다."""
+
+    if parsed.get("status") != "success" or parsed.get("selected_part") != "generic":
+        return parsed
+    result = dict(parsed)
+    warnings = list(result.get("warnings", []))
+    warning = "representative_part_unidentified:generic"
+    if warning not in warnings:
+        warnings.append(warning)
+    result["warnings"] = warnings
+    return result
+
+
 def _merge_ocr_metadata(parsed: dict[str, Any], metadata: OcrMetadata) -> dict[str, Any]:
     """파서 결과에 OCR 출처와 신뢰도 정보를 덧붙인다."""
 
@@ -76,7 +90,7 @@ def _merge_ocr_metadata(parsed: dict[str, Any], metadata: OcrMetadata) -> dict[s
         ],
     }
     # OCR 메타데이터 조립까지 마친 최종 응답을 같은 계약으로 검증한다.
-    return normalize_label_response(result, api_version=API_VERSION)
+    return normalize_label_response(_with_part_uncertainty(result), api_version=API_VERSION)
 
 
 def _first_composition_review(ocr_result: OcrResult) -> tuple[str, dict[str, Any]] | None:
@@ -87,7 +101,7 @@ def _first_composition_review(ocr_result: OcrResult) -> tuple[str, dict[str, Any
             or len(candidate.image_key) != 64
             or any(char not in "0123456789abcdef" for char in candidate.image_key)):
         return None
-    parsed = parse_label(candidate.text, confirmed_first_generic=True)
+    parsed = _with_part_uncertainty(parse_label(candidate.text, confirmed_first_generic=True))
     if (parsed["status"] != "success" or parsed.get("selected_part") != "generic"
             or "confirmed_representative_selection:first_generic" not in parsed["warnings"]):
         return None
@@ -141,10 +155,23 @@ def analyze_ocr_result(
         ),
         ocr_result.metadata,
     )
+    review = (_first_composition_review(ocr_result)
+              if automatic["status"] == "failed" or confirmed_review_id is not None else None)
+    if automatic["status"] == "failed" and review is not None:
+        automatic["warnings"].append("manual_composition_review_required:first_generic")
+        automatic["parse_evidence"]["review"] = {
+            "available": True,
+            "confirmed": False,
+            "confirmation_required": True,
+            "confirmation_scope": "materials_and_ratios",
+            "selection": "first_generic",
+            "source": "original",
+            "selected_part": "generic",
+            "option_id": review[0],
+        }
     if confirmed_review_id is None:
         return automatic
 
-    review = _first_composition_review(ocr_result)
     if review is None or review[0] != confirmed_review_id:
         raise ValueError("선택 ID가 현재 OCR의 확인 후보와 일치하지 않습니다.")
     option_id, reviewed = review
@@ -203,7 +230,7 @@ def analyze_label_text(
 ) -> dict[str, Any]:
     """Parse extracted text; explicit per-label review options never imply OCR confidence."""
 
-    return normalize_label_response(parse_label(
+    return normalize_label_response(_with_part_uncertainty(parse_label(
         text, confirmed_polyester_poly=confirmed_polyester_poly,
         confirmed_first_generic=confirmed_first_generic,
-    ), api_version=API_VERSION)
+    )), api_version=API_VERSION)

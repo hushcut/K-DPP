@@ -1,5 +1,17 @@
 # K-DPP AI OCR 통합 모듈
 
+## 2026-10-13 재인식 근거와 미확정 상태 구분
+
+같은 사진·부위·행의 소재명 한 칸만 독립 재인식 근거로 복원합니다. 숫자와 부위는
+추정하지 않습니다. AI 서비스는 부위 미확인 성공과 명시 확인이 가능한 자동 실패를
+구분하고, QA는 최종 실패 단계와 후보의 서비스 오류·캐시 누락·시간 예산 이력을 분리합니다.
+앱의 확인 화면·확인 API 연결과 독립된 새 실사진 검증은 남아 있습니다.
+
+로컬 검증은 AI/QA 4,108개 및 하위 27개 보고, 임시 DB를 사용하는 AI 연동 13개,
+Ruff 138개 파일을 통과했습니다. 저장 실사진 OCR 두 기록은 각 45/48,
+합성은 177/200이며 성공 오답은 0건입니다. 새 독립 실사진 Vision 정확도가 아닙니다.
+4번 진단 변경은 3번 검증 결과의 해시를 확인해 재분류했으며 OCR을 다시 호출하지 않았습니다.
+
 ## 2026-10-12 develop·최신 AI 통합
 
 프론트엔드·백엔드는 `develop`의 `7104464` 원본을 사용합니다. AI는 로컬
@@ -253,6 +265,21 @@ OCR을 실행하지 않으므로 파일 여러 개의 합산 크기도 제한됩
 반환하며 겉감으로 표시하지 않습니다. 부위를 알 수 없는 다른 OCR 후보의 손상 근거는
 선택한 후보가 이를 버렸다는 이유로 무시하지 않습니다.
 
+AI 분석 서비스에서 소재가 확정됐어도 부위명이 없으면 `selected_part=generic`과
+`representative_part_unidentified:generic` 경고를 반환합니다. 소재 비율은 유지하며
+겉감이나 의류 전체 조성으로 추정하지 않습니다. 이 표시는 후보 선택 이후에만 붙습니다.
+
+자동 판정이 실패했지만 원본의 첫 조성을 명시적으로 확인할 수 있으면
+`manual_composition_review_required:first_generic` 경고와
+`parse_evidence.review`의 `available=true`, `confirmed=false`를 남깁니다.
+실패 응답의 `materials`·`parts`는 비어 있으며 기존 오류·거절 근거도 유지합니다.
+`get_ocr_review_options()`의 소재·비율을 사용자에게 보여 준 뒤 확인한 경우에만
+같은 `OcrResult`에 `analyze_ocr_result(..., confirmed_review_id=선택ID)`를 호출합니다.
+확인은 그 조성의 소재·비율에만 적용되며 부위는 계속 `generic`입니다. 확인 ID는 인증 수단이
+아니며 원본 OCR 결과의 보관·사용자 소유권 검사는 담당 백엔드에서 구현해야 합니다.
+추가 Vision 호출은 필요 없습니다. 앱 확인 화면·확인 API와 두 새 경고의 화면 문구 연결은
+아직 구현되지 않았습니다. 현재 백엔드는 `parse_evidence`를 공개하지 않고 경고만 전달합니다.
+
 기존 동등 섬유 규칙에 맞는 다국어 반복과, 실패 원본의 정상적인 배치 복구는 허용합니다.
 `run_ocr_bytes()`·`run_ocr_with_metadata()`의 텍스트는 원문 확인용으로 보존하므로,
 소재 판단에는 `analyze_ocr_result()`로 충돌 메타데이터까지 전달해야 합니다.
@@ -425,7 +452,7 @@ Google Vision이 제공한 신뢰도 점수로 해석하지 않습니다.
     "ocr": "unknown",
     "parser": "high"
   },
-  "warnings": [],
+  "warnings": ["representative_part_unidentified:generic"],
   "care_instruction": "",
   "care_instructions": [],
   "selected_part": "generic",
@@ -489,6 +516,23 @@ OCR 설정·사용 한도 오류를 502, 일시 서비스 장애를 503, 시간 
 파서 규칙이나 OCR 전처리의 회귀만 확인할 때는 `scripts/run_qa_batch.py`를
 사용합니다. 실제 백엔드 요청 형식과 응답 계약까지 확인할 때는 저장소 루트의
 `QA/run_qa_batch.py`를 사용합니다. 두 결과는 측정 범위가 달라 각각 기록합니다.
+
+QA의 `failure_stage`는 최종 결과의 실패 단계를 구분합니다. `ocr_service`는
+Vision 오류·시간 초과·사용량 한도, `text_recognition`은 명시적인 빈 OCR 결과,
+`composition`은 조성 연결·검증 실패입니다. 설정·입력·내부 오류는 각각 별도로 기록합니다.
+OCR 문자열이 있다는 이유만으로 글자를 정확히 읽었다고 판정하지 않습니다.
+
+`ocr_service_error_codes`는 실패한 후보에서 관측된 서비스 오류 이력입니다. 다른 후보가
+성공했거나 최종 실패가 조성 오류여도 이 이력을 보존하며, 이력만으로 최종 실패 원인을
+서비스 장애로 바꾸지 않습니다. `ocr_cache_incomplete`와 `ocr_budget_exhausted`는
+캐시 누락과 호출 전 전체 시간 예산 소진이며 Vision 장애로 추정하지 않습니다.
+요약에는 단계별 실패 수와 서비스 오류·캐시 누락·예산 소진 사례 수를 별도로 기록합니다.
+
+`scripts/track_ocr_failures.py`도 같은 구분과 `ocr_events`를 제공합니다. 기존
+`material_unconfirmed` 집계와 전체 평가 분모는 유지하므로 서비스 오류를 제외해 점수를
+높이지 않습니다. QA 예외는 허용된 코드만 기록하고 원시 내부 메시지는 남기지 않습니다.
+예외에서 확인할 수 없는 RPC·재시도 횟수는 CSV에서 빈 값으로 남깁니다. 재시도 정책과
+호출·시간 한도는 변경하지 않았습니다. 숫자·소재 사전·후보 선택도 그대로입니다.
 
 OCR QA 정답 CSV의 필수 열은 다음과 같습니다.
 
