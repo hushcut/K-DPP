@@ -14,6 +14,7 @@ import pytest
 from starlette.datastructures import Headers
 
 from apps.text import ocr_text
+from apps.text.ocr_layout import OcrWord
 from apps.text.parse_label import parse_label
 
 
@@ -201,6 +202,29 @@ def test_scan_returns_successful_ocr_materials_without_internal_metadata(
     assert not INTERNAL_KEYS & response.keys()
     assert scan_db.saved == []
     assert scan_db.committed is False
+
+
+def test_scan_reports_available_review_without_exposing_options_or_saving(
+    backend_main, scan_db, monkeypatch,
+) -> None:
+    monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_args: object())
+    monkeypatch.setattr(
+        ocr_text, "_run_google_ocr",
+        lambda *_args, **_kwargs: ocr_text.OcrPayload(
+            "MATERIAL\nCOTTON 80%\nPOLYESTER 20%\nCUSTOMFIBER 60%\nPOLYESTER 40%",
+            layout_words=(OcrWord("MATERIAL", 0, 0, 4, 1),),
+        ),
+    )
+    with pytest.raises(HTTPException) as raised:
+        backend_main.scan_label(
+            image=make_upload(), raw_ocr_text=None, db=scan_db,
+            current_user=SimpleNamespace(id=1),
+        )
+    detail = raised.value.detail
+    assert raised.value.status_code == 422 and detail["materials"] == {}
+    assert "manual_composition_review_required:first_generic" in detail["warnings"]
+    assert not INTERNAL_KEYS & detail.keys()
+    assert scan_db.saved == [] and scan_db.committed is False
 
 
 @pytest.mark.parametrize("ratio_row", ["100%", "100", "50"])

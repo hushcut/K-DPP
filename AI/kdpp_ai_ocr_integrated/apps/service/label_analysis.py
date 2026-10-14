@@ -7,6 +7,8 @@ OCR 모듈은 텍스트와 이미지 처리 메타데이터만 담당하고, 파
 from __future__ import annotations
 
 import os
+from copy import deepcopy
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,19 @@ from apps.text.parse_label import parse_label
 from apps.service.response_contract import normalize_label_response
 
 API_VERSION = "1.0"
+
+
+def _with_part_uncertainty(parsed: dict[str, Any]) -> dict[str, Any]:
+    """확정 소재와 부위 미확정을 구분하되 후보 선택에는 영향을 주지 않는다."""
+
+    if parsed.get("status") != "success" or parsed.get("selected_part") != "generic":
+        return parsed
+    result = dict(parsed)
+    result["parse_evidence"] = {
+        **result.get("parse_evidence", {}),
+        "part_resolution": {"status": "unidentified", "selected_part": "generic"},
+    }
+    return result
 
 
 def _merge_ocr_metadata(parsed: dict[str, Any], metadata: OcrMetadata) -> dict[str, Any]:
@@ -74,13 +89,63 @@ def _merge_ocr_metadata(parsed: dict[str, Any], metadata: OcrMetadata) -> dict[s
         ],
     }
     # OCR 메타데이터 조립까지 마친 최종 응답을 같은 계약으로 검증한다.
-    return normalize_label_response(result, api_version=API_VERSION)
+    return normalize_label_response(_with_part_uncertainty(result), api_version=API_VERSION)
 
 
-def analyze_ocr_result(ocr_result: OcrResult) -> dict[str, Any]:
+def _first_composition_review(ocr_result: OcrResult) -> tuple[str, dict[str, Any]] | None:
+    """Return one literal original-response option, never an automatic repair."""
+
+    candidate = ocr_result.original_candidate
+    if (candidate is None or candidate.source != "original" or candidate.layout_used
+            or len(candidate.image_key) != 64
+            or any(char not in "0123456789abcdef" for char in candidate.image_key)):
+        return None
+    parsed = _with_part_uncertainty(parse_label(candidate.text, confirmed_first_generic=True))
+    if (parsed["status"] != "success" or parsed.get("selected_part") != "generic"
+            or "confirmed_representative_selection:first_generic" not in parsed["warnings"]):
+        return None
+    # Bind the confirmation to this photo, OCR reading and interpretation.
+    # The ID is a stale-selection guard, not authentication or authorization.
+    identity = "\0".join(("first_generic/v1", candidate.image_key,
+                           candidate.image_variant_key, candidate.text))
+    option_id = "first_generic:" + hashlib.sha256(identity.encode("utf8")).hexdigest()
+    return option_id, parsed
+
+
+def get_ocr_review_options(ocr_result: OcrResult) -> list[dict[str, Any]]:
+    """Show a composition for human review; this never confirms a scan.
+
+    A consumer must display the material names and ratios and obtain explicit
+    confirmation of those values, not just silently select the first option.
+    """
+
+    review = _first_composition_review(ocr_result)
+    if review is None:
+        return []
+    option_id, parsed = review
+    return [{
+        "id": option_id,
+        "selection": "first_generic",
+        "source": "original",
+        "selected_part": "generic",
+        "materials": deepcopy(parsed["materials"]),
+        "warnings": [warning for warning in parsed["warnings"]
+                     if warning != "confirmed_representative_selection:first_generic"],
+        "confirmation_required": True,
+        "confirmation_scope": "materials_and_ratios",
+    }]
+
+
+def analyze_ocr_result(
+    ocr_result: OcrResult, *, confirmed_review_id: str | None = None,
+) -> dict[str, Any]:
     """이미 OCR이 끝난 결과를 파싱한다. QA에서는 외부 OCR 호출 없이 이 함수를 쓴다."""
 
-    return _merge_ocr_metadata(
+    if confirmed_review_id is not None and (
+        type(confirmed_review_id) is not str or not confirmed_review_id
+    ):
+        raise ValueError("확인한 조성의 선택 ID는 비어 있지 않은 문자열이어야 합니다.")
+    automatic = _merge_ocr_metadata(
         parse_label(
             ocr_result.text,
             conflicting_parts=ocr_result.metadata.conflicting_parts,
@@ -89,6 +154,46 @@ def analyze_ocr_result(ocr_result: OcrResult) -> dict[str, Any]:
         ),
         ocr_result.metadata,
     )
+    review = (_first_composition_review(ocr_result)
+              if automatic["status"] == "failed" or confirmed_review_id is not None else None)
+    if automatic["status"] == "failed" and review is not None:
+        automatic["warnings"].append("manual_composition_review_required:first_generic")
+        automatic["parse_evidence"]["review"] = {
+            "available": True,
+            "confirmed": False,
+            "confirmation_required": True,
+            "confirmation_scope": "materials_and_ratios",
+            "selection": "first_generic",
+            "source": "original",
+            "selected_part": "generic",
+            "option_id": review[0],
+        }
+    if confirmed_review_id is None:
+        return automatic
+
+    if review is None or review[0] != confirmed_review_id:
+        raise ValueError("선택 ID가 현재 OCR의 확인 후보와 일치하지 않습니다.")
+    option_id, reviewed = review
+    # Human confirmation applies to this displayed composition. It does not
+    # resolve or erase any of the automatic candidate's rejection evidence.
+    reviewed["ocr"] = deepcopy(automatic["ocr"])
+    reviewed["confidence"]["ocr"] = automatic["confidence"]["ocr"]
+    reviewed["confidence"]["parser"] = "medium"
+    reviewed["warnings"].append("manual_composition_review_confirmed:first_generic")
+    if automatic["status"] == "failed":
+        reviewed["warnings"].append("automatic_composition_not_confirmed")
+    reviewed["parse_evidence"]["review"] = {
+        "confirmed": True,
+        "confirmation_scope": "materials_and_ratios",
+        "selection": "first_generic",
+        "source": "original",
+        "option_id": option_id,
+        "automatic_status": automatic["status"],
+        "automatic_error_code": automatic["error_code"],
+        "automatic_ocr_source": automatic["ocr"]["source"],
+        "automatic_warnings": list(automatic["warnings"]),
+    }
+    return normalize_label_response(reviewed, api_version=API_VERSION)
 
 
 def analyze_label_image_bytes(
@@ -124,7 +229,7 @@ def analyze_label_text(
 ) -> dict[str, Any]:
     """Parse extracted text; explicit per-label review options never imply OCR confidence."""
 
-    return normalize_label_response(parse_label(
+    return normalize_label_response(_with_part_uncertainty(parse_label(
         text, confirmed_polyester_poly=confirmed_polyester_poly,
         confirmed_first_generic=confirmed_first_generic,
-    ), api_version=API_VERSION)
+    )), api_version=API_VERSION)

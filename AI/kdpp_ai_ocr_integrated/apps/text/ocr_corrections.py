@@ -622,6 +622,57 @@ def _literal_raw_context(candidate: OcrCandidate, candidates: list[OcrCandidate]
                for peer in candidates)
 
 
+def _same_response_fenced_context(candidate: OcrCandidate, alternative: OcrCandidate,
+                                  context: list[str]) -> bool:
+    """Keep shuffled captions outside a physically verified composition band."""
+    from apps.text.parse_label import build_line_infos
+
+    view = _bounded_composition_context(alternative)
+    if view is None:
+        return False
+    infos = [info for info in build_line_infos(view.text)
+             if info.materials or info.numbers or re.search(r"[0-9%]", info.raw)]
+    rows = _locate_rows(infos, alternative.image_words,
+                        physical=True, tokenise=_annotation_tokens)
+    material_words = [word for info, words in rows if info.materials for word in words]
+    if not material_words:
+        return False
+    anchor = max(material_words, key=lambda word: word.right - word.left)
+    points = anchor.vertices or ((anchor.left, anchor.top), (anchor.right, anchor.top))
+    dx, dy = points[1][0] - points[0][0], points[1][1] - points[0][1]
+    length = math.hypot(dx, dy)
+    if not length:
+        return False
+    normal = (-dy / length, dx / length)
+
+    def extent(words):
+        values = [normal[0] * x + normal[1] * y for word in words
+                  for x, y in (word.vertices or ((word.left, word.top), (word.right, word.top),
+                                                (word.right, word.bottom), (word.left, word.bottom)))]
+        return min(values), max(values)
+
+    # Care glyphs can have a different baseline and a wide box reaching the
+    # next caption. Keep the already proved wash number in the band, rather
+    # than letting that non-composition glyph enlarge the material boundary.
+    band_words = tuple(set(material_words) | {word for _info, words in rows for word in words
+                                              if normalize_text(word.text).isdigit()})
+    low, high = extent(band_words)
+    for info in build_line_infos("\n".join(context)):
+        if not _has_unclassified_context(replace(candidate, text=info.raw), bounded=False):
+            continue
+        options = _row_options(info.raw, candidate.image_words, physical=True,
+                               tokenise=_annotation_tokens)
+        if len(options) != 1:
+            return False
+        words = tuple(candidate.image_words[index] for index in options[0])
+        start, end = extent(words)
+        # An opaque caption beside or between fibers remains composition
+        # evidence, even if paragraph order moved it beyond a metadata fence.
+        if not (end < low - 1 or start > high + 1):
+            return False
+    return True
+
+
 def _same_response_metadata_recovery(candidate: OcrCandidate, alternative: OcrCandidate,
                                      part: str, target_part: str) -> bool:
     """Classify literal wash numbers only from complete same-response rows."""
@@ -706,7 +757,10 @@ def _same_response_metadata_recovery(candidate: OcrCandidate, alternative: OcrCa
                 and not info.invalid_evidence and not info.unresolved_materials
                 and (not info.numbers or wash_number)):
             context.append(info.raw)
-    if not removed or _has_unclassified_context(replace(candidate, text="\n".join(context))):
+    if not removed or (
+        _has_unclassified_context(replace(candidate, text="\n".join(context)))
+        and not _same_response_fenced_context(candidate, alternative, context)
+    ):
         return False
     targets = [info for info in target_infos if info.part == target_part and not _is_metadata_line(info)]
     target_used = set()
@@ -1636,6 +1690,109 @@ def _same_response_hyphen_recovery(candidate, alternative, part, target_part):
     return True
 
 
+def _same_region_placeholder_recovery(candidate, alternative, part, candidates):
+    """Replace one boxed placeholder only with a complete, overlapping material row."""
+    from apps.text.parse_label import build_line_infos, _is_metadata_line
+
+    if (not re.search(r"[*?]", candidate.text) or not alternative.layout_used
+            or not candidate.image_variant_key or not alternative.image_variant_key
+            or candidate.image_variant_key == alternative.image_variant_key
+            or candidate.source == alternative.source
+            or set(candidate.rejected_composition_parts.get(part, ())) != {"unpaired_material_rows"}
+            or set(alternative.parts) != {part}):
+        return False
+    # A raw paragraph may shuffle captions. Only its exact, geometry-derived
+    # layout may locate the damaged cell; retain every original annotation and
+    # every part's material/ratio evidence when using that view.
+    source = candidate if candidate.layout_used else _literal_layout_peer(candidate, candidates)[0]
+    if (source is None or source.rejected_composition_parts != candidate.rejected_composition_parts
+            or source.observed_materials != candidate.observed_materials
+            or source.observed_ratios != candidate.observed_ratios
+            or source.paired_material_ratios != candidate.paired_material_ratios
+            or Counter(_annotation_tokens(source.text)) != Counter(_annotation_tokens(candidate.text))):
+        return False
+    views = (candidate, source, alternative)
+    if any(any(len(word.vertices) != 4 for word in view.image_words)
+           or not _covers_row_tokens(_annotation_tokens(view.text), list(view.image_words),
+                                    tokenise=_annotation_tokens) for view in views):
+        return False
+    if (not _verified_layout_rows(source) or not _verified_layout_rows(alternative)
+            or _has_unclassified_context(source) or _has_unclassified_context(alternative)):
+        return False
+    rows = []
+    for view in (source, alternative):
+        if (set(view.observed_materials) | set(view.observed_ratios)) - {part}:
+            return False
+        infos = build_line_infos(view.text)
+        located = _locate_rows(infos, view.image_words, physical=True,
+                               allow_quantisation=True, tokenise=_annotation_tokens)
+        if len(located) != len(infos):
+            return False
+        composition = [(info, words) for info, words in located
+                       if not _is_metadata_line(info) and (info.materials or info.numbers
+                           or info.explicit_percent or info.invalid_evidence or info.unresolved_materials)]
+        if any(info.part != part or info.invalid_evidence or info.unresolved_materials
+               or not info.explicit_percent or len(info.numbers) != 1 or len(info.materials) > 1
+               or not _physical_row(info.raw, words, allow_quantisation=True, tokenise=_annotation_tokens)
+               for info, words in composition):
+            return False
+        rows.append(composition)
+    original, reread = rows
+    if len(original) < 2 or len(original) != len(reread) or any(not info.materials for info, _ in reread):
+        return False
+    missing = [info for info, _ in original if not info.materials]
+    if len(missing) != 1:
+        return False
+    placeholder = "".join(token for token in _annotation_tokens(missing[0].raw)
+                          if not token.isdigit() and token != "%")
+    if not re.fullmatch(r"[*?]{1,3}", placeholder):
+        return False
+    # No number is repaired here. Match complete rows bijectively so neither
+    # another percentage nor another part can lend its material to the cell.
+    def numeric(items):
+        return Counter(token for word in items for token in _annotation_tokens(word.text)
+                       if token.isdigit() or token == "%")
+
+    used = set()
+    for info, words in original:
+        matches = []
+        for index, (target, target_words) in enumerate(reread):
+            if index in used or info.numbers != target.numbers:
+                continue
+            if (numeric(words) != numeric(target_words)
+                    or not _numeric_components_align(words, target_words, (), corroborated=False)
+                    or not _numeric_components_align(target_words, words, (), corroborated=False)):
+                continue
+            if info.materials:
+                if (info.materials == target.materials
+                        and Counter(_annotation_tokens(info.raw)) == Counter(_annotation_tokens(target.raw))
+                        and _aligned_reading(words, target_words, literal_cjk=True)
+                        and _aligned_reading(target_words, words, literal_cjk=True)
+                        and _cjk_components_align(words, target_words)
+                        and _cjk_components_align(target_words, words)):
+                    matches.append(index)
+            else:
+                damaged = tuple(word for word in words if re.fullmatch(r"[*?]{1,3}", word.text))
+                names = tuple(word for word in target_words if _annotation_tokens(word.text)
+                              and all(token.isalpha() for token in _annotation_tokens(word.text)))
+                if (damaged and names
+                        and find_material_key("".join(word.text for word in names)) == target.materials[0]
+                        and all(any(_overlaps(word, name) for name in names) for word in damaged)
+                        and all(any(_overlaps(word, name) for word in damaged) for name in names)):
+                    matches.append(index)
+        if len(matches) != 1:
+            return False
+        used.add(matches[0])
+    original_words = tuple(word for _, words in original for word in words)
+    target_words = tuple(word for _, words in reread for word in words)
+    for words, region in ((original_words, alternative.image_region), (target_words, source.image_region)):
+        left, top, right, bottom = region
+        if any(not (left - 2 <= word.left and word.right <= right + 2
+                    and top - 2 <= word.top and word.bottom <= bottom + 2) for word in words):
+            return False
+    return Counter(candidate.paired_material_ratios.get(part, ())) <= Counter(alternative.parts[part].items())
+
+
 def same_region_recovery(
     candidate: OcrCandidate, alternative: OcrCandidate, part: str,
     candidates: list[OcrCandidate] | None = None,
@@ -1658,6 +1815,9 @@ def same_region_recovery(
     forbidden = NEGATING_MODIFIERS | UNPRICED_MATERIALS | {"unknown", "olefin", "未知繊維", "未知纤维"}
     if any(token in forbidden for token in _tokens(candidate.text) + _tokens(alternative.text)):
         return False
+
+    if _same_region_placeholder_recovery(candidate, alternative, part, candidates):
+        return True
 
     # Keep IN's independently confirmed decimal/ratio-cell recovery confined
     # to its explicit artifact shapes. Ordinary rereads use the stricter path.

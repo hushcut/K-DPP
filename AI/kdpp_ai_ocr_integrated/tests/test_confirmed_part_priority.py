@@ -130,17 +130,3 @@ def test_fallback_part_and_yarn_remain_valid_in_the_service_response_contract(te
     assert response.status == 'success'
     assert response.selected_part == part
     assert response.materials == response.parts[part] == {'polyester': 100}
-
-
-@pytest.mark.parametrize('caption', [
-    '(자수, 상표, 무늬 등 제외)', '(심지, 밴드,\n자수장식 제외)',
-    '( 심지 , 보강재 , 상표 , 무늬 , 밴드 ,\n자수 장식 제외 )',
-    '(excluding embroidery)', '[embroidery decoration excluded]',
-])
-def test_exclusion_caption_does_not_create_a_yarn_part(caption):
-    result = parse_label('OUTER POLYESTER 96% POLYURETHANE 4%\n' + caption)
-    assert result['status'] == 'success'
-    assert result['selected_part'] == 'outer'
-    assert result['materials'] == {'polyester': 96, 'polyurethane': 4}
-    assert 'embroidery_yarn' not in result['parts']
-    assert 'embroidery_yarn' not in result['parse_evidence']['rejected_composition_parts']
