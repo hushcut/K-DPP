@@ -4,7 +4,8 @@
 	encode zstd gzip
 
 	# 앱 상한(main.py MAX_REQUEST_BYTES = 스캔 10MB + 1MB)과 같게 둡니다.
-	# 넘는 요청은 앱에 닿기 전에 413 으로 끊깁니다.
+	# 넘는 요청은 앱에 닿기 전에 413 으로 끊깁니다. 사진 업로드가 아닌 요청의
+	# 1MiB 상한(MAX_JSON_REQUEST_BYTES)은 앱이 Content-Type 을 보고 따로 겁니다.
 	request_body {
 		max_size 11MiB
 	}

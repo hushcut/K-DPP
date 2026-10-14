@@ -152,10 +152,10 @@ docker compose up -d --wait
 가입·비밀번호 찾기 인증번호 메일은 Resend 를 SMTP 로 씁니다(무료 하루 100통·월 3,000통, DECISIONS 171).
 다른 SMTP 서버로 바꿀 때는 `.env` 의 `K_DPP_SMTP_*` 와 비밀번호 파일만 바꿉니다.
 
-- 도메인: Resend 에 하위 도메인(예 `send.<도메인>`)을 추가하고 Resend 가 보여 주는 SPF·DKIM 레코드를 DNS 에
+- 도메인: Resend 에 하위 도메인(예 `mail.<도메인>` — Resend 가 그 앞에 `send.` 를 붙여 반송 주소로 씀)을 추가하고 Resend 가 보여 주는 SPF·DKIM 레코드를 DNS 에
   넣어 Verified 를 확인합니다. DMARC(`_dmarc` TXT `v=DMARC1; p=none;`)는 그 48시간 뒤, 첫 시험 발송은 도메인을
   등록하고 24시간 뒤에 합니다(네이버·다음은 SPF 가 맞지 않으면 반송).
-- `.env`: `K_DPP_EMAIL_DELIVERY=smtp`, `K_DPP_EMAIL_FROM`(예 `K-DPP <no-reply@send.<도메인>>`),
+- `.env`: `K_DPP_EMAIL_DELIVERY=smtp`, `K_DPP_EMAIL_FROM`(예 `K-DPP <no-reply@mail.<도메인>>`),
   `K_DPP_EMAIL_DAILY_MAX=100`(Resend 하루 한도와 같은 UTC 날짜 — 넘는 요청은 앱이 503 으로 먼저 막음).
   SMTP 값(`smtp.resend.com`·587·`resend`)은 `.env.example` 그대로 둡니다. 하나라도 비었거나 틀리면 앱이
   시작하지 않고 `docker compose logs app` 에 그 이름이 나옵니다.
@@ -222,4 +222,5 @@ http → https 이동 주소에 8443 이 빠지는 것은 컨테이너 안이 44
 - `docker inspect` 로 앱·백업 환경변수(DB 주소·비밀번호 포함)를 볼 수 있습니다. 서버 접속 권한 = DB 접근 권한입니다.
 - 로그는 `docker compose logs -f app caddy backup`. 서비스마다 10MB × 3개까지만 남습니다.
 - 길이를 밝히지 않은(chunked) 11MiB 초과 요청은 Caddy 가 빈 본문의 413 으로 끊습니다.
-  Content-Length 가 있는 요청은 앱이 먼저 JSON 413 으로 답합니다.
+  Content-Length 가 있는 요청은 앱이 먼저 JSON 413 으로 답합니다. 사진 업로드(multipart)가 아닌 요청은
+  앱이 1MiB 에서 JSON 413 으로 끊습니다(chunked 포함 — Caddy 상한은 사진 업로드 기준이라 그대로).

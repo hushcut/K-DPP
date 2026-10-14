@@ -4,6 +4,7 @@ import hashlib
 import json
 import threading
 import time
+import tracemalloc
 from datetime import timedelta
 
 import pytest
@@ -1012,3 +1013,190 @@ def test_unknown_api_docs_value_stops_startup():
     result = _import_main_with_api_docs("disable")
     assert result.returncode != 0
     assert "K_DPP_API_DOCS" in result.stderr
+
+
+# --- 사진 업로드가 아닌 요청의 본문 상한 (DECISIONS 244) ------------------------
+
+
+def _json_body_of_size(size):
+    # 정상 소재 입력에 채움 칸을 붙여 정확히 size 바이트로 만든다(모르는 칸은 요청 모델이 무시).
+    head, tail = b'{"materials": {"cotton": 100}, "pad": "', b'"}'
+    return head + b"x" * (size - len(head) - len(tail)) + tail
+
+
+def _assert_json_413(response):
+    assert response.status_code == 413
+    body = response.json()
+    assert body["error_code"] == "PAYLOAD_TOO_LARGE"
+    # 사진이 아닌 요청에 '이미지는 10MB 이하' 안내가 가지 않게 문구를 나눈다.
+    assert "1MB" in body["message"]
+    assert "이미지" not in body["message"]
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    [
+        "application/json",
+        "application/json; charset=utf-8",
+        "text/plain",
+        "application/x-www-form-urlencoded",
+        None,  # Content-Type 이 없으면 FastAPI 는 JSON 으로 읽는다
+    ],
+)
+def test_non_multipart_body_over_json_limit_returns_413(client, content_type):
+    limit = main.MAX_JSON_REQUEST_BYTES
+    headers = {"Content-Type": content_type} if content_type else {}
+
+    over_limit = client.post("/analyze", content=_json_body_of_size(limit + 1), headers=headers)
+
+    _assert_json_413(over_limit)
+
+
+def test_json_body_at_limit_still_calculates(client):
+    body = _json_body_of_size(main.MAX_JSON_REQUEST_BYTES)
+
+    response = client.post("/analyze", content=body, headers={"Content-Type": "application/json"})
+
+    assert response.status_code == 200
+    assert response.json()["carbon_footprint"] == 8.3
+
+
+def test_chunked_json_body_uses_json_limit(client):
+    # 길이를 미리 알리지 않는(chunked) 요청도 받은 바이트로 같은 상한을 센다.
+    def stream(body, size=64 * 1024):
+        for start in range(0, len(body), size):
+            yield body[start:start + size]
+
+    limit = main.MAX_JSON_REQUEST_BYTES
+    headers = {"Content-Type": "application/json"}
+    at_limit = client.post("/analyze", content=stream(_json_body_of_size(limit)), headers=headers)
+    over_limit = client.post("/analyze", content=stream(_json_body_of_size(limit + 1)), headers=headers)
+
+    # 상한 안이면 받아 둔 조각을 그대로 다시 넘겨 계산까지 간다.
+    assert at_limit.status_code == 200
+    assert at_limit.json()["carbon_footprint"] == 8.3
+    _assert_json_413(over_limit)
+
+
+@pytest.mark.parametrize(
+    ("content_type", "expected"),
+    [
+        (b"multipart/form-data", True),
+        (b"multipart/form-data; boundary=abc", True),
+        (b"Multipart/Form-Data;boundary=abc", True),
+        (b"  MULTIPART/FORM-DATA ; boundary=abc", True),
+        (None, False),
+        (b"", False),
+        (b"application/json", False),
+        (b"multipart/mixed; boundary=abc", False),
+        (b"text/plain; note=multipart/form-data", False),
+    ],
+)
+def test_multipart_is_recognised_by_media_type_only(content_type, expected):
+    assert main.is_multipart_request(content_type) is expected
+
+
+def test_multipart_body_keeps_upload_limit_on_any_path(client):
+    # multipart 로 보내면 11MB 상한이 그대로다. JSON 요청 경로에 multipart 를 보내도 FastAPI 는
+    # 본문을 JSON 으로 읽지 않아(바이트 그대로) 검증 오류 하나로 끝난다.
+    body = b"x" * (main.MAX_JSON_REQUEST_BYTES + 1)
+
+    response = client.post(
+        "/analyze",
+        content=body,
+        headers={"Content-Type": "Multipart/Form-Data; boundary=abc"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "VALIDATION_ERROR"
+    assert len(response.json()["detail"]) == 1
+
+
+def test_scan_upload_at_image_limit_still_passes(client, monkeypatch):
+    # 사진 업로드는 1MB 상한에 걸리지 않는다 — 10MB 꽉 찬 사진도 전처럼 받는다.
+    monkeypatch.setattr(main, "run_ocr", lambda *a, **k: "COTTON 100%")
+    token = _login_token(client, email="full-size-scan@example.com")
+
+    response = client.post(
+        "/api/scan",
+        files={"image": ("label.jpg", b"x" * main.MAX_UPLOAD_BYTES, "image/jpeg")},
+        data={"raw_ocr_text": "COTTON 100%"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["materials"] == {"cotton": 100}
+
+
+def test_too_many_materials_are_rejected_before_each_entry_is_validated(client):
+    # dict 의 Field(max_length) 는 칸마다 검증·오류를 다 만든 뒤에야 개수를 봐서, 숫자 아닌 값으로
+    # 칸을 채운 1MB 안쪽 요청 한 건이 오류 수만 개로 메모리를 크게 올렸다(고치기 전 약 62MB).
+    entries = 60_000
+    body = json.dumps(
+        {"materials": {str(i): "x" for i in range(entries)}}, separators=(",", ":")
+    ).encode()
+    assert len(body) <= main.MAX_JSON_REQUEST_BYTES
+
+    tracemalloc.start()
+    try:
+        response = client.post("/analyze", content=body, headers={"Content-Type": "application/json"})
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == [
+        {
+            "type": "too_long",
+            "loc": ["body", "materials"],
+            "msg": f"Dictionary should have at most {main.MAX_MATERIAL_ENTRIES} items after validation, not {entries}",
+        }
+    ]
+    # 본문을 파싱하는 데만 약 9MB 가 든다 — 칸마다 오류를 만들지 않았다는 여유 있는 선.
+    assert peak < 25 * 1024 * 1024
+
+
+def test_material_count_limit_keeps_the_error_shape(client):
+    # 개수 검사를 앞으로 옮겨도 21칸의 422 모양은 Field(max_length) 때와 같고, 20칸은 그대로 지나간다.
+    token = _login_token(client, email="material-count@example.com")
+    limit = main.MAX_MATERIAL_ENTRIES
+    over = {f"m{i}": 100 / (limit + 1) for i in range(limit + 1)}
+    at = {f"m{i}": 100 / limit for i in range(limit)}
+    expected = [
+        {
+            "type": "too_long",
+            "loc": ["body", "materials"],
+            "msg": f"Dictionary should have at most {limit} items after validation, not {limit + 1}",
+        }
+    ]
+    calls = [
+        ("/analyze", {}, {}),
+        ("/api/carbon/calculate", {"weight_grams": 200}, {"Authorization": f"Bearer {token}"}),
+    ]
+
+    for path, extra, headers in calls:
+        rejected = client.post(path, json={"materials": over, **extra}, headers=headers)
+        accepted = client.post(path, json={"materials": at, **extra}, headers=headers)
+
+        assert rejected.status_code == 422, path
+        assert rejected.json()["error_code"] == "VALIDATION_ERROR"
+        assert rejected.json()["detail"] == expected
+        # 20칸은 개수 검사를 지나 소재 확인까지 간다(표에 없는 이름이라 400).
+        assert accepted.status_code == 400, path
+        assert accepted.json()["error_code"] == "MATERIAL_NOT_FOUND"
+
+
+def test_validation_errors_are_still_cut_at_twenty(client):
+    # 상한 안(20칸)의 칸별 오류 20개 + 원문 길이 오류 1개 = 21개 → 응답에는 앞의 20개만.
+    response = client.post(
+        "/analyze",
+        json={
+            "materials": {f"m{i}": "x" for i in range(main.MAX_MATERIAL_ENTRIES)},
+            "raw_ocr_text": "x" * (main.MAX_RAW_OCR_TEXT_LENGTH + 1),
+        },
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert len(detail) == 20
+    assert all(set(error) == {"loc", "msg", "type"} for error in detail)

@@ -41,6 +41,7 @@
 - `WEIGHT_RANGE_INVALID`: 최소/최대 무게 범위 오류
 - `AUTH_REQUIRED`: 인증 필요
 - `INTERNAL_SERVER_ERROR`: 서버 내부 오류
+- `PAYLOAD_TOO_LARGE`: 요청 본문이 너무 큼(413) — 사진 업로드(multipart)는 11MB(이미지 10MB), 그 밖의 요청은 1MiB
 - `TOO_MANY_ATTEMPTS`: 시도·요청 횟수 한도 초과(429)
 - `EMAIL_CODE_RESEND_TOO_SOON`: 같은 이메일로 인증번호를 너무 빨리 다시 요청(429)
 - `EMAIL_SEND_UNAVAILABLE`: 서버의 하루 인증 메일 발송 상한에 닿음(503)
@@ -869,3 +870,14 @@ Authorization: Bearer <token>
 - **Vision 시간 초과는 504 `OCR_TIMEOUT`**(앱에 시간 초과 안내가 이미 있음). 나머지 Vision 실패는 전처럼 502.
 - 분석 함수(`analyze_ocr_result`)를 불러오지 못하면 OCR·파서 모듈 없음과 같이 Vision 전에 503 `AI_MODULE_FAILED`(세지 않음).
 - `raw_ocr_text` 요청은 전처럼 AI 파서(`parse_label`)로 바로 파싱한다 — 같은 422·`warnings` 규칙.
+
+## 변경 이력 — 사진 업로드가 아닌 요청의 본문 상한 (DECISIONS 244)
+
+- **사진 업로드(multipart/form-data)가 아닌 요청은 본문 1MiB 까지**: JSON 이거나 Content-Type 이 없는 요청이 1MiB 를 넘으면
+  413 `PAYLOAD_TOO_LARGE` "요청이 너무 큽니다. 사진 업로드가 아닌 요청은 1MB 이하여야 합니다."(길이를 밝히지 않은 chunked 요청도
+  받은 바이트로 셈). 이전에는 사진과 같은 11MB 까지 받아, 로그인 없는 `POST /analyze` 에 숫자가 아닌 소재 값 수십만 칸을 넣은
+  요청 한 건이 칸마다 검증 오류를 만들어 서버 메모리를 1GB 넘게 올렸다. 사진 업로드(`POST /api/scan`)의 11MB·문구는 그대로이고,
+  앱의 JSON 요청은 몇 KB 라 앱 변경 없음.
+- **`materials` 20개 상한을 칸마다 검증하기 전에 먼저 본다**(`/analyze`·`/api/carbon/calculate`): 422 `VALIDATION_ERROR` 와
+  `detail` 모양(`too_long`, `loc` `["body", "materials"]`)은 같다. 이전에는 칸마다 키·값을 다 검증한 뒤에야 개수를 봐서, 값이 틀린 칸이
+  21개 이상이면 칸별 오류(앞 20개)가 나왔는데 이제는 개수 오류 하나만 나온다.
