@@ -58,6 +58,10 @@ Future<ClothingTypeOption?> showClothingTypePickerSheet({
   return showModalBottomSheet<ClothingTypeOption>(
     context: context,
     isScrollControlled: true,
+    // 키보드가 올라와 시트가 화면 끝까지 커져도 상태 표시줄·다이내믹 아일랜드 아래에서 멈추게 합니다.
+    // 없으면 6.3인치 iPhone 에서 시트 윗변이 화면 맨 위까지 올라가 제목이 그 밑으로 들어갑니다
+    // (DECISIONS 246).
+    useSafeArea: true,
     isDismissible: canDismiss,
     // Flutter 손잡이는 enableDrag가 false여도 자체 드래그 감지기와 접근성 '닫기'
     // 동작을 가지며, 둘 다 PopScope를 거치지 않고 시트를 닫습니다. 그래서 필수
@@ -542,158 +546,174 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
         : const Color(0xFF777777);
     final inputFillColor = isDark ? const Color(0xFF2A2A2E) : Colors.white;
 
-    return ListView(
-      key: const ValueKey('direct-input'),
-      shrinkWrap: true,
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-      children: [
-        Row(
-          children: [
-            IconButton(
-              onPressed: _leaveDirectInputMode,
-              tooltip: '의류 종류 목록으로 돌아가기',
-              icon: Icon(
-                Icons.arrow_back_ios_new_rounded,
+    // 스크롤되는 부분(제목부터 안내 카드까지)입니다.
+    final fields = <Widget>[
+      Row(
+        children: [
+          IconButton(
+            onPressed: _leaveDirectInputMode,
+            tooltip: '의류 종류 목록으로 돌아가기',
+            icon: Icon(
+              Icons.arrow_back_ios_new_rounded,
+              color: primaryText,
+              size: 20,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              '직접 무게 입력',
+              textAlign: TextAlign.center,
+              style: TextStyle(
                 color: primaryText,
-                size: 20,
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
               ),
             ),
-            Expanded(
-              child: Text(
-                '직접 무게 입력',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: primaryText,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-            const SizedBox(width: 48),
-          ],
+          ),
+          const SizedBox(width: 48),
+        ],
+      ),
+      const SizedBox(height: 8),
+      Text(
+        '실제 무게를 알고 있다면 더 정확하게 탄소발자국을 계산할 수 있어요.',
+        style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
+      ),
+      const SizedBox(height: 18),
+      TextField(
+        controller: _directNameController,
+        focusNode: _directNameFocusNode,
+        autofocus: true,
+        style: TextStyle(color: primaryText),
+        textInputAction: TextInputAction.next,
+        onTapOutside: dismissKeyboardOnTapOutside,
+        decoration: InputDecoration(
+          filled: true,
+          fillColor: inputFillColor,
+          labelText: '의류 종류',
+          hintText: '예: 가디건, 조끼, 트레이닝복',
+          labelStyle: TextStyle(color: secondaryText),
+          hintStyle: TextStyle(color: secondaryText),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          prefixIcon: const Icon(Icons.edit_outlined),
         ),
-        const SizedBox(height: 8),
-        Text(
-          '실제 무게를 알고 있다면 더 정확하게 탄소발자국을 계산할 수 있어요.',
+        onChanged: (_) {
+          if (_directErrorText == null) return;
+          setState(() {
+            _directErrorText = null;
+          });
+        },
+      ),
+      const SizedBox(height: 14),
+      TextField(
+        controller: _directWeightController,
+        focusNode: _directWeightFocusNode,
+        style: TextStyle(color: primaryText),
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        textInputAction: TextInputAction.done,
+        onTapOutside: dismissKeyboardOnTapOutside,
+        decoration: InputDecoration(
+          filled: true,
+          fillColor: inputFillColor,
+          labelText: '실제 무게',
+          hintText: '예: 620',
+          suffixText: 'g',
+          labelStyle: TextStyle(color: secondaryText),
+          hintStyle: TextStyle(color: secondaryText),
+          suffixStyle: TextStyle(color: secondaryText),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          prefixIcon: const Icon(Icons.scale_outlined),
+        ),
+        onChanged: (_) {
+          if (_directErrorText == null) return;
+          setState(() {
+            _directErrorText = null;
+          });
+        },
+        onSubmitted: (_) => _submitDirectInput(),
+      ),
+      const SizedBox(height: 16),
+      Text(
+        '분류',
+        style: TextStyle(
+          color: primaryText,
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      const SizedBox(height: 10),
+      ClothingCategorySegmentedControl(
+        options: const ['상의', '하의'],
+        selected: _directCategory,
+        onChanged: (value) {
+          setState(() {
+            _directCategory = value;
+          });
+        },
+      ),
+      if (_directErrorText != null) ...[
+        const SizedBox(height: 12),
+        Semantics(
+          liveRegion: true,
+          child: Text(
+            _directErrorText!,
+            style: const TextStyle(
+              color: Colors.redAccent,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+      const SizedBox(height: 20),
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: borderColor),
+        ),
+        child: Text(
+          '무게는 의류 한 벌 기준으로 g 단위로 입력해 주세요.',
           style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
         ),
-        const SizedBox(height: 18),
-        TextField(
-          controller: _directNameController,
-          focusNode: _directNameFocusNode,
-          autofocus: true,
-          style: TextStyle(color: primaryText),
-          textInputAction: TextInputAction.next,
-          onTapOutside: dismissKeyboardOnTapOutside,
-          decoration: InputDecoration(
-            filled: true,
-            fillColor: inputFillColor,
-            labelText: '의류 종류',
-            hintText: '예: 가디건, 조끼, 트레이닝복',
-            labelStyle: TextStyle(color: secondaryText),
-            hintStyle: TextStyle(color: secondaryText),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            prefixIcon: const Icon(Icons.edit_outlined),
-          ),
-          onChanged: (_) {
-            if (_directErrorText == null) return;
-            setState(() {
-              _directErrorText = null;
-            });
-          },
-        ),
-        const SizedBox(height: 14),
-        TextField(
-          controller: _directWeightController,
-          focusNode: _directWeightFocusNode,
-          style: TextStyle(color: primaryText),
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          textInputAction: TextInputAction.done,
-          onTapOutside: dismissKeyboardOnTapOutside,
-          decoration: InputDecoration(
-            filled: true,
-            fillColor: inputFillColor,
-            labelText: '실제 무게',
-            hintText: '예: 620',
-            suffixText: 'g',
-            labelStyle: TextStyle(color: secondaryText),
-            hintStyle: TextStyle(color: secondaryText),
-            suffixStyle: TextStyle(color: secondaryText),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            prefixIcon: const Icon(Icons.scale_outlined),
-          ),
-          onChanged: (_) {
-            if (_directErrorText == null) return;
-            setState(() {
-              _directErrorText = null;
-            });
-          },
-          onSubmitted: (_) => _submitDirectInput(),
-        ),
-        const SizedBox(height: 16),
-        Text(
-          '분류',
-          style: TextStyle(
-            color: primaryText,
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
+      ),
+    ];
+
+    // '적용하기'는 스크롤 밖 맨 아래에 둡니다. 키보드가 올라와 남은 높이가 내용보다 작아지면 위
+    // 입력란만 스크롤되고, 버튼은 키보드(iOS 숫자 칸은 그 위 막대) 바로 위에 늘 보입니다. 목록 끝에
+    // 두었을 때는 6.3인치 iPhone 에서 키보드에 가려졌습니다(DECISIONS 246). 키보드가 없을 때 간격은
+    // 전과 같습니다(목록 아래 8 + 버튼 위 12 = 20).
+    return Column(
+      key: const ValueKey('direct-input'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Flexible(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            children: fields,
           ),
         ),
-        const SizedBox(height: 10),
-        ClothingCategorySegmentedControl(
-          options: const ['상의', '하의'],
-          selected: _directCategory,
-          onChanged: (value) {
-            setState(() {
-              _directCategory = value;
-            });
-          },
-        ),
-        if (_directErrorText != null) ...[
-          const SizedBox(height: 12),
-          Semantics(
-            liveRegion: true,
-            child: Text(
-              _directErrorText!,
-              style: const TextStyle(
-                color: Colors.redAccent,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          child: SizedBox(
+            height: 50,
+            child: ElevatedButton(
+              onPressed: _submitDirectInput,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppPalette.accent,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
               ),
-            ),
-          ),
-        ],
-        const SizedBox(height: 20),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: cardColor,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: borderColor),
-          ),
-          child: Text(
-            '무게는 의류 한 벌 기준으로 g 단위로 입력해 주세요.',
-            style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
-          ),
-        ),
-        const SizedBox(height: 20),
-        SizedBox(
-          width: double.infinity,
-          height: 50,
-          child: ElevatedButton(
-            onPressed: _submitDirectInput,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppPalette.accent,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            child: const Text(
-              '적용하기',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
+              child: const Text(
+                '적용하기',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ),
