@@ -10,6 +10,7 @@ import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/models/main_screen_arguments.dart';
 import 'package:k_dpp/navigation_bar_opacity_provider.dart';
 import 'package:k_dpp/scan_screen.dart';
+import 'package:k_dpp/services/carbon_api_service.dart';
 import 'package:k_dpp/services/scan_api_service.dart';
 import 'package:k_dpp/widgets/app_back_button.dart';
 import 'package:k_dpp/widgets/app_banner.dart';
@@ -17,6 +18,7 @@ import 'package:k_dpp/widgets/frosted_surface.dart';
 import 'package:k_dpp/widgets/scan_result_view.dart';
 import 'package:provider/provider.dart';
 
+import 'helpers/fake_auth_session_storage.dart';
 import 'helpers/fake_closet_storage.dart';
 
 void main() {
@@ -433,8 +435,12 @@ void main() {
     double navigationBarOpacity = NavigationBarOpacityProvider.defaultOpacity,
     Map<String, WidgetBuilder> routes = const {},
     FakeClosetStorage? storage,
+    FakeAuthSessionStorage? authSessionStorage,
   }) async {
-    final provider = ClosetProvider(storage: storage ?? FakeClosetStorage());
+    final provider = ClosetProvider(
+      storage: storage ?? FakeClosetStorage(),
+      authSessionStorage: authSessionStorage,
+    );
     final opacityProvider = NavigationBarOpacityProvider();
     if (navigationBarOpacity != NavigationBarOpacityProvider.defaultOpacity) {
       opacityProvider.preview(navigationBarOpacity);
@@ -864,6 +870,128 @@ void main() {
     await tester.pump(const Duration(seconds: 10));
   });
 
+  // C26(DECISIONS 2026-10-14): 저장은 서버 계산을 기다린 뒤 옷장에 넣는다. 그 사이 로그아웃하면 공용 칸에
+  // 들어가 다음에 앱을 켠 이메일 계정 옷장에 합쳐졌다. 지금은 저장 중 설정·"<"·뒤로가기가 막혀 화면으로는
+  // 그 사이 계정을 못 바꾸므로, 계산 응답을 붙잡아 두고 provider 로 직접 바꾼다.
+  group('계산을 기다리는 사이 계정이 바뀐 스캔 저장', () {
+    Future<(ClosetProvider, FakeClosetStorage, _HeldCarbonApiService)>
+    startHeldServerSave(WidgetTester tester) async {
+      final carbonApi = _HeldCarbonApiService();
+      ScanScreen.carbonApiServiceFactory = () => carbonApi;
+      addTearDown(
+        () => ScanScreen.carbonApiServiceFactory = CarbonApiService.new,
+      );
+      final storage = FakeClosetStorage();
+      final provider = await pumpMainScreen(
+        tester,
+        storage: storage,
+        authSessionStorage: FakeAuthSessionStorage(),
+        routes: {'/main': (_) => const MainScreen()},
+      );
+      await provider.setAuthenticatedUser(
+        nickname: 'A',
+        email: 'a@example.com',
+        accessToken: 'token-a',
+        expiresInSeconds: 3600,
+      );
+      await tester.pump();
+
+      await openScanResultForm(tester);
+      await fillOneMaterial(tester);
+      await tapSave(tester);
+      expect(carbonApi.calls, 1);
+      return (provider, storage, carbonApi);
+    }
+
+    Future<List<int?>?> savedIdsFor(FakeClosetStorage storage, String owner) {
+      return storage
+          .loadClothesListOrNullFor(owner)
+          .then((items) => items?.map((item) => item.savedResultId).toList());
+    }
+
+    testWidgets('같은 계정이면 서버 저장 ID 를 달아 옷장에 넣고 리포트를 연다', (tester) async {
+      final (provider, storage, carbonApi) = await startHeldServerSave(tester);
+
+      carbonApi.respond(savedResultId: 4242);
+      await tester.pump();
+      await tester.pump(routeTransition);
+      await tester.pump(routeTransition);
+
+      expect(provider.items.single.savedResultId, 4242);
+      expect(await savedIdsFor(storage, 'a@example.com'), [4242]);
+      expect(find.text('상세 리포트'), findsOneWidget);
+    });
+
+    testWidgets('로그아웃했으면 공용 칸이 아니라 저장을 시작한 계정 옷장에 넣고 리포트를 열지 않는다', (
+      tester,
+    ) async {
+      final (provider, storage, carbonApi) = await startHeldServerSave(tester);
+
+      await provider.logout();
+      carbonApi.respond(savedResultId: 4242);
+      await tester.pump();
+      await tester.pump(routeTransition);
+
+      expect(provider.items, isEmpty);
+      expect(await storage.loadClothesListOrNull(), isNull);
+      expect(await savedIdsFor(storage, 'a@example.com'), [4242]);
+      // 실제 앱에선 로그아웃이 화면을 로그인으로 바꾸지만, 여기선 화면이 남아 있어도 넘어가지 않는다.
+      expect(find.byType(ScanResultView), findsOneWidget);
+      expect(find.text('상세 리포트'), findsNothing);
+    });
+
+    testWidgets('다른 계정이 로그인했으면 그 계정 옷장에 넣지 않고 그 계정 리포트도 열지 않는다', (
+      tester,
+    ) async {
+      final (provider, storage, carbonApi) = await startHeldServerSave(tester);
+
+      await provider.logout();
+      await provider.setAuthenticatedUser(
+        nickname: 'B',
+        email: 'b@example.com',
+        accessToken: 'token-b',
+        expiresInSeconds: 3600,
+      );
+      await provider.addClothes(
+        Clothes(
+          title: 'B 셔츠',
+          category: '상의',
+          health: 80,
+          materials: {'cotton': 100},
+          careInstruction: '찬물 세탁',
+          carbonFootprint: 3.0,
+          savedResultId: 7,
+        ),
+      );
+      carbonApi.respond(savedResultId: 4242);
+      await tester.pump();
+      await tester.pump(routeTransition);
+      await tester.pump(routeTransition);
+
+      expect(provider.items.map((item) => item.savedResultId), [7]);
+      expect(await savedIdsFor(storage, 'b@example.com'), [7]);
+      expect(await savedIdsFor(storage, 'a@example.com'), [4242]);
+      expect(find.byType(ScanResultView), findsOneWidget);
+      expect(find.text('상세 리포트'), findsNothing);
+    });
+
+    testWidgets('로그아웃 뒤 계산이 401 이면 저장을 시작한 계정 옷장에 넣고 만료 안내를 하지 않는다', (
+      tester,
+    ) async {
+      final (provider, storage, carbonApi) = await startHeldServerSave(tester);
+
+      await provider.logout();
+      carbonApi.fail(CarbonApiErrorType.unauthorized);
+      await tester.pump();
+      await tester.pump(routeTransition);
+
+      expect(provider.items, isEmpty);
+      expect(await storage.loadClothesListOrNull(), isNull);
+      expect(await savedIdsFor(storage, 'a@example.com'), [null]);
+      expect(find.textContaining('로그인이 만료됐어요'), findsNothing);
+    });
+  });
+
   // 2026-10-01 DECISIONS 75: 선택 모드에선 하단 메뉴를 높이는 남긴 채 아래로 밀어 숨기고,
   // 그 막대 자리 왼쪽에 휴지통을 띄운다(참고: Apple Music 플레이리스트 편집).
   testWidgets('옷장 선택 모드에서는 하단 메뉴를 높이를 남긴 채 내려 숨기고, 막대 자리 왼쪽에 휴지통을 띄운다', (
@@ -968,6 +1096,42 @@ void main() {
     await pumpMainScreen(tester, navigationBarOpacity: 1.0);
     expect(find.byType(BackdropFilter), findsNothing);
   });
+}
+
+/// 탄소 계산 응답을 붙잡아 두는 서비스입니다. 계산을 기다리는 사이 계정을 바꿔 보는 데 씁니다(C26).
+class _HeldCarbonApiService extends CarbonApiService {
+  final Completer<CarbonCalculationResult> _response = Completer();
+  int calls = 0;
+
+  void respond({required int savedResultId}) {
+    _response.complete(
+      CarbonCalculationResult(
+        carbonFactor: 8.3,
+        carbonFootprint: 1.5,
+        carbonFootprintMin: 0.8,
+        carbonFootprintMax: 2.1,
+        minWeightGram: 100,
+        maxWeightGram: 250,
+        unit: 'kg CO2eq',
+        savedResultId: savedResultId,
+      ),
+    );
+  }
+
+  void fail(CarbonApiErrorType type) {
+    _response.completeError(CarbonApiException(type: type, message: ''));
+  }
+
+  @override
+  Future<CarbonCalculationResult> calculate({
+    required Map<String, double> materials,
+    required double minWeightGram,
+    required double maxWeightGram,
+    required String accessToken,
+  }) {
+    calls++;
+    return _response.future;
+  }
 }
 
 /// 옷장 저장을 붙잡아 두어 스캔 화면의 '저장 중' 상태를 만들 수 있는 저장소입니다.

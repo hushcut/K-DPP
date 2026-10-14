@@ -48,6 +48,12 @@ class ScanScreen extends StatefulWidget {
   /// 설정 버튼을 막습니다. 이 화면만 값을 바꿉니다.
   final ValueNotifier<bool>? saving;
 
+  /// 탄소 계산 서비스를 만듭니다. 테스트가 계산 응답을 붙잡아 두고 그 사이 계정을 바꿔 볼 때
+  /// 갈아 끼웁니다(C26).
+  @visibleForTesting
+  static CarbonApiService Function() carbonApiServiceFactory =
+      CarbonApiService.new;
+
   @override
   State<ScanScreen> createState() => _ScanScreenState();
 }
@@ -84,7 +90,8 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
 
   // 분석, 촬영, 초안 생성, 계산, 저장 책임은 전용 서비스에 위임합니다.
   final ScanAnalysisService _scanAnalysisService = ScanAnalysisService();
-  final CarbonApiService _carbonApiService = CarbonApiService();
+  final CarbonApiService _carbonApiService =
+      ScanScreen.carbonApiServiceFactory();
   // 결과 화면의 소재 추천 목록과 소재 선택창이 함께 쓰는 소재 목록입니다.
   final MaterialCatalogController _materialCatalog = MaterialCatalogController(
     fetchMaterials: MaterialCatalogApiService().fetchMaterials,
