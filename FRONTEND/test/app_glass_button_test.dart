@@ -20,10 +20,10 @@ import 'package:shared_preferences_platform_interface/shared_preferences_async_p
 import 'helpers/fake_auth_session_storage.dart';
 import 'helpers/fake_closet_storage.dart';
 
-// DECISIONS 224·225: 혼자 떠 있는 버튼은 반투명 유리 원(캡슐)이고, 누르면 iOS 는 물방울처럼 부풀며
-// 당기면 늘어나고, Android 는 모서리가 줄어 둥근 네모 쪽으로 눌립니다. 계기는 "<" 를 누르면 세로로
-// 긴 원이 보이던 것(앱바 칸 44×56 을 버튼이 채움, Material 3 는 splashRadius 를 쓰지 않음)이라,
-// 원 크기와 모양부터 지킵니다.
+// DECISIONS 224·225·229: 혼자 떠 있는 버튼은 iOS 에선 반투명 유리 원(캡슐)이고 누르면 물방울처럼
+// 부풀며 당기면 늘어납니다. Android 는 Material 식으로 원 배경 없이 아이콘만 두고, 누르면 동그란
+// 물결이 퍼집니다. 계기는 "<" 를 누르면 세로로 긴 원이 보이던 것(앱바 칸 44×56 을 버튼이 채움,
+// Material 3 는 splashRadius 를 쓰지 않음)이라, 두 플랫폼 모두 원 크기와 모양부터 지킵니다.
 final _iOS = TargetPlatformVariant.only(TargetPlatform.iOS);
 final _android = TargetPlatformVariant.only(TargetPlatform.android);
 final _both = TargetPlatformVariant({
@@ -39,26 +39,47 @@ void main() {
         InMemorySharedPreferencesAsync.empty();
   });
 
-  group('"<" 유리 원', () {
+  group('"<" 버튼', () {
+    // 테마는 테스트 안에서 만듭니다. ThemeData 의 플랫폼은 만들 때의 기본값으로 굳어서, 밖에서 만들면
+    // iOS 변형에서도 Android 테마가 됩니다.
     for (final (name, theme) in [
-      ('라이트', AppTheme.light()),
-      ('다크', AppTheme.dark()),
+      ('라이트', AppTheme.light),
+      ('다크', AppTheme.dark),
     ]) {
-      testWidgets('$name: 앱바 칸 안에서 보이는 원은 44×44 원, 누를 수 있는 곳은 48×48', (
+      testWidgets('$name: 앱바 칸 안에서 원(iOS 44·Android 40)이고, 누를 수 있는 곳은 48×48', (
         tester,
       ) async {
-        await _pumpBackButton(tester, theme: theme);
+        await _pumpBackButton(tester, theme: theme());
         final button = find.byType(AppBackButton);
 
-        expect(tester.getSize(_surfaceOf(button)), const Size.square(44));
-        expect(_cornerOf(tester, button), 22, reason: '반지름 = 지름의 절반이라 원');
+        expect(
+          tester.getSize(_surfaceOf(button)),
+          Size.square(_isIOS ? 44 : 40),
+        );
+        expect(_shapeOf(tester, button), isA<CircleBorder>());
         expect(
           tester.getSize(
             find.descendant(of: button, matching: find.byType(IconButton)),
           ),
           const Size.square(48),
         );
-      });
+        // 아이콘은 유리 원 안에선 22, Material 은 기본 24 입니다.
+        expect(
+          tester.getSize(
+            find.descendant(of: button, matching: find.byType(Icon)),
+          ),
+          Size.square(_isIOS ? 22 : 24),
+        );
+        // iOS 는 늘 보이는 유리 원, Android 는 원 배경 없이 아이콘만입니다.
+        if (_isIOS) {
+          expect(
+            _fillOf(tester, button),
+            AppGlassStyle.fill(tester.element(button)),
+          );
+        } else {
+          expect(_fillOf(tester, button)?.a ?? 0, 0);
+        }
+      }, variant: _both);
     }
 
     testWidgets('iOS: 누르는 동안 물방울처럼 부풀고 바탕이 바뀌며, 떼면 제자리로 돌아온다', (tester) async {
@@ -72,9 +93,8 @@ void main() {
       final gesture = await tester.startGesture(tester.getCenter(button));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      // 원 44 가 약 55 까지 부풉니다. 모서리는 그대로 원입니다.
+      // 원 44 가 약 55 까지 부풉니다.
       expect(_scaleOf(tester, button), closeTo(1.25, 0.02));
-      expect(_cornerOf(tester, button), 22);
       expect(_fillOf(tester, button), AppGlassStyle.pressedFill(context));
 
       await gesture.up();
@@ -82,43 +102,47 @@ void main() {
       expect(_scaleOf(tester, button), closeTo(1, 0.001));
     }, variant: _iOS);
 
-    testWidgets(
-      'Android: 크기는 그대로, 누르는 동안 모서리가 22 → 14 로 줄어 둥근 네모 쪽으로 눌린다',
-      (tester) async {
-        await _pumpBackButton(tester);
-        final button = find.byType(AppBackButton);
-        final context = tester.element(button);
-
-        final gesture = await tester.startGesture(tester.getCenter(button));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 300));
-        expect(_scaleOf(tester, button), 1);
-        expect(_cornerOf(tester, button), closeTo(14, 0.5));
-        expect(_fillOf(tester, button), AppGlassStyle.pressedFill(context));
-
-        await gesture.up();
-        await tester.pumpAndSettle();
-        expect(_cornerOf(tester, button), closeTo(22, 0.01));
-        expect(_fillOf(tester, button), AppGlassStyle.fill(context));
-      },
-      variant: _android,
-    );
-
-    testWidgets('물결(Material 잉크)은 그리지 않는다 — 부풂·모양 바뀜과 겹치지 않게', (tester) async {
+    testWidgets('iOS: 물결(Material 잉크)은 그리지 않는다 — 부풂과 겹치지 않게', (tester) async {
       await _pumpBackButton(tester);
-      final button = find.byType(AppBackButton);
+      final inkWell = _inkWellOf(tester, find.byType(AppBackButton));
 
-      final inkWell = tester.widget<InkWell>(
-        find.descendant(of: button, matching: find.byType(InkWell)),
-      );
       expect(inkWell.splashFactory, NoSplash.splashFactory);
       expect(
         inkWell.overlayColor?.resolve({WidgetState.pressed}),
         Colors.transparent,
       );
-    }, variant: _both);
+    }, variant: _iOS);
 
-    testWidgets('"동작 줄이기"가 켜져 있으면 모양은 그대로이고 바탕색만 바뀐다', (tester) async {
+    testWidgets('Android: 부풀지 않고, 누르면 동그란 원 안에 Material 물결이 퍼진다', (
+      tester,
+    ) async {
+      await _pumpBackButton(tester);
+      final button = find.byType(AppBackButton);
+
+      // 물방울 효과를 아예 두지 않습니다.
+      expect(
+        find.descendant(
+          of: button,
+          matching: find.byKey(GlassPressBuilder.transformKey),
+        ),
+        findsNothing,
+      );
+      final inkWell = _inkWellOf(tester, button);
+      expect(inkWell.splashFactory, isNot(NoSplash.splashFactory));
+      expect(inkWell.customBorder, isA<CircleBorder>());
+      expect(
+        inkWell.overlayColor?.resolve({WidgetState.pressed})?.a ?? 0,
+        greaterThan(0),
+      );
+
+      final gesture = await tester.startGesture(tester.getCenter(button));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.getSize(_surfaceOf(button)), const Size.square(40));
+      await gesture.up();
+      await tester.pumpAndSettle();
+    }, variant: _android);
+
+    testWidgets('iOS: "동작 줄이기"가 켜져 있으면 모양은 그대로이고 바탕색만 바뀐다', (tester) async {
       await _pumpBackButton(tester, disableAnimations: true);
       final button = find.byType(AppBackButton);
 
@@ -127,7 +151,6 @@ void main() {
       await gesture.moveBy(const Offset(40, 0));
       await tester.pump(const Duration(milliseconds: 300));
       expect(_matrixOf(tester, button), Matrix4.identity());
-      expect(_cornerOf(tester, button), 22);
       expect(
         _fillOf(tester, button),
         AppGlassStyle.pressedFill(tester.element(button)),
@@ -136,23 +159,7 @@ void main() {
       await tester.pumpAndSettle();
     }, variant: _iOS);
 
-    testWidgets('Android 도 "동작 줄이기"면 모서리가 그대로이고 바탕색만 바뀐다', (tester) async {
-      await _pumpBackButton(tester, disableAnimations: true);
-      final button = find.byType(AppBackButton);
-
-      final gesture = await tester.startGesture(tester.getCenter(button));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(_cornerOf(tester, button), 22);
-      expect(
-        _fillOf(tester, button),
-        AppGlassStyle.pressedFill(tester.element(button)),
-      );
-      await gesture.up();
-      await tester.pumpAndSettle();
-    }, variant: _android);
-
-    testWidgets('누를 수 없는 버튼은 눌러도 반응하지 않는다', (tester) async {
+    testWidgets('iOS: 누를 수 없는 버튼은 눌러도 반응하지 않는다', (tester) async {
       await tester.pumpWidget(
         MaterialApp(
           theme: AppTheme.light(),
@@ -171,12 +178,15 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       expect(_matrixOf(tester, button), Matrix4.identity());
-      expect(_cornerOf(tester, button), 22);
+      expect(
+        _fillOf(tester, button),
+        AppGlassStyle.fill(tester.element(button)),
+      );
       await gesture.up();
       await tester.pumpAndSettle();
-    }, variant: _both);
+    }, variant: _iOS);
 
-    testWidgets('누르고 있는 동안 누를 수 없게 바뀌어도 오류 없이 제자리로 돌아온다', (tester) async {
+    testWidgets('iOS: 누르고 있는 동안 누를 수 없게 바뀌어도 오류 없이 제자리로 돌아온다', (tester) async {
       // 스캔 저장이 시작돼 설정 버튼이 잠기는 순간 손가락이 올라가 있는 경우입니다. 버튼은 그리는
       // 도중에 눌림을 풀어 알리므로, 그때 바로 다시 그리면 Flutter 가 막습니다.
       final enabled = ValueNotifier(true);
@@ -201,22 +211,17 @@ void main() {
       final gesture = await tester.startGesture(tester.getCenter(button));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      if (_isIOS) {
-        expect(_scaleOf(tester, button), greaterThan(1.1));
-      } else {
-        expect(_cornerOf(tester, button), lessThan(16));
-      }
+      expect(_scaleOf(tester, button), greaterThan(1.1));
 
       enabled.value = false;
       await tester.pump();
       expect(tester.takeException(), isNull);
       await tester.pumpAndSettle();
       expect(_scaleOf(tester, button), closeTo(1, 0.001));
-      expect(_cornerOf(tester, button), closeTo(22, 0.01));
 
       await gesture.up();
       await tester.pumpAndSettle();
-    }, variant: _both);
+    }, variant: _iOS);
   });
 
   group('iOS 누른 채 당기기', () {
@@ -385,22 +390,29 @@ void main() {
   });
 
   group('옷장', () {
-    testWidgets('"선택" 은 같은 재질의 캡슐, 정렬은 유리 원이다', (tester) async {
+    testWidgets('iOS 는 "선택" 캡슐·정렬 유리 원, Android 는 바탕 없는 글자·아이콘 버튼', (
+      tester,
+    ) async {
       await _pumpCloset(tester);
 
       final select = find.ancestor(
         of: find.text('선택'),
         matching: find.byType(AppGlassTextButton),
       );
-      expect(tester.getSize(_surfaceOf(select)).height, 36);
-      expect(_cornerOf(tester, select), 18, reason: '반지름 = 높이의 절반이라 캡슐');
-
       final sort = find.ancestor(
         of: find.byIcon(Icons.sort),
         matching: find.byType(AppGlassIconButton),
       );
-      expect(tester.getSize(_surfaceOf(sort)), const Size.square(44));
-    });
+      if (_isIOS) {
+        expect(tester.getSize(_surfaceOf(select)).height, 36);
+        expect(_shapeOf(tester, select), isA<StadiumBorder>());
+        expect(tester.getSize(_surfaceOf(sort)), const Size.square(44));
+      } else {
+        expect(_fillOf(tester, select)?.a ?? 0, 0);
+        expect(_fillOf(tester, sort)?.a ?? 0, 0);
+        expect(tester.getSize(_surfaceOf(sort)), const Size.square(40));
+      }
+    }, variant: _both);
 
     testWidgets('휴지통은 고른 옷이 있을 때만 반응하고, 떼면 확인창이 뜬다', (tester) async {
       await _pumpCloset(tester);
@@ -411,20 +423,34 @@ void main() {
         of: find.byIcon(Icons.delete_outline),
         matching: find.byType(GlassPressBuilder),
       );
-      double trashCorner() => tester
-          .widget<FrostedSurface>(
-            find.descendant(of: trash, matching: find.byType(FrostedSurface)),
-          )
-          .borderRadius
-          .topLeft
-          .x;
+      final transform = find.descendant(
+        of: trash,
+        matching: find.byKey(GlassPressBuilder.transformKey),
+      );
+
+      // 모양은 두 플랫폼 모두 흐림 원 56 그대로입니다.
+      expect(
+        tester
+            .widget<FrostedSurface>(
+              find.descendant(of: trash, matching: find.byType(FrostedSurface)),
+            )
+            .borderRadius,
+        BorderRadius.circular(28),
+      );
+      if (!_isIOS) {
+        // Android: 물방울 없이 Material 물결이 그대로입니다.
+        expect(transform, findsNothing);
+        expect(
+          _inkWellOf(tester, trash).splashFactory,
+          isNot(NoSplash.splashFactory),
+        );
+      }
 
       // 아무것도 고르지 않음: 누를 수 없어 반응하지 않습니다.
       var gesture = await tester.startGesture(tester.getCenter(trash));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      expect(_matrixOf(tester, trash), Matrix4.identity());
-      expect(trashCorner(), 28);
+      if (_isIOS) expect(_matrixOf(tester, trash), Matrix4.identity());
       await gesture.up();
       await tester.pumpAndSettle();
 
@@ -437,18 +463,13 @@ void main() {
       if (_isIOS) {
         // 큰 원이라 위쪽 원(1.25)보다 덜 부풉니다(56 → 약 64).
         expect(_scaleOf(tester, trash), closeTo(1.14, 0.02));
-        expect(trashCorner(), 28);
-      } else {
-        expect(_scaleOf(tester, trash), 1);
-        expect(trashCorner(), closeTo(28 * 0.64, 0.5));
       }
 
       // 떼면 확인창이 뜨고, 바로 지워지지 않습니다.
       await gesture.up();
       await tester.pumpAndSettle();
       expect(find.text('선택한 의류 삭제'), findsOneWidget);
-      expect(_scaleOf(tester, trash), closeTo(1, 0.001));
-      expect(trashCorner(), closeTo(28, 0.01));
+      if (_isIOS) expect(_scaleOf(tester, trash), closeTo(1, 0.001));
     }, variant: _both);
   });
 }
@@ -516,13 +537,15 @@ Finder _surfaceOf(Finder button) =>
 Color? _fillOf(WidgetTester tester, Finder button) =>
     tester.widget<Material>(_surfaceOf(button)).color;
 
-/// 바탕 모서리 반지름입니다. 원 44 는 22, 캡슐 36 은 18 이 평소 값입니다.
-double _cornerOf(WidgetTester tester, Finder button) {
-  final shape = tester.widget<Material>(_surfaceOf(button)).shape;
-  return ((shape as RoundedRectangleBorder).borderRadius as BorderRadius)
-      .topLeft
-      .x;
-}
+/// 바탕 모양입니다.
+ShapeBorder? _shapeOf(WidgetTester tester, Finder button) =>
+    tester.widget<Material>(_surfaceOf(button)).shape;
+
+/// 버튼의 누름 표시(물결)를 그리는 InkWell 입니다.
+InkWell _inkWellOf(WidgetTester tester, Finder button) =>
+    tester.widget<InkWell>(
+      find.descendant(of: button, matching: find.byType(InkWell)),
+    );
 
 /// 누름 반응이 그리는 변환입니다.
 Matrix4 _matrixOf(WidgetTester tester, Finder button) => tester

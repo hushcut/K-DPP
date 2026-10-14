@@ -152,7 +152,7 @@ extension _ClosetBody on _ClosetScreenState {
             AppGlassIconButton(
               onPressed: _showSortBottomSheet,
               tooltip: '옷장 정렬',
-              icon: const Icon(Icons.sort, size: 22, color: AppPalette.accent),
+              icon: const Icon(Icons.sort, color: AppPalette.accent),
             ),
           ];
 
@@ -223,18 +223,18 @@ extension _ClosetBody on _ClosetScreenState {
           offset: Offset(0, (1 - t) * (bottom + size)),
           child: child,
         ),
-        // 위쪽 유리 버튼과 같이 누르면 바탕이 바뀌고 iOS 는 부풀며 Android 는 모서리가 줄어듭니다
-        // (DECISIONS 224·225). 원이 커서 덜 키웁니다.
+        // iOS 는 위쪽 유리 버튼과 같이 누르면 바탕이 바뀌며 부풀고(원이 커서 덜 키움), Android 는
+        // Material 물결 그대로입니다(DECISIONS 224·225·229).
         child: GlassPressBuilder(
           pressedScale: 1.14,
-          builder: (context, states, pressed, corner) => SizedBox.square(
+          builder: (context, states, pressed) => SizedBox.square(
             dimension: size,
             child: FrostedSurface(
               opacity: opacity,
               color: pressed
                   ? AppGlassStyle.pressedFill(context)
                   : appPalette.card,
-              borderRadius: BorderRadius.circular(size / 2 * corner),
+              borderRadius: BorderRadius.circular(size / 2),
               border: Border.all(color: appPalette.border),
               boxShadow: [
                 BoxShadow(
@@ -249,10 +249,7 @@ extension _ClosetBody on _ClosetScreenState {
                 onPressed: canDelete ? _deleteSelectedItems : null,
                 statesController: states,
                 color: Colors.redAccent,
-                style: const ButtonStyle(
-                  overlayColor: WidgetStatePropertyAll(Colors.transparent),
-                  splashFactory: NoSplash.splashFactory,
-                ),
+                style: AppGlassStyle.floatingPressStyle(context),
                 // 이름은 tooltip 대신 아이콘 낭독 이름으로 줍니다. iOS VoiceOver 는 tooltip 만 있고 누를 수
                 // 없는 칸을 건너뛰어, 아무것도 고르지 않았을 때 휴지통이 사라집니다(2026-10-02).
                 // 확인창 제목('선택한 의류 삭제')과 겹치지 않는 이름입니다.

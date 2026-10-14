@@ -107,7 +107,7 @@ Widget _buildReportBody(
               AppGlassIconButton(
                 onPressed: () => _showEditBottomSheet(context, item),
                 tooltip: '의류 정보 수정',
-                icon: Icon(Icons.edit_outlined, size: 22, color: secondaryText),
+                icon: Icon(Icons.edit_outlined, color: secondaryText),
               ),
             ],
           ),

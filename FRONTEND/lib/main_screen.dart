@@ -346,7 +346,7 @@ class _SettingsButton extends StatelessWidget {
       tooltip: '설정',
       color: color,
       disabledColor: color.withValues(alpha: 0.38),
-      icon: const Icon(Icons.settings_outlined, size: 22),
+      icon: const Icon(Icons.settings_outlined),
     );
   }
 }
