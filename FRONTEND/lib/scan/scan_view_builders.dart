@@ -49,7 +49,9 @@ extension _ScanViewBuilders on _ScanScreenState {
       onSubmit: () {
         _submitClothes();
       },
-      onReset: _resetScan,
+      onReset: () {
+        _confirmRetake();
+      },
     );
   }
 }

@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -87,6 +88,8 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   double? _serverCarbonFootprint;
   double? _serverWeightGram;
   String? _serverCalculationMethod;
+  // 결과 폼을 채운 직후의 모습입니다. '다시 촬영' 때 지금 폼과 다르면 버릴지 묻습니다.
+  _ResultFormSnapshot? _initialResultForm;
 
   // 분석, 촬영, 초안 생성, 계산, 저장 책임은 전용 서비스에 위임합니다.
   final ScanAnalysisService _scanAnalysisService = ScanAnalysisService();
