@@ -22,6 +22,7 @@ RUNTIME_FILES = (
     "apps/service/response_contract.py",
     "apps/text/__init__.py",
     "apps/text/composition_candidates.py",
+    "apps/text/line_analysis_cache.py",
     "apps/text/material_extraction.py",
     "apps/text/multilingual_rows.py",
     "apps/text/scoped_materials.py",

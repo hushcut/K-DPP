@@ -12,6 +12,7 @@ import pytest
 from apps.text import ocr_text
 from apps.service.label_analysis import analyze_ocr_result
 from apps.text.ocr_cache import OcrTextCache
+from scripts.ocr_failure_diagnostics import failure_diagnostics
 
 
 @pytest.fixture
@@ -202,6 +203,42 @@ def test_client_setup_exhausting_request_budget_starts_no_rpc(monkeypatch, clock
     monkeypatch.setattr(ocr_text, "_get_vision_client", slow_setup)
     with pytest.raises(ocr_text.OcrTotalTimeoutError):
         ocr_text.run_ocr_bytes(b"image")
+
+
+@pytest.mark.parametrize("cached_text,status,materials", [
+    ("BRAND ONLY", "failed", {}),
+    ("COTTON\n80%\nPOLYESTER\n20%", "success", {"cotton": 80, "polyester": 20}),
+])
+def test_cached_original_setup_timeout_is_a_local_budget_event(
+    monkeypatch, clock, cached_text, status, materials,
+):
+    client = client_for(lambda **_kwargs: pytest.fail("local budget must prevent RPC"))
+    pipeline_environment(monkeypatch, client)
+    cache = SimpleNamespace(get_entry=lambda content: (
+        {"text": cached_text} if content == b"original" else None
+    ))
+
+    def slow_setup(*_args):
+        clock["now"] += ocr_text.OCR_TOTAL_TIMEOUT_SECONDS + 1
+        return client
+
+    monkeypatch.setattr(ocr_text, "_get_vision_client", slow_setup)
+    result = ocr_text.run_ocr_bytes(
+        b"image", ocr_cache=cache, enable_reflection=False,
+        enable_denoised=False, enable_rotated=False, enable_material_region=False,
+    )
+    attempt = result.metadata.attempts[-1]
+    assert attempt.source == "preprocessed" and attempt.outcome == "failed"
+    assert attempt.failure_code == "total_timeout"
+    assert attempt.external_call is False
+    assert result.metadata.external_call_count == result.metadata.rpc_attempt_count == 0
+    assert attempt.rpc_attempt_count == attempt.retry_count == result.metadata.retry_count == 0
+    analysis = analyze_ocr_result(result)
+    assert analysis["status"] == status and analysis["materials"] == materials
+    diagnostic = failure_diagnostics(analysis)
+    assert diagnostic["budget_exhausted"] is True
+    assert diagnostic["service_error_codes"] == []
+    assert diagnostic["failure_stage"] == ("success" if status == "success" else "composition")
 
 
 def test_offline_cache_hit_has_zero_rpc_attempts(monkeypatch, clock, tmp_path):

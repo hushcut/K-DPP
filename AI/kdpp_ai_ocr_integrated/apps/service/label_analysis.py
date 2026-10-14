@@ -19,6 +19,7 @@ from apps.text.ocr_text import (
     run_ocr_bytes,
 )
 from apps.text.parse_label import parse_label
+from apps.text.line_analysis_cache import line_analysis_scope
 from apps.service.response_contract import normalize_label_response
 
 API_VERSION = "1.0"
@@ -112,6 +113,41 @@ def _first_composition_review(ocr_result: OcrResult) -> tuple[str, dict[str, Any
     return option_id, parsed
 
 
+def _with_recapture_guidance(parsed: dict[str, Any]) -> dict[str, Any]:
+    """Suggest a clearer composition photo only after completed OCR attempts.
+
+    This describes the current OCR evidence, not whether the image could ever
+    be recovered by another reader. Public failure fields remain unchanged.
+    """
+
+    evidence = parsed.get("parse_evidence", {})
+    ocr = parsed.get("ocr", {})
+    attempts = ocr.get("attempts", [])
+    if (parsed.get("status") != "failed"
+            or parsed.get("error_code") != "composition_not_found"
+            or evidence.get("review", {}).get("available")
+            or ocr.get("conflicting_parts")
+            or ocr.get("attempt_failures")
+            or not attempts
+            or any(attempt.get("outcome") != "success" or attempt.get("failure_code")
+                   for attempt in attempts)):
+        return parsed
+    has_composition_text = any(evidence.get("observed_materials", {}).values()) or any(
+        evidence.get("observed_ratios", {}).values()
+    )
+    return {
+        **parsed,
+        "parse_evidence": {
+            **evidence,
+            "recapture": {
+                "action": "retake_composition_region",
+                "reason": "composition_incomplete" if has_composition_text else "composition_text_missing",
+                "basis": "current_ocr",
+            },
+        },
+    }
+
+
 def get_ocr_review_options(ocr_result: OcrResult) -> list[dict[str, Any]]:
     """Show a composition for human review; this never confirms a scan.
 
@@ -136,6 +172,7 @@ def get_ocr_review_options(ocr_result: OcrResult) -> list[dict[str, Any]]:
     }]
 
 
+@line_analysis_scope()
 def analyze_ocr_result(
     ocr_result: OcrResult, *, confirmed_review_id: str | None = None,
 ) -> dict[str, Any]:
@@ -169,7 +206,7 @@ def analyze_ocr_result(
             "option_id": review[0],
         }
     if confirmed_review_id is None:
-        return automatic
+        return _with_recapture_guidance(automatic)
 
     if review is None or review[0] != confirmed_review_id:
         raise ValueError("선택 ID가 현재 OCR의 확인 후보와 일치하지 않습니다.")
@@ -196,6 +233,7 @@ def analyze_ocr_result(
     return normalize_label_response(reviewed, api_version=API_VERSION)
 
 
+@line_analysis_scope()
 def analyze_label_image_bytes(
     content: bytes,
     *,

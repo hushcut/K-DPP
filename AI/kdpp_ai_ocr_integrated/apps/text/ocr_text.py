@@ -15,6 +15,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from apps.text.line_analysis_cache import line_analysis_scope
 from apps.text.ocr_candidates import (
     OcrCandidate, build_candidate, find_conflicting_parts, find_unpaired_ratio_parts,
     agreed_original_composition, find_rejected_composition_parts, rotated_layout_evidence, score_candidate,
@@ -55,7 +56,7 @@ from apps.text.ocr_layout import (
     OcrWord, extract_response_layout_text, extract_response_words, spatial_text_from_words,
 )
 from apps.text.ocr_regions import (
-    find_complete_material_region, find_material_region, material_region_options,
+    color_material_region_angle, find_complete_material_region, find_material_region, material_region_options,
     material_region_word_boxes, prepare_material_region,
 )
 from apps.text.scoped_materials import read_yarn_materials
@@ -522,6 +523,8 @@ def _attempt_failure_code(exc: Exception) -> str:
 
     if isinstance(exc, OcrQuotaExceededError):
         return "quota_exceeded"
+    if isinstance(exc, OcrTotalTimeoutError):
+        return "total_timeout"
     if isinstance(exc, OcrTimeoutError):
         return "timeout"
     if isinstance(exc, OcrUnavailableError):
@@ -539,6 +542,7 @@ def _attempt_failure_code(exc: Exception) -> str:
     return "unknown"
 
 
+@line_analysis_scope()
 def run_ocr_bytes(
     content: bytes,
     credential_path: str | None = None,
@@ -737,9 +741,21 @@ def run_ocr_bytes(
     )
     ocr_candidate_count = 1
 
+    assessed_candidates: tuple[OcrCandidate, ...] = ()
+    cached_decision: _CandidateDecision | None = None
+
+    def assess_current_candidates() -> _CandidateDecision:
+        nonlocal assessed_candidates, cached_decision
+        # Candidates are immutable here. Added/replaced/reordered objects require a fresh assessment.
+        if (cached_decision is None or len(candidates) != len(assessed_candidates)
+                or any(current is not previous for current, previous in zip(candidates, assessed_candidates))):
+            cached_decision = _assess_candidates(candidates)
+            assessed_candidates = tuple(candidates)
+        return cached_decision
+
     # 같은 응답의 원문·좌표 조성이 확인됐으면 줄 연결의 중간 신뢰도만으로
     # 재호출하지 않는다. 관측된 충돌·누락의 최종 안전 판정은 계속 우선한다.
-    decision = _assess_candidates(candidates)
+    decision = assess_current_candidates()
     original = decision.best
     early_region = None
     early_rotated = False
@@ -773,7 +789,7 @@ def run_ocr_bytes(
                 if not isinstance(exc, OcrTotalTimeoutError):
                     attempt_failures.append(f"{source}:{type(exc).__name__}")
                     processing_warnings.append("소재 영역 재인식에 실패하여 기존 후보를 유지했습니다.")
-            decision = _assess_candidates(candidates)
+            decision = assess_current_candidates()
     if not (early_rotated and decision.status == "success") and (
         original.parser_status != "success"
         or (original.parser_confidence != "high" and not agreed_original_composition(candidates))
@@ -808,7 +824,7 @@ def run_ocr_bytes(
                 )
         else:
             # 기본 전처리 후에도 최종 판단이 복원 가능한 실패이면 추가한다.
-            if use_reflection and _needs_composition_retry(_assess_candidates(candidates)):
+            if use_reflection and _needs_composition_retry(assess_current_candidates()):
                 try:
                     if remaining_timeout_seconds() <= 0:
                         record_total_timeout("reflection")
@@ -847,7 +863,7 @@ def run_ocr_bytes(
             "미세 회전 OCR에 실패하여 기존 후보를 유지했습니다.",
         ),
     ):
-        if not enabled or not _needs_composition_retry(_assess_candidates(candidates)):
+        if not enabled or not _needs_composition_retry(assess_current_candidates()):
             continue
         try:
             if remaining_timeout_seconds() <= 0:
@@ -875,7 +891,7 @@ def run_ocr_bytes(
                 attempt_failures.append(f"{source}:{type(exc).__name__}")
                 processing_warnings.append(failure_warning)
 
-    if use_material_region and _assess_candidates(candidates).status != "success":
+    if use_material_region and assess_current_candidates().status != "success":
         region = early_region or find_material_region(candidates, validated.width, validated.height)
         if region is not None:
             complete_region = find_complete_material_region(candidates, region)
@@ -883,25 +899,35 @@ def run_ocr_bytes(
                 region = complete_region
             font_height, rotation_degrees = material_region_options(candidates, region)
             word_boxes = material_region_word_boxes(candidates, region)
+            color_angle = (color_material_region_angle(candidates, region, rotation_degrees)
+                           if complete_region is None else None)
             # A clipped heading can manufacture opaque OCR characters. Use
             # the complete crop's rotated reading first, then the plain crop
             # only if its independent response is still needed.
             for rotated in ((True, False) if complete_region is not None else (False, True)):
                 if rotated and early_rotated:
                     continue
-                if _assess_candidates(candidates).status == "success":
+                if assess_current_candidates().status == "success":
                     break
                 source = "material_crop_rotated" if rotated else "material_crop"
+                enhancement = "standard"
+                if rotated and complete_region is None:
+                    if color_angle is not None:
+                        enhancement = "original"
+                    elif _prefer_mild_region_contrast(candidates):
+                        enhancement = "mild_contrast"
+                    else:
+                        enhancement = "adaptive_mild"
                 try:
                     if remaining_timeout_seconds() <= 0:
                         record_total_timeout(source)
                         break
                     cropped = prepare_material_region(
                         validated.content, region, rotated=rotated,
-                        font_height=font_height, rotation_degrees=rotation_degrees,
+                        font_height=font_height,
+                        rotation_degrees=(color_angle if rotated and color_angle is not None else rotation_degrees),
                         word_boxes=word_boxes,
-                        enhancement=(("mild_contrast" if _prefer_mild_region_contrast(candidates)
-                                      else "adaptive_mild") if rotated and complete_region is None else "standard"),
+                        enhancement=enhancement,
                     )
                     if remaining_timeout_seconds() <= 0:
                         record_total_timeout(source)
@@ -926,7 +952,7 @@ def run_ocr_bytes(
                         "소재 영역 재인식에 실패하여 기존 후보를 유지했습니다."
                     )
 
-    decision = _assess_candidates(candidates)
+    decision = assess_current_candidates()
     best = decision.best
     conflicting_parts = decision.conflicting_parts
     unpaired_ratio_parts = decision.unpaired_ratio_parts

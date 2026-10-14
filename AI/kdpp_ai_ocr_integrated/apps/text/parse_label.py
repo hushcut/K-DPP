@@ -2,6 +2,7 @@ import re
 from dataclasses import replace, dataclass
 from decimal import Decimal, InvalidOperation
 
+from apps.text.line_analysis_cache import LineAnalysis, line_analysis_scope, reuse_line_analysis
 from apps.text.ratio_contract import EXACT_RATIO_TOTAL, has_exact_total
 from apps.text.translation_alternatives import prepare_translation_alternatives
 from apps.text.scoped_materials import read_yarn_materials, confirmed_yarn_declaration
@@ -177,7 +178,10 @@ def _looks_like_non_composition_number(line: str) -> bool:
 
 _NUMERIC_IDENTIFIER_ROW_PATTERN = re.compile(r"\(?\s*[0-9]+(?:\s*-\s*[0-9]+){1,3}\s*\)?")
 _WASH_SYMBOL_OCR_PATTERN = re.compile(r"1(?:30|40|50|60|70|95)\s*[/\\]")
-_PAREN_WASH_SYMBOL_OCR_PATTERN = re.compile(r"\(\s*(?:30|40|50|60|70|95)0\s*\)?")
+_OUTLINED_WASH_SYMBOL_OCR_PATTERN = re.compile(
+    r"(?:\(\s*(?:30|40|50|60|70|95)0\s*\)?\s*/?"
+    r"|\\\s*(?:30|40|50|60|70|95)\s*/?)"
+)
 _NUMBERED_OUTER_MARKER_PATTERN = re.compile(
     r"(?<![a-z0-9])(?:outshell|cutshell|shell|outer|겉\s*감)\s*[12](?![a-z0-9.,]|\s*%)"
 )
@@ -255,9 +259,9 @@ def _is_non_composition_numeric_row(
         groups = re.findall(r"[0-9]+", line)
         # Long hyphenated product/contact numbers cannot be percentage ranges.
         return sum(map(len, groups)) >= 7 and max(map(len, groups)) >= 4
-    # A tub outline can turn 30 degrees into '(300'. Keep explicit ratios,
-    # incomplete blocks and plain out-of-range numbers under normal validation.
-    if _PAREN_WASH_SYMBOL_OCR_PATTERN.fullmatch(line):
+    # A tub outline can turn 30 degrees into '(300/' or '\30/'. Only a
+    # complete preceding declaration can fence it off; a bare 30 stays evidence.
+    if _OUTLINED_WASH_SYMBOL_OCR_PATTERN.fullmatch(line):
         return _has_complete_preceding_composition(preceding_infos or [])
     if line in {"30", "40", "50", "60", "70", "95"} and (
         previous is not None
@@ -593,6 +597,18 @@ def build_line_infos(
     translation_indices: set[int] | None = None,
     translation_warnings: list[str] | None = None,
 ) -> list[LineInfo]:
+    analysis = reuse_line_analysis(text, _build_line_analysis)
+    if restored_indices is not None:
+        restored_indices.update(analysis.restored_indices)
+    if translation_indices is not None:
+        translation_indices.update(analysis.translation_indices)
+    if translation_warnings is not None:
+        translation_warnings.extend(analysis.translation_warnings)
+    # Callers may filter or extend their list; cached rows and evidence stay immutable.
+    return list(analysis.infos)
+
+
+def _build_line_analysis(text: str) -> LineAnalysis:
     infos: list[LineInfo] = []
     current_part = "generic"
     pending_metadata_kind = None
@@ -608,15 +624,11 @@ def build_line_infos(
     # or number across rows and therefore need no reconstructed-pair boundary.
     if not unproven_rewrite:
         restored_rows -= translations.recovered_rows
-    if restored_indices is not None:
-        restored_indices.update(restored_rows)
-    if translation_indices is not None and not unproven_rewrite:
-        translation_indices.update(translations.recovered_rows)
-    if translation_warnings is not None:
-        if translations.recovered_rows:
-            translation_warnings.extend(("registered_translation_alternatives", "multilingual_translation_rows"))
-        if translations.damaged_rows:
-            translation_warnings.extend(("damaged_translation_fragment", "unread_translation_rows"))
+    translation_warnings: list[str] = []
+    if translations.recovered_rows:
+        translation_warnings.extend(("registered_translation_alternatives", "multilingual_translation_rows"))
+    if translations.damaged_rows:
+        translation_warnings.extend(("damaged_translation_fragment", "unread_translation_rows"))
     raw_lines = translations.text.split("\n")
     content_indices = [i for i, raw in enumerate(raw_lines) if normalize_text(raw)]
     last_content_index = content_indices[-1] if content_indices else -1
@@ -718,7 +730,12 @@ def build_line_infos(
             marker_part=marker_part, invalid_evidence=invalid_evidence,
             is_metadata=is_metadata, inferred_metadata=inferred_metadata,
         ))
-    return _mark_split_imitation_leather(_apply_trailing_part_markers(_mark_leading_garment_size(infos)))
+    return LineAnalysis(
+        infos=tuple(_mark_split_imitation_leather(_apply_trailing_part_markers(_mark_leading_garment_size(infos)))),
+        restored_indices=frozenset(restored_rows),
+        translation_indices=frozenset(translations.recovered_rows if not unproven_rewrite else ()),
+        translation_warnings=tuple(translation_warnings),
+    )
 
 
 def _mark_leading_garment_size(infos: list[LineInfo]) -> list[LineInfo]:
@@ -1000,7 +1017,7 @@ def _restored_block_has_clear_boundaries(
                         continue
                 if (
                     _NUMERIC_IDENTIFIER_ROW_PATTERN.fullmatch(info.normalized)
-                    or _PAREN_WASH_SYMBOL_OCR_PATTERN.fullmatch(info.normalized)
+                    or _OUTLINED_WASH_SYMBOL_OCR_PATTERN.fullmatch(info.normalized)
                     or _WASH_SYMBOL_OCR_PATTERN.fullmatch(info.normalized)
                     or re.fullmatch(r"[0-9]+", info.normalized)
                 ):
@@ -1459,6 +1476,7 @@ def failed_response(
     return result
 
 
+@line_analysis_scope()
 def parse_label(
     text: str,
     *,

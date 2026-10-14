@@ -170,6 +170,18 @@ _HAN_GAP_PATTERNS = {
     False: re.compile(r"[\u4e00-\u9fff][ \t]+[\u4e00-\u9fff]"),
     True: re.compile(r"[\u4e00-\u9fff][ \t\n]+[\u4e00-\u9fff]"),
 }
+_HAN_PART_HEADING_PATTERN = re.compile(
+    r"(?m)^(?P<before>[ \t:;()\[\]{}]*)(?P<part>"
+    + "|".join(
+        r"[ \t]*".join(map(re.escape, alias))
+        for alias in sorted(
+            {alias for aliases in PART_PATTERNS.values() for alias in aliases
+             if re.fullmatch(r"[\u4e00-\u9fff]{2,}", alias)},
+            key=lambda alias: (-len(alias), alias),
+        )
+    )
+    + r")(?P<after>[ \t:;()\[\]{}]*)$"
+)
 
 
 def restore_registered_han_aliases(text: str, *, allow_newlines: bool = False) -> str:
@@ -218,6 +230,15 @@ def normalize_text(text: str) -> str:
     for wrong, correct in OCR_CORRECTIONS.items():
         normalized = _replace_token(normalized, wrong.casefold(), correct.casefold())
 
+    # Restore only a complete heading on its own row, never metadata or
+    # characters separated by a row boundary.
+    if _HAN_GAP_PATTERNS[False].search(normalized):
+        normalized = _HAN_PART_HEADING_PATTERN.sub(
+            lambda match: match.group("before")
+            + re.sub(r"[ \t]+", "", match.group("part"))
+            + match.group("after"),
+            normalized,
+        )
     normalized = restore_registered_han_aliases(normalized)
 
     lines = [re.sub(r"[ \t]+", " ", line).strip() for line in normalized.split("\n")]

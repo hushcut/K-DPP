@@ -179,6 +179,47 @@ def material_region_options(
     return font_height, angle
 
 
+def color_material_region_angle(
+    candidates: list[OcrCandidate], box: tuple[int, int, int, int], angle: float,
+) -> float | None:
+    """Preserve strokes when a tilted, fully read composition lost its row links."""
+    from apps.text.ratio_contract import has_exact_total
+
+    if not 5 <= abs(angle) < 45:
+        return None
+    full = [candidate for candidate in candidates
+            if candidate.source in {"original", "preprocessed"}
+            and candidate.image_key and candidate.image_variant_key
+            and len(candidate.image_region) == 4]
+    if len({candidate.image_key for candidate in full}) != 1:
+        return None
+    # This selects pixels only. All candidates' rejection evidence is still
+    # checked after OCR; missing names, damaged ratios and parts keep the old input.
+    if not any(
+        candidate.parser_status == "failed"
+        and set(candidate.observed_ratios) == set(candidate.observed_materials) == {"generic"}
+        and len(candidate.observed_ratios["generic"]) >= 2
+        and len(set(candidate.observed_materials["generic"])) == len(candidate.observed_ratios["generic"])
+        and len(candidate.observed_materials["generic"]) == len(candidate.observed_ratios["generic"])
+        and all(0 < ratio <= 100 for ratio in candidate.observed_ratios["generic"])
+        and has_exact_total(candidate.observed_ratios["generic"])
+        and not candidate.conflicting_parts
+        and candidate.rejected_composition_parts == {"generic": ("unpaired_material_rows",)}
+        for candidate in full
+    ):
+        return None
+    left, top, right, bottom = box
+    words = list(dict.fromkeys(word for candidate in full for word in candidate.image_words
+                 if word.page == 0 and left <= word.left < word.right <= right
+                 and top <= word.top < word.bottom <= bottom
+                 and sum(character.isalpha() for character in word.text) >= 2))
+    geometry = _supported_geometry(words)
+    if (geometry is None or not 5 <= abs(geometry[0]) < 45
+            or abs(geometry[0] - angle) > 2.5):
+        return None
+    return geometry[0]
+
+
 def find_material_region(candidates: list[OcrCandidate], width: int, height: int) -> tuple[int, int, int, int] | None:
     """Locate observed material/unknown percentage rows in original geometry."""
 
