@@ -396,6 +396,33 @@ void main() {
       expect(_isSheetOpen(), isFalse);
     });
   });
+
+  testWidgets('직접 입력 줄도 오른쪽은 다른 줄과 같은 ">" 이고, 저울은 왼쪽에만 있다(결정 234)', (
+    tester,
+  ) async {
+    _usePhoneView(tester);
+    await _openSheet(tester);
+    // 목록 맨 끝 줄이라 화면 밖에서는 아직 만들어지지 않는다.
+    await tester.scrollUntilVisible(find.text('직접 입력'), 100);
+
+    final directRow = find
+        .ancestor(of: find.text('실제 무게를 알고 있어요'), matching: find.byType(Row))
+        .first;
+    expect(
+      find.descendant(
+        of: directRow,
+        matching: find.byIcon(Icons.chevron_right),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: directRow,
+        matching: find.byIcon(Icons.scale_outlined),
+      ),
+      findsOneWidget,
+    );
+  });
 }
 
 class _SheetResult {
