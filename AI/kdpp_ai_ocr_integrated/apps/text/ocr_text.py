@@ -176,6 +176,8 @@ class OcrAttempt:
 class OcrResult:
     text: str
     metadata: OcrMetadata
+    # Kept internally for explicit review; never added to service OCR metadata.
+    original_candidate: OcrCandidate | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -972,6 +974,8 @@ def run_ocr_bytes(
 
     return OcrResult(
         text=best.text,
+        original_candidate=next((candidate for candidate in candidates
+                                 if candidate.source == "original" and not candidate.layout_used), None),
         metadata=OcrMetadata(
             source=best.source,
             confidence=ocr_confidence,

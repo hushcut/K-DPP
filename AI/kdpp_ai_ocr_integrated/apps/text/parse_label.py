@@ -451,7 +451,7 @@ def _restore_multiline_alias_fragments(text: str) -> str:
     for position, first in enumerate(words):
         joined = first.group()
         if (
-            first.start() < consumed_until or joined in ALIAS_TO_MATERIAL
+            first.start() < consumed_until or (joined in ALIAS_TO_MATERIAL and joined != "poly")
             or joined not in _SINGLE_WORD_ALIAS_PREFIXES
         ):
             continue
@@ -522,7 +522,7 @@ def _prepare_multilingual_rows(text: str) -> str:
         joined = match.group(1) + match.group(2)
         # A complete table entry is required; partial or fuzzy words stay put.
         return (
-            joined if match.group(1) not in ALIAS_TO_MATERIAL
+            joined if (match.group(1) not in ALIAS_TO_MATERIAL or match.group(1) == "poly")
             and joined in ALIAS_TO_MATERIAL and joined != "poly" else match.group()
         )
 
@@ -1490,6 +1490,13 @@ def parse_label(
     )
     if interpreted != composition_text:
         warnings.extend(("confirmed_material_alias:poly:polyester", "poly_abbreviation_as_polyester"))
+    # Project-level interpretation is automatic, distinct from per-label
+    # human confirmation. Keep complete wrapped names such as POLY/AMIDE intact.
+    prepared = _prepare_multilingual_rows(normalize_text(composition_text))
+    if re.search(r"(?<![^\W\d_])poly(?![^\W\d_])", prepared):
+        warnings.append("project_material_alias:poly:polyester")
+        if "poly_abbreviation_as_polyester" not in warnings:
+            warnings.append("poly_abbreviation_as_polyester")
     if "generic_secondary" in expected_parts:
         warnings.append("confirmed_representative_selection:first_generic")
     yarn_materials = yarn_declaration[1] if yarn_declaration else read_yarn_materials(text)

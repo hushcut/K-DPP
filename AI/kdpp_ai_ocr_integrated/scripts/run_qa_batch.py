@@ -11,7 +11,7 @@ import csv
 import json
 import sys
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +27,7 @@ from apps.text.qa_dataset import (
     load_qa_answer_key,
     parse_answer_materials as parse_qa_answer_materials,
 )
+from scripts.ocr_failure_diagnostics import failure_diagnostics, safe_failure_code
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -50,6 +51,10 @@ class QaSummary:
     matched_material_ratio_mae: float | None
     exception_count: int
     failure_category_counts: dict[str, int]
+    failure_stage_counts: dict[str, int] = field(default_factory=dict)
+    service_error_case_count: int = 0
+    cache_incomplete_case_count: int = 0
+    budget_exhausted_case_count: int = 0
 
 
 def csv_safe(value: Any) -> Any:
@@ -150,9 +155,10 @@ def classify_failure(
     if judgment == "not_compared":
         return "not_compared"
     if exception:
-        return "ocr_or_pipeline_exception"
+        return safe_failure_code(exception.partition(":")[0],
+                                 default=safe_failure_code(result.get("error_code")))
     if result.get("status") != "success":
-        return str(result.get("error_code") or "parser_failed")
+        return safe_failure_code(result.get("error_code"), default="parser_failed")
     if judgment == "success":
         return "success"
     if failure_reason == "no_predicted_materials":
@@ -236,6 +242,12 @@ def build_summary(
                 ).items()
             )
         ),
+        failure_stage_counts=dict(sorted(Counter(
+            row.get("failure_stage", "unknown") for row in compared if row["judgment"] == "failed"
+        ).items())),
+        service_error_case_count=sum(bool(json.loads(row.get("ocr_service_error_codes", "[]"))) for row in rows),
+        cache_incomplete_case_count=sum(row.get("ocr_cache_incomplete", False) is True for row in rows),
+        budget_exhausted_case_count=sum(row.get("ocr_budget_exhausted", False) is True for row in rows),
     )
 
 
@@ -374,11 +386,15 @@ def main() -> None:
         except OcrCacheError:
             raise
         except OcrError as exc:
-            result["error_code"] = type(exc).__name__
-            result["message"] = str(exc)
-            exception = f"{type(exc).__name__}: {exc}"
-        except Exception as exc:
-            exception = f"{type(exc).__name__}: {exc}"
+            result["error_code"] = safe_failure_code(type(exc).__name__)
+            result["message"] = "OCR 처리 중 오류가 발생했습니다."
+            result["ocr"] = {key: value if type(value) is int and value >= 0 else None
+                             for key in ("rpc_attempt_count", "retry_count")
+                             for value in [getattr(exc, key, None)]}
+            exception = result["error_code"]
+        except Exception:
+            exception = "pipeline_exception"
+            result["ocr"] = {"rpc_attempt_count": None, "retry_count": None}
 
         predicted = result.get("materials", {})
         if not answer:
@@ -395,6 +411,9 @@ def main() -> None:
         )
         confidence = result.get("confidence", {})
         ocr = result.get("ocr", {})
+        diagnostics = failure_diagnostics(result, exception_code=exception)
+        if judgment == "failed" and result.get("status") == "success":
+            diagnostics["failure_stage"] = "composition_mismatch"
         row = {
             "file_name": image_path.name,
             "qa_scope": "ocr_parser",
@@ -404,6 +423,10 @@ def main() -> None:
             "judgment": judgment,
             "failure_reason": failure_reason,
             "failure_category": failure_category,
+            "failure_stage": diagnostics["failure_stage"],
+            "ocr_service_error_codes": json.dumps(diagnostics["service_error_codes"]),
+            "ocr_cache_incomplete": diagnostics["cache_incomplete"],
+            "ocr_budget_exhausted": diagnostics["budget_exhausted"],
             "answer_materials": json.dumps(
                 answer,
                 ensure_ascii=False,

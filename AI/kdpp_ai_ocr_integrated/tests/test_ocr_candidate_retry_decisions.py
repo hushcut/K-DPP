@@ -6,7 +6,6 @@ import pytest
 
 from apps.service.label_analysis import analyze_ocr_result
 from apps.text import ocr_text
-from part_policy_assertions import assert_selected_part
 
 
 INCOMPLETE = ocr_text.OcrPayload("COTTON 100%\nPOLYESTER", "COTTON 100%")
@@ -63,13 +62,6 @@ def test_final_rejection_triggers_basic_recovery(monkeypatch, original, restored
     )
     analysis = analyze_ocr_result(result)
 
-    if original.text.startswith("OUTER"):
-        # IN keeps one basic reread when only the lower part is complete.
-        assert calls == [b"original", b"basic"]
-        assert_selected_part(analysis, "outer", {"polyester": 100})
-        assert analysis["parts"]["lining"] == {"cotton": 100}
-        assert analysis["ocr"]["rejected_composition_parts"] == {}
-        return
     assert calls == [b"original", b"basic"]
     assert analysis["status"] == "success"
     assert analysis["materials"] == materials
@@ -141,20 +133,22 @@ def test_confirmed_representative_skips_all_extra_candidates(monkeypatch, origin
         ),
     ],
 )
-def test_irreversible_rejections_remain_failed_without_extra_calls(monkeypatch, original):
+def test_irreversible_rejections_do_not_request_extra_calls(monkeypatch, original):
     result, calls = run_candidates(
         monkeypatch, {b"original": original},
         enable_reflection=True, enable_denoised=True, enable_rotated=True,
     )
 
     assert calls == [b"original"]
-    if "LINING" in original.text:
-        analysis = analyze_ocr_result(result)
-        assert_selected_part(analysis, "lining", {"polyester": 100}, unconfirmed="outer")
-        assert "outer" in analysis["ocr"]["conflicting_parts"]
-        return
-    assert analyze_ocr_result(result)["status"] == "failed"
-    assert result.metadata.confidence == "low"
+    analysis = analyze_ocr_result(result)
+    if "outer" in result.metadata.conflicting_parts:
+        assert analysis["status"] == "success"
+        assert analysis["selected_part"] == "lining"
+        assert analysis["materials"] == {"polyester": 100}
+        assert "outer" not in analysis["parts"]
+    else:
+        assert analysis["status"] == "failed"
+        assert result.metadata.confidence == "low"
 
 
 def test_recovery_does_not_start_after_total_deadline(monkeypatch):

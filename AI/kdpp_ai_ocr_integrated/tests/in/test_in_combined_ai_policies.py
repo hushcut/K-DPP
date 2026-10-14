@@ -27,14 +27,15 @@ def test_opaque_long_translation_cannot_disappear(text):
     assert result['materials'] == {}
 
 
-def test_poly_requires_confirmation_even_in_a_complete_mixed_row():
+def test_poly_project_policy_applies_to_a_complete_mixed_row():
     text = 'POLY 60% COTTON 40%'
-    assert analyze_label_text(text)['status'] == 'failed'
-    result = analyze_label_text(text, confirmed_polyester_poly=True)
+    result = analyze_label_text(text)
     assert result['status'] == 'success'
     assert result['materials'] == {'polyester': 60, 'cotton': 40}
     assert result['confidence']['parser'] == 'medium'
     assert 'poly_abbreviation_as_polyester' in result['warnings']
+    assert 'project_material_alias:poly:polyester' in result['warnings']
+    assert 'confirmed_material_alias:poly:polyester' not in result['warnings']
 
 
 @pytest.mark.parametrize('languages', [
