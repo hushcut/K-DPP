@@ -230,6 +230,13 @@ extension _ScanResultActions on _ScanScreenState {
 
   /// 새 스캔을 위해 이미지·폼·서버 결과와 카메라 상태를 초기화합니다.
   void _resetScan() {
+    _clearScanResult();
+    _cameraLifecycle.startIfNeeded();
+  }
+
+  /// 이미지·폼·서버 결과를 지워 촬영 화면 상태로 되돌립니다. 카메라는 켜지 않습니다 — 저장 직후엔
+  /// 곧바로 리포트가 위에 쌓이고, 리포트가 닫혀 이 화면이 다시 보일 때 켭니다.
+  void _clearScanResult() {
     _materialInputs.clear();
 
     _updateState(() {
@@ -249,7 +256,5 @@ extension _ScanResultActions on _ScanScreenState {
       _hasTriedSubmit = false;
       _isSaving = false;
     });
-
-    _cameraLifecycle.startIfNeeded();
   }
 }

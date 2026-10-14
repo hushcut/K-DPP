@@ -168,16 +168,12 @@ extension _ScanSaveActions on _ScanScreenState {
           AppBanner.of(context).show(fallbackMessage, kind: AppBannerKind.info);
         }
 
-        // pushReplacement는 이 화면이 아니라 **맨 위 라우트**를 교체합니다.
-        // 저장을 기다리는 동안 설정 화면을 열어 두면 그 설정이 교체돼 사라지고
-        // /main이 두 겹으로 쌓여, 뒤로가기로 이미 저장된 스캔 폼에 되돌아갈 수 있습니다.
-        // 스택을 통째로 정리해 항상 한 겹만 남깁니다.
-        Navigator.pushNamedAndRemoveUntil(
-          context,
-          '/main',
-          (route) => false,
-          arguments: MainScreenArguments(initialIndex: 1, showReport: true),
-        );
+        // 메인 화면은 그대로 두고 이 화면을 새 촬영 상태로 되돌린 뒤, 이 화면을 담은 라우트가 그 위에
+        // 리포트를 엽니다. 리포트를 닫으면 바로 다음 옷을 찍고, 이 화면까지 닫으면 들어왔던 탭과 옷장
+        // 검색어가 그대로 있습니다. 예전처럼 /main 을 새로 만들면 홈에서 다시 시작했습니다(C04,
+        // DECISIONS 2026-10-14). 저장 중엔 설정·"<"·뒤로가기가 막혀 있어 이 화면이 맨 위입니다.
+        _clearScanResult();
+        widget.onSaved(clothesToSave);
     }
   }
 }
