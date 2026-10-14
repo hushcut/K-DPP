@@ -333,8 +333,8 @@ Authorization: Bearer <token>
   연결 끊기가 실패해도 탈퇴는 성공으로 응답합니다(서버 로그만 — 그때 카카오 쪽에 연결이 남고, 다음 카카오 로그인은 새 계정).
   **앱은 카카오 연결 끊기를 따로 부르지 않습니다.**
 
-성공하면 `users`, 그 사용자의 `access_tokens`, `analysis_results`(카카오 계정은 소셜 연결 기록도)를 **한 트랜잭션에서
-모두 삭제**합니다. 외래키에 `ON DELETE`가 걸려 있지 않아 애플리케이션이 직접 지웁니다.
+성공하면 `users`, 그 사용자의 `access_tokens`, `analysis_results`, 옷장 서버 백업(`closet_snapshots`, 2026-10-14부터)
+(카카오 계정은 소셜 연결 기록도)를 **한 트랜잭션에서 모두 삭제**합니다. 외래키에 `ON DELETE`가 걸려 있지 않아 애플리케이션이 직접 지웁니다.
 프론트는 서버 삭제가 성공한 뒤에만 기기의 계정 전용 옷장(`closet_items_account_*`)을
 지웁니다. 같은 이메일로 다시 가입할 수 있고, 같은 카카오 계정으로 다시 로그인하면 새 계정이 됩니다.
 
@@ -406,6 +406,7 @@ SQLite 때 있던 두 경합 — 지워진 `user_id`로 고아 행이 남는 것
 | 비밀번호 길이 (가입·로그인·`/auth/password` 의 현재·새·`/auth/withdraw`·`/auth/password-reset` 의 새) | **128자** | 앱 입력이 닿지 않는 안전선 |
 | `nickname` 길이 (가입·`/auth/kakao`) | **50자** | 저장·응답에 그대로 실리는 값. 카카오에서 받아 온 닉네임이 넘으면 422 대신 `SOCIAL_NICKNAME_REQUIRED` |
 | `/history`·`/me/history` 반환 건수 | **200건** | 전건 적재를 막음. 잘리면 `has_more: true` |
+| 옷장 백업(`POST /me/closet`) | **500벌·512KB·8단** | 한 벌 약 0.55~0.7KB. 넘으면 413 `CLOSET_TOO_LARGE`(벌 수·바이트) 또는 422 `CLOSET_INVALID`(깊이) — `BACKEND/API_CONTRACT.md` 의 `POST /me/closet` |
 
 인증 입력의 길이 상한(2026-10-05)은 앞뒤 공백을 지우기 전 글자 수로 셉니다. 실제 사용자가
 닿지 않는 안전선이라 가입의 형식 검사(400, 한국어 문구)와 달리 아래 422 로 거부합니다 — 앱은

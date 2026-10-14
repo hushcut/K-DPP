@@ -53,6 +53,10 @@
 - `SOCIAL_PROVIDER_UNAVAILABLE`: 카카오 서버가 응답하지 않음·오류(502)
 - `SOCIAL_LOGIN_UNAVAILABLE`: 이 서버에 카카오 로그인이 설정되지 않음(503)
 - `PASSWORD_NOT_SET`: 비밀번호가 없는 계정(카카오 계정)의 비밀번호 변경(400)
+- `CLOSET_VERSION_CONFLICT`: 옷장 백업을 다른 기기가 먼저 바꿈 — `detail.current_version` 으로 다시 보냄(409, `POST /me/closet`)
+- `CLOSET_OWNER_MISMATCH`: 옷장 백업 본문의 `user_id` 가 로그인한 계정이 아님(403, `POST /me/closet`)
+- `CLOSET_TOO_LARGE`: 옷장이 500벌 또는 512KB 를 넘음(413, `POST /me/closet` — `detail.reason`)
+- `CLOSET_INVALID`: 옷장 데이터를 저장할 수 없음 — 너무 깊음·NaN 같은 수·깨진 유니코드(422, `POST /me/closet` — `detail.reason`)
 
 ## 사용자 객체 (`user`)
 
@@ -358,7 +362,8 @@ Authorization: Bearer <token>
 - **지금 앱에서 바꿔야 하는 곳**(10-05 develop 기준 코드에서 찾은 것):
   - `AuthUser.fromJson`(`FRONTEND/lib/services/auth_api_models.dart`)이 이메일이 비면 응답을 거부합니다 → `email` 이 `null` 인 응답을 받게.
     로그인 응답뿐 아니라 시작 때 세션 확인·로그인 뒤 동기화(`/me/history` 의 `user`, `post_login_sync_service.dart`)도 같은 함수를 씁니다.
-  - **옷장의 주인을 이메일로만 정합니다**(`FRONTEND/lib/closet_provider.dart` — `setUserProfile` 은 이메일이 비면 주인을 바꾸지 않고, 그때 `_persist` 는
+  - (해결됨 — 앱은 이제 이메일 계정은 정규화한 이메일, 이메일 없는 계정은 `user:<id>` 를 옷장 키로 씁니다. 아래는 10-05 당시 메모)
+    **옷장의 주인을 이메일로만 정합니다**(`FRONTEND/lib/closet_provider.dart` — `setUserProfile` 은 이메일이 비면 주인을 바꾸지 않고, 그때 `_persist` 는
     공용 `closet_items` 에 저장하며, 다음 실행에서 이메일 세션을 복원하면 그 공용 옷장을 이메일 계정 옷장에 합치고, `purgeAccountData` 는 주인 이메일이 비면 건너뜀).
     `AuthUser.fromJson` 만 고치면 **카카오 사용자의 옷장이 같은 기기의 다음 이메일 사용자 옷장으로 넘어가고 탈퇴해도 남습니다.**
     → 이메일 없는 계정의 옷장 키(예: 사용자 `id`)를 정하고 저장·복원·탈퇴 정리를 모두 그 키로, 공용 옷장 합치기는 이메일 계정만.
@@ -662,6 +667,7 @@ Authorization: Bearer <token>
 ```json
 {
   "status": "success",
+  "user": {"id": 1, "email": "user@example.com", "nickname": "홍길동", "login_methods": ["password"]},
   "history": [
     {
       "id": 13,
@@ -677,15 +683,119 @@ Authorization: Bearer <token>
       "max_weight_grams": 250,
       "unit": "kg CO2eq",
       "unknown_materials": [],
-      "created_at": "2026-06-04T12:00:00"
+      "created_at": "2026-06-04T12:00:00+00:00"
     }
-  ]
+  ],
+  "has_more": false
 }
 ```
+
+- `user`: 위 '사용자 객체'. 앱 시작 때의 세션 확인·로그인 뒤 동기화가 읽습니다.
+- `history` 는 최근 200건까지, 더 있으면 `has_more: true`(`docs/SCAN_API_CONTRACT.md` 2-4). `created_at` 은 UTC 오프셋을 붙인 ISO 형식입니다.
 
 ## GET /me/history
 
 `/history`와 동일하게 로그인 사용자의 분석 결과를 반환합니다.
+
+## GET /me/closet
+
+로그인한 계정의 옷장 서버 백업을 돌려줍니다(DECISIONS 100·242). 백업이 없으면 오류가 아니라 `version` 0·빈 목록입니다
+(404 는 이 API 가 없는 옛 서버와 구분되지 않아 쓰지 않음).
+
+Header: `Authorization: Bearer <token>`
+
+```json
+{
+  "status": "success",
+  "user_id": 1,
+  "version": 3,
+  "item_count": 2,
+  "items": [{"title": "흰 셔츠", "category": "상의", "materials": {"면": 100.0}, "registeredAt": "2026-10-14T16:55:23.328586"}],
+  "updated_at": "2026-10-14T07:55:23.328586+00:00"
+}
+```
+
+- `items` 는 마지막으로 올린 배열을 **그대로** 돌려줍니다(순서·칸·`null`·숫자 표기 `15.0` 포함). 서버는 옷 내용을 해석하지 않습니다.
+- 백업이 없으면 `version: 0`, `item_count: 0`, `items: []`, `updated_at: null`.
+- 앱은 합치기 전에 `user_id` 가 지금 계정인지 대조합니다.
+- 오류는 401 `AUTH_REQUIRED` 뿐입니다(토큰 없음·형식 오류·만료·폐기).
+
+## POST /me/closet
+
+로그인한 계정의 옷장을 서버에 백업합니다. 폰 우선입니다 — 서버 백업은 '마지막으로 옷장을 바꾼 폰'의 것이고,
+서버에서 받아 기기 옷장을 바꾸는 일은 기기가 이 계정 백업과 처음 맞출 때만 합니다(아래 '앱 연동 메모').
+
+```json
+{
+  "user_id": 1,
+  "base_version": 3,
+  "items": [{"title": "흰 셔츠", "category": "상의", "materials": {"면": 100.0}}]
+}
+```
+
+- `user_id`: 앱이 아는 지금 계정 id(정수 — 문자열 `"1"` 은 422). 토큰 사용자와 다르면 403 — 로그인 전환 틈에 옛 계정 옷장이 올라가지 않게.
+- `base_version`: 앱이 마지막으로 맞춘 서버 `version`(처음이면 0, 0 이상 정수).
+- `items`: 옷 객체(`Clothes.toJson`)의 배열, 앱 순서 그대로. 원소가 객체인지만 봅니다.
+
+성공(200):
+
+```json
+{"status": "success", "version": 4, "changed": true, "item_count": 1, "updated_at": "2026-10-14T08:01:02.123456+00:00"}
+```
+
+- 서버가 저장한 글자(`json.dumps(ensure_ascii=False, separators=(',', ':'))`)와 **같은 내용이면 `base_version` 과 상관없이**
+  `changed: false` 이고 `version`·`updated_at` 은 그대로입니다(응답을 잃고 다시 보낸 경우). 백업이 없을 때 `[]` 를 보내면 행을 만들지 않고 `version` 0.
+- 내용이 다르고 `base_version` 이 지금 `version` 과 같으면 `version` +1 로 저장합니다(첫 저장은 1). 다 지운 `[]` 도 바뀐 내용입니다.
+- 내용이 다르고 `base_version` 이 다르면 409(아래).
+
+검사 순서(처음 걸린 것으로 응답): 본문 크기(413 `PAYLOAD_TOO_LARGE` — 사진이 아닌 요청 1MiB) → JSON 해석(422 `VALIDATION_ERROR`)
+→ 세션(401) → 모양(501벌 이상이면 413 `CLOSET_TOO_LARGE`, 그 밖의 모양 오류 422 `VALIDATION_ERROR`) → 주인(403) → 깊이·수·유니코드(422 `CLOSET_INVALID`)
+→ 크기(413 `CLOSET_TOO_LARGE`) → 계정 잠금(그사이 탈퇴했으면 401 "로그인이 만료되었습니다.") → 같은 내용(200 `changed: false`) → 버전(409) → 저장.
+
+| 상태 | error_code | 언제 | `detail` 추가 값 / 앱 처리 |
+| --- | --- | --- | --- |
+| 401 | `AUTH_REQUIRED` | 토큰 없음·형식·만료·폐기, 저장 직전에 계정이 탈퇴로 없어짐 | — / 조용히 멈춤(로그아웃하지 않음) |
+| 403 | `CLOSET_OWNER_MISMATCH` | 본문 `user_id` ≠ 토큰 사용자 | — / 이번 시도만 버림 |
+| 409 | `CLOSET_VERSION_CONFLICT` | 내용이 다르고 `base_version` ≠ 지금 `version` | `current_version` / 같은 목록을 `base_version = current_version` 으로 한 번 더(폰 우선) |
+| 413 | `CLOSET_TOO_LARGE` | 501벌 이상(`reason: too_many_items`, `max_items: 500`), 저장할 글자가 524,288바이트 초과(`reason: too_many_bytes`, `max_bytes: 524288`) | 위 값 / 거절 |
+| 413 | `PAYLOAD_TOO_LARGE` | 본문 1MiB 초과 | — / 거절 |
+| 422 | `VALIDATION_ERROR` | JSON·모양 오류(칸 없음·정수 아님·`base_version` 음수·`items` 가 배열 아님·원소가 객체 아님) | 오류 목록(최대 20, 입력 원문 없음) / 거절 |
+| 422 | `CLOSET_INVALID` | `reason`: `too_deep`(배열을 1단으로 세어 8단 초과 — 옷 한 벌은 3단), `invalid_number`(NaN·Infinity·`1e400`), `invalid_unicode`(짝 없는 서로게이트) | `reason` / 거절 |
+
+- 상한은 500벌·512KB·8단입니다(한 벌 약 0.55~0.7KB, 500벌 약 350KB). 바이트는 서버가 저장할 글자의 UTF-8 길이로 셉니다(한글 3바이트).
+- 서버는 충돌·거절만 로그에 한 줄 남깁니다(`[closet] conflict user=… base=… current=…`, `[closet] rejected user=… reason=… items=…`).
+  성공은 남기지 않고, 옷 내용은 로그·오류 응답 어디에도 싣지 않습니다.
+- 받아들인 한계: 서버 코드는 CHECK 를 어길 값(version 0·음수 개수)을 쓰지 않지만, 그런 버그가 생기면 PostgreSQL 오류 문장
+  ('Failing row contains')에 칸마다 앞 64바이트까지 실립니다. SQLAlchemy 가 붙이는 매개변수는 숨깁니다(`hide_parameters`).
+- 탈퇴(`POST /auth/withdraw`)는 같은 트랜잭션에서 옷장 백업도 지웁니다. 탈퇴와 저장이 겹치면 users 행 잠금 순서대로 — 탈퇴가 먼저면 저장 401,
+  저장이 먼저면 탈퇴가 그 백업까지 지웁니다.
+- 앞으로 옷 형식 번호를 더하면, 그 칸이 없는 옛 백업은 1 로 봅니다(지금은 형식 번호 없음).
+- 출시 때 할 일(DECISIONS 172 — 지금은 문서로만): 쓰기 속도 제한 · 옷 id·형식 번호·판 이력 · 백업 끄기 · 결과를 모르는 업로드 표시 ·
+  사용자 id 보안 저장소 · iOS·Android 기기 이전 표식 · 저장량 추정(1만 명 × 약 70KB × 백업 파일 최대 34벌).
+
+### 앱 연동 메모 (옷장 백업)
+
+앱 세션 몫이고, 줄 번호가 달린 전문은 백엔드 설계안(DECISIONS 242)에 있습니다. 서버를 먼저 배포합니다.
+
+- 응답 분류: 409 `CLOSET_VERSION_CONFLICT` = 충돌 · 401 = 세션 무효(백업은 조용히 멈춤) · 403 `CLOSET_OWNER_MISMATCH` = 이번 시도만 버림 ·
+  그 밖의 403·413·422·400·다른 409 코드·404 를 뺀 4xx = 거절(이번 실행 동안 이 계정 백업 멈춤) · 404·5xx·네트워크·시간 초과 = 못 닿음.
+  `runJsonApiRequest` 를 쓰고 시간 초과는 GET 10초·POST 20초.
+- 기기 상태: 계정마다 키 하나(`closet_backup_state_` + 옷장 키 꼬리)에 `{uid, api, v, h}`. `h` 는 마지막으로 서버와 맞춘 내용의 지문
+  (`saveClothesListFor` 와 같은 `jsonEncode` 문자열의 `'<UTF-8 바이트 수>:<FNV-1a 64비트 16진수>'` — `String.hashCode` 금지).
+  `uid` 가 지금 사용자 id 와 다르거나 `api` 가 지금 주소와 다르면 '맞춘 적 없음'. **계정 옷장 키가 없으면 상태도 없다**(키 없음으로 `[]` 를 만들 때·
+  탈퇴 정리 때 지움, 로그아웃은 남김). 손상된 옷장 값을 만나면(두 경로) 그 주인 상태를 먼저 지워 다음 동기화가 합치기가 되게.
+- 첫 맞춤(상태가 유효하지 않을 때, 스플래시 Valid·로그인 뒤 동기화에서 GET 까지만 기다림): GET → 응답 `user_id` 대조 → 서버 옷을 모두 읽을 수
+  있을 때만 합침 = 지금 기기 목록 + 짝 없는 서버 옷(서버 순서). 짝: `registeredAt` 이 둘 다 있으면 그 문자열과 `savedResultId` 가 모두 같을 때,
+  둘 다 없으면 `jsonEncode(toJson())` 이 같을 때, 한쪽만 있으면 짝 아님(한 벌은 한 번만). 합친 결과를 기기에 저장한 **직후, 업로드보다 먼저**
+  상태 `{uid, api, v: 서버 version, h: 서버 내용 지문}` 을 저장. 그다음 기기가 서버와 다르면 올리고, 409 이면서 합친 뒤 기기 변경이 없으면
+  GET·합치기를 한 번만 더. 새로 들어온 벌 수가 0 보다 크면 '서버 백업에서 옷 N벌을 되살렸어요.' 배너.
+- 업로드: 계정 옷장 저장 성공·첫 맞춤 뒤·ok 뒤 다시 바뀜 때 2초 모아 하나씩. 지금 목록의 지문이 `h` 와 같으면 보내지 않음(켜기만 한 폰은 덮지 않음).
+  ok 면 보낼 때 잡아 둔 주인 상태에 `{v: 응답 version, h: 보낸 지문}`. 409 면 `current_version` 으로 한 번 더, 또 409 면 다음 변경 때.
+- 세션은 있는데 옷장 주인 키가 없으면 저장을 거부(StateError — 공용 칸에 들어가 사라지던 경우).
+- 받아들인 한계: 첫 맞춤은 합집합이라 다른 폰에서(또는 첫 맞춤 전에) 지운 옷이 돌아올 수 있습니다 · 업로드 응답이 시간 초과로 끊긴 사이 다른 폰이 바꾸면
+  이 폰의 다음 업로드가 덮을 수 있습니다 · DB 를 백업으로 복구하면 폰이 다시 바꾸기 전까지 새 폰 복원은 백업 시각 판을 받습니다 ·
+  LAN 개발 서버로 쓰던 폰은 배포 백업 빌드를 깔기 전에 앱을 지우고 새로 깝니다(`user:<id>` 가 서버마다 겹침).
+- 앱 안 개인정보 안내·탈퇴 문구에 '옷장 백업(AWS 호주)'을 넣은 빌드부터 팀 밖에 줍니다(문구는 사용자 확정 뒤).
 
 ## POST /analyze
 
@@ -881,3 +991,13 @@ Authorization: Bearer <token>
 - **`materials` 20개 상한을 칸마다 검증하기 전에 먼저 본다**(`/analyze`·`/api/carbon/calculate`): 422 `VALIDATION_ERROR` 와
   `detail` 모양(`too_long`, `loc` `["body", "materials"]`)은 같다. 이전에는 칸마다 키·값을 다 검증한 뒤에야 개수를 봐서, 값이 틀린 칸이
   21개 이상이면 칸별 오류(앞 20개)가 나왔는데 이제는 개수 오류 하나만 나온다.
+
+## 변경 이력 — 옷장 서버 백업 (DECISIONS 100·242)
+
+- **`GET /me/closet`·`POST /me/closet` 을 더했다**: 로그인한 계정의 옷장을 사용자당 한 행(`closet_snapshots`)에 그대로 보관한다. 정수 `version`
+  으로 충돌을 가리고(내용이 같으면 200 `changed: false`, 다르고 `base_version` 이 옛것이면 409), 상한은 500벌·512KB·8단. 기존 API 는 바뀌지 않는다.
+- 새 `error_code` 넷: `CLOSET_VERSION_CONFLICT`(409)·`CLOSET_OWNER_MISMATCH`(403)·`CLOSET_TOO_LARGE`(413)·`CLOSET_INVALID`(422).
+- **탈퇴가 옷장 백업도 지운다**(같은 트랜잭션). 탈퇴 응답은 그대로.
+- Alembic 리비전 `a28c2a50b363`(표 하나 추가 — `19b7eee3b75c` 위). 백업 행이 있으면 downgrade 를 거부한다.
+- DB 오류 문장에 SQL 매개변수를 싣지 않는다(`hide_parameters` — 모든 경로, 동작은 같음).
+- 문서: `GET /history` 예시에 `user`·`has_more`·`+00:00` 을 채우고, 카카오 절의 옛 옷장 주인 메모를 '해결됨'으로 표시했다.
