@@ -111,7 +111,7 @@ Widget _buildProductionCarbonCard(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '생산·제조 과정 추정값',
+                    '원료·소재 생산 단계 추정값',
                     style: TextStyle(
                       color: secondaryText,
                       fontSize: 13,
@@ -154,7 +154,7 @@ Widget _buildProductionCarbonCard(
         _buildScopeRow(
           icon: Icons.info_outline,
           label: '미포함',
-          value: '운송, 사용, 세탁, 폐기 과정',
+          value: '봉제·제조, 운송, 사용, 세탁, 폐기 과정',
           color: Colors.orange,
           primaryText: primaryText,
           secondaryText: secondaryText,
@@ -377,7 +377,7 @@ Widget _buildCarbonScopeNotice({
         const SizedBox(width: 10),
         Expanded(
           child: Text(
-            '운송, 사용, 세탁, 폐기 과정의 배출량은 현재 수치에 포함하지 않습니다.',
+            '봉제·제조, 운송, 사용, 세탁, 폐기 과정의 배출량은 현재 수치에 포함하지 않습니다.',
             style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
           ),
         ),
@@ -440,7 +440,7 @@ Widget _buildCalculationBasisCard(
         const SizedBox(height: 8),
         _buildBasisRow(
           label: '범위',
-          value: '소재, 혼용률, 의류 무게 기준의 생산·제조 과정',
+          value: '소재, 혼용률, 의류 무게 기준의 원료·소재 생산 단계',
           primaryText: primaryText,
           secondaryText: secondaryText,
         ),
