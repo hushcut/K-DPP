@@ -123,12 +123,7 @@ class _KakaoNicknameScreenState extends State<KakaoNicknameScreen> {
           clipBehavior: Clip.none,
           leading: Padding(
             padding: const EdgeInsets.only(left: 8),
-            child: AppBackButton(
-              onPressed: () {
-                if (_isLoading) return;
-                Navigator.pop(context);
-              },
-            ),
+            child: AppBackButton(enabled: !_isLoading),
           ),
           title: Text(
             '닉네임 정하기',

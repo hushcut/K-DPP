@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
 import 'package:k_dpp/closet_screen.dart';
@@ -141,6 +142,49 @@ void main() {
       await gesture.up();
       await tester.pumpAndSettle();
     }, variant: _android);
+
+    // 서버 요청을 기다리는 인증 화면이 씁니다(C25, DECISIONS 2026-10-14).
+    testWidgets('누를 수 없게 하면 설정 버튼의 막힘처럼 0.38 로 흐리고, 눌러도 동작하지 않으며 사용 중지로 읽힌다', (
+      tester,
+    ) async {
+      var taps = 0;
+      // 라이트 테마의 평소 "<" 색입니다.
+      const normal = Color(0xFF6F6F6F);
+      Icon iconOf() => tester.widget<Icon>(
+        find.descendant(
+          of: find.byType(AppBackButton),
+          matching: find.byType(Icon),
+        ),
+      );
+      SemanticsNode semanticsOf() => tester.getSemantics(
+        find.descendant(
+          of: find.byType(AppBackButton),
+          matching: find.byType(IconButton),
+        ),
+      );
+
+      await _pumpBackButton(tester, onPressed: () => taps++, enabled: false);
+
+      expect(iconOf().color, normal.withValues(alpha: 0.38));
+      expect(
+        semanticsOf(),
+        isSemantics(isButton: true, hasEnabledState: true, isEnabled: false),
+      );
+      await tester.tap(find.byType(AppBackButton));
+      await tester.pumpAndSettle();
+      expect(taps, 0);
+
+      await _pumpBackButton(tester, onPressed: () => taps++);
+
+      expect(iconOf().color, normal);
+      expect(
+        semanticsOf(),
+        isSemantics(isButton: true, hasEnabledState: true, isEnabled: true),
+      );
+      await tester.tap(find.byType(AppBackButton));
+      await tester.pumpAndSettle();
+      expect(taps, 1);
+    }, variant: _both);
 
     testWidgets('iOS: "동작 줄이기"가 켜져 있으면 모양은 그대로이고 바탕색만 바뀐다', (tester) async {
       await _pumpBackButton(tester, disableAnimations: true);
@@ -479,6 +523,7 @@ Future<void> _pumpBackButton(
   ThemeData? theme,
   bool disableAnimations = false,
   VoidCallback? onPressed,
+  bool enabled = true,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -494,7 +539,10 @@ Future<void> _pumpBackButton(
           leadingWidth: AppGlassStyle.leadingWidth,
           leading: Padding(
             padding: const EdgeInsets.only(left: AppGlassStyle.leadingInset),
-            child: AppBackButton(onPressed: onPressed ?? () {}),
+            child: AppBackButton(
+              onPressed: onPressed ?? () {},
+              enabled: enabled,
+            ),
           ),
         ),
       ),

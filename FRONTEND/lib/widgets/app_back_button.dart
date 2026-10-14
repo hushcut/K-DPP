@@ -17,6 +17,7 @@ class AppBackButton extends StatelessWidget {
     this.onPressed,
     this.tooltip = '뒤로 가기',
     this.color,
+    this.enabled = true,
   });
 
   /// 누를 때 동작. null 이면 `Navigator.pop`.
@@ -28,19 +29,28 @@ class AppBackButton extends StatelessWidget {
   /// 아이콘 색. null 이면 밝기에 따라 흰색/회색.
   final Color? color;
 
+  /// false 면 흐리게 그리고 누를 수 없습니다(TalkBack '사용 중지됨'). 서버 요청을 기다리는 인증
+  /// 화면처럼 지금 떠나면 응답을 받을 화면이 없어지는 곳에서 씁니다. 시스템 뒤로가기는 그 화면이
+  /// `PopScope` 로 따로 막습니다(DECISIONS 2026-10-14 C25).
+  final bool enabled;
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final iconColor =
+        color ?? (isDark ? Colors.white : const Color(0xFF6F6F6F));
 
     return AppGlassIconButton(
-      onPressed: onPressed ?? () => Navigator.pop(context),
+      onPressed: enabled ? onPressed ?? () => Navigator.pop(context) : null,
       tooltip: tooltip,
       icon: Padding(
         // "<" 는 왼쪽이 뾰족해 정가운데에 두면 오른쪽으로 쏠려 보여서 조금 왼쪽으로 옮깁니다.
         padding: const EdgeInsets.only(right: 2),
         child: Icon(
           CupertinoIcons.chevron_left,
-          color: color ?? (isDark ? Colors.white : const Color(0xFF6F6F6F)),
+          // 색을 아이콘에 바로 주므로 버튼의 disabledColor 가 닿지 않아 여기서 흐리게 합니다
+          // (설정 버튼의 막힘과 같은 0.38).
+          color: enabled ? iconColor : iconColor.withValues(alpha: 0.38),
         ),
       ),
     );

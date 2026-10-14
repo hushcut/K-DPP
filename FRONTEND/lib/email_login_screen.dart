@@ -172,165 +172,174 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
         ? const Color(0xFFB8B8BE)
         : const Color(0xFF8C8C8C);
 
-    return Scaffold(
-      backgroundColor: backgroundColor,
-      appBar: AppBar(
+    return PopScope(
+      // 요청 중에 닫히면 서버가 준 로그인을 받을 화면이 없어져, 인증은 저장됐는데 로그인 첫 화면에
+      // 남거나 받은 토큰을 버린다(C25 — DECISIONS 2026-10-14).
+      canPop: !_isLoading,
+      child: Scaffold(
         backgroundColor: backgroundColor,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        centerTitle: true,
-        automaticallyImplyLeading: false,
-        leadingWidth: AppGlassStyle.leadingWidth,
-        // 누르면 부푸는 유리 버튼이 앱바 아래 경계에서 잘리지 않게 합니다(앱바 기본은 잘라 냄).
-        clipBehavior: Clip.none,
-        leading: const Padding(
-          padding: EdgeInsets.only(left: 8),
-          child: AppBackButton(),
-        ),
-        title: Text(
-          '로그인',
-          style: TextStyle(
-            color: primaryText,
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
+        appBar: AppBar(
+          backgroundColor: backgroundColor,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          centerTitle: true,
+          automaticallyImplyLeading: false,
+          leadingWidth: AppGlassStyle.leadingWidth,
+          // 누르면 부푸는 유리 버튼이 앱바 아래 경계에서 잘리지 않게 합니다(앱바 기본은 잘라 냄).
+          clipBehavior: Clip.none,
+          leading: Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: AppBackButton(enabled: !_isLoading),
+          ),
+          title: Text(
+            '로그인',
+            style: TextStyle(
+              color: primaryText,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
-      ),
-      body: SafeArea(
-        child: Form(
-          key: _formKey,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: ConstrainedBox(
-                  // 아래 인셋(자판 등)이 앱바 아래를 다 덮으면 maxHeight 가 0 이 되므로
-                  // 빼고 남은 값이 음수가 되지 않게 0 에서 멈춥니다.
-                  constraints: BoxConstraints(
-                    minHeight: math.max(0.0, constraints.maxHeight - 12),
-                  ),
-                  child: IntrinsicHeight(
-                    child: Column(
-                      children: [
-                        const SizedBox(height: 48),
-                        Text(
-                          'K-DPP에 로그인하세요',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                            color: primaryText,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          '계정 정보를 입력하고 서비스를 시작해 보세요.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: secondaryText,
-                            height: 1.5,
-                          ),
-                        ),
-                        const SizedBox(height: 40),
-                        TextFormField(
-                          controller: _emailController,
-                          keyboardType: TextInputType.emailAddress,
-                          textInputAction: TextInputAction.next,
-                          autofillHints: const [
-                            AutofillHints.username,
-                            AutofillHints.email,
-                          ],
-                          autocorrect: false,
-                          validator: validateEmailInput,
-                          style: TextStyle(color: primaryText),
-                          cursorColor: AppPalette.accent,
-                          decoration: authInputDecoration(
-                            context,
-                            labelText: '이메일',
-                            hintText: 'honggildong@example.com',
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        TextFormField(
-                          controller: _passwordController,
-                          obscureText: _obscurePassword,
-                          textInputAction: TextInputAction.done,
-                          autofillHints: const [AutofillHints.password],
-                          enableSuggestions: false,
-                          autocorrect: false,
-                          validator: _validatePassword,
-                          style: TextStyle(color: primaryText),
-                          cursorColor: AppPalette.accent,
-                          decoration: authInputDecoration(
-                            context,
-                            labelText: '비밀번호',
-                            hintText: '8자 이상 입력',
-                            suffixIcon: IconButton(
-                              onPressed: () {
-                                setState(() {
-                                  _obscurePassword = !_obscurePassword;
-                                });
-                              },
-                              tooltip: _obscurePassword
-                                  ? '비밀번호 표시'
-                                  : '비밀번호 숨기기',
-                              icon: Icon(
-                                _obscurePassword
-                                    ? Icons.visibility_off_outlined
-                                    : Icons.visibility_outlined,
-                                color: iconColor,
-                              ),
+        body: SafeArea(
+          child: Form(
+            key: _formKey,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: ConstrainedBox(
+                    // 아래 인셋(자판 등)이 앱바 아래를 다 덮으면 maxHeight 가 0 이 되므로
+                    // 빼고 남은 값이 음수가 되지 않게 0 에서 멈춥니다.
+                    constraints: BoxConstraints(
+                      minHeight: math.max(0.0, constraints.maxHeight - 12),
+                    ),
+                    child: IntrinsicHeight(
+                      child: Column(
+                        children: [
+                          const SizedBox(height: 48),
+                          Text(
+                            'K-DPP에 로그인하세요',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: primaryText,
                             ),
                           ),
-                          onFieldSubmitted: (_) {
-                            if (!_isLoading) {
-                              _handleLogin();
-                            }
-                          },
-                        ),
-                        const SizedBox(height: 32),
-                        AuthSubmitButton(
-                          label: '로그인',
-                          loadingSemanticsLabel: '로그인 처리 중',
-                          isLoading: _isLoading,
-                          onPressed: _handleLogin,
-                        ),
-                        const SizedBox(height: 18),
-                        AuthLinkButton(
-                          action: '비밀번호를 잊으셨나요?',
-                          onPressed: _openPasswordReset,
-                        ),
-                        const SizedBox(height: 4),
-                        AuthLinkButton(
-                          prompt: '계정이 없으신가요?',
-                          action: '회원가입',
-                          onPressed: () async {
-                            // 회원가입이 pop으로 돌아오면 이 화면을 재사용하고,
-                            // 전달된 이메일이 있으면 로그인 폼에 채웁니다.
-                            final result = await Navigator.pushNamed(
+                          const SizedBox(height: 10),
+                          Text(
+                            '계정 정보를 입력하고 서비스를 시작해 보세요.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: secondaryText,
+                              height: 1.5,
+                            ),
+                          ),
+                          const SizedBox(height: 40),
+                          TextFormField(
+                            controller: _emailController,
+                            keyboardType: TextInputType.emailAddress,
+                            textInputAction: TextInputAction.next,
+                            autofillHints: const [
+                              AutofillHints.username,
+                              AutofillHints.email,
+                            ],
+                            autocorrect: false,
+                            validator: validateEmailInput,
+                            style: TextStyle(color: primaryText),
+                            cursorColor: AppPalette.accent,
+                            decoration: authInputDecoration(
                               context,
-                              '/signup',
-                              arguments: SignupScreen.fromEmailLoginArgument,
-                            );
+                              labelText: '이메일',
+                              hintText: 'honggildong@example.com',
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          TextFormField(
+                            controller: _passwordController,
+                            obscureText: _obscurePassword,
+                            textInputAction: TextInputAction.done,
+                            autofillHints: const [AutofillHints.password],
+                            enableSuggestions: false,
+                            autocorrect: false,
+                            validator: _validatePassword,
+                            style: TextStyle(color: primaryText),
+                            cursorColor: AppPalette.accent,
+                            decoration: authInputDecoration(
+                              context,
+                              labelText: '비밀번호',
+                              hintText: '8자 이상 입력',
+                              suffixIcon: IconButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _obscurePassword = !_obscurePassword;
+                                  });
+                                },
+                                tooltip: _obscurePassword
+                                    ? '비밀번호 표시'
+                                    : '비밀번호 숨기기',
+                                icon: Icon(
+                                  _obscurePassword
+                                      ? Icons.visibility_off_outlined
+                                      : Icons.visibility_outlined,
+                                  color: iconColor,
+                                ),
+                              ),
+                            ),
+                            onFieldSubmitted: (_) {
+                              if (!_isLoading) {
+                                _handleLogin();
+                              }
+                            },
+                          ),
+                          const SizedBox(height: 32),
+                          AuthSubmitButton(
+                            label: '로그인',
+                            loadingSemanticsLabel: '로그인 처리 중',
+                            isLoading: _isLoading,
+                            onPressed: _handleLogin,
+                          ),
+                          const SizedBox(height: 18),
+                          // 요청 중에 다른 화면을 쌓으면, 끝난 로그인이 그 화면을 메인으로 바꿔 버린다.
+                          AuthLinkButton(
+                            action: '비밀번호를 잊으셨나요?',
+                            onPressed: _isLoading ? null : _openPasswordReset,
+                          ),
+                          const SizedBox(height: 4),
+                          AuthLinkButton(
+                            prompt: '계정이 없으신가요?',
+                            action: '회원가입',
+                            onPressed: _isLoading
+                                ? null
+                                : () async {
+                                    // 회원가입이 pop으로 돌아오면 이 화면을 재사용하고,
+                                    // 전달된 이메일이 있으면 로그인 폼에 채웁니다.
+                                    final result = await Navigator.pushNamed(
+                                      context,
+                                      '/signup',
+                                      arguments:
+                                          SignupScreen.fromEmailLoginArgument,
+                                    );
 
-                            if (!mounted ||
-                                result is! String ||
-                                result.trim().isEmpty) {
-                              return;
-                            }
+                                    if (!mounted ||
+                                        result is! String ||
+                                        result.trim().isEmpty) {
+                                      return;
+                                    }
 
-                            _emailController.text = result.trim();
-                          },
-                        ),
-                        const Spacer(),
-                        const SizedBox(height: 24),
-                      ],
+                                    _emailController.text = result.trim();
+                                  },
+                          ),
+                          const Spacer(),
+                          const SizedBox(height: 24),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
         ),
       ),
