@@ -91,7 +91,9 @@ SCAN_IMAGE_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 # 탄소 계산에 허용하는 의류 무게 상한(100kg).
 MAX_WEIGHT_GRAMS = 100_000
-MATERIAL_FACTOR_SOURCE = "K-DPP backend material carbon factor table (development estimates)"
+# 리포트 '계산 기준'의 출처 줄에 그대로 보이는 이름입니다. 계수가 아직 개발용 추정값이라
+# '추정값'을 붙여 둡니다(팀 승인 출처가 정해지면 바꿈 — DECISIONS 227·233).
+MATERIAL_FACTOR_SOURCE = "K-DPP 소재별 배출계수 표(추정값)"
 CALCULATION_SCOPE = "material_production_estimate"
 CLOTHING_TYPE_OPTIONS = [
     {
@@ -2881,7 +2883,8 @@ def calculate_carbon_range(
         "calculation_basis": "소재별 탄소배출계수(kg CO2eq/kg)와 의류 무게(g)를 곱해 계산했습니다.",
         "emission_factors": emission_factors,
         "calculation_source": MATERIAL_FACTOR_SOURCE,
-        "calculation_note": "현재 소재별 배출계수는 개발용 추정값입니다. 최종 발표 전 팀 승인 출처로 교체해야 합니다.",
+        # 예전엔 팀 내부 메모를 실어 리포트에 그대로 보였습니다. 칸은 계약대로 두고 비웁니다(DECISIONS 233).
+        "calculation_note": None,
         "saved_result_id": result.id,
     }
 

@@ -153,8 +153,9 @@ def test_carbon_range_uses_db_factor_and_weight_range(client):
     assert body["average_carbon_footprint"] == 1.46
     assert body["source"] == "backend"
     assert body["calculation_scope"] == "material_production_estimate"
-    assert "development estimates" in body["calculation_source"]
-    assert "개발용 추정값" in body["calculation_note"]
+    # 리포트에 그대로 보이는 값이라 개발용 영어 이름·팀 내부 메모가 다시 실리지 않게 붙들어 둡니다(DECISIONS 233).
+    assert body["calculation_source"] == "K-DPP 소재별 배출계수 표(추정값)"
+    assert body["calculation_note"] is None
     assert body["weight_source"] == "range"
     assert body["emission_factors"] == [
         {
@@ -164,7 +165,7 @@ def test_carbon_range_uses_db_factor_and_weight_range(client):
             "ratio": 100.0,
             "carbon_factor": 8.3,
             "unit": "kg CO2eq/kg textile",
-            "source": "K-DPP backend material carbon factor table (development estimates)",
+            "source": "K-DPP 소재별 배출계수 표(추정값)",
         }
     ]
     assert body["saved_result_id"] is not None
