@@ -40,6 +40,9 @@ x-backup: &backup
     TZ: Asia/Seoul
     K_DPP_BACKUP_AT: ${K_DPP_BACKUP_AT:-04:00}
     K_DPP_BACKUP_MAX_AGE_MIN: ${K_DPP_BACKUP_MAX_AGE_MIN:-1560}
+    # 보관 기간(일, 7~14): 어떤 백업 파일도 이 기간을 넘겨 남지 않게 매일 백업이 성공한 뒤 종류와 상관없이 지웁니다.
+    # 값이 잘못되면 백업이 시작하지 않아 `up` 도 멈춥니다(DECISIONS 243·250·251, README '백업').
+    K_DPP_BACKUP_KEEP_DAYS: ${K_DPP_BACKUP_KEEP_DAYS:-14}
   volumes:
     # 파일 하나가 아니라 폴더째 연결합니다 — git pull 로 바뀐 스크립트가 떠 있는 컨테이너에도 보이게.
     - ./backup:/opt/kdpp-backup:ro
@@ -79,7 +82,7 @@ services:
     restart: "no"
 
   backup:
-    # ② 매일 백업: 매일 K_DPP_BACKUP_AT 에 백업하고 되살려 검사합니다. 매일 백업의 마지막 성공이
+    # ② 매일 백업: 매일 K_DPP_BACKUP_AT 에 백업하고 되살려 검사한 뒤 보관 기간을 넘은 파일을 지웁니다. 매일 백업의 마지막 성공이
     # K_DPP_BACKUP_MAX_AGE_MIN(기본 26시간)보다 오래되면 unhealthy 로 보입니다(배포 직전·수동 백업은 세지 않음).
     <<: *backup
     command: ["loop"]
