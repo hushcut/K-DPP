@@ -14,6 +14,7 @@ import 'package:k_dpp/widgets/auth_form_widgets.dart';
 import 'package:k_dpp/widgets/kakao_login_button.dart';
 import 'package:provider/provider.dart';
 
+import 'helpers/app_back_button_state.dart';
 import 'helpers/app_banner_expect.dart';
 import 'helpers/fake_auth_backend.dart';
 import 'helpers/fake_auth_session_storage.dart';
@@ -306,6 +307,36 @@ void main() {
     expect(harness.provider.isAuthenticated, isFalse);
     expect(find.byType(AppBannerView), findsNothing);
     expect(_kakaoButton(tester).isLoading, isFalse);
+  });
+
+  testWidgets('닉네임 화면은 가입을 기다리는 동안 "<" 가 흐리고 뒤로가기로도 닫히지 않는다', (tester) async {
+    final harness = await _pumpLogin(tester);
+    harness.backend
+      ..on('/auth/kakao', _nicknameRequired())
+      ..on('/auth/kakao', _kakaoLoginSuccess(isNewUser: true))
+      ..on('/me/history', _kakaoSessionSnapshot());
+
+    await tester.tap(find.byType(KakaoLoginButton));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField), '새 닉네임');
+    final pendingSignup = harness.backend.hold('/auth/kakao');
+    await tester.tap(find.text('시작하기'));
+    await tester.pump();
+
+    expect(harness.backend.bodiesFor('/auth/kakao'), hasLength(2));
+    // 이 화면은 C25 전부터 막혀 있었지만 "<" 모양은 그대로였다 — 이제 다른 인증 화면처럼 흐리다
+    // (DECISIONS 2026-10-14).
+    expect(isAppBackButtonEnabled(tester), isFalse);
+
+    await tryToLeave(tester);
+
+    expect(find.byType(KakaoNicknameScreen), findsOneWidget);
+
+    pendingSignup.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.text('메인 화면'), findsOneWidget);
+    expect(harness.provider.isAuthenticated, isTrue);
   });
 
   testWidgets('카카오가 응답하지 않으면 잠시 후 다시 하라고 알리고 로그인 화면에 남는다', (tester) async {

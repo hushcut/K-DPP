@@ -7,6 +7,7 @@ import 'package:k_dpp/signup_screen.dart';
 import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:k_dpp/widgets/number_keyboard_toolbar.dart';
 
+import 'helpers/app_back_button_state.dart';
 import 'helpers/app_banner_expect.dart';
 import 'helpers/fake_auth_backend.dart';
 
@@ -521,6 +522,85 @@ void main() {
     // 이메일 로그인 화면이 한 장만 남아야 중복 스택이 없는 것입니다.
     expect(find.byType(EmailLoginScreen, skipOffstage: false), findsOneWidget);
     expect(find.byType(SignupScreen, skipOffstage: false), findsNothing);
+  });
+
+  // C25(DECISIONS 2026-10-14): 요청 중에 떠나면 서버에 계정은 생겼는데 가입 완료 안내도, 로그인
+  // 칸의 이메일도 없었다.
+  testWidgets('가입을 기다리는 동안은 "<"·뒤로가기·로그인 링크로 떠날 수 없고, 끝나면 이메일을 넘겨 돌아간다', (
+    tester,
+  ) async {
+    backend
+      ..on('/auth/email-code', emailCodeSentResponse())
+      ..on(
+        '/auth/signup',
+        jsonResponse({
+          'status': 'success',
+          'message': '회원가입이 완료되었습니다.',
+          'user': {
+            'id': 1,
+            'email': 'honggildong@example.com',
+            'nickname': '홍길동',
+          },
+        }, 200),
+      );
+    final service = AuthApiService(client: backend.client);
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: AppBannerHost.builder,
+        home: EmailLoginScreen(authApiService: service),
+        routes: {
+          '/signup': (_) =>
+              SignupScreen(authApiService: service, now: () => now),
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tapVisible(tester, find.text('계정이 없으신가요? 회원가입'));
+
+    // 아래에 로그인 화면이 깔려 있어 맨 위 화면의 칸만 찾습니다.
+    Finder onTop(String label) => find.widgetWithText(TextFormField, label);
+    await tester.enterText(onTop('이메일'), 'honggildong@example.com');
+    await requestCode(tester);
+    await tester.enterText(onTop('인증번호'), '123456');
+    await tester.enterText(onTop('닉네임'), '홍길동');
+    await tester.enterText(onTop('비밀번호'), 'password123');
+    await tester.enterText(onTop('비밀번호 확인'), 'password123');
+    final pendingSignup = backend.hold('/auth/signup');
+    final submit = find.widgetWithText(ElevatedButton, '회원가입');
+    await tester.ensureVisible(submit);
+    await tester.pumpAndSettle();
+    await tester.tap(submit);
+    await tester.pump();
+
+    expect(backend.bodiesFor('/auth/signup'), hasLength(1));
+    expect(isAppBackButtonEnabled(tester), isFalse);
+
+    await tryToLeave(tester);
+    final loginLink = find.text('이미 계정이 있으신가요? 로그인');
+    await tester.ensureVisible(loginLink);
+    await tester.pump();
+    await tester.tap(loginLink);
+    await pumpPastTransition(tester);
+
+    expect(find.byType(SignupScreen), findsOneWidget);
+
+    pendingSignup.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SignupScreen), findsNothing);
+    expect(
+      tester
+          .widget<EditableText>(
+            find.descendant(
+              of: onTop('이메일'),
+              matching: find.byType(EditableText),
+            ),
+          )
+          .controller
+          .text,
+      'honggildong@example.com',
+    );
+    expectAppBanner(tester, '회원가입이 완료됐어요. 로그인해 주세요.', AppBannerKind.success);
   });
 
   testWidgets('자판 인셋이 앱바 아래를 다 덮어 본문 높이가 0 이 돼도 레이아웃 예외가 나지 않는다', (
