@@ -50,6 +50,52 @@ def test_tilted_columns_preserve_each_material_ratio(tilt, scale, offset):
     assert Counter(layout.split()) == Counter(token for w in words for token in w.text.split())
 
 
+@pytest.mark.parametrize("names", [
+    ("COTTON", "POLYESTER", "POLYURETHANE"),
+    ("綿", "ポリエステル", "ポリウレタン"),
+])
+@pytest.mark.parametrize("tilt", [-0.2, -0.12, 0.12, 0.2])
+@pytest.mark.parametrize("scale", [1, 3])
+@pytest.mark.parametrize("offset", [(0, 0), (137, 91)])
+def test_wide_columns_are_partitioned_in_the_supported_reading_direction(names, tilt, scale, offset):
+    words = [value
+             for index, (name, ratio) in enumerate(zip(names, (57, 31, 12)))
+             for value in (
+                 word(name, 20, 300 + index * 40, 30 if len(name) == 1 else 150,
+                      tilt=tilt, scale=scale, offset=offset),
+                 word(str(ratio), 900, 300 + index * 40, 30,
+                      tilt=tilt, scale=scale, offset=offset),
+                 word("%", 935, 300 + index * 40, 15,
+                      tilt=tilt, scale=scale, offset=offset),
+             )]
+    expected = "\n".join(f"{name} {ratio} %" for name, ratio in zip(names, (57, 31, 12)))
+    layout = spatial_text_from_words(words)
+    assert layout == expected
+    assert spatial_text_from_words(list(reversed(words))) == expected
+    assert Counter(layout.split()) == Counter(token for value in words for token in value.text.split())
+    assert parse_label(layout)["materials"] == {"cotton": 57, "polyester": 31, "polyurethane": 12}
+
+
+@pytest.mark.parametrize("defect", ["missing_polygon", "opposite_direction", "flat_box", "degenerate_box"])
+def test_wide_columns_do_not_inherit_an_angle_for_an_unproved_short_box(defect):
+    words = [value
+             for index, (name, ratio) in enumerate(zip(("綿", "ポリエステル", "ポリウレタン"), (57, 31, 12)))
+             for value in (
+                 word(name, 20, 300 + index * 40, 30 if len(name) == 1 else 150),
+                 word(str(ratio), 900, 300 + index * 40, 30),
+                 word("%", 935, 300 + index * 40, 15),
+             )]
+    if defect == "missing_polygon":
+        words[0] = replace(words[0], vertices=())
+    elif defect == "degenerate_box":
+        words[0] = replace(words[0], vertices=((0, 0),) * 4)
+    else:
+        words[0] = word("綿", 20, 300, 30, tilt=0.12 if defect == "opposite_direction" else 0)
+    layout = spatial_text_from_words(words)
+    assert "綿 57 %" not in layout
+    assert Counter(layout.split()) == Counter(token for value in words for token in value.text.split())
+
+
 @pytest.mark.parametrize("seed", range(5))
 def test_layout_is_independent_of_provider_word_order(seed):
     words = composition_words()

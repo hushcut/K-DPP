@@ -65,10 +65,9 @@ def test_decimal_ratios_keep_input_precision_in_output_and_answer_key():
 def test_invalid_ratios_cannot_confirm_their_own_part(text):
     result = parse_label(text)
     if text.startswith("OUTER"):
-        assert result["status"] == "success"
-        assert result["selected_part"] == "lining"
-        assert result["materials"] == {"polyester": 100}
-        assert "outer" not in result["parts"]
+        assert result["status"] == "failed"
+        assert result["error_code"] == "incomplete_part_composition"
+        assert result["materials"] == result["parts"] == {}
         assert any(warning.startswith("outer:") for warning in result["warnings"])
     else:
         assert result["status"] == "failed"

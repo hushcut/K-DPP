@@ -31,11 +31,13 @@ RUNTIME_FILES = (
     "apps/text/ocr_candidates.py",
     "apps/text/ocr_corrections.py",
     "apps/text/ocr_errors.py",
+    "apps/text/ocr_geometry.py",
     "apps/text/ocr_image.py",
     "apps/text/ocr_layout.py",
     "apps/text/ocr_regions.py",
     "apps/text/ocr_text.py",
     "apps/text/parse_label.py",
+    "apps/text/part_policy.py",
     "apps/text/ratio_contract.py",
     "apps/text/rules.py",
 )

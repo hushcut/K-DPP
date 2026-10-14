@@ -10,6 +10,7 @@ from typing import Any, Callable
 from apps.text.composition_candidates import equivalent_composition
 from apps.text.material_extraction import PART_PATTERNS, _material_evidence, extract_materials, normalize_text
 from apps.text.rules import EQUIVALENT_MATERIALS
+from apps.text.part_policy import OUTER_PARTS, PART_PRIORITY, part_rank
 from apps.text.ocr_layout import OcrWord, _horizontal_rows, _projected_height
 
 
@@ -37,6 +38,14 @@ class OcrCandidate:
     image_words: tuple[OcrWord, ...] = ()
     image_region: tuple[float, ...] = ()
     parser_warnings: tuple[str, ...] = ()
+    unconfirmed_outer_parts: tuple[str, ...] = ()
+
+    def has_confirmed_part(self, part: str) -> bool:
+        """부분 조성의 근거는 쓰되 미확정 겉감을 복원한 것으로 취급하지 않는다."""
+        return part in self.parts and (
+            self.parser_status == "success"
+            or bool(self.unconfirmed_outer_parts) and part not in (*OUTER_PARTS, "generic")
+        )
 
 
 def agreed_original_composition(candidates: list[OcrCandidate]) -> bool:
@@ -120,7 +129,7 @@ def literal_yarn_table_over_failed_layout(raw: OcrCandidate, layout: OcrCandidat
             or len({word.page for word in raw.image_words}) != 1):
         return False
     from apps.text.scoped_materials import confirmed_yarn_declaration
-    from apps.text.ocr_corrections import _annotation_tokens, _covers_row_tokens
+    from apps.text.ocr_geometry import _annotation_tokens, _covers_row_tokens
 
     declaration = confirmed_yarn_declaration(raw.text)
     if not declaration or len({item["language"] for item in declaration[1]["observations"]}) < 3:
@@ -490,7 +499,6 @@ def find_rejected_composition_parts(
                         materials_resolved = _can_resolve_duplicate_material_rows(
                             candidate, part, required_materials, required_ratios, available_pairs,
                         )
-                    from apps.text.parse_label import PART_PRIORITY
 
                     new_material_parts = {
                         key for key in valid_parts
@@ -555,24 +563,12 @@ def score_candidate(
         else 0.0
     )
     confidence_rank = {"low": 0, "medium": 1, "high": 2}.get(parser_confidence, 0)
-    part_rank = {
-        "outer": 8,
-        "generic": 7,
-        "outer_2": 6,
-        "lining": 5,
-        "filling": 4,
-        "pocket": 3,
-        "rib": 2,
-        "sleeve": 1,
-        "color_block": 0,
-        "embroidery_yarn": -1,
-    }.get(selected_part, 0)
     explicit_percent_count = len(re.findall(r"\d{1,3}(?:\.\d+)?\s*[%％]", text))
     source_priority = 1 if source == "original" else 0
 
     return (
         1 if parser_status == "success" else 0,
-        part_rank,
+        part_rank(selected_part),
         len(materials),
         confidence_rank,
         -abs(100.0 - total) if materials else -100.0,
@@ -601,6 +597,11 @@ def build_candidate(
     )
     parser_warnings = parsed.get("warnings", [])
     evidence = parsed.get("parse_evidence", {})
+    confirmed_parts = parsed.get("parts", {}) or evidence.get("confirmed_parts", {})
+    # Among failed readings, retain the one with a confirmed secondary block.
+    # Its failure status and empty primary materials still prevent publication.
+    score_part = selected_part or next((part for part in PART_PRIORITY if part in confirmed_parts), "")
+    score_materials = materials or confirmed_parts.get(score_part, {})
     return OcrCandidate(
         source=source,
         text=text,
@@ -610,8 +611,8 @@ def build_candidate(
         parser_confidence=parser_confidence,
         score=score_candidate(
             text,
-            materials,
-            selected_part,
+            score_materials,
+            score_part,
             parser_status,
             parser_confidence,
             source,
@@ -619,7 +620,9 @@ def build_candidate(
             warning_count=len(parser_warnings),
         ),
         layout_used=layout_used,
-        parts=parsed.get("parts", {}),
+        # Confirmed secondary blocks remain evidence, even when an unread
+        # outer prevents publishing any primary materials.
+        parts=confirmed_parts,
         conflicting_parts=tuple(sorted({
             warning.split(":", 1)[0]
             for warning in parser_warnings
@@ -637,6 +640,7 @@ def build_candidate(
             for part, reasons in evidence.get("rejected_composition_parts", {}).items()
         },
         parser_warnings=tuple(parser_warnings),
+        unconfirmed_outer_parts=tuple(evidence.get("unconfirmed_outer_parts", ())),
     )
 
 

@@ -44,7 +44,7 @@ def test_confirmed_materials_do_not_acquire_an_outer_part(text, ocr):
 
 @pytest.mark.parametrize("text,part", [
     ("OUTER COTTON 100%", "outer"),
-    ("OUTER UNKNOWN 100%\nLINING POLYESTER 100%", "lining"),
+    ("LINING POLYESTER 100%", "lining"),
     ("YARN POLYESTER 100%", "embroidery_yarn"),
 ])
 def test_an_explicit_part_or_fallback_keeps_its_existing_meaning(text, part):

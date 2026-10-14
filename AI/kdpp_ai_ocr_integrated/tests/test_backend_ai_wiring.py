@@ -133,6 +133,20 @@ def test_scan_label_uses_ai_parser_and_returns_analysis_response(backend_main, s
     assert scan_db.saved == []
 
 
+def test_scan_rejects_unconfirmed_outer_without_using_lining(backend_main, scan_db) -> None:
+    with pytest.raises(HTTPException) as raised:
+        backend_main.scan_label(
+            image=make_upload(), raw_ocr_text="OUTER COTTON 95%\nLINING COTTON 100%",
+            db=scan_db, current_user=SimpleNamespace(id=1),
+        )
+    assert raised.value.status_code == 422
+    assert raised.value.detail["error_code"] == "MATERIAL_EXTRACTION_FAILED"
+    assert not raised.value.detail.get("partial_materials")
+    assert not raised.value.detail.get("materials")
+    assert scan_db.saved == []
+    assert scan_db.committed is False
+
+
 def test_scan_label_runs_ocr_then_ai_parser(backend_main, scan_db, monkeypatch) -> None:
     image = make_upload()
     expected_bytes = image.file.getvalue()

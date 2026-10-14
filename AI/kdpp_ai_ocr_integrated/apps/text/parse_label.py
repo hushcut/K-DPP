@@ -3,6 +3,8 @@ from dataclasses import replace, dataclass
 from decimal import Decimal, InvalidOperation
 
 from apps.text.line_analysis_cache import LineAnalysis, line_analysis_scope, reuse_line_analysis
+from apps.text.part_policy import PART_PRIORITY as PART_PRIORITY
+from apps.text.part_policy import OUTER_PARTS
 from apps.text.ratio_contract import EXACT_RATIO_TOTAL, has_exact_total
 from apps.text.translation_alternatives import prepare_translation_alternatives
 from apps.text.scoped_materials import read_yarn_materials, confirmed_yarn_declaration
@@ -35,19 +37,6 @@ from apps.text.rules import (
     MATERIAL_KOREAN,
 )
 
-
-PART_PRIORITY = [
-    "outer",
-    "generic",
-    "outer_2",
-    "lining",
-    "filling",
-    "pocket",
-    "rib",
-    "sleeve",
-    "color_block",
-    "embroidery_yarn",
-]
 
 NON_COMPOSITION_WORDS = {
     "제품명",
@@ -1569,8 +1558,8 @@ def parse_label(
             parse_evidence=ratio_evidence,
         )
 
-    # A result describes exactly selected_part, never an inferred whole garment.
-    # Keep rejected higher parts visible while choosing the first confirmed part.
+    # A known outer must be confirmed before another part can be primary.
+    # An absent outer does not prevent using an explicitly labelled other part.
     missing_parts = [part for part in PART_PRIORITY if part in expected_parts and part not in parts]
     warnings.extend(f"{part}:composition_not_confirmed" for part in missing_parts)
     unconfirmed_parts = [
@@ -1578,6 +1567,19 @@ def parse_label(
         for part in PART_PRIORITY[: PART_PRIORITY.index(selected_part)]
         if part in expected_parts and part not in parts
     ]
+    unconfirmed_outer_parts = [part for part in unconfirmed_parts if part in OUTER_PARTS]
+    if unconfirmed_outer_parts:
+        return failed_response(
+            text,
+            error_code="incomplete_part_composition",
+            message="겉감 조성을 확정하지 못해 다른 부위로 대신 계산할 수 없습니다.",
+            warnings=warnings,
+            parse_evidence={
+                **ratio_evidence,
+                "unconfirmed_outer_parts": unconfirmed_outer_parts,
+                "confirmed_parts": parts,
+            },
+        )
     if unconfirmed_parts:
         warnings.append(f"representative_part_fallback:{selected_part}")
 

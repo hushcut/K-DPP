@@ -4,7 +4,7 @@ import pytest
 
 from apps.text.ocr_candidates import build_candidate, find_rejected_composition_parts
 from apps.text.parse_label import _prepare_multilingual_rows, parse_label
-from part_policy_assertions import assert_selected_part
+from part_policy_assertions import assert_unconfirmed_outer
 
 
 def _prepare_without_losing_characters(text):
@@ -209,7 +209,7 @@ def test_identical_fiber_rows_in_another_part_cannot_cancel_restored_provenance(
     assert "cotton 100% /\ncoton" in prepared
     assert "cotton 100%" in prepared.split("outer\n", 1)[1]
     result = parse_label(text)
-    assert_selected_part(result, 'lining', {'cotton': 100}, unconfirmed='outer')
+    assert_unconfirmed_outer(result, {'lining': {'cotton': 100}})
     evidence = result["parse_evidence"]
     assert evidence["observed_materials"]["outer"] == ["cotton"]
     assert "outer" in evidence["rejected_composition_parts"]

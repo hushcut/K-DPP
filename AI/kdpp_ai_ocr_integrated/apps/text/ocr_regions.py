@@ -514,7 +514,7 @@ def _material_ink_threshold(
 
 def find_complete_material_region(candidates: list[OcrCandidate], region: tuple[int, int, int, int]) -> tuple[int, int, int, int] | None:
     """End a crop before a complete care heading instead of cutting its letters."""
-    from apps.text.ocr_corrections import _row_words
+    from apps.text.ocr_geometry import _row_words
     from apps.text.parse_label import build_line_infos, _is_metadata_line
 
     left, top, right, bottom = region

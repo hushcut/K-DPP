@@ -38,11 +38,11 @@ def test_outer_and_lining_rows_stay_in_separate_blocks():
     assert result['parts'] == {'outer': {'cotton': 73, 'polyester': 27}, 'lining': {'nylon': 100}}
 
 
-def test_an_unread_outer_declaration_still_falls_back_to_confirmed_lining():
+def test_an_unread_outer_declaration_cannot_fall_back_to_confirmed_lining():
     result = parse_label('表 地\nUNKNOWN 100%\n裏 地\nPOLYESTER 100%')
-    assert result['status'] == 'success'
-    assert result['selected_part'] == 'lining'
-    assert result['parts'] == {'lining': {'polyester': 100}}
+    assert result['status'] == 'failed'
+    assert result['error_code'] == 'incomplete_part_composition'
+    assert result['parts'] == result['materials'] == {}
     assert 'outer' in result['parse_evidence']['rejected_composition_parts']
 
 

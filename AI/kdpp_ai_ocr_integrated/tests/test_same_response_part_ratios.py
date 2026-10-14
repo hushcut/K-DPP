@@ -35,9 +35,8 @@ def test_layout_pairs_repeated_percentages_and_keeps_unconfirmed_outer():
     raw, layout = readings()
     assert _same_response_ratio_order_recovery(raw, layout, "lining", [raw, layout])
     result = _assess_candidates([raw, layout])
-    assert result.status == "success"
-    assert result.best.selected_part == "lining"
-    assert result.best.materials == {"polyester": 100}
+    assert result.status == "failed"
+    assert result.best.parts["lining"] == {"polyester": 100}
     assert "outer" in result.rejected_composition_parts
     assert "lining" not in result.rejected_composition_parts
     assert "lining" not in result.unpaired_ratio_parts

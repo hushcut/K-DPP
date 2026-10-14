@@ -131,16 +131,15 @@ def test_primary_han_recovery_cannot_borrow_or_hide_secondary_part_annotations(d
         words[outer_percent] = next(word for word in words if word.text == "%" and word.top == 380)
     selected[0] = _rebuild(candidate, words=tuple(words))
     decision = _assess_candidates(original + crop)
-    assert decision.status == "success"
+    assert decision.status == "failed"
     assert "outer" in decision.rejected_composition_parts or "generic" in decision.rejected_composition_parts
-    # The invalid primary reconstruction remains rejected. Only the literal
-    # confirmed lining may survive under the new part selection policy.
+    # A confirmed lining cannot hide the rejected primary reconstruction.
     from apps.text.parse_label import parse_label
     response = parse_label(decision.best.text, rejected_composition_parts=decision.rejected_composition_parts,
                            unpaired_ratio_parts=decision.unpaired_ratio_parts,
                            conflicting_parts=decision.conflicting_parts)
-    assert response["selected_part"] == "lining"
-    assert "outer" not in response["parts"]
+    assert response["status"] == "failed"
+    assert response["materials"] == response["parts"] == {}
 
 
 @pytest.mark.parametrize("damaged_side", ["source", "target"])

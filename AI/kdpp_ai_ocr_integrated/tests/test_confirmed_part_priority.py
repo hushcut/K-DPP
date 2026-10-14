@@ -43,16 +43,18 @@ def test_registered_yarn_headings_use_the_last_part(heading):
 ])
 def test_real_layouts_and_unconfirmed_higher_parts_select_only_verified_ratios(text):
     result = parse_label(text)
+    if not text.startswith('자수'):
+        assert result['status'] == 'failed'
+        assert result['error_code'] == 'incomplete_part_composition'
+        assert result['materials'] == result['parts'] == {}
+        assert 'outer:composition_not_confirmed' in result['warnings']
+        assert result['parse_evidence']['confirmed_parts']['lining'] == {'polyester': 100}
+        return
     assert result['status'] == 'success'
-    part = 'embroidery_yarn' if text.startswith('자수') else 'lining'
+    part = 'embroidery_yarn'
     assert result['selected_part'] == part
     assert result['materials'] == {'polyester': 100}
     assert 'outer' not in result['parts']
-    if part == 'lining':
-        assert 'outer:composition_not_confirmed' in result['warnings']
-        assert 'representative_part_fallback:lining' in result['warnings']
-        assert 'outer' in result['parse_evidence']['rejected_composition_parts'] or any(
-            warning.startswith('outer:') for warning in result['warnings'])
 
 
 @pytest.mark.parametrize('text', [
@@ -123,7 +125,7 @@ def test_unlocated_unknown_row_cannot_be_hidden_by_falling_back_to_another_candi
 
 @pytest.mark.parametrize('text,part', [
     ('YARN POLYESTER 100%', 'embroidery_yarn'),
-    ('OUTER COTTON 95%\nLINING POLYESTER 100%', 'lining'),
+    ('LINING POLYESTER 100%', 'lining'),
 ])
 def test_fallback_part_and_yarn_remain_valid_in_the_service_response_contract(text, part):
     response = LabelResponseContract.model_validate({'api_version': 'test', **parse_label(text)})
