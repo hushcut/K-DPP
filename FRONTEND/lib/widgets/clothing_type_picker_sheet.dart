@@ -514,12 +514,9 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
                               color: AppPalette.accent,
                             )
                           else
-                            Icon(
-                              option.isDirectWeightPlaceholder
-                                  ? Icons.scale_outlined
-                                  : Icons.chevron_right,
-                              color: secondaryText,
-                            ),
+                            // 직접 입력도 누르면 무게 칸으로 넘어가므로 다른 줄과 같은 ">" 입니다.
+                            // 저울은 왼쪽 아이콘에 이미 있습니다(결정 234).
+                            Icon(Icons.chevron_right, color: secondaryText),
                         ],
                       ),
                     ),
