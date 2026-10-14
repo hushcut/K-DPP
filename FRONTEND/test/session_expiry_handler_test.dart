@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
+import 'package:k_dpp/services/scan_api_service.dart';
 import 'package:k_dpp/utils/session_expiry_handler.dart';
 import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:provider/provider.dart';
@@ -64,6 +65,30 @@ void main() {
       expectAppBanner(
         tester,
         '로그인이 만료됐어요. 의류는 기기에 저장했어요. 일부 로그인 정보는 지우지 못했어요.',
+        AppBannerKind.failure,
+      );
+    });
+
+    // 스캔 중 만료 문장이 '다시 로그인한 뒤 스캔해 주세요.' 로 끝나 세 문장이 되던 것.
+    testWidgets('스캔 중 만료도 두 문장을 넘지 않는다', (tester) async {
+      final storage = FakeAuthSessionStorage();
+      final provider = await _signedInProvider(storage: storage);
+      storage.clearError = Exception('저장소 잠김');
+      await _pumpExpiryButton(
+        tester,
+        provider,
+        message: const ScanApiException(
+          type: ScanApiErrorType.unauthorized,
+          message: '',
+        ).userMessage,
+      );
+
+      await tester.tap(find.text('만료 처리'));
+      await tester.pumpAndSettle();
+
+      expectAppBanner(
+        tester,
+        '로그인이 만료돼 스캔하지 못했어요. 일부 로그인 정보는 지우지 못했어요.',
         AppBannerKind.failure,
       );
     });

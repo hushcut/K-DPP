@@ -69,12 +69,17 @@ extension _ScanCaptureActions on _ScanScreenState {
     if (outcome is ScanAnalysisFailure) {
       // 인증 만료는 수동 입력 대신 세션 정리 후 로그인으로 보내
       // 탄소 계산 경로의 401 처리와 정책을 맞춥니다.
+      // 누른 스캔이 이뤄지지 않았으므로 안내가 아니라 실패로 알립니다(탈퇴 401 과 같음).
       if (outcome.exception.type == ScanApiErrorType.unauthorized &&
           accessToken != null) {
         _updateState(() {
           _isScanning = false;
         });
-        await SessionExpiryHandler.handle(context, message: outcome.userMessage);
+        await SessionExpiryHandler.handle(
+          context,
+          message: outcome.userMessage,
+          kind: AppBannerKind.failure,
+        );
         return;
       }
 

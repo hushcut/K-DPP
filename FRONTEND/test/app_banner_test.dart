@@ -40,13 +40,14 @@ void main() {
         ),
         const Duration(milliseconds: 3800),
       );
-      // 43자: 가장 긴 앱 문구(스캔 중 로그인 만료 + 정리 실패).
+      // 54자: 앞선 탈퇴 결과를 모르는 채 로그인 만료 + 정리 실패(할 일 안내를 남겨 세 문장, DECISIONS 102).
       expect(
         AppBanner.durationFor(
-          '로그인 정보가 만료되었어요. 다시 로그인한 뒤 스캔해 주세요. 일부 로그인 정보는 지우지 못했어요.',
+          '로그인이 만료돼 탈퇴됐는지 확인하지 못했어요. 다시 로그인되면 탈퇴를 다시 해 주세요. '
+          '일부 로그인 정보는 지우지 못했어요.',
           AppBannerKind.failure,
         ),
-        const Duration(milliseconds: 5300),
+        const Duration(milliseconds: 6400),
       );
       // 공백·줄바꿈은 세지 않는다.
       expect(

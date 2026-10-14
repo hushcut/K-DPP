@@ -51,8 +51,10 @@ class ScanApiException implements Exception {
     switch (type) {
       case ScanApiErrorType.badRequest:
         return '사진을 처리하지 못했어요. 다른 사진을 선택해 다시 시도해 주세요.';
+      // DECISIONS 102: '다시 로그인해 주세요.' 로 끝나야 정리 실패 때 그 자리가 바뀌어
+      // 두 문장을 넘지 않는다.
       case ScanApiErrorType.unauthorized:
-        return '로그인 정보가 만료되었어요. 다시 로그인한 뒤 스캔해 주세요.';
+        return '로그인이 만료돼 스캔하지 못했어요. 다시 로그인해 주세요.';
       case ScanApiErrorType.forbidden:
         return '이 기능을 사용할 권한이 없어요. 계속되면 관리자에게 문의해 주세요.';
       case ScanApiErrorType.payloadTooLarge:
