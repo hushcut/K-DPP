@@ -695,6 +695,165 @@ void main() {
     expect(find.text('홈'), findsOneWidget);
   });
 
+  // DECISIONS 2026-10-14 C24: 결과 화면 '다시 촬영'은 입력을 고쳤을 때만 버릴지 묻는다.
+  // '다시 촬영' 글자는 종류 선택 시트에도 있으므로 결과 화면 안에서 찾는다.
+  Future<void> tapRetake(WidgetTester tester) async {
+    final retake = find.descendant(
+      of: find.byType(ScanResultView),
+      matching: find.text('다시 촬영'),
+    );
+    // 입력 칸에 초점이 남은 채 내리면 스크롤 애니메이션이 돌고, 도는 동안 목록이 탭을 받지 않는다
+    // (실행 확인). 폰에서도 칸 밖을 누르면 키보드가 닫히므로 먼저 닫는다.
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    await tester.ensureVisible(retake);
+    await tester.pump();
+    await tester.tap(retake);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+
+  Future<void> keepWriting(WidgetTester tester) async {
+    await tester.tap(find.text('계속 작성하기'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+
+  Finder titleField() => find.widgetWithText(TextFormField, '의류 이름');
+
+  String titleText(WidgetTester tester) =>
+      tester.widget<TextFormField>(titleField()).controller!.text;
+
+  testWidgets('결과를 고치지 않았으면 "다시 촬영" 은 묻지 않고 바로 촬영 화면으로 돌아간다', (tester) async {
+    await pumpMainScreen(tester);
+    await openScanResultForm(tester);
+
+    // 고쳤다가 처음 글자로 되돌린 것도 고치지 않은 것으로 본다.
+    final originalTitle = titleText(tester);
+    await tester.enterText(titleField(), '바뀐 이름');
+    await tester.enterText(titleField(), originalTitle);
+
+    await tapRetake(tester);
+
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(ScanResultView), findsNothing);
+    expect(find.text(scanGuide), findsOneWidget);
+  });
+
+  testWidgets(
+    '이름을 고쳤으면 "다시 촬영" 은 버릴지 묻고, 계속 작성하면 고친 이름이 남고 다시 촬영하면 촬영 화면으로 간다',
+    (tester) async {
+      await pumpMainScreen(tester);
+      await openScanResultForm(tester);
+
+      await tester.enterText(titleField(), '내 셔츠');
+      await tapRetake(tester);
+      expect(find.text('다시 촬영할까요?'), findsOneWidget);
+
+      await keepWriting(tester);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(titleText(tester), '내 셔츠');
+
+      await tapRetake(tester);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('다시 촬영'),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(ScanResultView), findsNothing);
+      expect(find.text(scanGuide), findsOneWidget);
+    },
+  );
+
+  testWidgets('소재를 적거나 소재 행을 더하거나 종류를 바꿔도 "다시 촬영" 은 묻고, 되돌리면 묻지 않는다', (
+    tester,
+  ) async {
+    await pumpMainScreen(tester);
+    await openScanResultForm(tester);
+
+    Future<void> chooseType(String label) async {
+      // '무게 기준' 칸은 위에 겹친 누름 영역이 받으므로 칸 전체(Stack)를 누른다.
+      final weightField = find
+          .ancestor(of: find.text('무게 기준'), matching: find.byType(Stack))
+          .first;
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      await tester.ensureVisible(weightField);
+      await tester.pump();
+      await tester.tap(weightField);
+      await tester.pump();
+      await tester.pump(routeTransition);
+      // 같은 글자가 이름 칸에도 있을 수 있어 종류 시트 안에서 찾는다.
+      await tester.tap(
+        find.descendant(
+          of: find.byType(BottomSheet),
+          matching: find.text(label),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(routeTransition);
+    }
+
+    final percentField = find.byWidgetPredicate(
+      (widget) => widget is TextField && widget.decoration?.suffixText == '%',
+    );
+    final originalPercent = tester
+        .widget<TextField>(percentField)
+        .controller!
+        .text;
+
+    final edits = <String, (Future<void> Function(), Future<void> Function())>{
+      '소재명': (
+        () => tester.enterText(find.widgetWithText(TextFormField, '소재명'), '면'),
+        () => tester.enterText(find.widgetWithText(TextFormField, '소재명'), ''),
+      ),
+      '함유율': (
+        () => tester.enterText(percentField, '70'),
+        () => tester.enterText(percentField, originalPercent),
+      ),
+      '소재 행': (
+        () async {
+          await tester.ensureVisible(find.text('소재 추가'));
+          await tester.tap(find.text('소재 추가'));
+          await tester.pump();
+        },
+        () async {
+          await tester.ensureVisible(find.byTooltip('소재 삭제').last);
+          await tester.tap(find.byTooltip('소재 삭제').last);
+          await tester.pump();
+        },
+      ),
+      // 종류를 바꾸면 기본 이름도 따라 바뀌므로, 이름은 처음 글자로 되돌려 종류만 다르게 둔다.
+      '종류': (
+        () async {
+          final originalTitle = titleText(tester);
+          await tester.enterText(titleField(), '내 옷');
+          await chooseType('셔츠 / 블라우스');
+          await tester.enterText(titleField(), originalTitle);
+        },
+        () => chooseType('반팔 티셔츠'),
+      ),
+    };
+
+    for (final MapEntry(key: what, value: (edit, undo)) in edits.entries) {
+      await edit();
+      await tapRetake(tester);
+      expect(find.text('다시 촬영할까요?'), findsOneWidget, reason: what);
+      await keepWriting(tester);
+
+      await undo();
+    }
+
+    await tapRetake(tester);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.text(scanGuide), findsOneWidget);
+  });
+
   // 입력 칸이 초점을 가졌는지입니다. 초점은 칸 안의 EditableText 가 가집니다.
   bool fieldHasFocus(WidgetTester tester, Finder field) => tester
       .state<EditableTextState>(
