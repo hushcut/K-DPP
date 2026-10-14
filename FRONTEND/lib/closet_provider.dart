@@ -32,6 +32,10 @@ class ClosetProvider with ChangeNotifier {
   List<String> _loginMethods = const [];
   // 계정별 옷장의 주인 키입니다([_closetOwnerKeyFor]).
   String? _closetOwnerKey;
+  // 이번 실행에서 로그아웃한 적이 있으면 true 입니다. 그 뒤 주인 없이 들어온 저장은 공용 옷장 칸에
+  // 쓰지 않습니다 — 공용 칸은 다음에 앱을 켠 이메일 계정 옷장에 합쳐지기 때문입니다(DECISIONS 2026-10-14).
+  // 로그인 중엔 계정 칸에 쓰므로 이 값은 주인이 없을 때만 봅니다.
+  bool _hasSignedOut = false;
   ClosetSortOption _closetSortOption = ClosetSortOption.eco;
 
   // 정렬 기준은 목록·선택 상태와 무관하므로 별도 카운터를 씁니다.
@@ -93,6 +97,12 @@ class ClosetProvider with ChangeNotifier {
   bool get hasPasswordLogin => _loginMethods.contains(LoginMethod.password);
 
   String? get accessToken => _authSession?.accessToken;
+
+  /// 지금 옷장 주인 키입니다. 로그아웃 상태면 null 입니다.
+  ///
+  /// 서버 응답을 기다리는 사이 계정이 바뀔 수 있는 저장(스캔 저장)은 시작할 때 이 값을 잡아
+  /// 두었다가 [addClothesForOwner] 에 넘깁니다.
+  String? get closetOwnerKey => _closetOwnerKey;
 
   /// 옷장 목록에 적용 중인 정렬 기준입니다. 기기 단위 표시 설정이라
   /// 계정을 바꾸거나 로그아웃해도 유지됩니다.
@@ -271,6 +281,7 @@ class ClosetProvider with ChangeNotifier {
     _items.clear();
     _selectedClothes = null;
     _closetOwnerKey = null;
+    _hasSignedOut = true;
     _userName = '홍길동';
     _isUserNameCustomized = false;
     _userEmail = null;
@@ -399,10 +410,14 @@ class ClosetProvider with ChangeNotifier {
   }
 
   // 로그인 계정이 있으면 계정별 공간에, 없으면 기존 공용 공간에 옷장을 저장합니다.
+  // 로그아웃한 뒤에는 공용 공간에도 쓰지 않고 실패로 돌려, 부른 쪽이 목록을 되돌리게 합니다.
   Future<void> _persist() async {
     final ownerKey = _closetOwnerKey;
 
     if (ownerKey == null) {
+      if (_hasSignedOut) {
+        throw StateError('로그아웃한 뒤에는 옷장을 저장하지 않습니다.');
+      }
       await _storageService.saveClothesList(_items);
       return;
     }
@@ -431,6 +446,31 @@ class ClosetProvider with ChangeNotifier {
       }
       rethrow;
     }
+  }
+
+  /// [ownerKey] 계정 옷장에 새 의류를 넣고, 지금 옷장에 넣었으면 true 를 돌려줍니다.
+  ///
+  /// [ownerKey] 는 저장을 시작할 때 잡아 둔 [closetOwnerKey] 입니다. 기다리는 사이 로그아웃했거나
+  /// 다른 계정으로 바뀌었으면 지금 옷장은 건드리지 않고 기기에 저장된 [ownerKey] 옷장에만 더한 뒤
+  /// false 를 돌려줍니다 — 서버엔 이미 그 계정 기록이 있으니 다시 로그인하면 보이게 합니다.
+  /// 그 옷장이 기기에 없으면(탈퇴로 지워짐) 어디에도 넣지 않습니다(DECISIONS 2026-10-14).
+  Future<bool> addClothesForOwner(String? ownerKey, Clothes newClothes) async {
+    if (ownerKey == _closetOwnerKey) {
+      await addClothes(newClothes);
+      return true;
+    }
+
+    // 로그인 전에 시작한 저장은 넣을 계정 옷장이 없습니다.
+    if (ownerKey == null) return false;
+
+    final savedItems = await _storageService.loadClothesListOrNullFor(ownerKey);
+    if (savedItems == null) return false;
+
+    await _storageService.saveClothesListFor(ownerKey, [
+      ...savedItems,
+      newClothes,
+    ]);
+    return false;
   }
 
   /// 객체 또는 서버 저장 ID로 대상 의류를 찾아 수정하고 선택 상태도 교체합니다.

@@ -6,12 +6,14 @@ extension _ScanSaveActions on _ScanScreenState {
   /// 저장이 실패해도 저장 버튼이 잠긴 채 남지 않도록 상태를 되돌립니다.
   Future<void> _saveLocallyAfterSessionExpiry({
     required ClosetProvider provider,
+    required String? ownerKey,
     required Clothes clothes,
   }) async {
     var isSaved = false;
+    var isInCurrentCloset = false;
 
     try {
-      await provider.addClothes(clothes);
+      isInCurrentCloset = await provider.addClothesForOwner(ownerKey, clothes);
       isSaved = true;
     } catch (error) {
       debugPrint('세션 만료 후 로컬 저장에 실패했습니다: $error');
@@ -23,7 +25,8 @@ extension _ScanSaveActions on _ScanScreenState {
       }
     }
 
-    if (!mounted) return;
+    // 기다리는 사이 계정이 바뀌었으면 원래 계정 옷장에 넣었으니 지금 계정에 안내하지 않습니다.
+    if (!mounted || (isSaved && !isInCurrentCloset)) return;
 
     if (!isSaved) {
       AppBanner.of(context).show(
@@ -79,10 +82,14 @@ extension _ScanSaveActions on _ScanScreenState {
         var clothesToSave = clothes;
         String? fallbackMessage;
         final accessToken = provider.accessToken;
+        // 계산을 기다리는 사이 로그아웃하거나 다른 계정으로 바뀌어도 이 계정 옷장에 넣도록,
+        // 기다리기 전에 주인을 잡아 둡니다(C26, DECISIONS 2026-10-14).
+        final ownerKey = provider.closetOwnerKey;
 
         if (accessToken != null && !provider.isAuthenticated) {
           await _saveLocallyAfterSessionExpiry(
             provider: provider,
+            ownerKey: ownerKey,
             clothes: clothesToSave,
           );
           return;
@@ -116,6 +123,7 @@ extension _ScanSaveActions on _ScanScreenState {
             if (error.type == CarbonApiErrorType.unauthorized) {
               await _saveLocallyAfterSessionExpiry(
                 provider: provider,
+                ownerKey: ownerKey,
                 clothes: clothesToSave,
               );
               return;
@@ -126,8 +134,13 @@ extension _ScanSaveActions on _ScanScreenState {
           }
         }
 
+        var isInCurrentCloset = false;
+
         try {
-          await provider.addClothes(clothesToSave);
+          isInCurrentCloset = await provider.addClothesForOwner(
+            ownerKey,
+            clothesToSave,
+          );
         } catch (error) {
           // Provider가 목록을 되돌리므로 실패를 알리고 화면에 머무릅니다.
           debugPrint('옷장 저장에 실패했습니다: $error');
@@ -147,7 +160,8 @@ extension _ScanSaveActions on _ScanScreenState {
           }
         }
 
-        if (!mounted) return;
+        // 원래 계정 옷장에 넣었으면 지금 계정의 리포트를 열지 않습니다.
+        if (!mounted || !isInCurrentCloset) return;
 
         if (fallbackMessage != null) {
           // 저장은 됐고 탄소량만 임시 추정값으로 대신했으므로 안내다.
