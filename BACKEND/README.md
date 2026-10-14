@@ -152,7 +152,8 @@ cd C:\DEV\K-DPP\BACKEND
 alembic upgrade head
 ```
 
-- 리비전: `98b9938f3cd5` 기준선(develop 표 4개) → `09f14728ed0b` 소재 시드 22종.
+- 리비전: `98b9938f3cd5` 기준선(develop 표 4개) → `09f14728ed0b` 소재 시드 22종 → `19b7eee3b75c` 카카오 로그인(`social_accounts`,
+  users 이메일·비밀번호 NULL 허용) → `a28c2a50b363` 옷장 서버 백업(`closet_snapshots`). 뒤의 둘은 지킬 행이 있으면 downgrade 를 거부합니다.
 - 모델(`database.py`)을 바꾸면 `alembic revision --autogenerate -m "설명"`으로 리비전을 만들고 **내용을 꼭 손으로 검토**합니다.
   `alembic check`가 `No new upgrade operations detected.`면 모델과 리비전이 맞습니다.
 - 소재·계수를 바꿀 때는 `init_data.py`의 `MATERIAL_SEEDS`(프런트 사본 두 파일도 함께)를 고치고, 같은 변경을 하는 새 리비전(UPDATE·INSERT)을 더합니다.

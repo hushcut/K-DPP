@@ -52,7 +52,7 @@ import main  # noqa: E402
 
 # 테스트마다 비우는 표. 소재(materials)는 마이그레이션이 넣은 값을 그대로 쓴다
 # — 소재를 바꾸는 API·테스트가 없다.
-PER_TEST_TABLES = ("analysis_results", "access_tokens", "social_accounts", "users")
+PER_TEST_TABLES = ("closet_snapshots", "analysis_results", "access_tokens", "social_accounts", "users")
 
 
 def make_alembic_config() -> Config:

@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.policy import default as email_policy
 from email.utils import format_datetime, make_msgid, parseaddr
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import (
     BackgroundTasks,
@@ -402,10 +402,36 @@ async def request_validation_error_code_handler(
     request: Request,
     exc: RequestValidationError,
 ):
+    errors = exc.errors()
+
+    # 옷장 백업의 벌 수 상한은 사용자가 닿을 수 있는 상한이라 앱 버그(422)와 나눠 413 으로 알립니다.
+    # list 의 max_length 는 501번째 원소에서 멈추므로 원소 오류를 다 만들지 않습니다(DECISIONS 242).
+    # 다른 오류가 함께 있어도 이것이 이깁니다.
+    if request.url.path == CLOSET_PATH and any(
+        error.get("type") == "too_long" and tuple(error.get("loc", ())) == ("body", "items")
+        for error in errors
+    ):
+        log_closet("rejected reason=too_many_items")
+        detail = build_error_detail(
+            CLOSET_TOO_LARGE_MESSAGE,
+            "CLOSET_TOO_LARGE",
+            reason="too_many_items",
+            max_items=MAX_CLOSET_ITEMS,
+        )
+        return JSONResponse(
+            status_code=413,
+            content={
+                "status": "error",
+                "error_code": "CLOSET_TOO_LARGE",
+                "message": CLOSET_TOO_LARGE_MESSAGE,
+                "detail": detail,
+            },
+        )
+
     error_code = "VALIDATION_ERROR"
     message = "요청 형식이 올바르지 않습니다."
 
-    for error in exc.errors():
+    for error in errors:
         if "image" in error.get("loc", ()):
             error_code = "IMAGE_MISSING"
             message = "이미지 파일을 첨부해 주세요."
@@ -416,7 +442,7 @@ async def request_validation_error_code_handler(
     # 부담이 되므로, 위치와 사유만 남기고 개수도 제한합니다.
     safe_errors = [
         {key: value for key, value in error.items() if key in ("loc", "msg", "type")}
-        for error in exc.errors()[:20]
+        for error in errors[:20]
     ]
 
     return JSONResponse(
@@ -550,6 +576,27 @@ class CarbonRangeRequest(BaseModel):
     clothing_type: str | None = None
     category: str | None = None
     raw_ocr_text: RawOcrText | None = None
+
+
+# 옷장 서버 백업(DECISIONS 100·242 — 설계 전문 docs/옷장백업-설계안.md). 한 벌은 약 0.55~0.7KB 라
+# 500벌이 약 350KB 입니다. 모두 상수이고 환경변수는 두지 않습니다.
+CLOSET_PATH = "/me/closet"
+MAX_CLOSET_ITEMS = 500
+MAX_CLOSET_BYTES = 512 * 1024  # 524,288 — 직렬화한 items 의 UTF-8 바이트
+MAX_CLOSET_DEPTH = 8  # items 배열 = 1단. 옷 한 벌은 3단(배열 → 옷 → materials)
+CLOSET_TOO_LARGE_MESSAGE = "옷장이 너무 커서 서버에 백업할 수 없습니다. 옷은 500벌, 크기는 512KB까지입니다."
+CLOSET_INVALID_MESSAGE = "옷장 데이터 형식이 올바르지 않습니다."
+
+StrictInt = Annotated[int, Field(strict=True)]
+
+
+class ClosetSaveRequest(BaseModel):
+    # 로그인 전환 틈에 옛 계정 옷장이 새 토큰으로 올라가지 않게, 앱이 아는 주인을 함께 보냅니다(403).
+    user_id: StrictInt
+    # 앱이 마지막으로 맞춘 서버 version(처음이면 0). 내용이 다르고 이 값이 지금 version 과 다르면 409.
+    base_version: Annotated[StrictInt, Field(ge=0)]
+    # 서버는 옷 내용을 해석하지 않고 원소가 객체인지만 봅니다. 501번째 원소에서 멈춥니다(위 처리기가 413).
+    items: Annotated[list[dict[str, Any]], Field(max_length=MAX_CLOSET_ITEMS)]
 
 # 4. 소재명 매칭 및 탄소발자국 계산 함수
 def normalize_email(email: str) -> str:
@@ -1695,9 +1742,14 @@ def lock_user_row(db: Session, user_id: int) -> bool:
 
 
 def delete_user_rows(db: Session, user_id: int) -> None:
-    """탈퇴: 계정과 그 토큰·분석 이력·소셜 연결을 지운다(커밋은 부르는 쪽, users 행을 잠근 뒤).
+    """탈퇴: 계정과 그 토큰·분석 이력·소셜 연결·옷장 백업을 지운다(커밋은 부르는 쪽, users 행을 잠근 뒤).
     외래 키에 ON DELETE 가 없어 users 를 마지막에 지운다."""
-    for model in (database.AnalysisResult, database.AccessToken, database.SocialAccount):
+    for model in (
+        database.AnalysisResult,
+        database.AccessToken,
+        database.SocialAccount,
+        database.ClosetSnapshot,
+    ):
         db.query(model).filter(model.user_id == user_id).delete(synchronize_session=False)
     db.query(database.User).filter(database.User.id == user_id).delete(
         synchronize_session=False
@@ -2652,7 +2704,7 @@ def withdraw(
     db: Session = Depends(get_db),
 ):
     """재인증(비밀번호 계정은 비밀번호, 카카오 계정은 카카오 로그인)한 뒤 계정·토큰·분석 이력·
-    소셜 연결을 한 트랜잭션에서 지운다.
+    소셜 연결·옷장 백업을 한 트랜잭션에서 지운다.
 
     DELETE 메서드 대신 POST를 쓰는 이유는 프론트 공용 HTTP 헬퍼가
     GET/POST만 지원하기 때문이다(docs/SCAN_API_CONTRACT.md 참조).
@@ -2957,6 +3009,174 @@ def get_my_history(
     db: Session = Depends(get_db),
 ):
     return get_user_history_response(current_user, db)
+
+
+def log_closet(message: str) -> None:
+    # 충돌·거절만 남깁니다. 성공·같은 내용·401 은 남기지 않고, 옷 내용은 어디에도 찍지 않습니다.
+    print(f"[closet] {message}", file=sys.stderr, flush=True)
+
+
+def closet_rejection(
+    user_id: int, item_count: int, status_code: int, reason: str, **extra
+) -> HTTPException:
+    """413 CLOSET_TOO_LARGE 또는 422 CLOSET_INVALID 를 만들고 거절 줄을 남긴다(입력 원문은 싣지 않음)."""
+    log_closet(f"rejected user={user_id} reason={reason} items={item_count}")
+    if status_code == 413:
+        detail = build_error_detail(CLOSET_TOO_LARGE_MESSAGE, "CLOSET_TOO_LARGE", reason=reason, **extra)
+    else:
+        detail = build_error_detail(CLOSET_INVALID_MESSAGE, "CLOSET_INVALID", reason=reason, **extra)
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+def check_closet_depth(items: list, user_id: int) -> None:
+    """items 배열을 1단으로 세어 MAX_CLOSET_DEPTH 를 넘으면 422 too_deep.
+
+    재귀 없이 스택으로 셉니다. 깊은 값이 저장되면 응답을 만들 때 재귀 직렬화가 터질 수 있어
+    저장 전에 막습니다(DECISIONS 242).
+    """
+    stack = [(items, 1)]
+    while stack:
+        value, depth = stack.pop()
+        if depth > MAX_CLOSET_DEPTH:
+            raise closet_rejection(user_id, len(items), 422, "too_deep")
+        children = value.values() if isinstance(value, dict) else value
+        for child in children:
+            if isinstance(child, (dict, list)):
+                stack.append((child, depth + 1))
+
+
+def serialize_closet_items(items: list, user_id: int) -> str:
+    """저장·비교에 쓰는 글자. NaN·Infinity(1e400 포함)·짝 없는 서로게이트는 422, 512KB 넘으면 413."""
+    try:
+        payload = json.dumps(items, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    except ValueError:
+        raise closet_rejection(user_id, len(items), 422, "invalid_number") from None
+    try:
+        size = len(payload.encode("utf-8"))
+    except UnicodeEncodeError:
+        raise closet_rejection(user_id, len(items), 422, "invalid_unicode") from None
+    if size > MAX_CLOSET_BYTES:
+        raise closet_rejection(user_id, len(items), 413, "too_many_bytes", max_bytes=MAX_CLOSET_BYTES)
+    return payload
+
+
+def closet_updated_at(value: datetime | None) -> str | None:
+    return None if value is None else value.replace(tzinfo=timezone.utc).isoformat()
+
+
+@app.get(CLOSET_PATH, tags=["v1-closet"])
+def get_my_closet(
+    current_user: database.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """옷장 서버 백업 조회. 백업이 없으면 version 0·items []."""
+    row = (
+        db.query(database.ClosetSnapshot)
+        .filter(database.ClosetSnapshot.user_id == current_user.id)
+        .first()
+    )
+    # dict 를 돌려주면 FastAPI 가 jsonable_encoder(파이썬 재귀, '_sa' 로 시작하는 키를 버림)를 거칩니다.
+    # 소재 이름은 자유 입력이라 저장한 그대로 돌려주도록 JSONResponse 를 직접 만듭니다.
+    return JSONResponse(
+        content={
+            "status": "success",
+            "user_id": current_user.id,
+            "version": row.version if row else 0,
+            "item_count": row.item_count if row else 0,
+            "items": json.loads(row.items) if row else [],
+            "updated_at": closet_updated_at(row.updated_at if row else None),
+        }
+    )
+
+
+@app.post(CLOSET_PATH, tags=["v1-closet"])
+def save_my_closet(
+    request: ClosetSaveRequest,
+    current_user: database.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """옷장 서버 백업 저장(폰 우선 — DECISIONS 100·242).
+
+    내용이 저장된 것과 같으면 base_version 과 상관없이 200 changed=false. 다르고 base_version 이
+    지금 version 과 다르면 409 CLOSET_VERSION_CONFLICT. 그 밖에는 version +1 로 씁니다.
+    검사·직렬화는 잠금 전에 끝내 users 잠금을 SELECT 한 번 + 쓰기 한 번 동안만 쥡니다.
+    """
+    user_id = current_user.id
+    item_count = len(request.items)
+    if request.user_id != user_id:
+        log_closet(f"rejected user={user_id} reason=owner_mismatch items={item_count}")
+        raise HTTPException(
+            status_code=403,
+            detail=build_error_detail("로그인한 계정의 옷장이 아닙니다.", "CLOSET_OWNER_MISMATCH"),
+        )
+    check_closet_depth(request.items, user_id)
+    payload = serialize_closet_items(request.items, user_id)
+
+    # 잠그는 순서는 탈퇴와 같다(users → closet_snapshots). 같은 계정의 동시 첫 업로드는 여기서 줄을
+    # 서므로 PK 가 겹치지 않고, 탈퇴가 먼저 커밋됐으면 401, 이 저장이 먼저면 탈퇴가 이 행까지 지운다.
+    if not lock_user_row(db, user_id):
+        db.rollback()
+        raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
+
+    row = (
+        db.query(database.ClosetSnapshot)
+        .filter(database.ClosetSnapshot.user_id == user_id)
+        .first()
+    )
+    current_version = row.version if row else 0
+    current_items = row.items if row else "[]"
+    current_updated_at = row.updated_at if row else None
+
+    if payload == current_items:
+        db.rollback()
+        return {
+            "status": "success",
+            "version": current_version,
+            "changed": False,
+            "item_count": item_count,
+            "updated_at": closet_updated_at(current_updated_at),
+        }
+
+    if request.base_version != current_version:
+        db.rollback()
+        log_closet(f"conflict user={user_id} base={request.base_version} current={current_version}")
+        raise HTTPException(
+            status_code=409,
+            detail=build_error_detail(
+                "다른 기기에서 옷장 백업이 바뀌었습니다.",
+                "CLOSET_VERSION_CONFLICT",
+                current_version=current_version,
+            ),
+        )
+
+    now = utc_now()
+    if row is None:
+        db.add(
+            database.ClosetSnapshot(
+                user_id=user_id,
+                version=1,
+                item_count=item_count,
+                items=payload,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        new_version = 1
+    else:
+        new_version = current_version + 1
+        row.version = new_version
+        row.item_count = item_count
+        row.items = payload
+        row.updated_at = now
+    db.commit()
+
+    return {
+        "status": "success",
+        "version": new_version,
+        "changed": True,
+        "item_count": item_count,
+        "updated_at": closet_updated_at(now),
+    }
 
 
 def get_user_history_response(

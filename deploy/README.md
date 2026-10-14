@@ -58,6 +58,22 @@ docker compose up -d --build --wait   # 배포 직전 백업 → migrate(새 리
 - `.env.example` 에 새 필수 값이 생겼으면(`git diff <옛 커밋> -- .env.example`) `.env` 에도 넣습니다.
   빠지면 `up` 뿐 아니라 `ps`·`logs` 도 `required variable … is missing a value` 로 멈춥니다.
 - 보안 패치: `docker compose pull postgres caddy` 와 `docker compose build --pull` 뒤 `up -d --wait`.
+
+### 되돌리기 (새 리비전이 들어간 업데이트)
+
+옛 코드는 DB 리비전이 자기 머리와 다르면 시작하지 않고, 옛 이미지의 alembic 은 모르는 리비전에서 멈춥니다. 그래서 리비전이 든
+업데이트(예: 옷장 백업 `a28c2a50b363`)는 **올리기 전에** 준비하고, 되돌릴 때는 아래 순서를 지킵니다. 미리 실행하지 않습니다.
+
+0. 올리기 전: `git rev-parse HEAD` 로 옛 커밋을 적고, 손 백업(`docker compose run --rm --no-deps backup once manual`)의 OK 줄을 봅니다.
+1. 새 표가 아직 비었을 때(예: `closet_snapshots` 0행): **새 코드가 체크아웃된 채로** 새 이미지의 migrate 로 내린 뒤 옛 커밋으로 갑니다.
+   ```sh
+   docker compose run --rm --no-deps migrate alembic downgrade <옛 머리 리비전>   # 옷장이면 19b7eee3b75c
+   git checkout --detach <옛 커밋>
+   docker compose up -d --build --wait
+   ```
+   표에 행이 있으면 downgrade 가 `RuntimeError` 로 멈추고 아무것도 바꾸지 않습니다(사용자 백업을 리비전이 지우지 않음).
+2. 행이 생긴 뒤: 앞으로 고칩니다. 꼭 옛 코드여야 하면 '복구' 1)~3) 으로 업데이트 전 덤프(`backups/pre-migrate/`)를 되돌린 뒤
+   옛 커밋을 체크아웃하고 4) — 그 사이 생긴 데이터는 잃습니다.
 - 받기 전에 그 커밋의 GitHub Actions `Backend image (docker build)` 잡이 초록인지 봅니다 — 서버와 같은
   x86_64 에서 이 이미지를 빌드하고 migrate·앱 시작까지 해 본 결과입니다.
 
@@ -146,6 +162,17 @@ docker compose up -d --wait
 - **위 '복구' 전체를 한 번 실제로** 해 봅니다: 서버를 연 직후(11-01 이후) 한 번, 그다음은 한 달에 한 번이나
   배포 방식이 바뀔 때. 맥 리허설에서 같은 순서를 확인했습니다(백업 → 백업 뒤 가입·이력 삭제 → stage →
   바꿔 끼우기 → 백업 시점 상태로 돌아옴·옛 DB 남음, 옛 리비전 백업은 migrate 가 head 로 올림).
+
+## 옷장 백업 확인
+
+옷 내용(`items`)은 열지 않고 상태만 봅니다(DECISIONS 242).
+
+```sh
+docker compose exec -T postgres psql -U kdpp -d k_dpp -c "SELECT user_id, version, item_count, octet_length(items) AS bytes, updated_at FROM closet_snapshots ORDER BY updated_at DESC LIMIT 20"
+```
+
+- 새 환경변수·Caddy 변경은 없고, 매일 백업에 이 표도 함께 들어갑니다. 탈퇴하면 운영 DB 에서는 바로 지워지지만 백업 파일에는 남습니다.
+- 서버 로그는 충돌·거절만 `[closet]` 한 줄로 남깁니다(`docker compose logs app | grep '\[closet\]'`).
 
 ## 메일 발송
 
