@@ -6,6 +6,7 @@ import 'theme/app_palette.dart';
 import 'utils/accessibility_announcer.dart';
 import 'utils/auth_form_validators.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/app_glass_button.dart';
 import 'widgets/app_banner.dart';
 import 'widgets/auth_form_widgets.dart';
 
@@ -117,7 +118,9 @@ class _KakaoNicknameScreenState extends State<KakaoNicknameScreen> {
           scrolledUnderElevation: 0,
           centerTitle: true,
           automaticallyImplyLeading: false,
-          leadingWidth: 52,
+          leadingWidth: AppGlassStyle.leadingWidth,
+          // 누르면 부푸는 유리 버튼이 앱바 아래 경계에서 잘리지 않게 합니다(앱바 기본은 잘라 냄).
+          clipBehavior: Clip.none,
           leading: Padding(
             padding: const EdgeInsets.only(left: 8),
             child: AppBackButton(

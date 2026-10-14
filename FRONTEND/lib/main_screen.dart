@@ -13,6 +13,7 @@ import 'report_screen.dart';
 import 'scan_screen.dart';
 import 'theme/app_palette.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/app_glass_button.dart';
 import 'widgets/bottom_navigation_metrics.dart';
 import 'widgets/frosted_surface.dart';
 import 'widgets/kdpp_logo_mark.dart';
@@ -305,7 +306,9 @@ PreferredSizeWidget _buildMainAppBar(
     scrolledUnderElevation: 0,
     automaticallyImplyLeading: false,
     centerTitle: true,
-    leadingWidth: 52,
+    leadingWidth: AppGlassStyle.leadingWidth,
+    // 누르면 부푸는 유리 버튼이 앱바 아래 경계에서 잘리지 않게 합니다(앱바 기본은 잘라 냄).
+    clipBehavior: Clip.none,
     leading: leading,
     title: const KdppLogoMark(size: 34),
     actions: [
@@ -337,7 +340,7 @@ class _SettingsButton extends StatelessWidget {
   Widget _buildButton(BuildContext context, {required bool isLocked}) {
     final color = _appBarIconColor(context);
 
-    return IconButton(
+    return AppGlassIconButton(
       // 막힌 동안 TalkBack 은 '사용 중지됨'으로 읽어 왜 안 열리는지 알 수 있습니다.
       onPressed: isLocked ? null : onPressed,
       tooltip: '설정',
@@ -429,7 +432,9 @@ class _ReportPage extends StatelessWidget {
         backgroundColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
-        leadingWidth: 52,
+        leadingWidth: AppGlassStyle.leadingWidth,
+        // 누르면 부푸는 유리 버튼이 앱바 아래 경계에서 잘리지 않게 합니다(앱바 기본은 잘라 냄).
+        clipBehavior: Clip.none,
         leading: Padding(
           padding: const EdgeInsets.only(left: 8),
           child: AppBackButton(tooltip: '리포트 닫기', color: appBarIconColor),

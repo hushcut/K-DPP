@@ -13,6 +13,7 @@ import 'theme_provider.dart';
 import 'utils/accessibility_announcer.dart';
 import 'utils/session_expiry_handler.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/app_glass_button.dart';
 import 'widgets/app_banner.dart';
 import 'widgets/kakao_login_button.dart';
 
@@ -537,7 +538,9 @@ class SettingsScreen extends StatelessWidget {
         scrolledUnderElevation: 0,
         centerTitle: true,
         automaticallyImplyLeading: false,
-        leadingWidth: 52,
+        leadingWidth: AppGlassStyle.leadingWidth,
+        // 누르면 부푸는 유리 버튼이 앱바 아래 경계에서 잘리지 않게 합니다(앱바 기본은 잘라 냄).
+        clipBehavior: Clip.none,
         leading: const Padding(
           padding: EdgeInsets.only(left: 8),
           child: AppBackButton(),

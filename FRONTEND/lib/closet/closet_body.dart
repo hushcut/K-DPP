@@ -135,20 +135,21 @@ extension _ClosetBody on _ClosetScreenState {
 
     final actions = selecting
         ? [
-            TextButton(
+            AppGlassTextButton(
+              label: '취소',
               onPressed: _deleteInProgress
                   ? null
                   : () => _setSelectionMode(false),
-              child: const Text('취소'),
             ),
           ]
         : [
             // 정렬과 상관없이 고르고 지우는 모드입니다. 옷이 없으면 고를 것이 없어 누를 수 없습니다.
-            TextButton(
+            AppGlassTextButton(
+              label: '선택',
               onPressed: hasClothes ? () => _setSelectionMode(true) : null,
-              child: const Text('선택'),
             ),
-            IconButton(
+            const SizedBox(width: 6),
+            AppGlassIconButton(
               onPressed: _showSortBottomSheet,
               tooltip: '옷장 정렬',
               icon: const Icon(Icons.sort, color: AppPalette.accent),
@@ -222,32 +223,41 @@ extension _ClosetBody on _ClosetScreenState {
           offset: Offset(0, (1 - t) * (bottom + size)),
           child: child,
         ),
-        child: SizedBox.square(
-          dimension: size,
-          child: FrostedSurface(
-            opacity: opacity,
-            color: appPalette.card,
-            borderRadius: BorderRadius.circular(size / 2),
-            border: Border.all(color: appPalette.border),
-            boxShadow: [
-              BoxShadow(
-                color: isDark
-                    ? Colors.black.withValues(alpha: 0.30)
-                    : Colors.black.withValues(alpha: 0.10),
-                blurRadius: 22,
-                offset: const Offset(0, 8),
-              ),
-            ],
-            child: IconButton(
-              onPressed: canDelete ? _deleteSelectedItems : null,
-              color: Colors.redAccent,
-              // 이름은 tooltip 대신 아이콘 낭독 이름으로 줍니다. iOS VoiceOver 는 tooltip 만 있고 누를 수
-              // 없는 칸을 건너뛰어, 아무것도 고르지 않았을 때 휴지통이 사라집니다(2026-10-02).
-              // 확인창 제목('선택한 의류 삭제')과 겹치지 않는 이름입니다.
-              icon: const Icon(
-                Icons.delete_outline,
-                size: 26,
-                semanticLabel: '선택한 의류 지우기',
+        // iOS 는 위쪽 유리 버튼과 같이 누르면 바탕이 바뀌며 부풀고(원이 커서 덜 키움), Android 는
+        // Material 물결 그대로입니다(DECISIONS 224·225·229).
+        child: GlassPressBuilder(
+          pressedScale: 1.14,
+          builder: (context, states, pressed) => SizedBox.square(
+            dimension: size,
+            child: FrostedSurface(
+              opacity: opacity,
+              color: pressed
+                  ? AppGlassStyle.pressedFill(context)
+                  : appPalette.card,
+              borderRadius: BorderRadius.circular(size / 2),
+              border: Border.all(color: appPalette.border),
+              boxShadow: [
+                BoxShadow(
+                  color: isDark
+                      ? Colors.black.withValues(alpha: 0.30)
+                      : Colors.black.withValues(alpha: 0.10),
+                  blurRadius: 22,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+              child: IconButton(
+                onPressed: canDelete ? _deleteSelectedItems : null,
+                statesController: states,
+                color: Colors.redAccent,
+                style: AppGlassStyle.floatingPressStyle(context),
+                // 이름은 tooltip 대신 아이콘 낭독 이름으로 줍니다. iOS VoiceOver 는 tooltip 만 있고 누를 수
+                // 없는 칸을 건너뛰어, 아무것도 고르지 않았을 때 휴지통이 사라집니다(2026-10-02).
+                // 확인창 제목('선택한 의류 삭제')과 겹치지 않는 이름입니다.
+                icon: const Icon(
+                  Icons.delete_outline,
+                  size: 26,
+                  semanticLabel: '선택한 의류 지우기',
+                ),
               ),
             ),
           ),
