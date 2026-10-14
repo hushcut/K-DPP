@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:ui' show SemanticsFlag;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,11 +10,14 @@ import 'package:k_dpp/main_screen.dart';
 import 'package:k_dpp/material_name_display_provider.dart';
 import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/models/main_screen_arguments.dart';
+import 'package:k_dpp/models/scan_result.dart';
 import 'package:k_dpp/navigation_bar_opacity_provider.dart';
 import 'package:k_dpp/scan_screen.dart';
+import 'package:k_dpp/services/scan_analysis_service.dart';
 import 'package:k_dpp/services/scan_api_service.dart';
 import 'package:k_dpp/widgets/app_back_button.dart';
 import 'package:k_dpp/widgets/app_banner.dart';
+import 'package:k_dpp/widgets/clothing_type_picker_sheet.dart';
 import 'package:k_dpp/widgets/frosted_surface.dart';
 import 'package:k_dpp/widgets/scan_result_view.dart';
 import 'package:provider/provider.dart';
@@ -553,9 +558,10 @@ void main() {
     expect(scanScreen().isActive, isTrue);
   });
 
-  // 앨범에서 사진을 고른 것처럼 흉내 내 종류 선택 시트까지 연다. 없는 파일이라 분석이 실패해
-  // 직접 입력 시트가 뜬다(서버 분석 실패와 같은 경로). 파일 읽기는 실제 입출력이라 runAsync 로 기다린다.
-  Future<void> openTypeSheetAfterFailedScan(WidgetTester tester) async {
+  // 앨범에서 사진을 고른 것처럼 흉내 내 종류 선택 화면까지 연다. 없는 파일이라 분석이 실패해
+  // 실패 이유를 단 화면이 뜬다(서버 분석 실패와 같은 경로). 파일 읽기는 실제 입출력이라 runAsync 로
+  // 기다린다. 분석 성공은 [ScanScreen.scanAnalysisServiceFactory] 를 갈아 끼우고 부른다.
+  Future<void> openTypePickerFromGallery(WidgetTester tester) async {
     const picker = MethodChannel('plugins.flutter.io/image_picker');
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
       picker,
@@ -580,50 +586,63 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 100));
     }
-    // 종류 선택 시트가 다 올라온 뒤에 고른다(올라오는 도중엔 탭이 빗나간다).
+    // 종류 선택 화면이 다 들어온 뒤에 고른다(들어오는 도중엔 탭이 빗나간다).
     await tester.pump(routeTransition);
   }
 
-  // 위 시트에서 종류를 골라 결과 입력 화면까지 들어간다.
+  // 위 화면에서 종류를 골라 결과 입력 화면까지 들어간다.
   Future<void> openScanResultForm(WidgetTester tester) async {
-    await openTypeSheetAfterFailedScan(tester);
+    await openTypePickerFromGallery(tester);
 
     await tester.tap(find.text('반팔 티셔츠'));
     await tester.pump();
     await tester.pump(routeTransition);
 
-    // '다시 촬영' 글자는 종류 선택 시트에도 있으므로 결과 화면 위젯으로 확인한다.
+    // '다시 촬영'은 종류 선택 화면 "<" 의 이름이기도 하므로 결과 화면 위젯으로 확인한다.
     expect(find.byType(ScanResultView), findsOneWidget);
-    expect(find.byType(BottomSheet), findsNothing);
+    expect(find.byType(ClothingTypePickerSheet), findsNothing);
   }
 
-  // DECISIONS 96: 분석 실패는 시트를 고른 뒤 띄우던 배너 대신 종류 선택 시트 맨 위에서 알린다.
-  // 시트 제목은 성공과 같아, 전에는 '다시 촬영'으로 나가면 실패했다는 말을 듣지 못했다.
+  ScanScreen scanScreenOf(WidgetTester tester) =>
+      tester.widget<ScanScreen>(find.byType(ScanScreen, skipOffstage: false));
+
+  // DECISIONS 96: 분석 실패는 선택창을 고른 뒤 띄우던 배너 대신 종류 선택 화면 맨 위에서 알린다.
+  // 제목은 성공과 같아, 전에는 '다시 촬영'으로 나가면 실패했다는 말을 듣지 못했다. 이유 줄은 화면
+  // 이름이라 화면이 열릴 때 먼저 읽히고, 쓸어 넘기면 "<" 다음 첫 칸이다(DECISIONS 226).
   testWidgets(
-    '사진 분석이 실패하면 이유가 종류 선택 시트에서 가장 먼저 읽히고, 고른 뒤 배너는 뜨지 않는다',
+    '사진 분석이 실패하면 이유가 종류 선택 화면의 이름이 되어 먼저 읽히고, 고른 뒤 배너는 뜨지 않는다',
     (tester) async {
       final semantics = tester.ensureSemantics();
       await pumpMainScreen(tester);
-      await openTypeSheetAfterFailedScan(tester);
+      await openTypePickerFromGallery(tester);
 
       final failureMessages = {
         for (final type in ScanApiErrorType.values)
           ScanApiException(type: type, message: '').userMessage,
       };
       final reason = find.descendant(
-        of: find.byType(BottomSheet),
+        of: find.byType(ClothingTypePickerSheet),
         matching: find.byWidgetPredicate(
           (widget) => widget is Text && failureMessages.contains(widget.data),
         ),
       );
       expect(reason, findsOneWidget);
+      final reasonText = tester.widget<Text>(reason).data;
 
+      // 아래 스캔 화면·메인 화면은 가려져 낭독 트리에 없으므로 화면 이름은 이유 하나뿐이다.
+      expect(
+        find.semantics
+            .byFlag(SemanticsFlag.namesRoute)
+            .evaluate()
+            .map((node) => node.label),
+        [reasonText],
+      );
       final labels = tester.semantics
           .simulatedAccessibilityTraversal()
           .map((node) => node.label.isEmpty ? node.tooltip : node.label)
           .where((label) => label.isNotEmpty)
           .toList();
-      expect(labels.first, tester.widget<Text>(reason).data);
+      expect(labels.take(2), ['다시 촬영', reasonText]);
 
       await tester.tap(find.text('반팔 티셔츠'));
       await tester.pump();
@@ -635,6 +654,150 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
+
+  testWidgets('종류 선택 화면이 스캔 화면을 덮는 동안 카메라를 끄고, 분석 실패 뒤 "<" 는 묻지 않고 카메라로 돌아간다', (
+    tester,
+  ) async {
+    await pumpMainScreen(tester);
+    await openTypePickerFromGallery(tester);
+
+    expect(find.byType(ClothingTypePickerSheet), findsOneWidget);
+    expect(scanScreenOf(tester).isActive, isFalse);
+
+    await tester.tap(find.byTooltip('다시 촬영'));
+    await tester.pump();
+    await tester.pump(routeTransition);
+
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(ClothingTypePickerSheet), findsNothing);
+    expect(scanScreenOf(tester).isActive, isTrue);
+    expect(find.text(scanGuide), findsOneWidget);
+    expect(find.byType(ScanResultView), findsNothing);
+  });
+
+  testWidgets(
+    '분석 실패 뒤 종류 선택 화면은 iOS 왼쪽 끝을 밀어도 카메라로 돌아가고, 스캔 화면은 남는다',
+    (tester) async {
+      await pumpMainScreen(tester);
+      await openTypePickerFromGallery(tester);
+
+      await tester.dragFrom(const Offset(5, 300), const Offset(600, 0));
+      await tester.pump();
+      await tester.pump(routeTransition);
+
+      expect(find.byType(ClothingTypePickerSheet), findsNothing);
+      expect(find.byType(ScanScreen), findsOneWidget);
+      expect(scanScreenOf(tester).isActive, isTrue);
+      expect(find.text(scanGuide), findsOneWidget);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets('결과 입력 중 무게 기준을 눌러 종류를 바꾸는 것은 새 화면이 아니라 닫을 수 있는 시트다', (
+    tester,
+  ) async {
+    await pumpMainScreen(tester);
+    await openScanResultForm(tester);
+
+    await tester.ensureVisible(find.text('무게 기준'));
+    await tester.pumpAndSettle();
+    // 누름 효과를 칸 위에 겹쳐 그려, 글자 자리의 탭은 그 효과 칸이 받는다.
+    await tester.tap(find.text('무게 기준'), warnIfMissed: false);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: find.byType(BottomSheet),
+        matching: find.byType(ClothingTypePickerSheet),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byTooltip('다시 촬영'), findsNothing);
+
+    // 뒤로가기는 시트만 닫고, 입력 화면의 '버릴까요?' 확인으로 가지 않는다.
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ClothingTypePickerSheet), findsNothing);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(ScanResultView), findsOneWidget);
+  });
+
+  group('라벨 분석이 성공하면', () {
+    setUp(() {
+      ScanScreen.scanAnalysisServiceFactory =
+          _SucceedingScanAnalysisService.new;
+    });
+    tearDown(() {
+      ScanScreen.scanAnalysisServiceFactory = ScanAnalysisService.new;
+    });
+
+    testWidgets('종류 선택 화면의 "<" 는 다시 촬영할지 묻고, 다시 촬영하기로 해야 카메라로 돌아간다', (
+      tester,
+    ) async {
+      await pumpMainScreen(tester);
+      await openTypePickerFromGallery(tester);
+
+      // 실패 이유 줄은 없다.
+      expect(find.byIcon(Icons.error_outline), findsNothing);
+      expect(scanScreenOf(tester).isActive, isFalse);
+
+      await tester.tap(find.byTooltip('다시 촬영'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('다시 촬영할까요?'), findsOneWidget);
+
+      await tester.tap(find.text('선택 계속하기'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(ClothingTypePickerSheet), findsOneWidget);
+
+      await tester.tap(find.byTooltip('다시 촬영'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('다시 촬영'),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(routeTransition);
+
+      expect(find.byType(ClothingTypePickerSheet), findsNothing);
+      expect(scanScreenOf(tester).isActive, isTrue);
+      expect(find.text(scanGuide), findsOneWidget);
+    });
+
+    testWidgets(
+      '종류 선택 화면은 iOS 왼쪽 끝을 밀어도 닫히지 않는다',
+      (tester) async {
+        await pumpMainScreen(tester);
+        await openTypePickerFromGallery(tester);
+
+        await tester.dragFrom(const Offset(5, 300), const Offset(600, 0));
+        await tester.pump();
+        await tester.pump(routeTransition);
+
+        expect(find.byType(ClothingTypePickerSheet), findsOneWidget);
+        expect(find.byType(AlertDialog), findsNothing);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+
+    testWidgets('종류를 고르면 분석 결과가 담긴 입력 화면이 나온다', (tester) async {
+      await pumpMainScreen(tester);
+      await openTypePickerFromGallery(tester);
+
+      await tester.tap(find.text('반팔 티셔츠'));
+      await tester.pump();
+      await tester.pump(routeTransition);
+
+      expect(find.byType(ClothingTypePickerSheet), findsNothing);
+      expect(find.byType(ScanResultView), findsOneWidget);
+      expect(find.text(_SucceedingScanAnalysisService.title), findsOneWidget);
+    });
+  });
 
   testWidgets(
     '결과를 입력하는 동안에는 iOS 왼쪽 끝을 밀어도 스캔 화면이 닫히지 않는다',
@@ -987,5 +1150,25 @@ class _HeldClosetStorage extends FakeClosetStorage {
     _hold = null;
     await hold?.future;
     return super.saveClothesList(items);
+  }
+}
+
+// 서버에 묻지 않고 라벨 분석이 성공한 것처럼 돌려준다.
+class _SucceedingScanAnalysisService extends ScanAnalysisService {
+  static const title = '분석한 셔츠';
+
+  @override
+  Future<ScanAnalysisOutcome> analyzeLabel({
+    required File imageFile,
+    String? accessToken,
+  }) async {
+    return ScanAnalysisSuccess(
+      ScanResult(
+        materials: const {'cotton': 100},
+        careInstruction: '찬물 세탁',
+        title: title,
+        category: '상의',
+      ),
+    );
   }
 }

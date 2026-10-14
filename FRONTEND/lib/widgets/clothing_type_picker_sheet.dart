@@ -3,68 +3,30 @@ import 'package:flutter/material.dart';
 
 import '../models/clothing_type_option.dart';
 import '../theme/app_palette.dart';
+import 'app_back_button.dart';
+import 'app_glass_button.dart';
 import 'clothing_category_segmented_control.dart';
 import 'number_keyboard_toolbar.dart';
 
-/// 선택을 건너뛸 수 없는 유형 선택 시트에서 '다시 촬영'으로 나갈 때 보여 줄 확인 문구입니다.
+/// 결과 입력 화면에서 의류 종류를 바꾸는 시트를 열고 고른 종류를 반환합니다.
 ///
-/// 분석에 성공한 뒤와 실패해 직접 입력하는 경우는 사라지는 내용이 달라 문구를 나눕니다.
-class ClothingTypePickerDiscardPrompt {
-  const ClothingTypePickerDiscardPrompt({
-    required this.title,
-    required this.message,
-  });
-
-  final String title;
-  final String message;
-
-  /// 분석 결과를 확인하는 시트: 나가면 분석한 라벨 결과가 사라집니다.
-  static const analysisResult = ClothingTypePickerDiscardPrompt(
-    title: '다시 촬영할까요?',
-    message: '다시 촬영하면 현재 분석 결과가 사라져요.',
-  );
-
-  /// 분석 실패 후 직접 입력하는 시트: 버릴 분석 결과는 없고 지금 사진만 사라집니다.
-  static const manualAfterFailure = ClothingTypePickerDiscardPrompt(
-    title: '다시 촬영할까요?',
-    message: '현재 사진을 지우고 촬영 화면으로 돌아가요.',
-  );
-}
-
-/// 의류 유형 선택 시트를 열고 고른 유형을 반환합니다.
-///
-/// [discardPrompt]가 없으면 드래그·바깥 탭·뒤로가기로 닫을 수 있고 그때는 null을 반환합니다.
-/// 있으면 선택을 건너뛸 수 없는 시트가 되어 닫는 경로를 모두 막고, 시트 안 '다시 촬영'
-/// 버튼이나 시스템 뒤로가기에서 확인을 받은 경우에만 null로 닫힙니다.
+/// 드래그·바깥 탭·뒤로가기로 닫을 수 있고 그때는 null을 반환합니다. 스캔 직후 반드시
+/// 골라야 하는 경우는 시트가 아니라 [showClothingTypePickerScreen] 으로 엽니다(DECISIONS 226).
 ///
 /// [optionsListenable]을 주면 시트가 열려 있는 동안 목록이 바뀌어도(서버 무게표 도착)
 /// 새 목록을 보여 줍니다. 그때는 [options]보다 그 값을 씁니다.
-///
-/// [failureMessage]를 주면 시트 맨 위(제목 위)에 빨간 느낌표와 함께 보입니다.
-/// 분석이 실패해 직접 입력으로 넘어갈 때 쓰며, 시트가 열리면 읽기 프로그램도 이 줄부터
-/// 읽습니다(DECISIONS 96).
 Future<ClothingTypeOption?> showClothingTypePickerSheet({
   required BuildContext context,
   required List<ClothingTypeOption> options,
   required ClothingTypeOption initialSelection,
   ValueListenable<List<ClothingTypeOption>>? optionsListenable,
-  ClothingTypePickerDiscardPrompt? discardPrompt,
-  String? failureMessage,
 }) {
-  final canDismiss = discardPrompt == null;
-
   // 배경색은 테마(AppTheme.bottomSheetTheme)에 맡깁니다. 여기서 정하면 여는 순간의 테마로 굳어
   // 시트가 열린 채 시스템 밝기가 바뀔 때 따라오지 않습니다.
   return showModalBottomSheet<ClothingTypeOption>(
     context: context,
     isScrollControlled: true,
-    isDismissible: canDismiss,
-    // Flutter 손잡이는 enableDrag가 false여도 자체 드래그 감지기와 접근성 '닫기'
-    // 동작을 가지며, 둘 다 PopScope를 거치지 않고 시트를 닫습니다. 그래서 필수
-    // 선택에서는 손잡이를 뺍니다. 끌어서 닫히지 않으므로 손잡이 모양도 그리지 않습니다
-    // (2026-09-18 사용자 결정). enableDrag도 꺼야 하단 안전 영역을 끌어내려 닫는 경로가 막힙니다.
-    enableDrag: canDismiss,
-    showDragHandle: canDismiss,
+    showDragHandle: true,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
     ),
@@ -74,8 +36,6 @@ Future<ClothingTypeOption?> showClothingTypePickerSheet({
         options: options,
         optionsListenable: optionsListenable,
         initialSelection: initialSelection,
-        discardPrompt: discardPrompt,
-        failureMessage: failureMessage,
         onSelected: (option) {
           Navigator.pop(sheetContext, option);
         },
@@ -84,10 +44,47 @@ Future<ClothingTypeOption?> showClothingTypePickerSheet({
   );
 }
 
-/// 의류 종류별 예상 무게를 선택하거나 실제 무게를 직접 입력하는 바텀 시트입니다.
+/// 스캔 직후 의류 종류를 반드시 고르는 화면을 열고 고른 종류를 반환합니다(DECISIONS 226).
 ///
-/// 선택 결과는 [onSelected]로 전달합니다. [discardPrompt]가 있으면 시트 안에
-/// '다시 촬영' 버튼을 두고 시스템 뒤로가기를 확인 대화상자로 보냅니다.
+/// 고르지 않고 나가는 길은 앱바 "<"(다시 촬영)뿐이고 그때는 null을 반환합니다.
+/// [confirmRetake]가 true면(분석 성공 뒤) 분석 결과가 사라진다고 먼저 묻고, 확인창을 끼울 수
+/// 없는 iOS 왼쪽 끝 밀기는 막습니다. false면(분석 실패 뒤) 잃는 것이 실패한 사진뿐이라 묻지 않고
+/// 밀어서도 나갈 수 있습니다.
+///
+/// [failureMessage]를 주면 화면 맨 위(제목 위)에 빨간 느낌표와 함께 보이고, 화면이 열릴 때
+/// 읽기 프로그램이 이 줄을 화면 이름으로 먼저 읽습니다(DECISIONS 96).
+Future<ClothingTypeOption?> showClothingTypePickerScreen({
+  required BuildContext context,
+  required List<ClothingTypeOption> options,
+  required ClothingTypeOption initialSelection,
+  required bool confirmRetake,
+  ValueListenable<List<ClothingTypeOption>>? optionsListenable,
+  String? failureMessage,
+}) {
+  return Navigator.push<ClothingTypeOption>(
+    context,
+    MaterialPageRoute<ClothingTypeOption>(
+      builder: (routeContext) {
+        return ClothingTypePickerSheet.screen(
+          options: options,
+          optionsListenable: optionsListenable,
+          initialSelection: initialSelection,
+          confirmRetake: confirmRetake,
+          failureMessage: failureMessage,
+          onSelected: (option) {
+            Navigator.pop(routeContext, option);
+          },
+        );
+      },
+    ),
+  );
+}
+
+/// 의류 종류별 예상 무게를 선택하거나 실제 무게를 직접 입력하는 몸통입니다.
+///
+/// 기본 생성자는 바텀 시트 안에 들어가고, [ClothingTypePickerSheet.screen]은 앱바 "<"를 단
+/// 한 화면이 됩니다. 두 곳이 목록·직접 입력을 함께 씁니다(DECISIONS 226 ⑥).
+/// 선택 결과는 [onSelected]로 전달합니다.
 class ClothingTypePickerSheet extends StatefulWidget {
   const ClothingTypePickerSheet({
     super.key,
@@ -95,9 +92,21 @@ class ClothingTypePickerSheet extends StatefulWidget {
     required this.initialSelection,
     required this.onSelected,
     this.optionsListenable,
-    this.discardPrompt,
+  }) : isScreen = false,
+       confirmRetake = false,
+       failureMessage = null;
+
+  /// 스캔 직후 반드시 고르는 화면입니다. "<"·시스템 뒤로가기는 직접 입력 중이면 목록으로
+  /// 돌아가고, 목록에서는 [confirmRetake]에 따라 묻거나 바로 결과 없이 닫습니다.
+  const ClothingTypePickerSheet.screen({
+    super.key,
+    required this.options,
+    required this.initialSelection,
+    required this.onSelected,
+    required this.confirmRetake,
+    this.optionsListenable,
     this.failureMessage,
-  });
+  }) : isScreen = true;
 
   // 표시할 선택지와 현재 선택된 초기값입니다.
   final List<ClothingTypeOption> options;
@@ -106,8 +115,10 @@ class ClothingTypePickerSheet extends StatefulWidget {
   final ClothingTypeOption initialSelection;
   /// 일반 선택 또는 검증된 직접 입력 결과를 상위 화면에 전달합니다.
   final ValueChanged<ClothingTypeOption> onSelected;
-  /// 선택을 건너뛸 수 없는 시트일 때 '다시 촬영' 확인에 쓸 문구입니다.
-  final ClothingTypePickerDiscardPrompt? discardPrompt;
+  /// 시트 안 몸통이 아니라 앱바를 단 한 화면으로 그리는지입니다.
+  final bool isScreen;
+  /// 화면에서 "<"(다시 촬영)로 나가기 전에 분석 결과가 사라진다고 물을지입니다.
+  final bool confirmRetake;
   /// 분석에 실패했을 때 목록 맨 위에 보일 이유입니다. 없으면 그 줄을 그리지 않습니다.
   final String? failureMessage;
 
@@ -129,6 +140,10 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
 
   List<ClothingTypeOption> get _options =>
       widget.optionsListenable?.value ?? widget.options;
+
+  // 시트는 손잡이가 위를 띄워 주고, 화면은 앱바 바로 아래라 조금 띄웁니다.
+  EdgeInsets get _contentPadding =>
+      EdgeInsets.fromLTRB(20, widget.isScreen ? 8 : 0, 20, 24);
 
   // 목록이 바뀌면 다시 그립니다. 선택 표시는 이름으로 맞추므로 고른 종류가 유지됩니다.
   void _handleOptionsChanged() {
@@ -209,11 +224,8 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
     });
   }
 
-  // 확인을 받은 경우에만 결과 없이 시트를 닫아, 호출 화면이 촬영 화면으로 돌아가게 합니다.
-  Future<void> _confirmDiscard() async {
-    final prompt = widget.discardPrompt;
-    if (prompt == null) return;
-
+  // 확인을 받은 경우에만 결과 없이 화면을 닫아, 호출 화면이 촬영 화면으로 돌아가게 합니다.
+  Future<void> _confirmRetake() async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final palette = AppPalette.of(context);
 
@@ -223,11 +235,11 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
         return AlertDialog(
           backgroundColor: palette.card,
           title: Text(
-            prompt.title,
+            '다시 촬영할까요?',
             style: TextStyle(color: palette.textPrimary),
           ),
           content: Text(
-            prompt.message,
+            '다시 촬영하면 현재 분석 결과가 사라져요.',
             style: TextStyle(
               height: 1.5,
               color: isDark ? const Color(0xFFD1D1D6) : const Color(0xFF444444),
@@ -260,10 +272,13 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final maxSheetHeight = MediaQuery.sizeOf(context).height * 0.78;
-    final isSelectionRequired = widget.discardPrompt != null;
+    return widget.isScreen ? _buildScreen(context) : _buildSheet(context);
+  }
 
-    final sheet = SafeArea(
+  Widget _buildSheet(BuildContext context) {
+    final maxSheetHeight = MediaQuery.sizeOf(context).height * 0.78;
+
+    return SafeArea(
       top: false,
       child: AnimatedPadding(
         duration: const Duration(milliseconds: 180),
@@ -279,20 +294,9 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
             // Flexible 없이 Column에 두면 높이 제한 없이 화면 높이의 78%까지 커져
             // 키보드 여백과 합쳐 넘칩니다(2026-09-18 폰 확인).
             Flexible(
-              child: Padding(
-                // 손잡이가 없는 필수 선택 시트는 제목이 둥근 윗변에 붙지 않게 띄웁니다.
-                padding: EdgeInsets.only(top: isSelectionRequired ? 24 : 0),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(maxHeight: maxSheetHeight),
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    switchInCurve: Curves.easeOut,
-                    switchOutCurve: Curves.easeOut,
-                    child: _isDirectInputMode
-                        ? _buildDirectInputView(context)
-                        : _buildOptionListView(context),
-                  ),
-                ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: maxSheetHeight),
+                child: _buildContent(context),
               ),
             ),
             _buildWeightKeyboardToolbar(context),
@@ -300,13 +304,18 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
         ),
       ),
     );
+  }
 
-    if (!isSelectionRequired) return sheet;
+  // 키보드가 올라오면 Scaffold 가 본문을 줄이므로, 시트와 달리 키보드 여백을 따로 두지 않습니다.
+  Widget _buildScreen(BuildContext context) {
+    final palette = AppPalette.of(context);
 
     return PopScope<Object?>(
-      canPop: false,
+      // 직접 입력 중에는 목록으로, 분석 성공 뒤에는 확인창으로 가야 해서 막습니다. 막으면 iOS 왼쪽
+      // 끝 밀기도 꺼집니다(Flutter PageRoute.popGestureEnabled) — 밀기에는 확인창을 끼울 수 없습니다.
+      canPop: !_isDirectInputMode && !widget.confirmRetake,
       onPopInvokedWithResult: (didPop, _) {
-        // 유형을 고르거나 확인 후 닫힐 때도 불리므로, 막힌 뒤로가기만 처리합니다.
+        // 종류를 골라 닫힐 때도 불리므로, 막힌 뒤로가기만 처리합니다.
         if (didPop) return;
 
         if (_isDirectInputMode) {
@@ -314,9 +323,50 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
           return;
         }
 
-        _confirmDiscard();
+        _confirmRetake();
       },
-      child: sheet,
+      child: Scaffold(
+        backgroundColor: palette.background,
+        appBar: AppBar(
+          backgroundColor: palette.background,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          automaticallyImplyLeading: false,
+          leadingWidth: AppGlassStyle.leadingWidth,
+          // 누르면 부푸는 유리 버튼이 앱바 아래 경계에서 잘리지 않게 합니다(앱바 기본은 잘라 냄).
+          clipBehavior: Clip.none,
+          leading: Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: AppBackButton(
+              // pop 이 아니라 maybePop 이라야 위 PopScope 를 거칩니다.
+              onPressed: () => Navigator.maybePop(context),
+              // 직접 입력 중에는 촬영 화면이 아니라 목록으로 돌아갑니다.
+              tooltip: _isDirectInputMode ? '의류 종류 목록으로 돌아가기' : '다시 촬영',
+            ),
+          ),
+        ),
+        body: SafeArea(
+          top: false,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: _buildContent(context)),
+              _buildWeightKeyboardToolbar(context),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeOut,
+      child: _isDirectInputMode
+          ? _buildDirectInputView(context)
+          : _buildOptionListView(context),
     );
   }
 
@@ -352,61 +402,51 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
 
     return ListView(
       key: const ValueKey('option-list'),
-      shrinkWrap: true,
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+      shrinkWrap: !widget.isScreen,
+      padding: _contentPadding,
       children: [
-        // 제목은 성공 시트와 같아 이 줄이 없으면 실패한 줄 모른다. 제목보다 위에 두어
-        // 시트가 열릴 때 읽기 프로그램이 먼저 읽게 하고, 모양은 실패 배너와 맞춘다.
+        // 제목은 분석 성공과 같아 이 줄이 없으면 실패한 줄 모른다. 제목보다 위에 두고 모양은
+        // 실패 배너와 맞춘다. 화면 이름(namesRoute)으로 삼아, 화면이 열릴 때 읽기 프로그램이 첫 칸
+        // ("<")으로 가기 전에 이 줄부터 말하게 한다 — 보이는 순서는 그대로 둔다(DECISIONS 103).
         if (failureMessage != null) ...[
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Icon(
-                Icons.error_outline,
-                color: Colors.redAccent,
-                size: 22,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 1),
-                  child: Text(
-                    failureMessage,
-                    style: TextStyle(
-                      color: primaryText,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      height: 1.4,
+          Semantics(
+            container: true,
+            namesRoute: true,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.error_outline,
+                  color: Colors.redAccent,
+                  size: 22,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 1),
+                    child: Text(
+                      failureMessage,
+                      style: TextStyle(
+                        color: primaryText,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        height: 1.4,
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           const SizedBox(height: 16),
         ],
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                '의류 종류 선택',
-                style: TextStyle(
-                  color: primaryText,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-            if (widget.discardPrompt != null)
-              TextButton(
-                onPressed: _confirmDiscard,
-                style: TextButton.styleFrom(foregroundColor: secondaryText),
-                child: const Text(
-                  '다시 촬영',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-              ),
-          ],
+        Text(
+          '의류 종류 선택',
+          style: TextStyle(
+            color: primaryText,
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+          ),
         ),
         const SizedBox(height: 8),
         Text(
@@ -545,36 +585,40 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
         : const Color(0xFF777777);
     final inputFillColor = isDark ? const Color(0xFF2A2A2E) : Colors.white;
 
+    final title = Text(
+      '직접 무게 입력',
+      textAlign: widget.isScreen ? TextAlign.start : TextAlign.center,
+      style: TextStyle(
+        color: primaryText,
+        fontSize: 22,
+        fontWeight: FontWeight.w800,
+      ),
+    );
+
     return ListView(
       key: const ValueKey('direct-input'),
-      shrinkWrap: true,
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+      shrinkWrap: !widget.isScreen,
+      padding: _contentPadding,
       children: [
-        Row(
-          children: [
-            IconButton(
-              onPressed: _leaveDirectInputMode,
-              tooltip: '의류 종류 목록으로 돌아가기',
-              icon: Icon(
-                Icons.arrow_back_ios_new_rounded,
-                color: primaryText,
-                size: 20,
-              ),
-            ),
-            Expanded(
-              child: Text(
-                '직접 무게 입력',
-                textAlign: TextAlign.center,
-                style: TextStyle(
+        // 화면에서는 앱바 "<" 가 목록으로 돌아가므로 몸통 안에 뒤로 버튼을 또 두지 않습니다.
+        if (widget.isScreen)
+          title
+        else
+          Row(
+            children: [
+              IconButton(
+                onPressed: _leaveDirectInputMode,
+                tooltip: '의류 종류 목록으로 돌아가기',
+                icon: Icon(
+                  Icons.arrow_back_ios_new_rounded,
                   color: primaryText,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
+                  size: 20,
                 ),
               ),
-            ),
-            const SizedBox(width: 48),
-          ],
-        ),
+              Expanded(child: title),
+              const SizedBox(width: 48),
+            ],
+          ),
         const SizedBox(height: 8),
         Text(
           '실제 무게를 알고 있다면 더 정확하게 탄소발자국을 계산할 수 있어요.',

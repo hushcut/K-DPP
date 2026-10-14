@@ -45,9 +45,10 @@ extension _ScanCaptureActions on _ScanScreenState {
       });
 
       // 무게 범위와 분류를 확정할 수 있도록 분석 유형을 사용자에게 확인받습니다.
+      // 다시 촬영하면 분석 결과가 사라져 분석을 다시 받아야 하므로(서버 하루 스캔 한도) 먼저 묻습니다.
       final selectedType = await _showClothingTypePicker(
         initialSelection: inferredType,
-        discardPrompt: ClothingTypePickerDiscardPrompt.analysisResult,
+        confirmRetake: true,
       );
 
       if (!mounted) return;
@@ -86,8 +87,9 @@ extension _ScanCaptureActions on _ScanScreenState {
   /// 서버가 오류 본문에 부분 인식 결과를 실어 보냈다면 초기값으로 채웁니다.
   /// _isScanning은 유형 선택이 끝날 때까지 유지해 카메라 재초기화를 막습니다.
   ///
-  /// 실패 이유는 유형 선택 시트 맨 위에 보입니다. 고른 뒤 배너로 띄우면 시트가 먼저 떠
+  /// 실패 이유는 유형 선택 화면 맨 위에 보입니다. 고른 뒤 배너로 띄우면 선택창이 먼저 떠
   /// 실패했다는 말이 없고 '다시 촬영'으로 나가면 끝내 알리지 못했다(DECISIONS 96).
+  /// 다시 촬영해도 잃는 것은 실패한 사진뿐이라 묻지 않습니다(DECISIONS 226 ②).
   Future<void> _showManualFallback(ScanApiException exception) async {
     if (!mounted) return;
 
@@ -95,7 +97,7 @@ extension _ScanCaptureActions on _ScanScreenState {
 
     final selectedType = await _showClothingTypePicker(
       initialSelection: _selectedClothingType,
-      discardPrompt: ClothingTypePickerDiscardPrompt.manualAfterFailure,
+      confirmRetake: false,
       failureMessage: message,
     );
 

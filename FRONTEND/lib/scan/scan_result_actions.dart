@@ -63,25 +63,30 @@ extension _ScanResultActions on _ScanScreenState {
     });
   }
 
-  /// [discardPrompt]를 주면 선택을 건너뛸 수 없고, '다시 촬영' 확인 후에만 null을 반환합니다.
-  /// [failureMessage]는 분석 실패 이유로, 시트 맨 위에 보입니다.
+  /// 스캔 직후 반드시 고르는 종류 선택 화면을 엽니다. "<"(다시 촬영)로 나가면 null을 반환합니다.
+  /// [confirmRetake]는 나가기 전에 분석 결과가 사라진다고 물을지, [failureMessage]는 화면 맨 위에
+  /// 보일 분석 실패 이유입니다.
   Future<ClothingTypeOption?> _showClothingTypePicker({
     required ClothingTypeOption initialSelection,
-    ClothingTypePickerDiscardPrompt? discardPrompt,
+    required bool confirmRetake,
     String? failureMessage,
   }) {
-    return showClothingTypePickerSheet(
+    return showClothingTypePickerScreen(
       context: context,
       options: _clothingTypeCatalog.value,
       optionsListenable: _clothingTypeCatalog,
       initialSelection: initialSelection,
-      discardPrompt: discardPrompt,
+      confirmRetake: confirmRetake,
       failureMessage: failureMessage,
     );
   }
 
+  /// 결과 입력 중 종류를 바꾸는 것은 가벼운 선택이라 시트로 엽니다(DECISIONS 226 ⑥).
   Future<void> _selectClothingTypeFromResult() async {
-    final picked = await _showClothingTypePicker(
+    final picked = await showClothingTypePickerSheet(
+      context: context,
+      options: _clothingTypeCatalog.value,
+      optionsListenable: _clothingTypeCatalog,
       initialSelection: _selectedClothingType,
     );
 
