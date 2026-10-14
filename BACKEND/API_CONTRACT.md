@@ -582,7 +582,7 @@ Authorization: Bearer <token>
       "ratio": 80,
       "carbon_factor": 8.3,
       "unit": "kg CO2eq/kg textile",
-      "source": "K-DPP backend material carbon factor table (development estimates)"
+      "source": "K-DPP 소재별 배출계수 표(추정값)"
     },
     {
       "input_name": "polyester",
@@ -591,14 +591,17 @@ Authorization: Bearer <token>
       "ratio": 20,
       "carbon_factor": 9.5,
       "unit": "kg CO2eq/kg textile",
-      "source": "K-DPP backend material carbon factor table (development estimates)"
+      "source": "K-DPP 소재별 배출계수 표(추정값)"
     }
   ],
-  "calculation_source": "K-DPP backend material carbon factor table (development estimates)",
-  "calculation_note": "현재 소재별 배출계수는 개발용 추정값입니다. 최종 발표 전 팀 승인 출처로 교체해야 합니다.",
+  "calculation_source": "K-DPP 소재별 배출계수 표(추정값)",
+  "calculation_note": null,
   "saved_result_id": 13
 }
 ```
+
+`calculation_source`는 앱 리포트 '계산 기준'의 출처 줄에 그대로 보입니다. `calculation_note`는 `null`입니다
+(칸은 옛 앱을 위해 남김 — 예전엔 팀 내부 메모가 들어 있어 리포트에 보였음, DECISIONS 233).
 
 ## GET /materials
 
