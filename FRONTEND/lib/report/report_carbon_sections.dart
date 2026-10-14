@@ -160,11 +160,12 @@ Widget _buildProductionCarbonCard(
           secondaryText: secondaryText,
         ),
         // 서버 계산일 때만 백엔드가 내려준 계산 범위·근거·출처를 보여 줍니다.
+        // 서버의 calculation_note 는 팀 내부 메모('최종 발표 전 팀 승인 출처로 교체…')라 보여 주지
+        // 않습니다. 옷과 함께 폰에 저장돼 있어 서버를 고쳐도 남으므로 여기서 거릅니다(DECISIONS 227).
         if (item.carbonFootprintSource == CarbonFootprintSource.server &&
             (item.calculationScope != null ||
                 item.calculationBasis != null ||
-                item.calculationSource != null ||
-                item.calculationNote != null)) ...[
+                item.calculationSource != null)) ...[
           const SizedBox(height: 14),
           Container(
             width: double.infinity,
@@ -208,16 +209,7 @@ Widget _buildProductionCarbonCard(
                   ),
                 if (item.calculationSource != null)
                   Text(
-                    '출처: ${item.calculationSource!}',
-                    style: TextStyle(
-                      color: secondaryText,
-                      fontSize: 12,
-                      height: 1.5,
-                    ),
-                  ),
-                if (item.calculationNote != null)
-                  Text(
-                    item.calculationNote!,
+                    '출처: ${_calculationSourceLabel(item.calculationSource!)}',
                     style: TextStyle(
                       color: secondaryText,
                       fontSize: 12,
@@ -239,6 +231,16 @@ String _calculationScopeLabel(String scope) {
     return '범위: 원료 및 소재 생산 단계 추정';
   }
   return '범위: $scope';
+}
+
+// 서버가 내려준 출처 이름을 사용자 문구로 바꿉니다. 서버의 지금 이름은 영어 개발용 이름표라
+// 한국어로 보이되, 계수가 아직 추정값인 것은 그대로 알립니다(DECISIONS 227).
+String _calculationSourceLabel(String source) {
+  if (source ==
+      'K-DPP backend material carbon factor table (development estimates)') {
+    return 'K-DPP 소재별 배출계수 표(추정값)';
+  }
+  return source;
 }
 
 // 미국 EPA 환산 기준을 참고한 생활 속 탄소 비교 계수입니다. (develop d0df5a4 기준)
