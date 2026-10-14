@@ -24,7 +24,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, BeforeValidator, Field, StringConstraints
+from pydantic_core import PydanticCustomError
 import asyncio
 import base64
 import certifi
@@ -221,20 +222,34 @@ app = FastAPI(
 # 지적), 실제 수신 바이트를 누적 계산해 상한 초과 즉시 413을 돌려줍니다.
 # 실배포에서는 프록시(nginx 등)의 client_max_body_size도 함께 두어야 합니다.
 MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 1024 * 1024
+# 사진 업로드(multipart/form-data)가 아닌 요청 — JSON 이거나 Content-Type 이 없는 요청 — 의 상한.
+# 앱의 JSON 요청은 몇 KB 인데 11MB 까지 받으면, 파싱한 객체와 검증 오류가 본문의 수십 배로
+# 불어나 인증 없는 /analyze 한 건이 메모리를 수백 MB 넘게 올렸습니다(DECISIONS 244).
+MAX_JSON_REQUEST_BYTES = 1024 * 1024
+
+
+def is_multipart_request(content_type: bytes | None) -> bool:
+    """Content-Type 이 multipart/form-data 인지(대소문자·매개변수 무시)."""
+    if content_type is None:
+        return False
+    return content_type.split(b";", 1)[0].strip().lower() == b"multipart/form-data"
 
 
 class BodySizeLimitMiddleware:
     """요청 본문 상한 미들웨어.
 
+    - 상한은 Content-Type 으로 고릅니다: multipart/form-data(사진 업로드)는
+      max_bytes, 그 밖(JSON·Content-Type 없음 등)은 max_json_bytes.
     - Content-Length가 있으면 그 값으로 조기 차단합니다.
     - 길이 미표기(chunked) 요청은 상한까지만 직접 수신해 보고,
       초과하면 앱에 전달하지 않고 413을 반환합니다. 상한 이내면
       버퍼를 재생(replay)해 앱에 그대로 넘깁니다.
     """
 
-    def __init__(self, app, max_bytes: int):
+    def __init__(self, app, max_bytes: int, max_json_bytes: int):
         self.app = app
         self.max_bytes = max_bytes
+        self.max_json_bytes = max_json_bytes
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -242,16 +257,24 @@ class BodySizeLimitMiddleware:
             return
 
         declared_length = None
+        content_type = None
         for name, value in scope.get("headers") or []:
             if name == b"content-length":
                 try:
                     declared_length = int(value)
                 except ValueError:
                     declared_length = None
+            # 헤더가 여럿이면 Starlette(request.headers.get)처럼 첫 값을 씁니다 — 앱이 본문을
+            # 읽는 방식과 상한을 고르는 기준이 어긋나지 않게.
+            elif name == b"content-type" and content_type is None:
+                content_type = value
+
+        multipart = is_multipart_request(content_type)
+        max_bytes = self.max_bytes if multipart else self.max_json_bytes
 
         if declared_length is not None:
-            if declared_length > self.max_bytes:
-                await self._send_413(send)
+            if declared_length > max_bytes:
+                await self._send_413(send, multipart)
                 return
             # 길이가 신고돼 있고 상한 이내면 버퍼링 없이 그대로 통과시킵니다.
             # (신고 길이를 속여 더 보내는 경우는 서버(h11)가 프로토콜
@@ -269,8 +292,8 @@ class BodySizeLimitMiddleware:
             chunk = message.get("body", b"")
             body_chunks.append(chunk)
             received_bytes += len(chunk)
-            if received_bytes > self.max_bytes:
-                await self._send_413(send)
+            if received_bytes > max_bytes:
+                await self._send_413(send, multipart)
                 return
             if not message.get("more_body", False):
                 break
@@ -291,12 +314,16 @@ class BodySizeLimitMiddleware:
 
         await self.app(scope, replay_receive, send)
 
-    async def _send_413(self, send):
+    async def _send_413(self, send, multipart: bool):
+        if multipart:
+            message = f"요청이 너무 큽니다. 이미지는 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB 이하로 올려 주세요."
+        else:
+            message = f"요청이 너무 큽니다. 사진 업로드가 아닌 요청은 {self.max_json_bytes // (1024 * 1024)}MB 이하여야 합니다."
         body = json.dumps(
             {
                 "status": "error",
                 "error_code": "PAYLOAD_TOO_LARGE",
-                "message": f"요청이 너무 큽니다. 이미지는 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB 이하로 올려 주세요.",
+                "message": message,
                 "detail": None,
             },
             ensure_ascii=False,
@@ -327,7 +354,11 @@ def parse_cors_origins(value: str | None) -> list[str]:
 CORS_ALLOWED_ORIGINS = parse_cors_origins(os.getenv("K_DPP_CORS_ORIGINS"))
 
 # CORS를 나중에 추가해야 바깥층이 되어 413 응답에도 CORS 헤더가 붙습니다.
-app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
+app.add_middleware(
+    BodySizeLimitMiddleware,
+    max_bytes=MAX_REQUEST_BYTES,
+    max_json_bytes=MAX_JSON_REQUEST_BYTES,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -475,9 +506,33 @@ MAX_RAW_OCR_TEXT_LENGTH = 4000
 MAX_HISTORY_ITEMS = 200
 
 MaterialName = Annotated[str, StringConstraints(max_length=MAX_MATERIAL_NAME_LENGTH)]
+
+
+def reject_too_many_materials(value):
+    """소재 칸이 상한을 넘으면 칸마다 검증하기 전에 거절한다.
+
+    dict 의 Field(max_length) 는 칸마다 키·값을 다 검증하고 오류를 모두 만든 뒤에야 개수를
+    본다(pydantic 2.12). 숫자 아닌 값 수십만 칸이면 오류 객체만 수십만 개라 요청 한 건이
+    메모리를 수백 MB 올렸다(DECISIONS 244). 오류 모양은 Field(max_length) 의 too_long 과 같다.
+    """
+    if isinstance(value, dict) and len(value) > MAX_MATERIAL_ENTRIES:
+        raise PydanticCustomError(
+            "too_long",
+            "Dictionary should have at most {max_length} items after validation, not {actual_length}",
+            {
+                "field_type": "Dictionary",
+                "max_length": MAX_MATERIAL_ENTRIES,
+                "actual_length": len(value),
+            },
+        )
+    return value
+
+
 MaterialRatios = Annotated[
     dict[MaterialName, float],
+    # 문서(OpenAPI maxProperties)와 마지막 안전선으로 남깁니다. 실제 거절은 아래 BeforeValidator.
     Field(max_length=MAX_MATERIAL_ENTRIES),
+    BeforeValidator(reject_too_many_materials),
 ]
 RawOcrText = Annotated[str, StringConstraints(max_length=MAX_RAW_OCR_TEXT_LENGTH)]
 
