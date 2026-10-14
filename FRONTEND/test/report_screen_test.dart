@@ -42,10 +42,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('테스트 코튼 후드'), findsOneWidget);
-    expect(find.textContaining('소재 정보와 생산·제조 탄소 추정값을 확인하세요.'), findsOneWidget);
+    expect(
+      find.textContaining('소재 정보와 원료·소재 생산 단계 탄소 추정값을 확인하세요.'),
+      findsOneWidget,
+    );
     expect(find.text('현재 건강 상태'), findsNothing);
     expect(find.textContaining('단계별 탄소 배출량'), findsNothing);
-    expect(find.text('생산·제조 탄소 배출량'), findsOneWidget);
+    expect(find.text('원료·소재 생산 탄소 배출량'), findsOneWidget);
     expect(find.text('탄소 배출량 체감'), findsOneWidget);
     expect(find.text('계산 기준'), findsOneWidget);
     expect(find.text('앱 임시 추정값'), findsWidgets);
@@ -61,7 +64,7 @@ void main() {
   });
 
   // 2026-09-24 사용자 요청: 맞춤 관리 가이드를 탄소 배출량보다 위에 둔다.
-  testWidgets('맞춤 관리 가이드는 요약 카드 아래, 생산·제조 탄소 배출량 위에 있다', (tester) async {
+  testWidgets('맞춤 관리 가이드는 요약 카드 아래, 원료·소재 생산 탄소 배출량 위에 있다', (tester) async {
     final provider = ClosetProvider(storage: FakeClosetStorage());
     await provider.addClothes(
       Clothes(
@@ -91,8 +94,8 @@ void main() {
     double top(String text) => tester.getTopLeft(find.text(text)).dy;
 
     expect(top('탄소 추정값'), lessThan(top('맞춤 관리 가이드')));
-    expect(top('맞춤 관리 가이드'), lessThan(top('생산·제조 탄소 배출량')));
-    expect(top('생산·제조 탄소 배출량'), lessThan(top('관리 정보')));
+    expect(top('맞춤 관리 가이드'), lessThan(top('원료·소재 생산 탄소 배출량')));
+    expect(top('원료·소재 생산 탄소 배출량'), lessThan(top('관리 정보')));
   });
 
   testWidgets('상세 리포트에서 의류 이름과 세탁 지침을 수정할 수 있다', (tester) async {
@@ -411,5 +414,47 @@ void main() {
     expect(find.text('출처: K-DPP 소재별 배출계수 표(추정값)'), findsOneWidget);
     expect(find.textContaining('팀 승인'), findsNothing);
     expect(find.textContaining('development estimates'), findsNothing);
+  });
+
+  // D11: 계산은 소재별 배출계수 × 무게라 원료·소재 생산 단계뿐이다(MATERIAL_SOURCE_REVIEW.md).
+  // 서버 계산 옷은 서버 범위 줄도 함께 떠서, 한 화면 안에서 범위가 어긋나지 않는지 본다.
+  testWidgets('리포트의 탄소 범위는 원료·소재 생산 단계로 보이고, 봉제·제조는 미포함이다', (tester) async {
+    final provider = ClosetProvider(storage: FakeClosetStorage());
+    await provider.addClothes(
+      Clothes(
+        title: '범위 확인 셔츠',
+        category: '상의',
+        health: 82,
+        materials: {'cotton': 100},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: 3.0,
+        carbonFootprintSource: CarbonFootprintSource.server,
+        calculationScope: 'material_production_estimate',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+        ],
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: Scaffold(body: ReportScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('원료·소재 생산 단계 추정값'), findsOneWidget);
+    expect(find.text('범위: 원료 및 소재 생산 단계 추정'), findsOneWidget);
+    expect(find.text('소재, 혼용률, 의류 무게 기준의 원료·소재 생산 단계'), findsOneWidget);
+    expect(find.text('봉제·제조, 운송, 사용, 세탁, 폐기 과정'), findsOneWidget);
+    expect(
+      find.text('봉제·제조, 운송, 사용, 세탁, 폐기 과정의 배출량은 현재 수치에 포함하지 않습니다.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('생산·제조'), findsNothing);
   });
 }

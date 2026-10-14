@@ -122,7 +122,7 @@ Widget _buildReportBody(
           ),
           const SizedBox(height: 6),
           Text(
-            '소재 정보와 생산·제조 탄소 추정값을 확인하세요.',
+            '소재 정보와 원료·소재 생산 단계 탄소 추정값을 확인하세요.',
             style: TextStyle(color: secondaryText, fontSize: 14),
           ),
           const SizedBox(height: 16),
@@ -238,7 +238,7 @@ Widget _buildReportBody(
           const SizedBox(height: 24),
 
           Text(
-            '생산·제조 탄소 배출량',
+            '원료·소재 생산 탄소 배출량',
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
@@ -247,7 +247,7 @@ Widget _buildReportBody(
           ),
           const SizedBox(height: 8),
           Text(
-            '이 수치는 전체 생애주기 배출량이 아닙니다. 소재와 무게를 바탕으로 생산·제조 과정에서 발생한 탄소 배출량을 추정한 값입니다.',
+            '이 수치는 전체 생애주기 배출량이 아닙니다. 소재와 무게를 바탕으로 원료·소재 생산 단계에서 발생한 탄소 배출량을 추정한 값입니다.',
             style: TextStyle(color: secondaryText, fontSize: 13),
           ),
           const SizedBox(height: 16),
