@@ -123,10 +123,15 @@ def _with_recapture_guidance(parsed: dict[str, Any]) -> dict[str, Any]:
     evidence = parsed.get("parse_evidence", {})
     ocr = parsed.get("ocr", {})
     attempts = ocr.get("attempts", [])
+    # A missing primary part may be incomplete or ambiguous; a conflict
+    # needs review rather than being described as incomplete capture.
     if (parsed.get("status") != "failed"
-            or parsed.get("error_code") != "composition_not_found"
+            or parsed.get("error_code") not in {"composition_not_found", "incomplete_part_composition"}
             or evidence.get("review", {}).get("available")
             or ocr.get("conflicting_parts")
+            or any(warning.rsplit(":", 1)[-1] in {
+                "ambiguous_composition_candidates", "ambiguous_outer_compositions",
+            } for warning in parsed.get("warnings", []))
             or ocr.get("attempt_failures")
             or not attempts
             or any(attempt.get("outcome") != "success" or attempt.get("failure_code")

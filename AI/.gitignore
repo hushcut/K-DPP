@@ -1,0 +1,46 @@
+# Keep reviewed Python dependency locks visible despite the root *.lock rule.
+!requirements.lock
+!requirements-*.lock
+
+# Actual environment settings; only exact example/template names are shareable.
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+!.env.template
+!*.env.example
+!*.env.template
+
+# Credential JSON names. Arbitrary filenames and inline secrets need content scanning.
+key.json
+*credentials*.json
+*credential*.json
+*service-account*.json
+*service_account*.json
+client_secret*.json
+api-key*.json
+api_key*.json
+*private-key*.json
+*private_key*.json
+secrets.json
+secrets.yaml
+secrets.yml
+secrets.toml
+
+# Private keys, signing containers and local credential stores.
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+.aws/
+.gcloud/
+**/.config/gcloud/
+.secrets/
+secrets/

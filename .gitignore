@@ -403,3 +403,6 @@ docs/NEXT_WORK.md
 
 # Claude Code 워크트리 (기계 로컬 — 저장소 사본이 통째로 들어 있어 커밋되면 사고)
 **/.claude/worktrees/
+
+# Local verification outputs must be excluded in every clone.
+/.test-artifacts/

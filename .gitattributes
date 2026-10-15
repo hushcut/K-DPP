@@ -1,0 +1,3 @@
+# Git hooks and their POSIX launcher need LF even with Windows autocrlf enabled.
+/.githooks/* text eol=lf
+/scripts/security/*.sh text eol=lf
