@@ -99,19 +99,30 @@ docker run --rm -v "$PWD/BACKEND/requirements.txt:/r.txt:ro" python:3.12-slim-tr
 
 | 겹 | 언제 | 어디에 | 막는 사고 |
 | --- | --- | --- | --- |
-| ① 배포 직전 | `up` 할 때마다, migrate 바로 전 | `backups/pre-migrate/`(최근 10개) | 마이그레이션 실패 |
-| ② 매일 | 04:00 KST(`K_DPP_BACKUP_AT`) | `backups/daily/`(최근 14개) | 실수·버그로 망가진 데이터 |
+| ① 배포 직전 | `up` 할 때마다, migrate 바로 전 | `backups/pre-migrate/`(최근 10개, 14일 안) | 마이그레이션 실패 |
+| ② 매일 | 04:00 KST(`K_DPP_BACKUP_AT`) | `backups/daily/`(최근 13개 — 14일 안) | 실수·버그로 망가진 데이터 |
 | ③ 서버 통째 | Lightsail 자동 스냅샷(하루 한 번) | AWS(서버 밖) | 서버 고장·삭제 |
 | ④ 서버 밖 사본 | (아직 없음 — 서버·계정이 생기면 정함) | 다른 회사의 저장소 | AWS 계정 문제로 ③ 까지 잃는 경우 |
 
 - 백업 파일은 `pg_dump -Fc` 형식이고, 뜬 직후 **임시 DB 에 실제로 되살려** 확인합니다.
   행 수가 파일과 같은지, 표 목록·Alembic 리비전·소재 수가 운영과 같은지 봅니다.
   검사에 실패하면 파일은 남기고 오래된 파일도 지우지 않습니다.
+- **보관 기간**(`K_DPP_BACKUP_KEEP_DAYS`, 기본 14일): 어떤 백업 파일도 14일을 넘겨 남지 않습니다. 매일 백업이 뜨고
+  되살리기 검사까지 성공하면 **종류와 상관없이**(매일·배포 직전·수동, 중간에 끊겨 남은 `.tmp-` 파일까지) 지웁니다.
+  정리가 하루 한 번이라 다음 정리 전에 14일을 넘길 파일(이름의 시각이 13일 넘은 것)을 미리 지우므로, 매일 백업은
+  오늘 것까지 13개가 남습니다. 방금 뜬 파일은 지우지 않습니다.
+  나이는 수정 시각이 아니라 이름의 시각으로 셉니다. 이름 형식이 다른 파일은 건드리지 않습니다.
+  매일 백업이 실패하는 동안에는 지우지 않습니다(쓸 만한 파일까지 잃지 않게). 개수 정리(위 표)는 그대로 함께 합니다.
+  값은 7~14 정수만 받습니다 — 잘못된 값이면 백업이 시작하지 않아 `up` 도 `pre-migrate-backup` 에서 멈춥니다
+  (`logs pre-migrate-backup` 의 `FAIL K_DPP_BACKUP_KEEP_DAYS …`). 14를 넘길 수 없는 이유는 아래 '운영 점검'(DECISIONS 243·250·251).
+- 매일 백업이 `FAIL` 로 끝나는 그 밖의 정리 경우: 파일을 지우지 못함 · 이름의 시각이 1시간 넘게 미래인 파일이 있음
+  (시계를 확인하고 손으로 정리) · 복구 뒤 남은 DB(아래 '복구' — 7일 넘은 `k_dpp_old_*`, 남은 `k_dpp_restored`).
+  지울 것은 지운 뒤 실패로 끝나므로, 성공 기록이 멈춰 26시간 뒤 unhealthy 로 보입니다.
 - 상태 확인: `docker compose ps backup`(healthy 여부), `docker compose logs backup`(`OK`·`FAIL` 줄),
   `sudo cat backups/.last-daily-success`(매일 백업의 마지막 성공 — healthy 는 이것만 봄),
   `sudo cat backups/.last-success`(종류와 상관없이 마지막 성공).
   새 서버는 매일 백업이 처음 성공하기 전까지 첫 백업 뒤 26시간 동안 healthy 로 봐줍니다(첫 `up --wait` 가 통과하게).
-- 손으로 한 번 뜨기: `docker compose run --rm --no-deps backup once manual`(`backups/manual/`, 최근 10개).
+- 손으로 한 번 뜨기: `docker compose run --rm --no-deps backup once manual`(`backups/manual/`, 최근 10개 — 14일 뒤 지워짐).
 - 파일 하나만 검사: `docker compose run --rm --no-deps backup check /backups/daily/<파일>`.
 - 백업에는 **이메일과 비밀번호 해시**가 들어 있습니다. 폴더 700·파일 600 이고 서버에서는 root 소유라
   `sudo` 로 봅니다. Git 에 올리지 않습니다(`.gitignore`).
@@ -120,11 +131,22 @@ docker run --rm -v "$PWD/BACKEND/requirements.txt:/r.txt:ro" python:3.12-slim-tr
 - ④ 는 같은 AWS 계정의 S3 가 아니라 다른 회사의 저장소(Google Cloud Storage·Cloudflare R2 등)로 정할 예정입니다
   — 같은 계정이면 ③ 과 함께 잃습니다.
 
+### 운영 점검
+
+- **주 1회 `docker compose ps backup`** 이 healthy 인지 봅니다(실패 알림이 아직 없음). unhealthy 면 `docker compose logs backup` 의 `FAIL` 줄부터.
+  고친 뒤에는 다음 04:00 을 기다리지 말고 바로 `docker compose run --rm --no-deps backup once daily` 로 백업·정리까지 합니다.
+- 사고를 조사하는 동안 오래된 백업을 지켜야 하면 정리 대상이 아닌 폴더로 복사합니다:
+  `sudo mkdir -p -m 700 backups/hold && sudo cp -p backups/<종류>/<파일> backups/hold/`. 조사가 끝나면 바로 지웁니다
+  (남아 있는 동안은 아래 '최대 30일' 약속 밖입니다).
+- 탈퇴한 사용자의 데이터는 운영 DB 에서는 바로 지워지고, 백업에서는 **백업이 정상일 때 최대 30일 안에** 사라집니다(DECISIONS 243):
+  백업 파일 최대 14일 + 매일 백업이 멈춘 걸 알아채는 데 최대 8일(unhealthy 까지 26시간 + 주 1회 점검) + Lightsail 스냅샷 7개 ≈ 29일.
+  그래서 보관 기간은 14일을 넘길 수 없고, 복구 뒤 남는 옛 DB 도 7일 안에 지웁니다(아래 '복구').
+
 ### 백업이 실패해 앱이 안 뜰 때
 
 `up` 이 `service "pre-migrate-backup" didn't complete successfully` 로 끝나면 migrate·app 이 멈춘
 상태입니다(이때 함께 나오는 `dependency postgres failed to start` 는 Compose 의 표현일 뿐입니다).
-`docker compose logs pre-migrate-backup` 의 `FAIL` 줄로 원인(디스크 가득·비밀번호 등)을 먼저 고칩니다.
+`docker compose logs pre-migrate-backup` 의 `FAIL` 줄로 원인(디스크 가득·비밀번호·`K_DPP_BACKUP_KEEP_DAYS` 값 등)을 먼저 고칩니다.
 급하면 마이그레이션 없이 앱만 띄웁니다. DB 리비전이 코드와 맞을 때만 뜹니다.
 
 ```sh
@@ -153,7 +175,10 @@ docker compose up -d --wait
 
 - 5) 로그인·이력을 확인합니다. 백업 시각 이후에 생긴 가입·기록은 없는 것이 정상입니다.
 - 잘못 골랐으면 같은 3)·4) 를 거꾸로 합니다(`k_dpp` → 다른 이름, `k_dpp_old_<시각>` → `k_dpp`).
-- 며칠 지켜본 뒤 옛 DB 를 지웁니다: `docker compose exec -T postgres dropdb -U kdpp k_dpp_old_<시각>`.
+- **7일 안에** 옛 DB 를 지웁니다: `docker compose exec -T postgres dropdb -U kdpp k_dpp_old_<시각>`.
+  옛 DB 에는 그 뒤 탈퇴한 사용자의 데이터가 남아 있어, 오래 두면 '최대 30일' 약속(위 '운영 점검')이 깨집니다.
+  7일이 넘으면 매일 백업이 정리를 마친 뒤 `FAIL 복구 뒤 남은 DB 를 지우세요` 로 끝납니다(unhealthy).
+- 2) 만 하고 바꿔 끼우지 않기로 했으면 `k_dpp_restored` 를 바로 지웁니다(남아 있으면 다음 매일 백업이 같은 `FAIL`).
 - 2) 가 `k_dpp_restored 가 이미 있습니다` 로 멈추면 지난 복구에서 남은 것입니다. 내용을 확인한 뒤 같은 `dropdb` 로 지웁니다.
 
 ### 복구 연습
@@ -171,7 +196,8 @@ docker compose up -d --wait
 docker compose exec -T postgres psql -U kdpp -d k_dpp -c "SELECT user_id, version, item_count, octet_length(items) AS bytes, updated_at FROM closet_snapshots ORDER BY updated_at DESC LIMIT 20"
 ```
 
-- 새 환경변수·Caddy 변경은 없고, 매일 백업에 이 표도 함께 들어갑니다. 탈퇴하면 운영 DB 에서는 바로 지워지지만 백업 파일에는 남습니다.
+- 새 환경변수·Caddy 변경은 없고, 매일 백업에 이 표도 함께 들어갑니다. 탈퇴하면 운영 DB 에서는 바로 지워지고, 백업 파일에는
+  보관 기간(14일) 동안 남습니다 — 백업이 정상이면 최대 30일 안에 사라집니다('백업' → '운영 점검').
 - 서버 로그는 충돌·거절만 `[closet]` 한 줄로 남깁니다(`docker compose logs app | grep '\[closet\]'`).
 
 ## 메일 발송
