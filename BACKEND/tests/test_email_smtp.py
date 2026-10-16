@@ -369,9 +369,48 @@ def test_smtp_failure_log_hides_the_recipient(smtp, capsys):
     assert session.data is None
     err = capsys.readouterr().err
     assert "SMTPRecipientsRefused" in err
-    assert "<받는 주소>" in err
+    assert "<주소>" in err
     assert "new@example.com" not in err
     assert err.count("\n") == 1
+
+
+@pytest.mark.parametrize(
+    "rcpt_reply",
+    [
+        "550 5.1.1 <ZQ-RCPT@EXAMPLE.COM>: Recipient address rejected",  # 대소문자를 바꿔 되돌려 줌
+        "550 5.1.1 <zq-rcpt@example.com>: Recipient address rejected",
+        "550 5.1.1 Zq-Rcpt... Recipient address rejected",  # @ 앞부분만
+        "550 5.1.1 zq-rcpt%40example.com Recipient address rejected",
+    ],
+)
+def test_smtp_failure_log_hides_the_recipient_in_any_form(smtp, capsys, rcpt_reply):
+    # 받는 서버가 주소를 어떤 모양으로 되돌려 줘도 실패 줄엔 남지 않고, 거절 이유는 남습니다(DECISIONS 253).
+    server = smtp(rcpt_reply=rcpt_reply)
+    main.send_email_code_message("zq-rcpt@example.com", "signup", "123456")
+    server.wait()
+    err = capsys.readouterr().err
+    assert "SMTPRecipientsRefused" in err
+    assert "Recipient address rejected" in err
+    assert "zq-rcpt" not in err.lower()
+    assert "@" not in err  # 앞부분만 가리고 '@example.com' 이 남지 않게
+    assert err.count("\n") == 1
+
+
+def test_hide_email_addresses_keeps_the_reason():
+    hide = main.hide_email_addresses
+    # @ 가 든 토막은 누구 주소든(보내는 주소 포함) 가립니다.
+    assert hide("550 <ZQ-RCPT@EXAMPLE.COM>: rejected", "zq-rcpt@example.com") == "550 <<주소>>: rejected"
+    assert hide("553 no-reply@send.example.com refused", "zq-rcpt@example.com") == "553 <주소> refused"
+    # 토막 = 공백·주소 문법 글자 사이라, 주소에 붙은 따옴표·중괄호도 함께 가려집니다.
+    assert hide("{'zq-rcpt@example.com': (550, b'x')}", "zq-rcpt@example.com") == "<주소>: (550, b'x')}"
+    # 받는 주소의 앞부분은 단어로 따로 나올 때만 — 다른 단어 속 같은 글자는 그대로 둡니다.
+    assert hide("ZQ-RCPT... User unknown", "zq-rcpt@example.com") == "<주소>... User unknown"
+    assert hide("Mailbox full", "mail@example.com") == "Mailbox full"
+    # 원인 문구는 그대로, 두 번 가려도 같습니다.
+    reason = "SSLCertVerificationError(\"certificate is not valid for '127.0.0.1'\")"
+    assert hide(reason, "zq-rcpt@example.com") == reason
+    once = hide("550 <ZQ-RCPT@EXAMPLE.COM> zq-rcpt", "zq-rcpt@example.com")
+    assert hide(once, "zq-rcpt@example.com") == once
 
 
 def test_smtp_quit_failure_after_sending_is_not_a_failure(smtp, capsys):

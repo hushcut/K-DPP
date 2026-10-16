@@ -219,9 +219,11 @@ docker compose exec -T postgres psql -U kdpp -d k_dpp -c "SELECT user_id, versio
   보내지 않음). 587 이 막혔으면 `K_DPP_SMTP_PORT=2587`(STARTTLS) 또는 465·2465(처음부터 TLS).
 - 메일은 응답 뒤에 보내므로 앱 응답은 발송 결과와 상관없이 같습니다. `docker compose logs app` 에 보낸 것은
   `[email] 메일을 보냈습니다(signup)`, 실패는 `[email] 인증 메일 처리 실패(…)` 로 남고 주소·번호·비밀번호는
-  남기지 않습니다. 받는 사람별 기록은 Resend 화면의 Emails 에서 봅니다.
+  남기지 않습니다(받는 서버가 되돌려 준 주소도 `<주소>` 로 가림 — DECISIONS 253). 받는 사람별 기록은 Resend
+  화면의 Emails 에서 봅니다.
 - **시연 날 발송이 막히면** `.env` 를 `K_DPP_EMAIL_DELIVERY=log` 로 바꾸고 `docker compose up -d --wait` —
-  번호가 `docker compose logs app` 에 `[email] <주소> | <제목> | 인증번호 123456` 으로 남습니다.
+  번호가 `docker compose logs app` 에 `[email] #3f9a1c2b | <제목> | 인증번호 123456` 으로 남습니다. 주소 대신
+  app 이 켜질 때마다 바뀌는 지문이라, 시연 계정의 줄은 번호를 요청한 시각으로 찾습니다.
 - log 로 띄울 때도 secret 파일은 있어야 하므로 빈 파일(`: > secrets/smtp_password`)을 둡니다.
 - **띄운 직후 한 번 확인합니다**: 앱(또는 `curl`)으로 진짜 메일함에 가입 인증번호를 요청하고 메일이 왔는지,
   `docker compose logs app` 에 `메일을 보냈습니다` 가 남았는지 봅니다. 형식만 맞고 값이 틀린 설정(API 키·호스트 오타,
