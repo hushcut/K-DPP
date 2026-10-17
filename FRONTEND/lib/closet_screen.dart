@@ -85,7 +85,7 @@ class _ClosetScreenState extends State<ClosetScreen> {
   /// 정렬 기준은 Provider가 단일 출처입니다.
   ///
   /// 화면이 사본을 들고 있으면 저장 실패로 Provider만 되돌아갔을 때 둘이 어긋나고,
-  /// 그 어긋남이 화면 재생성(스캔 저장 후 /main 교체, 재로그인 등) 시점에
+  /// 그 어긋남이 화면 재생성(재로그인 등) 시점에
   /// 아무 안내 없이 드러납니다. 이 화면은 이미 Provider를 구독하므로
   /// 값이 바뀌면 그대로 다시 그려집니다.
   ClosetSortOption get _sortOption =>

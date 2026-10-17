@@ -106,7 +106,7 @@ void main() {
     expect(find.text('옷장'), findsNothing);
   });
 
-  testWidgets('스캔 저장 후에는 새 스캔 화면 위에 리포트를 쌓아 열고, 리포트를 닫으면 카메라를 켠다', (
+  testWidgets('스캔과 리포트를 함께 여는 경로 인자로 열면 새 스캔 화면 위에 리포트를 쌓고, 리포트를 닫으면 카메라를 켠다', (
     tester,
   ) async {
     final provider = ClosetProvider(storage: FakeClosetStorage());
@@ -210,7 +210,9 @@ void main() {
     expect(reportBack.dx, scanBack.dx);
   });
 
-  testWidgets('스캔 저장 직후 리포트에서 의류를 지우면 스캔 화면까지 닫히고 옷장 탭이 보인다', (tester) async {
+  testWidgets('경로 인자로 스캔 화면 위에 연 리포트에서 의류를 지우면 스캔 화면까지 닫히고 옷장 탭이 보인다', (
+    tester,
+  ) async {
     final provider = ClosetProvider(storage: FakeClosetStorage());
     await provider.addClothes(
       Clothes(
@@ -984,7 +986,7 @@ void main() {
     expect(find.text('설정 화면'), findsNothing);
     expect(find.byType(ScanResultView), findsOneWidget);
 
-    // 저장이 끝나면 새 스캔 화면 위에 리포트가 열린다(스택 정리는 그대로).
+    // 저장이 끝나면 새 촬영 상태로 돌아간 스캔 화면 위에 리포트가 열린다.
     releaseSave();
     await tester.pump();
     await tester.pump(routeTransition);
@@ -1027,6 +1029,144 @@ void main() {
     expect(find.text('설정 화면'), findsOneWidget);
     // 실패 배너가 저절로 닫힐 때까지 시간을 흘려 타이머를 남기지 않는다.
     await tester.pump(const Duration(seconds: 10));
+  });
+
+  // C04(DECISIONS 2026-10-14): 저장 끝에 /main 을 새로 만들면 홈에서 다시 시작해, 스캔까지 닫았을 때
+  // 들어왔던 탭과 옷장 검색어가 사라졌다. 지금은 메인 화면을 그대로 두고 스캔 화면 위에 리포트를 연다.
+  group('스캔 저장 뒤 화면 쌓임', () {
+    const searchHint = '옷 이름, 소재 검색';
+
+    ScanScreen scanScreen(WidgetTester tester) =>
+        tester.widget<ScanScreen>(find.byType(ScanScreen, skipOffstage: false));
+
+    String closetSearchText(WidgetTester tester) => tester
+        .widget<TextField>(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is TextField &&
+                widget.decoration?.hintText == searchHint,
+            skipOffstage: false,
+          ),
+        )
+        .controller!
+        .text;
+
+    Future<void> saveScannedClothes(WidgetTester tester) async {
+      await openScanResultForm(tester);
+      await fillOneMaterial(tester);
+      await tapSave(tester);
+      await tester.pump(routeTransition);
+      await tester.pump(routeTransition);
+    }
+
+    Future<void> tapAndWait(WidgetTester tester, Finder target) async {
+      await tester.tap(target);
+      await tester.pump();
+      await tester.pump(routeTransition);
+    }
+
+    testWidgets('옷장 탭에서 검색하다 스캔해 저장하면, 리포트와 스캔 화면을 닫았을 때 옷장 탭과 검색어가 그대로다', (
+      tester,
+    ) async {
+      final provider = await pumpMainScreen(tester);
+      for (final title in ['홍길동 옥스퍼드 셔츠', '홍길동 울 니트']) {
+        await provider.addClothes(
+          Clothes(
+            title: title,
+            category: '상의',
+            health: 80,
+            materials: {'cotton': 100},
+            careInstruction: '찬물 세탁',
+            carbonFootprint: 3.0,
+          ),
+        );
+      }
+      await tester.tap(find.text('옷장'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, searchHint), '셔츠');
+      await tester.pumpAndSettle();
+      expect(find.text('홍길동 울 니트'), findsNothing);
+      final mainState = tester.state(find.byType(MainScreen));
+
+      await saveScannedClothes(tester);
+
+      // 메인 화면은 그대로이고, 새 촬영 상태로 돌아간 스캔 화면 위에 리포트가 열린다.
+      expect(find.text('상세 리포트'), findsOneWidget);
+      expect(provider.items, hasLength(3));
+      expect(
+        tester.state(find.byType(MainScreen, skipOffstage: false)),
+        same(mainState),
+      );
+      expect(scanScreen(tester).isActive, isFalse);
+
+      await tapAndWait(tester, find.byTooltip('리포트 닫기'));
+      expect(find.text(scanGuide), findsOneWidget);
+      expect(find.byType(ScanResultView), findsNothing);
+      expect(scanScreen(tester).isActive, isTrue);
+
+      await tapAndWait(tester, find.byTooltip('스캔 화면 닫기'));
+      expect(find.byType(ScanScreen, skipOffstage: false), findsNothing);
+      expect(tester.state(find.byType(MainScreen)), same(mainState));
+      expect(find.text('내 옷장'), findsOneWidget);
+      expect(closetSearchText(tester), '셔츠');
+      expect(find.text('홍길동 옥스퍼드 셔츠'), findsOneWidget);
+      expect(find.text('홍길동 울 니트'), findsNothing);
+    });
+
+    testWidgets('저장 뒤 리포트를 닫고 다시 찍으면 앞서 넣은 소재 없이 처음과 같은 결과 화면이 열린다', (
+      tester,
+    ) async {
+      TextEditingController field(String label) => tester
+          .widget<TextFormField>(find.widgetWithText(TextFormField, label))
+          .controller!;
+
+      await pumpMainScreen(tester);
+      await openScanResultForm(tester);
+      final firstForm = (field('소재명').text, field('%').text);
+      await fillOneMaterial(tester);
+      expect((field('소재명').text, field('%').text), ('면', '100'));
+      await tapSave(tester);
+      await tester.pump(routeTransition);
+      await tester.pump(routeTransition);
+      await tapAndWait(tester, find.byTooltip('리포트 닫기'));
+
+      // 앨범 선택은 openScanResultForm 이 걸어 둔 가짜 응답을 그대로 쓴다.
+      await tester.tap(find.byIcon(Icons.photo_library_outlined));
+      final typeOption = find.text('반팔 티셔츠');
+      for (var i = 0; i < 30 && typeOption.evaluate().isEmpty; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      await tester.pump(routeTransition);
+      await tapAndWait(tester, typeOption);
+
+      expect(find.byType(ScanResultView), findsOneWidget);
+      expect((field('소재명').text, field('%').text), firstForm);
+    });
+
+    testWidgets('저장 뒤 리포트에서 그 의류를 지우면 스캔 화면까지 닫히고 옷장 탭이 보인다', (tester) async {
+      final provider = await pumpMainScreen(tester);
+      await saveScannedClothes(tester);
+      expect(provider.items, hasLength(1));
+
+      await tester.scrollUntilVisible(
+        find.text('이 의류 삭제하기'),
+        300,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tapAndWait(tester, find.text('이 의류 삭제하기'));
+      await tapAndWait(tester, find.widgetWithText(ElevatedButton, '삭제'));
+      await tester.pump(routeTransition);
+
+      expect(provider.items, isEmpty);
+      expect(find.text('상세 리포트'), findsNothing);
+      expect(find.byType(ScanScreen, skipOffstage: false), findsNothing);
+      expect(find.text('내 옷장'), findsOneWidget);
+      // 삭제 배너가 저절로 닫힐 때까지 시간을 흘려 타이머를 남기지 않는다.
+      await tester.pump(const Duration(seconds: 10));
+    });
   });
 
   // C26(DECISIONS 2026-10-14): 저장은 서버 계산을 기다린 뒤 옷장에 넣는다. 그 사이 로그아웃하면 공용 칸에
