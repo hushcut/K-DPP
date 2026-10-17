@@ -46,6 +46,34 @@ void main() {
       expect(provider.currentReportItem!.title, '테스트 셔츠');
     });
 
+    test('빈 옷장의 탄소 합계와 평균 건강도는 0이다', () {
+      final provider = ClosetProvider(storage: FakeClosetStorage());
+
+      expect(provider.totalCarbonFootprint, 0.0);
+      expect(provider.averageHealth, 0.0);
+    });
+
+    test('탄소 합계는 모든 의류의 합, 평균 건강도는 소수점까지 평균이다', () async {
+      final provider = ClosetProvider(storage: FakeClosetStorage());
+      Clothes clothes(String title, int health, double carbonFootprint) {
+        return Clothes(
+          title: title,
+          category: '상의',
+          health: health,
+          materials: {'cotton': 100},
+          careInstruction: '찬물 세탁',
+          carbonFootprint: carbonFootprint,
+        );
+      }
+
+      await provider.addClothes(clothes('집계 셔츠', 81, 2.5));
+      await provider.addClothes(clothes('집계 바지', 20, 4.5));
+
+      expect(provider.totalCarbonFootprint, 7.0);
+      // (81 + 20) / 2 — 정수 나눗셈이면 50 으로 잘린다.
+      expect(provider.averageHealth, 50.5);
+    });
+
     test('selectClothes를 호출하면 currentReportItem이 해당 의류로 바뀐다', () async {
       final provider = ClosetProvider(storage: FakeClosetStorage());
       final target = Clothes(
