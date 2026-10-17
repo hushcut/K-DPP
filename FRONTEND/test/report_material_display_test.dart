@@ -105,6 +105,13 @@ void main() {
     expect(find.text('폴리에스터 40%'), findsNothing);
   });
 
+  testWidgets('혼용률이 같으면 먼저 적힌 소재를 대표 소재로 고른다', (tester) async {
+    await pumpReport(tester, {'면': 50, '폴리에스터': 50});
+
+    expect(find.text('면 50%'), findsNWidgets(2));
+    expect(find.text('폴리에스터 50%'), findsNothing);
+  });
+
   testWidgets('서버 표에 없는 이름은 어느 설정에서도 번역하지 않는다', (tester) async {
     for (final display in MaterialNameDisplay.values) {
       await pumpReport(tester, {
