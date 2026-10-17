@@ -1,0 +1,21 @@
+# 실험 코드·설정·문서만 올린다. 사진·잘린 줄·라벨 데이터·모델·학습 산출물·키는 올리지 않는다.
+venv/
+PaddleOCR/
+downloads/
+models/
+output/
+data/
+results/
+logs/
+*.jpg
+*.jpeg
+*.png
+*.tar
+*.pdparams
+*.pdopt
+*.pdiparams
+*.states
+*.json
+*.env
+.env*
+versions_pip_freeze.txt

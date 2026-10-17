@@ -1,0 +1,9 @@
+python: 3.11.9
+paddleocr==3.1.1
+paddlepaddle==3.0.0
+paddlex==3.1.4
+PaddleOCR training code: release/3.0 @ 109a5eedf5a2996b932d737bf062a8149c7decd9
+korean config+dict: PaddleOCR main branch raw files, downloaded 2026-10-17
+pretrained: paddle-model-ecology.bj.bcebos.com/paddlex/official_pretrained_model/korean_PP-OCRv5_mobile_rec_pretrained.pdparams
+pretrained sha256: 8975dede5e0c2f47e0a7712b3d79ffdc766972f872fd0441ebcccd9d77cd52a3
+CPU: i5-10210U 4C/8T, RAM 15.9GB, Windows 10
