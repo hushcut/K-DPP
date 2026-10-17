@@ -7,7 +7,6 @@ import 'package:k_dpp/closet_provider.dart';
 import 'package:k_dpp/main_screen.dart';
 import 'package:k_dpp/material_name_display_provider.dart';
 import 'package:k_dpp/models/clothes.dart';
-import 'package:k_dpp/models/main_screen_arguments.dart';
 import 'package:k_dpp/navigation_bar_opacity_provider.dart';
 import 'package:k_dpp/scan_screen.dart';
 import 'package:k_dpp/services/carbon_api_service.dart';
@@ -106,242 +105,6 @@ void main() {
     expect(find.text('옷장'), findsNothing);
   });
 
-  testWidgets('스캔과 리포트를 함께 여는 경로 인자로 열면 새 스캔 화면 위에 리포트를 쌓고, 리포트를 닫으면 카메라를 켠다', (
-    tester,
-  ) async {
-    final provider = ClosetProvider(storage: FakeClosetStorage());
-    final clothes = Clothes(
-      title: '홍길동 코튼 셔츠',
-      category: '상의',
-      health: 88,
-      materials: {'cotton': 100},
-      careInstruction: '찬물 세탁',
-      carbonFootprint: 4.2,
-    );
-    await provider.addClothes(clothes);
-
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          ChangeNotifierProvider.value(value: provider),
-          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
-          ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
-        ],
-        child: MaterialApp(
-          builder: AppBannerHost.builder,
-          home: const MainScreen(
-            initialArguments: MainScreenArguments(
-              initialIndex: 1,
-              showReport: true,
-            ),
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('상세 리포트'), findsOneWidget);
-    expect(find.text('홍길동 코튼 셔츠'), findsOneWidget);
-    expect(find.text('홈'), findsNothing);
-    // 리포트 아래는 새 스캔 화면이지만 가려져 있으므로 카메라를 켜지 않는다.
-    ScanScreen scanScreen() =>
-        tester.widget<ScanScreen>(find.byType(ScanScreen, skipOffstage: false));
-    expect(scanScreen().isActive, isFalse);
-
-    // 리포트를 닫으면 바로 다음 옷을 찍을 수 있게 스캔 화면이 보인다.
-    await tester.tap(find.byTooltip('리포트 닫기'));
-    await tester.pump();
-    await tester.pump(routeTransition);
-
-    expect(find.text('상세 리포트'), findsNothing);
-    expect(find.text(scanGuide), findsOneWidget);
-    expect(scanScreen().isActive, isTrue);
-
-    // 스캔 화면을 닫으면 그 아래 홈이 나오고, 스캔 화면은 정리된다.
-    await tester.tap(find.byTooltip('스캔 화면 닫기'));
-    await tester.pump();
-    await tester.pump(routeTransition);
-
-    expect(find.text('홈'), findsOneWidget);
-    expect(find.byType(ScanScreen, skipOffstage: false), findsNothing);
-  });
-
-  // 2026-10-05 Android 확인(이슈 #18 1차 5): 리포트 앱바만 44 라 "<" 가 6dp 위에 있었다.
-  testWidgets('리포트의 "<" 는 스캔 화면의 "<" 와 같은 높이에 있다', (tester) async {
-    final provider = ClosetProvider(storage: FakeClosetStorage());
-    await provider.addClothes(
-      Clothes(
-        title: '홍길동 코튼 셔츠',
-        category: '상의',
-        health: 88,
-        materials: {'cotton': 100},
-        careInstruction: '찬물 세탁',
-        carbonFootprint: 4.2,
-      ),
-    );
-
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          ChangeNotifierProvider.value(value: provider),
-          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
-          ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
-        ],
-        child: MaterialApp(
-          builder: AppBannerHost.builder,
-          home: const MainScreen(
-            initialArguments: MainScreenArguments(
-              initialIndex: 1,
-              showReport: true,
-            ),
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    final reportBack = tester.getCenter(find.byTooltip('리포트 닫기'));
-    await tester.tap(find.byTooltip('리포트 닫기'));
-    await tester.pump();
-    await tester.pump(routeTransition);
-    final scanBack = tester.getCenter(find.byTooltip('스캔 화면 닫기'));
-
-    expect(reportBack.dy, scanBack.dy);
-    expect(reportBack.dx, scanBack.dx);
-  });
-
-  testWidgets('경로 인자로 스캔 화면 위에 연 리포트에서 의류를 지우면 스캔 화면까지 닫히고 옷장 탭이 보인다', (
-    tester,
-  ) async {
-    final provider = ClosetProvider(storage: FakeClosetStorage());
-    await provider.addClothes(
-      Clothes(
-        title: '홍길동 데님 재킷',
-        category: '아우터',
-        health: 70,
-        materials: {'cotton': 100},
-        careInstruction: '찬물 세탁',
-        carbonFootprint: 6.3,
-      ),
-    );
-
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          ChangeNotifierProvider.value(value: provider),
-          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
-          ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
-        ],
-        child: const MaterialApp(
-          builder: AppBannerHost.builder,
-          home: MainScreen(
-            initialArguments: MainScreenArguments(
-              initialIndex: 1,
-              showReport: true,
-            ),
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.scrollUntilVisible(
-      find.text('이 의류 삭제하기'),
-      300,
-      scrollable: find.byType(Scrollable).last,
-    );
-    await tester.tap(find.text('이 의류 삭제하기'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ElevatedButton, '삭제'));
-    await tester.pumpAndSettle();
-
-    expect(provider.items, isEmpty);
-    expect(find.text('상세 리포트'), findsNothing);
-    expect(find.byType(ScanScreen, skipOffstage: false), findsNothing);
-    expect(find.text('내 옷장'), findsOneWidget);
-  });
-
-  testWidgets('리포트가 열린 상태의 시스템 뒤로가기는 앱을 닫는 대신 리포트를 닫는다', (tester) async {
-    final provider = ClosetProvider(storage: FakeClosetStorage());
-    final clothes = Clothes(
-      title: '홍길동 후드집업',
-      category: '상의',
-      health: 80,
-      materials: {'cotton': 100},
-      careInstruction: '찬물 세탁',
-      carbonFootprint: 2.4,
-    );
-    await provider.addClothes(clothes);
-
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          ChangeNotifierProvider.value(value: provider),
-          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
-          ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
-        ],
-        child: const MaterialApp(
-          builder: AppBannerHost.builder,
-          home: MainScreen(
-            initialArguments: MainScreenArguments(showReport: true),
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('상세 리포트'), findsOneWidget);
-
-    // Android 시스템 뒤로가기와 동일한 popRoute 플랫폼 메시지를 보냅니다.
-    final backMessage = const JSONMethodCodec().encodeMethodCall(
-      const MethodCall('popRoute'),
-    );
-    await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
-      'flutter/navigation',
-      backMessage,
-      (_) {},
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('상세 리포트'), findsNothing);
-    expect(find.byType(MainScreen), findsOneWidget);
-  });
-
-  testWidgets('리포트가 열려 있어도 탭 위젯 트리를 해제하지 않고 보존한다', (tester) async {
-    final provider = ClosetProvider(storage: FakeClosetStorage());
-    final clothes = Clothes(
-      title: '홍길동 가디건',
-      category: '상의',
-      health: 77,
-      materials: {'wool': 100},
-      careInstruction: '드라이클리닝 권장',
-      carbonFootprint: 5.1,
-    );
-    await provider.addClothes(clothes);
-
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          ChangeNotifierProvider.value(value: provider),
-          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
-          ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
-        ],
-        child: const MaterialApp(
-          builder: AppBannerHost.builder,
-          home: MainScreen(
-            initialArguments: MainScreenArguments(showReport: true),
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('상세 리포트'), findsOneWidget);
-
-    // 리포트가 위에 쌓여 있는 동안에도 아래 메인 화면의 탭 스택은 유지되어야 합니다.
-    expect(find.byType(IndexedStack, skipOffstage: false), findsOneWidget);
-  });
-
   // 리포트는 설정처럼 라우트로 쌓인다(2026-09-24 사용자 결정 A안: iOS 에서 밀어서 닫히게).
   group('리포트 라우트', () {
     Future<ClosetProvider> pumpHomeWithClothes(WidgetTester tester) async {
@@ -428,6 +191,55 @@ void main() {
       expect(provider.items, isEmpty);
       expect(find.text('상세 리포트'), findsNothing);
       expect(find.text('내 옷장'), findsOneWidget);
+    });
+
+    testWidgets('리포트가 열린 상태의 시스템 뒤로가기는 앱을 닫는 대신 리포트를 닫는다', (tester) async {
+      await pumpHomeWithClothes(tester);
+      await tester.tap(find.text('홍길동 린넨 셔츠'));
+      await tester.pumpAndSettle();
+      expect(find.text('상세 리포트'), findsOneWidget);
+
+      // Android 시스템 뒤로가기와 동일한 popRoute 플랫폼 메시지를 보냅니다.
+      final backMessage = const JSONMethodCodec().encodeMethodCall(
+        const MethodCall('popRoute'),
+      );
+      await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+        'flutter/navigation',
+        backMessage,
+        (_) {},
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('상세 리포트'), findsNothing);
+      expect(find.byType(MainScreen), findsOneWidget);
+    });
+
+    testWidgets('리포트가 열려 있어도 탭 위젯 트리를 해제하지 않고 보존한다', (tester) async {
+      await pumpHomeWithClothes(tester);
+      await tester.tap(find.text('홍길동 린넨 셔츠'));
+      await tester.pumpAndSettle();
+      expect(find.text('상세 리포트'), findsOneWidget);
+
+      // 리포트가 위에 쌓여 있는 동안에도 아래 메인 화면의 탭 스택은 유지되어야 합니다.
+      expect(find.byType(IndexedStack, skipOffstage: false), findsOneWidget);
+    });
+
+    // 2026-10-05 Android 확인(이슈 #18 1차 5): 리포트 앱바만 44 라 "<" 가 6dp 위에 있었다.
+    testWidgets('리포트의 "<" 는 스캔 화면의 "<" 와 같은 높이에 있다', (tester) async {
+      await pumpHomeWithClothes(tester);
+      await tester.tap(find.text('홍길동 린넨 셔츠'));
+      await tester.pumpAndSettle();
+      final reportBack = tester.getCenter(find.byTooltip('리포트 닫기'));
+
+      await tester.tap(find.byTooltip('리포트 닫기'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('스캔'));
+      await tester.pump();
+      await tester.pump(routeTransition);
+      final scanBack = tester.getCenter(find.byTooltip('스캔 화면 닫기'));
+
+      expect(reportBack.dy, scanBack.dy);
+      expect(reportBack.dx, scanBack.dx);
     });
   });
 
