@@ -47,6 +47,9 @@ void main() {
         '로그인이 만료됐어요. 일부 로그인 정보는 지우지 못했어요.',
         AppBannerKind.failure,
       );
+      // 저장소를 못 지워도 메모리 세션은 먼저 비워, 로그인 화면에서 로그인된 채로 남지 않는다.
+      expect(provider.isAuthenticated, isFalse);
+      expect(provider.accessToken, isNull);
     });
 
     testWidgets('다른 안내로 끝나면 그 안내를 남기고 뒤에 붙인다', (tester) async {
