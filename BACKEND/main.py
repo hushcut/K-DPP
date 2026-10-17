@@ -1444,10 +1444,18 @@ def send_email_code_message(email: str, purpose: str, code: str) -> None:
             db.close()
         message = compose_email_code_message(email, purpose, code, registered)
         if message is None:
+            # 요청마다 보냄·실패·안 보냄 중 한 줄은 남깁니다 — smtp 모드에서 이 줄이 빠지면 '200 인데
+            # 기록 없음'이 발송 고장처럼 보입니다(DECISIONS 259). smtp 줄은 보냄 줄처럼 지문도 없습니다.
             if EMAIL_DELIVERY == "log":
                 print(
                     f"[email] {email_log_tag(email)} | 가입되지 않은 이메일이라 비밀번호 찾기 메일을 "
                     "보내지 않습니다.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[email] 가입되지 않은 이메일이라 메일을 보내지 않았습니다({purpose}).",
                     file=sys.stderr,
                     flush=True,
                 )

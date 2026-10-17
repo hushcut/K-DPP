@@ -221,6 +221,11 @@ docker compose exec -T postgres psql -U kdpp -d k_dpp -c "SELECT user_id, versio
   `[email] 메일을 보냈습니다(signup)`, 실패는 `[email] 인증 메일 처리 실패(…)` 로 남고 주소·번호·비밀번호는
   남기지 않습니다(받는 서버가 되돌려 준 주소도 `<주소>` 로 가림 — DECISIONS 253). 받는 사람별 기록은 Resend
   화면의 Emails 에서 봅니다.
+- 가입되지 않은 이메일로 온 비밀번호 찾기는 메일을 보내지 않고(앱 응답은 같음 — 가입 여부를 드러내지 않음)
+  `[email] 가입되지 않은 이메일이라 메일을 보내지 않았습니다(password_reset)` 만 남깁니다. 그래서 요청
+  `POST /auth/email-code … 200` 마다 보냄·실패·안 보냄 중 한 줄이 따라옵니다(DECISIONS 259). '메일이 안 온다'는데 이
+  줄이면 발송 고장이 아니라 그 주소가 가입돼 있지 않은 것입니다 — 앱 로그인 화면의 '비밀번호를 잊으셨나요?'는
+  로그인 칸에 적힌 주소를 비밀번호 찾기 화면에 그대로 채웁니다.
 - **시연 날 발송이 막히면** `.env` 를 `K_DPP_EMAIL_DELIVERY=log` 로 바꾸고 `docker compose up -d --wait` —
   번호가 `docker compose logs app` 에 `[email] #3f9a1c2b | <제목> | 인증번호 123456` 으로 남습니다. 주소 대신
   app 이 켜질 때마다 바뀌는 지문이라, 시연 계정의 줄은 번호를 요청한 시각으로 찾습니다.
