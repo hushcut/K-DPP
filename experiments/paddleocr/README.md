@@ -66,3 +66,76 @@ cd ..
 - `output/smoke_rec/` 학습 체크포인트, `output/smoke_rec_infer/` 내보낸 추론 모델, `results/` 비교 결과
 - `downloads/` 공식 사전학습 가중치·설정·사전, `models/base/` 기존 추론 모델 압축 해제본, `PaddleOCR/` 공식 학습 코드
 - `versions.txt`, `versions_pip_freeze.txt` 버전 기록
+
+---
+
+# 2단계: 학습 전 기준 측정 + 줄 라벨 만들기 (2026-10-17, 로컬 PC)
+
+목적: 학습하기 전 기본 모델이 우리 사진의 글자 줄을 얼마나 읽는지 기록하고, 학습용 줄 이미지·정답을 만든다.
+서비스 OCR(Google Vision)과 K-DPP 코드는 건드리지 않았다. 사진 01~05(1단계 학습용)는 제외했다.
+
+## 대상과 실행
+
+- 사진 208장: 실사진 06~50(45장) + 1학기 QA001~QA163(163장)
+- 모델: PP-OCRv5_server_det(검출) + korean_PP-OCRv5_mobile_rec(인식), 학습 안 한 기본 모델
+- 설정: 긴 변 1600px로 축소, enable_mkldnn=False, 줄 방향 보정 없음, 12×24px보다 작은 조각 제외
+- CPU 시간: 사진당 약 28초(총 5,849초), 검출 3,347줄 → 잘라낸 줄 3,328개
+
+## 라벨 (사진에 적힌 글자 그대로, POLY는 POLY)
+
+기본 모델 읽기를 초안으로 두고, 208장 전부 잘라낸 줄을 눈으로 보고 고쳤다.
+
+| 상태 | 줄 수 | 뜻 |
+|---|---|---|
+| ok | 2,080 | 확정 |
+| unsure(확인 필요) | 694 | 흐림·잘림·겹침. 최선의 읽기를 적어 둠. 사람 확인 필요 |
+| exclude | 554 | 세탁기호, 로고, 뒷면 비침 반전 글자, 판독 불가, 아랍어 등 |
+
+## 학습 전 기준 (줄 단위, 검출된 줄만 분모)
+
+| 범위 | 줄 수 | 글자 그대로 일치 | 띄어쓰기 무시 일치 | 글자 오류율(CER) |
+|---|---|---|---|---|
+| 확정 줄 전체 | 2,080 | 50.7% | 63.4% | 17.9% |
+| └ 실사진 06~50 | 506 | 55.3% | 63.4% | 18.0% |
+| └ 1학기 QA | 1,574 | 49.2% | 63.4% | 17.9% |
+| 검증 묶음 확정 줄 | 408 | 52.0% | 61.3% | 20.1% |
+| 확정+확인필요 | 2,774 | 41.7% | 51.9% | 23.4% |
+
+- 검출 자체를 놓친 글자는 분모에 없다. 소재·혼용률 판정 정확도가 아니라 줄 글자 인식 기준이다.
+- 확정 줄 중 199줄은 일본어·중국어 등 한국어 모델 사전에 없는 글자가 들어 있어, 이 모델로는 원래 맞힐 수 없다.
+
+## 옷 단위 학습/검증 나누기
+
+- 같은 옷의 다른 사진은 한 묶음: 검토 중 판단(`#same` 줄) + 알려 준 겹침(QA125=20·26, QA038·QA129=38, QA136=24·29, QA122=25, QA127=21)
+- 다른 옷이라도 라벨 문구가 거의 같은 경우(같은 브랜드 양식)도 한 묶음으로 보수적으로 묶음 (`13_make_split.py`의 TEMPLATE)
+- 109묶음 중 18묶음을 검증으로(seed 20261017): 사진 학습 172장 / 검증 36장
+- 학습 목록(한국어 사전 안 글자만): 학습 1,516줄, 검증 365줄 → `train_list.txt`, `val_list.txt`
+- 사전 밖 글자 포함 목록: 1,672 / 408줄 → `*_list_all_chars.txt` (다국어 모델용)
+- 사진이 거꾸로 찍힌 줄 47개는 학습용으로 바로 세운 사본 사용(`crops_upright/`)
+- 남은 한계: 무신사 주소처럼 여러 브랜드가 함께 쓰는 짧은 문구 몇 줄은 학습·검증 양쪽에 있을 수 있다.
+
+## 1학기 정답표와 다르게 보인 사진 (`data/stage2/answer_key_flags.tsv`)
+
+정답표는 팀원이 눈으로 작성한 것이라 틀릴 수 있다. 사진과 다르게 보인 곳만 표시했고 정답표는 고치지 않았다.
+QA003(98 vs 사진 100%), QA041(cotton50 nylon50 vs COTTON만 보임), QA077(검출 실패로 확인 못함), QA119(겉감2 누락),
+QA127(사진 파일이 상하 거울상으로 저장됨), QA139(PU 15 vs 사진 PU14+제전사1). 정답표의 `arylic` 오타도 그대로 있음.
+
+## 다시 실행하는 법
+
+```
+cd C:\kdpp_ocr_exp
+$env:PYTHONIOENCODING="utf-8"
+.\venv\Scripts\python.exe scripts\10_stage2_baseline_run.py     # 기본 모델 실행(끝난 사진은 건너뜀, 이어하기 가능)
+.\venv\Scripts\python.exe scripts\11_make_review_sheets.py     # 검토용 그림
+.\venv\Scripts\python.exe scripts\12_labels_and_baseline.py    # 라벨 합치기 + 기준 성능
+.\venv\Scripts\python.exe scripts\13_make_split.py             # 옷 단위 나누기 + 학습 목록
+.\venv\Scripts\python.exe scripts\14_unsure_page.py            # 확인 필요 줄 HTML
+```
+라벨을 고치려면 `data/stage2/labels_corrections.tsv` 끝에 `줄ID<TAB>상태<TAB>글자<TAB>메모`를 덧붙이고 12→13을 다시 돌린다(뒤에 적은 줄이 우선). 사진이 거꾸로 찍힌 줄의 회전 정보(메모 `rot180`)는 메모를 바꿔 적어도 유지되고, 풀려면 메모를 `rot0`으로 시작한다.
+
+## 2단계 파일
+
+- `data/stage2/photos/` 사진별 검출 좌표·초안·점수·시간, `crops/` 잘라낸 줄, `review/` 검토용 그림
+- `data/stage2/labels_corrections.tsv` 검토 기록, `labels_stage2.json` 줄별 최종 라벨
+- `data/stage2/garment_groups.json` 묶음·분할, `unsure_list.tsv` / `unsure_review.html` 확인 필요 줄
+- `results/stage2_baseline.json` 기준 성능, `logs/stage2_baseline.log` 실행 기록
