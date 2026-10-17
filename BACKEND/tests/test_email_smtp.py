@@ -455,12 +455,12 @@ def test_smtp_silent_server_times_out_on_implicit_tls(smtp, monkeypatch, capsys)
     assert "timed out" in err
 
 
-def test_unregistered_password_reset_sends_and_logs_nothing(smtp, capsys):
-    # smtp 모드에선 '가입되지 않은 이메일이라…' 줄(주소 포함 — 가입 여부)을 찍지 않고 연결도 하지 않습니다.
+def test_unregistered_password_reset_is_not_sent_and_logs_one_line_without_address(smtp, capsys):
+    # 연결하지 않고, 주소·지문·번호 없이 '안 보냄' 한 줄만 남깁니다 — 아무 줄도 없으면 발송 고장처럼 보입니다.
     server = smtp()
     main.send_email_code_message("nobody-smtp@example.com", "password_reset", "123456")
     assert server.sessions == []
-    assert capsys.readouterr().err == ""
+    assert capsys.readouterr().err == "[email] 가입되지 않은 이메일이라 메일을 보내지 않았습니다(password_reset).\n"
 
 
 def test_address_smtp_reads_differently_is_not_sent(smtp, capsys):
