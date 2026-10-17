@@ -7,7 +7,6 @@ import 'closet_provider.dart';
 import 'closet_screen.dart';
 import 'home_screen.dart';
 import 'models/clothes.dart';
-import 'models/main_screen_arguments.dart';
 import 'navigation_bar_opacity_provider.dart';
 import 'report_screen.dart';
 import 'scan_screen.dart';
@@ -20,9 +19,7 @@ import 'widgets/kdpp_logo_mark.dart';
 
 /// 하단 내비게이션의 선택 상태를 관리하고 스캔·상세 리포트·설정을 위에 쌓아 엽니다.
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key, this.initialArguments});
-
-  final MainScreenArguments? initialArguments;
+  const MainScreen({super.key});
 
   @override
   State<MainScreen> createState() => _MainScreenState();
@@ -36,9 +33,8 @@ class _MainScreenState extends State<MainScreen>
   // 탭 번호는 0 홈 · 2 옷장입니다. 1(스캔)은 탭이 아니라 위에 쌓아 여는 화면이라 여기에 들어오지 않습니다.
   int _selectedIndex = 0;
   bool _didReadInitialArgs = false;
-  // 경로 인자([MainScreenArguments])로 진입하자마자 스캔 화면·리포트를 쌓아 열어야 하는지 나타냅니다.
+  // 경로 인자(탭 번호 1)로 진입하자마자 스캔 화면을 쌓아 열어야 하는지 나타냅니다.
   bool _shouldOpenInitialScan = false;
-  bool _shouldOpenInitialReport = false;
   // 이 화면이 위에 쌓은 스캔·리포트·설정 라우트 수입니다. 스캔 저장 직후에는 스캔 화면과
   // 리포트가 함께 쌓이므로, 둘 다 닫혀야 덮이지 않은 것으로 봅니다.
   int _coveringRouteCount = 0;
@@ -192,17 +188,9 @@ class _MainScreenState extends State<MainScreen>
     return 0;
   }
 
-  /// 외부 경로에서 전달된 초기 탭과 스캔·리포트 표시 요청을 한 번만 적용합니다.
+  /// 외부 경로에서 전달된 초기 탭 번호(그 밖의 인자는 홈)를 한 번만 적용합니다.
   void _applyInitialArguments(Object? args) {
-    final int requestedIndex;
-    if (args is MainScreenArguments) {
-      requestedIndex = args.initialIndex;
-      _shouldOpenInitialReport =
-          args.showReport &&
-          context.read<ClosetProvider>().currentReportItem != null;
-    } else {
-      requestedIndex = args is int ? args : 0;
-    }
+    final requestedIndex = args is int ? args : 0;
 
     _shouldOpenInitialScan = requestedIndex == 1;
     _selectedIndex = _normalizeInitialIndex(requestedIndex);
@@ -256,19 +244,15 @@ class _MainScreenState extends State<MainScreen>
   @override
   Widget build(BuildContext context) {
     if (!_didReadInitialArgs) {
-      final args =
-          widget.initialArguments ?? ModalRoute.of(context)?.settings.arguments;
-      _applyInitialArguments(args);
+      _applyInitialArguments(ModalRoute.of(context)?.settings.arguments);
       _didReadInitialArgs = true;
 
-      if (_shouldOpenInitialScan || _shouldOpenInitialReport) {
-        // 빌드 중에는 라우트를 쌓을 수 없으므로 첫 프레임 뒤에 엽니다. 둘 다 열면 새 스캔 화면
-        // 위에 리포트를 쌓아, 리포트를 닫으면 바로 다음 옷을 찍을 수 있게 합니다.
+      if (_shouldOpenInitialScan) {
+        // 빌드 중에는 라우트를 쌓을 수 없으므로 첫 프레임 뒤에 엽니다.
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
 
-          if (_shouldOpenInitialScan) _pushScan();
-          if (_shouldOpenInitialReport) _pushReport();
+          _pushScan();
         });
       }
     }
