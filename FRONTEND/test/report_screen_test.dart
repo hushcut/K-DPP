@@ -457,4 +457,122 @@ void main() {
     );
     expect(find.textContaining('생산·제조'), findsNothing);
   });
+
+  // C37: 탄소 카드·생활 환산·계산 근거의 숫자 문구는 그동안 제목('자동차' 등)만 단언해,
+  // 계수나 반올림이 바뀌어도 전체 테스트가 초록이었다.
+  group('탄소 수치 문구', () {
+    Future<void> pumpReportFor(WidgetTester tester, Clothes item) async {
+      final provider = ClosetProvider(storage: FakeClosetStorage());
+      await provider.addClothes(item);
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: provider),
+            ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+          ],
+          child: const MaterialApp(
+            builder: AppBannerHost.builder,
+            home: Scaffold(body: ReportScreen()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    Clothes clothesWith({
+      double carbonFootprint = 3.0,
+      CarbonFootprintSource source = CarbonFootprintSource.localEstimate,
+      double? carbonFootprintMin,
+      double? carbonFootprintMax,
+      double? minWeightGram,
+      double? maxWeightGram,
+    }) {
+      return Clothes(
+        title: '수치 확인 셔츠',
+        category: '상의',
+        health: 82,
+        materials: {'cotton': 100},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: carbonFootprint,
+        carbonFootprintSource: source,
+        carbonFootprintMin: carbonFootprintMin,
+        carbonFootprintMax: carbonFootprintMax,
+        minWeightGram: minWeightGram,
+        maxWeightGram: maxWeightGram,
+      );
+    }
+
+    testWidgets('생활 환산값을 자리수에 맞춰 반올림해 보여 준다', (tester) async {
+      // 자동차 0.244 kg/km · 충전 0.0124 kg/회 · LED 0.004 kg/시간으로 나눈 값이다.
+      // 10 미만은 소수 한 자리(.0 은 뗌), 100 미만은 정수, 그 이상은 10 단위로 반올림한다.
+      // 0 이하는 0.1 kg 으로 보고 계산한다.
+      final cases = <double, (String, String?, String?)>{
+        9.2: ('약 38 km', '약 740회 충전', '약 2300시간'),
+        1.0: ('약 4.1 km', '약 81회 충전', '약 250시간'),
+        0.5: ('약 2 km', '약 40회 충전', null),
+        0.0: ('약 0.4 km', '약 8.1회 충전', '약 25시간'),
+      };
+
+      for (final entry in cases.entries) {
+        await pumpReportFor(tester, clothesWith(carbonFootprint: entry.key));
+
+        final (car, phone, led) = entry.value;
+        final reason = '${entry.key} kg CO2eq';
+        expect(find.text(car), findsOneWidget, reason: reason);
+        if (phone != null) {
+          expect(find.text(phone), findsOneWidget, reason: reason);
+        }
+        if (led != null) {
+          expect(find.text(led), findsOneWidget, reason: reason);
+        }
+
+        // 위젯 트리를 버려 다음 케이스가 이전 상태를 재사용하지 않게 합니다.
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+    });
+
+    testWidgets('서버 계산값은 최소~최대 범위를 소수 한 자리로 함께 보여 준다', (tester) async {
+      await pumpReportFor(
+        tester,
+        clothesWith(
+          carbonFootprint: 1.4,
+          source: CarbonFootprintSource.server,
+          carbonFootprintMin: 0.83,
+          carbonFootprintMax: 2.08,
+        ),
+      );
+
+      expect(find.text('1.4 kg CO2eq'), findsOneWidget);
+      expect(find.text('서버 계산값 · 0.8~2.1 kg CO2eq 범위'), findsOneWidget);
+      expect(find.text('백엔드 계산값'), findsOneWidget);
+      expect(find.text('앱 임시 추정값'), findsNothing);
+    });
+
+    testWidgets('서버 계산값이라도 범위가 없으면 범위 없이 보여 준다', (tester) async {
+      await pumpReportFor(
+        tester,
+        clothesWith(source: CarbonFootprintSource.server),
+      );
+
+      expect(find.text('서버 계산값'), findsOneWidget);
+      expect(find.textContaining('kg CO2eq 범위'), findsNothing);
+    });
+
+    testWidgets('계산 근거의 무게는 범위면 범위로, 한 값이면 실제 무게로 보여 준다', (tester) async {
+      await pumpReportFor(
+        tester,
+        clothesWith(minWeightGram: 99.5, maxWeightGram: 250),
+      );
+      expect(find.text('선택 무게 범위 99.5~250g'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await pumpReportFor(
+        tester,
+        clothesWith(minWeightGram: 612.5, maxWeightGram: 612.5),
+      );
+      expect(find.text('실제 무게 612.5g'), findsOneWidget);
+      expect(find.textContaining('선택 무게 범위'), findsNothing);
+    });
+  });
 }
