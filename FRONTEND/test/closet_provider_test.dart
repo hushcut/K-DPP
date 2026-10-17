@@ -1162,7 +1162,10 @@ void main() {
       final storage = FakeClosetStorage();
       await storage.saveClosetSortOption(ClosetSortOption.latest);
 
-      final provider = ClosetProvider(storage: storage);
+      final provider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: FakeAuthSessionStorage(),
+      );
       await provider.loadFromStorage();
 
       expect(provider.closetSortOption, ClosetSortOption.latest);
