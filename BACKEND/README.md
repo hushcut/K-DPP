@@ -70,8 +70,11 @@ http://127.0.0.1:8000/docs
 번호를 서버 로그(uvicorn 을 띄운 창)에 찍습니다.
 
 ```text
-[email] user@example.com | [K-DPP] 가입 인증번호 | 인증번호 123456
+[email] #3f9a1c2b | [K-DPP] 가입 인증번호 | 인증번호 123456
 ```
+
+로그에는 주소 대신 `#` 지문 8글자가 찍힙니다(DECISIONS 253). 서버가 켜질 때마다 새로 만든 비밀 키로 만든 값이라
+같은 주소의 줄끼리만 묶어 볼 수 있고 서버를 다시 켜면 바뀝니다 — 내 번호는 요청한 시각의 줄로 찾습니다.
 
 카카오 로그인(`POST /auth/kakao`)은 서버에 카카오 앱 ID(`K_DPP_KAKAO_APP_ID`)가 있어야 켜집니다. 로컬·CI 기본은
 비어 있어 503 `SOCIAL_LOGIN_UNAVAILABLE` 이고, 실기기로 시험할 때만 `BACKEND/.env` 에 앱 ID 를 넣습니다.

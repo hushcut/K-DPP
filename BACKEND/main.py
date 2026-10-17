@@ -1311,10 +1311,40 @@ def compose_email_code_message(
     return None
 
 
+# 서버 로그의 [email] 줄에는 받는 주소를 남기지 않습니다(DECISIONS 253) — 컨테이너 로그는 크기로만
+# 돌아 탈퇴 뒤 최대 30일(243)을 넘겨 남을 수 있습니다. log 모드 줄은 주소 대신 서버가 켜질 때 만든
+# 비밀 키의 지문을 찍어 같은 주소의 줄끼리만 묶어 볼 수 있게 합니다. 키는 메모리에만 있어 이메일 목록을
+# 대입해 주소를 되찾을 수 없고, 재시작하면 지문이 바뀝니다.
+_EMAIL_LOG_KEY = secrets.token_bytes(32)
+# 공백·주소 문법 글자(EMAIL_SPECIAL_CHARACTERS)는 이메일에 못 들어오므로 그 밖의 글자가 이어진 토막을 본다.
+_LOG_TOKEN = re.compile(r"""[^\s"<>(),;:\\\[\]]+""")
+
+
+def email_log_tag(email: str) -> str:
+    digest = hmac.new(_EMAIL_LOG_KEY, email.encode("utf-8", "surrogatepass"), hashlib.sha256)
+    return "#" + digest.hexdigest()[:8]
+
+
+def hide_email_addresses(text: str, email: str) -> str:
+    """로그에 남길 문구에서 주소를 가린다. 받는 서버는 주소의 대소문자를 바꿔(NEW@EXAMPLE.COM) 되돌려
+    주거나 @ 앞부분만 돌려줄 수 있어, @ 가 든 토막은 누구 주소든 모두 가리고 받는 주소의 앞부분은 따로
+    나와도 대소문자와 상관없이 가립니다. 원인 문구(인증서·시간 초과·거절 이유)는 그대로 둡니다."""
+    text = _LOG_TOKEN.sub(lambda match: "<주소>" if "@" in match.group() else match.group(), text)
+    local_part = email.rsplit("@", 1)[0]
+    if local_part:
+        text = re.sub(
+            rf"(?<![A-Za-z0-9]){re.escape(local_part)}(?![A-Za-z0-9])",
+            "<주소>",
+            text,
+            flags=re.IGNORECASE,
+        )
+    return text
+
+
 def log_email(message: OutgoingEmail) -> None:
-    """log 모드: 메일 대신 서버 로그에 찍는다(로컬·CI·시연은 여기서 번호를 본다)."""
+    """log 모드: 메일 대신 서버 로그에 찍는다(로컬·CI·시연은 여기서 번호를 본다). 주소 대신 지문."""
     print(
-        f"[email] {message.to} | {message.subject} | 인증번호 {message.code or '없음'}",
+        f"[email] {email_log_tag(message.to)} | {message.subject} | 인증번호 {message.code or '없음'}",
         file=sys.stderr,
         flush=True,
     )
@@ -1367,8 +1397,8 @@ def send_smtp_email(message: OutgoingEmail, settings: SmtpSettings) -> None:
 
 class EmailDeliveryError(Exception):
     """SMTP 발송 실패. 받는 서버는 거부 문구에 받는 주소나 받은 AUTH 줄을 되돌려 줄 수 있어, 서버 로그에
-    남기기 전에 원래 예외의 repr 에서 받는 주소·비밀번호(와 AUTH 로 보낸 base64)를 가린다. 로그에는
-    가린 repr 만 보이게 repr 을 그 문구로 둔다(send_email_code_message 가 {exc!r} 로 찍음)."""
+    남기기 전에 원래 예외의 repr 에서 비밀번호(와 AUTH 로 보낸 base64)·주소(hide_email_addresses)를
+    가린다. 로그에는 가린 repr 만 보이게 repr 을 그 문구로 둔다(send_email_code_message 가 찍음)."""
 
     def __repr__(self) -> str:
         return str(self)
@@ -1385,7 +1415,7 @@ def describe_smtp_failure(exc: Exception, message: OutgoingEmail, settings: Smtp
     for secret in sorted(hidden, key=len, reverse=True):
         text = text.replace(secret, "<비밀번호>")
     # 비밀번호 찾기 메일은 가입된 이메일에만 가므로, 실패 줄의 주소는 가입 여부까지 남깁니다.
-    return text.replace(message.to, "<받는 주소>")
+    return hide_email_addresses(text, message.to)
 
 
 def deliver_email(message: OutgoingEmail) -> None:
@@ -1416,14 +1446,17 @@ def send_email_code_message(email: str, purpose: str, code: str) -> None:
         if message is None:
             if EMAIL_DELIVERY == "log":
                 print(
-                    f"[email] {email} | 가입되지 않은 이메일이라 비밀번호 찾기 메일을 보내지 않습니다.",
+                    f"[email] {email_log_tag(email)} | 가입되지 않은 이메일이라 비밀번호 찾기 메일을 "
+                    "보내지 않습니다.",
                     file=sys.stderr,
                     flush=True,
                 )
             return
         deliver_email(message)
     except Exception as exc:  # noqa: BLE001 — 백그라운드 작업이라 올려 보낼 곳이 없습니다.
-        print(f"[email] 인증 메일 처리 실패({purpose}): {exc!r}", file=sys.stderr, flush=True)
+        # SMTP 실패(EmailDeliveryError)는 이미 가렸지만, 다른 예외의 문구에도 주소가 들 수 있어 한 번 더.
+        reason = hide_email_addresses(repr(exc), email)
+        print(f"[email] 인증 메일 처리 실패({purpose}): {reason}", file=sys.stderr, flush=True)
 
 
 # --- 카카오 로그인 (DECISIONS 140·143·152·153) ------------------------------------------

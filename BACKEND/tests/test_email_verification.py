@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import re
 import threading
 import time
 from datetime import timedelta
@@ -635,6 +636,20 @@ def test_delivery_failure_does_not_change_the_response(client, monkeypatch, caps
     assert "인증 메일 처리 실패" in capsys.readouterr().err
 
 
+def test_delivery_failure_log_hides_the_address_from_any_exception(client, monkeypatch, capsys):
+    # SMTP 밖의 예외 문구에 주소가 들어도 실패 줄엔 남기지 않습니다(DECISIONS 253).
+    def broken(message):
+        local_part = message.to.split("@")[0]
+        raise RuntimeError(f"service refused {message.to.upper()} ({local_part.title()}) at gateway")
+
+    monkeypatch.setattr(main, "deliver_email", broken)
+    assert _request(client, "zq-broken@example.com").status_code == 200
+    err = capsys.readouterr().err
+    assert "인증 메일 처리 실패(signup)" in err
+    assert "service refused" in err and "at gateway" in err
+    assert "zq-broken" not in err.lower()
+
+
 def test_email_code_request_does_not_need_the_database(client, monkeypatch, capsys):
     # 요청 처리 중엔 DB 를 보지 않습니다(가입 여부 조회는 응답 뒤). DB 가 없어도 응답은 같습니다.
     def no_database():
@@ -651,10 +666,29 @@ def test_log_mode_prints_the_code_to_the_server_log(capsys):
     main.send_email_code_message("log-only@example.com", "signup", "654321")
     main.send_email_code_message("log-only@example.com", "password_reset", "765432")
     err = capsys.readouterr().err
-    assert "log-only@example.com" in err
     assert "654321" in err
     assert "765432" not in err
     assert "보내지 않습니다" in err
+    # 주소 대신 지문 — 같은 주소의 두 줄은 같은 지문(DECISIONS 253).
+    tag = main.email_log_tag("log-only@example.com")
+    assert err.splitlines() == [
+        f"[email] {tag} | [K-DPP] 가입 인증번호 | 인증번호 654321",
+        f"[email] {tag} | 가입되지 않은 이메일이라 비밀번호 찾기 메일을 보내지 않습니다.",
+    ]
+    assert "log-only" not in err.lower()
+
+
+def test_log_tag_is_keyed_and_changes_with_each_server_start():
+    tag = main.email_log_tag("log-only@example.com")
+    assert re.fullmatch(r"#[0-9a-f]{8}", tag)
+    assert main.email_log_tag("log-only@example.com") == tag
+    assert main.email_log_tag("log-other@example.com") != tag
+    # 키 없는 해시가 아니라 이메일 목록을 대입해 되찾을 수 없고, 서버를 다시 켜면 지문이 바뀝니다.
+    assert tag[1:] != hashlib.sha256(b"log-only@example.com").hexdigest()[:8]
+    code = "import main; print(main.email_log_tag('log-only@example.com'))"
+    first, second = run_python(code), run_python(code)
+    assert first.returncode == second.returncode == 0, first.stderr + second.stderr
+    assert first.stdout.strip() != second.stdout.strip()
 
 
 def test_parse_email_delivery():
