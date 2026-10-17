@@ -11,6 +11,7 @@ import 'package:k_dpp/theme_provider.dart';
 import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:provider/provider.dart';
 
+import 'helpers/fake_auth_session_storage.dart';
 import 'helpers/fake_closet_storage.dart';
 
 // 알림 29곳을 대신하는 앱바 아래 공용 배너(DECISIONS 76·88)의 규칙을 고정한다.
@@ -787,7 +788,10 @@ void main() {
         MultiProvider(
           providers: [
             ChangeNotifierProvider(
-              create: (_) => ClosetProvider(storage: FakeClosetStorage()),
+              create: (_) => ClosetProvider(
+                storage: FakeClosetStorage(),
+                authSessionStorage: FakeAuthSessionStorage(),
+              ),
             ),
             ChangeNotifierProvider(create: (_) => ThemeProvider()),
             ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
