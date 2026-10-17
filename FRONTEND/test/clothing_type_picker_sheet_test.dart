@@ -423,11 +423,80 @@ void main() {
       findsOneWidget,
     );
   });
+
+  // 6.3인치 iPhone(16 Pro·17 — 402×874pt, 위 안전 영역 62·아래 34)에서 직접 무게 입력에 키보드가
+  // 올라왔을 때. 키보드 높이는 한글 키보드(추천 줄 포함) 약 346pt, 숫자 키패드 약 291pt 로 잡았다.
+  // 전에는 시트 윗변이 화면 맨 위(0)까지 올라가고 '적용하기'가 키보드에 가려졌다(DECISIONS 246).
+  for (final isRequired in [true, false]) {
+    testWidgets('6.3인치 iPhone 에서 키보드가 올라와도 직접 무게 입력 시트는 상태 표시줄 아래에서 멈추고 '
+        "'적용하기'는 키보드 바로 위에 보인다(${isRequired ? '스캔 직후' : '결과 폼'})", (
+      tester,
+    ) async {
+      _useIPhone63View(tester);
+      EditableText.debugDeterministicCursor = true;
+      addTearDown(() => EditableText.debugDeterministicCursor = false);
+      final sheet = await _openSheet(
+        tester,
+        discardPrompt: isRequired
+            ? ClothingTypePickerDiscardPrompt.manualAfterFailure
+            : null,
+      );
+      await tester.scrollUntilVisible(find.text('직접 입력'), 100);
+      await tester.ensureVisible(find.text('직접 입력'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('직접 입력'));
+      await tester.pumpAndSettle();
+      final applyButton = find.widgetWithText(ElevatedButton, '적용하기');
+
+      // 의류 종류 칸이 먼저 포커스를 받아 한글 키보드가 올라온다.
+      tester.view.viewInsets = const FakeViewPadding(bottom: 346 * 3);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(_sheetRect(tester).top, greaterThanOrEqualTo(62));
+      expect(tester.getRect(applyButton).bottom, lessThanOrEqualTo(874 - 346));
+      await tester.enterText(find.widgetWithText(TextField, '의류 종류'), '가디건');
+
+      // 무게 칸은 숫자 키패드 위에 ∧·∨·[완료] 막대가 붙는다. 버튼은 막대 위에 있어야 한다.
+      await tester.tap(find.widgetWithText(TextField, '실제 무게'));
+      tester.view.viewInsets = const FakeViewPadding(bottom: 291 * 3);
+      await tester.pumpAndSettle();
+      expect(_sheetRect(tester).top, greaterThanOrEqualTo(62));
+      expect(
+        tester.getRect(applyButton).bottom,
+        lessThanOrEqualTo(
+          tester.getRect(find.byType(NumberKeyboardToolbar)).top,
+        ),
+      );
+
+      await tester.enterText(find.widgetWithText(TextField, '실제 무게'), '450');
+      await tester.tap(applyButton);
+      await tester.pumpAndSettle();
+      expect(sheet.result?.label, '가디건');
+      expect(sheet.result?.estimatedWeightGram, 450);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+  }
 }
 
 class _SheetResult {
   bool completed = false;
   ClothingTypeOption? result;
+}
+
+// 6.3인치 iPhone(16 Pro·17)의 화면 크기와 위·아래 안전 영역입니다(pt, 배율 3).
+void _useIPhone63View(WidgetTester tester) {
+  const devicePixelRatio = 3.0;
+  const safeArea = FakeViewPadding(
+    top: 62 * devicePixelRatio,
+    bottom: 34 * devicePixelRatio,
+  );
+  tester.view.physicalSize = const Size(
+    402 * devicePixelRatio,
+    874 * devicePixelRatio,
+  );
+  tester.view.devicePixelRatio = devicePixelRatio;
+  tester.view.padding = safeArea;
+  tester.view.viewPadding = safeArea;
+  addTearDown(tester.view.reset);
 }
 
 void _usePhoneView(WidgetTester tester, {double bottomInset = 0}) {
