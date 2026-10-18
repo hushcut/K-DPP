@@ -343,8 +343,8 @@ class ScanResultView extends StatelessWidget {
                             color: materialInputs.isEmpty
                                 ? secondaryText
                                 : isTotalValid
-                                ? Colors.green
-                                : Colors.redAccent,
+                                ? palette.successText
+                                : palette.dangerText,
                             fontWeight: FontWeight.w600,
                             fontSize: 13,
                           ),

@@ -131,7 +131,7 @@ void _showDisposalBottomSheet(
                 child: ElevatedButton(
                   onPressed: () => Navigator.pop(context),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
+                    backgroundColor: AppPalette.success,
                   ),
                   child: const Text(
                     '확인했어요',

@@ -525,7 +525,7 @@ class SettingsScreen extends StatelessWidget {
     final secondaryText = palette.textSecondary;
     final sectionText = isDark
         ? const Color(0xFF9A9A9A)
-        : const Color(0xFF8E8E93);
+        : palette.textSecondary;
     final profileBoxColor = isDark
         ? const Color(0xFF2A2A2E)
         : const Color(0xFFEEF1FF);
@@ -715,7 +715,7 @@ class SettingsScreen extends StatelessWidget {
                 title: '회원 탈퇴',
                 subtitle: '계정을 삭제합니다.',
                 iconColor: Colors.redAccent,
-                textColor: Colors.redAccent,
+                textColor: palette.dangerText,
                 subtitleColor: secondaryText,
                 onTap: () => _confirmWithdraw(context),
               ),
@@ -1258,7 +1258,7 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
                 : _usesKakao
                 ? _submitWithKakao
                 : _submit,
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            style: ElevatedButton.styleFrom(backgroundColor: AppPalette.danger),
             child: _isBusy
                 ? const _SubmitProgress()
                 // 카카오 계정도 화면엔 '탈퇴' 한 단어만 둡니다. 긴 문구는 보통 폭·글자 크기에서도

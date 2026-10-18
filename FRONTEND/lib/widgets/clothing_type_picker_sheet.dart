@@ -245,7 +245,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
             ElevatedButton(
               onPressed: () => Navigator.pop(dialogContext, true),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent,
+                backgroundColor: AppPalette.danger,
               ),
               child: const Text(
                 '다시 촬영',
@@ -349,9 +349,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
     final cardColor = palette.card;
     final borderColor = isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade200;
     final primaryText = palette.textPrimary;
-    final secondaryText = isDark
-        ? const Color(0xFFD1D1D6)
-        : const Color(0xFF777777);
+    final secondaryText = palette.textSecondary;
     final failureMessage = widget.failureMessage;
 
     return ListView(
@@ -541,9 +539,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
     final cardColor = palette.card;
     final borderColor = isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade300;
     final primaryText = palette.textPrimary;
-    final secondaryText = isDark
-        ? const Color(0xFFD1D1D6)
-        : const Color(0xFF777777);
+    final secondaryText = palette.textSecondary;
     final inputFillColor = isDark ? const Color(0xFF2A2A2E) : Colors.white;
 
     // 스크롤되는 부분(제목부터 안내 카드까지)입니다.
@@ -656,8 +652,8 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
           liveRegion: true,
           child: Text(
             _directErrorText!,
-            style: const TextStyle(
-              color: Colors.redAccent,
+            style: TextStyle(
+              color: palette.dangerText,
               fontSize: 13,
               fontWeight: FontWeight.w700,
             ),

@@ -213,7 +213,7 @@ extension _ScanResultActions on _ScanScreenState {
             ElevatedButton(
               onPressed: () => Navigator.pop(dialogContext, true),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent,
+                backgroundColor: AppPalette.danger,
               ),
               child: Text(
                 discardLabel,
