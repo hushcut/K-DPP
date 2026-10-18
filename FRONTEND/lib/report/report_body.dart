@@ -324,7 +324,7 @@ Widget _buildReportBody(
               onPressed: () =>
                   _showDisposalBottomSheet(context, item, disposalGuide),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
+                backgroundColor: AppPalette.success,
                 minimumSize: const Size.fromHeight(54),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 16,
@@ -372,11 +372,11 @@ Widget _buildReportBody(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.delete_outline, color: Colors.redAccent),
-                  SizedBox(width: 8),
+                  const Icon(Icons.delete_outline, color: Colors.redAccent),
+                  const SizedBox(width: 8),
                   Flexible(
                     child: Text(
                       '이 의류 삭제하기',
@@ -384,7 +384,7 @@ Widget _buildReportBody(
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: Colors.redAccent,
+                        color: palette.dangerText,
                       ),
                     ),
                   ),

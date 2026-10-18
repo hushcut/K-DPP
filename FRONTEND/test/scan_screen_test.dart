@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
 import 'package:k_dpp/material_name_display_provider.dart';
@@ -13,6 +14,7 @@ import 'package:k_dpp/services/scan_analysis_service.dart';
 import 'package:k_dpp/services/scan_api_service.dart';
 import 'package:k_dpp/services/scan_camera_session.dart';
 import 'package:k_dpp/services/scan_capture_service.dart';
+import 'package:k_dpp/theme/app_palette.dart';
 import 'package:k_dpp/utils/clothing_type_catalog.dart';
 import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:k_dpp/widgets/scan_camera_view.dart';
@@ -575,6 +577,53 @@ void main() {
         AppBannerKind.info,
       ));
     });
+  });
+
+  // C53·C54: 라이트 모드에서 흰 바탕 대비 4.5:1 에 못 미치던 green·redAccent 글자와 버튼 바탕.
+  testWidgets('소재 합계 글자는 맞으면 좋음, 틀리면 경고 글자색이고, 고친 결과를 버리는 확인 버튼은 경고 바탕이다', (
+    tester,
+  ) async {
+    await pumpScanScreen(tester);
+    await tapAlbum(tester);
+    await finishAnalysis(tester, ScanAnalysisSuccess(knitResult()));
+    await chooseType(tester, '니트');
+
+    Color? totalColor() => tester
+        .renderObject<RenderParagraph>(find.textContaining('현재 소재 합계'))
+        .text
+        .style
+        ?.color;
+
+    expect(totalColor(), AppPalette.light.successText);
+
+    await tester.enterText(materialField('20'), '10');
+    await tester.pump();
+    expect(totalColor(), AppPalette.light.dangerText);
+
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    final retake = find.descendant(
+      of: find.byType(ScanResultView),
+      matching: find.text('다시 촬영'),
+    );
+    await tester.ensureVisible(retake);
+    await tester.pump();
+    await tester.tap(retake);
+    await tester.pump();
+    await tester.pump(transition);
+
+    final confirm = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.widgetWithText(ElevatedButton, '다시 촬영'),
+    );
+    expect(
+      tester
+          .widget<ElevatedButton>(confirm)
+          .style
+          ?.backgroundColor
+          ?.resolve(<WidgetState>{}),
+      AppPalette.danger,
+    );
   });
 }
 

@@ -157,7 +157,9 @@ extension _ClosetListViews on _ClosetScreenState {
               status: item.health > 20
                   ? '건강 상태: ${item.health}%'
                   : '수명 만료 (배출 권장)',
-              statusColor: item.health > 20 ? Colors.green : Colors.redAccent,
+              statusColor: item.health > 20
+                  ? palette.statusGoodText
+                  : palette.statusBadText,
               statusIcon: item.health > 20
                   ? Icons.sentiment_satisfied_alt
                   : Icons.warning_amber_rounded,
@@ -254,7 +256,9 @@ extension _ClosetListViews on _ClosetScreenState {
             status: item.health > 20
                 ? '건강 상태: ${item.health}%'
                 : '수명 만료 (배출 권장)',
-            statusColor: item.health > 20 ? Colors.green : Colors.redAccent,
+            statusColor: item.health > 20
+                ? palette.statusGoodText
+                : palette.statusBadText,
             statusIcon: item.health > 20
                 ? Icons.sentiment_satisfied_alt
                 : Icons.warning_amber_rounded,

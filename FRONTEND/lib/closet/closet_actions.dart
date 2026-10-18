@@ -153,7 +153,7 @@ extension _ClosetActions on _ClosetScreenState {
             ElevatedButton(
               onPressed: () => Navigator.pop(dialogContext, true),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent,
+                backgroundColor: AppPalette.danger,
               ),
               child: const Text('삭제', style: TextStyle(color: Colors.white)),
             ),

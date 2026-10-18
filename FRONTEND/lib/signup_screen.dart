@@ -178,9 +178,7 @@ class _SignupScreenState extends State<SignupScreen> {
     final palette = AppPalette.of(context);
     final backgroundColor = palette.background;
     final primaryText = palette.textPrimary;
-    final secondaryText = isDark
-        ? const Color(0xFFD1D1D6)
-        : const Color(0xFF8C8C8C);
+    final secondaryText = palette.textSecondary;
     final iconColor = isDark
         ? const Color(0xFFB8B8BE)
         : const Color(0xFF8C8C8C);

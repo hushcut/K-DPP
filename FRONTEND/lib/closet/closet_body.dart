@@ -381,11 +381,14 @@ class _ClosetPalette {
     required this.warningBgColor,
     required this.leadingBgColor,
     required this.shadowColor,
+    required this.statusGoodText,
+    required this.statusBadText,
     required this.isDark,
   });
 
   factory _ClosetPalette.from(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final appPalette = AppPalette.of(context);
 
     return _ClosetPalette(
       primaryText: isDark ? Colors.white : const Color(0xFF1A1A1A),
@@ -408,6 +411,8 @@ class _ClosetPalette {
       shadowColor: isDark
           ? Colors.black.withValues(alpha: 0.16)
           : Colors.black.withValues(alpha: 0.03),
+      statusGoodText: appPalette.successText,
+      statusBadText: appPalette.dangerText,
       isDark: isDark,
     );
   }
@@ -420,5 +425,9 @@ class _ClosetPalette {
   final Color warningBgColor;
   final Color leadingBgColor;
   final Color shadowColor;
+
+  /// 카드의 건강 상태 글자색입니다. 수명 만료 글자는 붉은 카드 바탕에서도 4.5:1 을 넘습니다(C54).
+  final Color statusGoodText;
+  final Color statusBadText;
   final bool isDark;
 }
