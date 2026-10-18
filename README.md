@@ -93,12 +93,16 @@ flutter run --dart-define=API_BASE_URL=http://127.0.0.1:8000
 ## 테스트
 
 ```bash
-cd FRONTEND && flutter analyze && flutter test    # 155건
-cd BACKEND && .venv/Scripts/python.exe -m pytest  # 42건
+cd FRONTEND && flutter analyze && flutter test
+cd BACKEND && docker compose up -d --wait && .venv/Scripts/python.exe -m pytest
 ```
 
-CI는 push·PR마다 실행됩니다. 프론트엔드 잡은 필수, 백엔드 잡은 자문(`continue-on-error`)
-상태입니다.
+백엔드 테스트는 로컬 PostgreSQL의 테스트 전용 DB(`k_dpp_test`)를 씁니다. 준비와 다른 DB를
+가리키는 법은 [BACKEND/README.md](BACKEND/README.md)의 '테스트' 절에 있습니다.
+
+CI는 push·PR마다 세 잡을 실행합니다 — 프론트엔드 분석·테스트, 백엔드 pytest(PostgreSQL
+서비스 포함), 배포 이미지 빌드. `continue-on-error`는 쓰지 않아 하나라도 실패하면 CI가
+실패로 표시됩니다. 백엔드 잡은 `BACKEND` 폴더가 없으면 건너뛰지 않고 실패합니다.
 
 ---
 
