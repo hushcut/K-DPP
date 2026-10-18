@@ -53,6 +53,7 @@ import main  # noqa: E402
 # 테스트마다 비우는 표. 소재(materials)는 마이그레이션이 넣은 값을 그대로 쓴다
 # — 소재를 바꾸는 API·테스트가 없다.
 PER_TEST_TABLES = ("closet_snapshots", "analysis_results", "access_tokens", "social_accounts", "users")
+PER_TEST_TABLES += ("profile_factors", "material_factors", "calculation_profiles")
 
 
 def make_alembic_config() -> Config:
@@ -92,9 +93,18 @@ def alembic_config():
 
 @pytest.fixture()
 def client(monkeypatch):
+    monkeypatch.delenv("K_DPP_CARBON_USAGE_SCOPE", raising=False)
+    # Restore guards intentionally removed by corruption tests.
+    from migrations.carbon_v2_guards import immutability_trigger_ddl
     with database.engine.begin() as connection:
+        for statement in immutability_trigger_ddl():
+            connection.exec_driver_sql(statement)
         connection.execute(
             text(f"TRUNCATE {', '.join(PER_TEST_TABLES)} RESTART IDENTITY")
+        )
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_active_carbon_profile "
+            "ON calculation_profiles(usage_scope) WHERE status = 'active'"
         )
     # 로그인 잠금·가입 IP 카운터·인증번호 기록·하루 스캔 카운터는 프로세스 메모리에 남으므로 테스트마다 초기화합니다.
     main._login_failures.clear()

@@ -10,11 +10,13 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    Index,
     MetaData,
     String,
     Text,
     UniqueConstraint,
     create_engine,
+    text,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -128,8 +130,76 @@ class Material(Base):
     unit = Column(String, nullable=False, default="kg CO2eq/kg textile")
 
 # 4. 라벨 분석 및 탄소배출량 계산 결과 저장 테이블
+class MaterialFactor(Base):
+    __tablename__ = "material_factors"
+    __table_args__ = (
+        UniqueConstraint("factor_key", "version"),
+        CheckConstraint("review_status IN ('candidate', 'selected', 'rejected')", name="factor_review_status"),
+        CheckConstraint("evidence_type IN ('literature', 'derived', 'placeholder')", name="factor_evidence_type"),
+    )
+    id = Column(Integer, primary_key=True)
+    factor_key = Column(String, nullable=False)
+    version = Column(String, nullable=False)
+    material_id = Column(Integer, ForeignKey("materials.id"), nullable=False)
+    value_decimal = Column(Text, nullable=False)
+    unit = Column(String, nullable=False)
+    method = Column(String, nullable=False)
+    scope = Column(String, nullable=False)
+    product_form = Column(String, nullable=False)
+    production_system = Column(String, nullable=False)
+    geography = Column(String, nullable=False, default="unknown")
+    publication_year = Column(Integer)
+    data_years_json = Column(Text, nullable=False, default="[]")
+    source_name = Column(String, nullable=False)
+    source_url = Column(String, nullable=False)
+    source_locator = Column(String, nullable=False)
+    evidence_type = Column(String, nullable=False)
+    review_status = Column(String, nullable=False, default="candidate")
+    usage_scope = Column(String, nullable=False)
+    limitations_json = Column(Text, nullable=False, default="[]")
+    carbon_accounting_json = Column(Text, nullable=False, default="{}")
+    components_json = Column(Text)
+    reviewed_at = Column(DateTime)
+    review_note = Column(Text)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+
+
+class CalculationProfile(Base):
+    __tablename__ = "calculation_profiles"
+    __table_args__ = (
+        UniqueConstraint("key", "version"),
+        CheckConstraint("status IN ('draft', 'active', 'retired')", name="profile_status"),
+        Index("uq_active_carbon_profile", "usage_scope", unique=True,
+              postgresql_where=text("status = 'active'")),
+    )
+    id = Column(Integer, primary_key=True)
+    key = Column(String, nullable=False)
+    version = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="draft")
+    formula_version = Column(String, nullable=False)
+    method = Column(String, nullable=False)
+    scope = Column(String, nullable=False)
+    usage_scope = Column(String, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+
+
+class ProfileFactor(Base):
+    __tablename__ = "profile_factors"
+    profile_id = Column(Integer, ForeignKey("calculation_profiles.id"), primary_key=True)
+    material_id = Column(Integer, ForeignKey("materials.id"), primary_key=True)
+    factor_id = Column(Integer, ForeignKey("material_factors.id"), nullable=False)
+    selection_assumption = Column(Text, nullable=False)
+
 class AnalysisResult(Base):
     __tablename__ = "analysis_results"
+    __table_args__ = (Index("uq_analysis_request", "user_id", "client_request_id", unique=True),)
+    result_kind = Column(String)
+    formula_version = Column(String)
+    profile_id = Column(Integer, ForeignKey("calculation_profiles.id"))
+    snapshot_schema_version = Column(Integer)
+    calculation_snapshot_json = Column(Text)
+    client_request_id = Column(String)
+    request_hash = Column(String)
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
