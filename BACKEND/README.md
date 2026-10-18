@@ -2,6 +2,9 @@
 
 탄소 V2 통합 및 연구용 계수 사용 절차: [CARBON_V2_INTEGRATION.md](CARBON_V2_INTEGRATION.md).
 
+무료 공개 캡스톤의 계수 선정 결과: [PUBLIC_FACTOR_DECISION.md](PUBLIC_FACTOR_DECISION.md).
+IDEMAT 선정 기록은 아직 DB에 자동 활성화되지 않습니다.
+
 FastAPI 기반 백엔드입니다. 라벨 OCR로 소재 혼용률을 추출하고, 사용자가 선택한 의류 무게 범위와 DB 소재 계수를 기준으로 탄소배출량을 계산합니다. 로그인 사용자의 최종 계산 결과는 분석 이력에 기록됩니다.
 
 ## 주요 파일
