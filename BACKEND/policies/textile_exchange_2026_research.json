@@ -1,0 +1,90 @@
+{
+  "profile": {
+    "key": "textile-exchange-2026-research",
+    "version": "2026-10-01-v2",
+    "formula_version": "fiber_mass_v2",
+    "method": "EF3.1_climate_change_total",
+    "scope": "fiber_production_estimate",
+    "usage_scope": "research_scenario"
+  },
+  "factors": [
+    {
+      "material": "cotton",
+      "factor_key": "textile-exchange-cotton-glo-country-average",
+      "version": "2026-03-review-v2",
+      "value_decimal": "2.88",
+      "unit": "kg CO2eq/kg fiber",
+      "method": "EF3.1_climate_change_total",
+      "scope": "fiber_production_estimate",
+      "product_form": "cotton fiber before spinning",
+      "production_system": "country-average cotton cultivation and fiber production",
+      "geography": "GLO country averages represented by study data",
+      "publication_year": 2026,
+      "data_years": [2023],
+      "source_name": "Textile Exchange Life Cycle Assessment for Cotton (2026)",
+      "source_url": "https://textileexchange.org/app/uploads/2026/03/Cotton-LCA-Technical-Report.pdf",
+      "source_locator": "printed p.250, Table G-14, GLO country averages, EF 3.1 Climate change total",
+      "evidence_type": "literature",
+      "usage_scope": "research_scenario",
+      "limitations": [
+        "Study data coverage is not equivalent to every cotton supply chain or Korean sourcing.",
+        "Textile Exchange states that the results are not intended for public or marketing claims, including on-product labels.",
+        "The study is not intended for comparisons between fibers or materials."
+      ],
+      "carbon_accounting": {
+        "reported_indicator": "EF 3.1 Climate change total",
+        "published_total_used_without_component_recalculation": true,
+        "biogenic_component_subtracted": false
+      },
+      "components": {
+        "total": "2.88",
+        "fossil": "2.59",
+        "biogenic": "0.0242",
+        "land_use_and_land_use_change": "0.259",
+        "unit": "kg CO2eq/kg fiber"
+      },
+      "review_note": "Research/demo proxy only. Source table and source-use restrictions reviewed on 2026-10-01.",
+      "selection_assumption": "Use the report's GLO country-averages EF 3.1 climate-change total as a generic cotton research proxy when product-specific origin and production data are unavailable."
+    },
+    {
+      "material": "polyester",
+      "factor_key": "textile-exchange-virgin-staple-sf1-sf3-published-mean",
+      "version": "2026-06-review-v2",
+      "value_decimal": "4.55",
+      "unit": "kg CO2eq/kg fiber",
+      "method": "EF3.1_climate_change_total",
+      "scope": "fiber_production_estimate",
+      "product_form": "virgin polyester staple fiber proxy",
+      "production_system": "published unweighted average of virgin staple fiber cases SF1, SF2 and SF3",
+      "geography": "study supplier cases; not a global production-weighted average",
+      "publication_year": 2026,
+      "data_years": [],
+      "source_name": "Textile Exchange Life Cycle Assessment for Polyester (2026)",
+      "source_url": "https://textileexchange.org/app/uploads/2026/06/Polyester-LCA-Technical-Report.pdf",
+      "source_locator": "printed p.143, Table 67 published average; pp.147-148, Tables 71-73 EF 3.1 case totals",
+      "evidence_type": "literature",
+      "usage_scope": "research_scenario",
+      "limitations": [
+        "4.55 is the report's published unweighted average of three virgin staple-fiber cases, not a global production-weighted polyester average.",
+        "The cases cover virgin staple fibers and do not represent filament, recycled polyester, or every polyester label.",
+        "One case is black fiber and two cases are white fiber; the mean is not production-volume weighted.",
+        "Textile Exchange states that the results are not intended for public or marketing claims, including on-product labels.",
+        "The study is not intended for comparisons between fibers or materials."
+      ],
+      "carbon_accounting": {
+        "reported_indicator": "EF 3.1 Climate change total",
+        "aggregation": "report-published unweighted average based on underlying study results",
+        "displayed_case_values_note": "The displayed case totals 4.74, 4.93 and 3.96 average to 4.5433; do not recalculate the report's published 4.55 from rounded display values.",
+        "biogenic_component_subtracted": false
+      },
+      "components": {
+        "SF1_black_virgin_staple_fiber": "4.74",
+        "SF2_white_virgin_staple_fiber": "4.93",
+        "SF3_white_virgin_staple_fiber": "3.96",
+        "unit": "kg CO2eq/kg fiber"
+      },
+      "review_note": "Research/demo proxy only. Derived mean and source-use restrictions reviewed on 2026-10-01.",
+      "selection_assumption": "Use only as an explicitly labeled virgin staple fiber research proxy when the label provides no polyester production-form detail; do not treat it as a universal polyester default."
+    }
+  ]
+}

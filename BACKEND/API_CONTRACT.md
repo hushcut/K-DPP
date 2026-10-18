@@ -1,5 +1,8 @@
 # K-DPP Backend API Contract
 
+탄소 V2 추가 계약: [CARBON_V2_API.md](CARBON_V2_API.md).
+DB 적용·계수 선정·연구용 실행: [CARBON_V2_INTEGRATION.md](CARBON_V2_INTEGRATION.md).
+
 기준 브랜치: `develop(중간통합)`
 
 이 문서는 프론트엔드, 백엔드, AI/OCR 파트가 같은 응답 구조를 기준으로 연동하기 위한 API 계약서입니다.

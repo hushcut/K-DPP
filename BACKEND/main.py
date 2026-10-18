@@ -46,6 +46,7 @@ import hashlib
 import hmac
 import secrets
 import database
+from carbon.api import build_router, history_provenance
 
 AI_MODULE_PATH = Path(__file__).resolve().parents[1] / "AI" / "kdpp_ai_ocr_integrated"
 if AI_MODULE_PATH.exists() and str(AI_MODULE_PATH) not in sys.path:
@@ -2090,6 +2091,7 @@ def build_analysis_response(
 
 def serialize_analysis_result(result: database.AnalysisResult) -> dict:
     return {
+        **history_provenance(result),
         "id": result.id,
         "user_id": result.user_id,
         "materials": json.loads(result.materials),
@@ -3268,3 +3270,6 @@ def get_clothing_types():
         "unit": "g",
         "items": CLOTHING_TYPE_OPTIONS,
     }
+
+
+app.include_router(build_router(get_db, get_current_user, CLOTHING_TYPE_OPTIONS))
