@@ -3,7 +3,7 @@ import 'dart:ui' show Tristate;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
@@ -1279,6 +1279,55 @@ void main() {
       expect(tester.takeException(), isNull);
       expectApart(find.text('1개 선택됨'), [find.widgetWithText(TextButton, '취소')]);
     });
+
+    // 2026-10-18 탐침: 320 폭·1.8배부터 카드 상태는 두 줄 제한에 '84%' 가 잘렸고,
+    // 검색 안내는 한 줄 제한에 '…' 로 잘렸다.
+    for (final scale in [1.8, 2.0]) {
+      testWidgets('320 폭·글자 $scale배에서도 카드 상태와 검색 안내가 잘리지 않는다', (
+        tester,
+      ) async {
+        // 큰 글자에서는 헤더가 커져 둘째 카드가 640 높이 밖으로 밀리므로 화면을 길게 둔다.
+        tester.view.physicalSize = const Size(960, 3000);
+        tester.view.devicePixelRatio = 3;
+        tester.platformDispatcher.textScaleFactorTestValue = scale;
+        addTearDown(tester.view.reset);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+        await _pumpCloset(
+          tester,
+          clothes: [
+            _clothes('홍길동 셔츠'),
+            Clothes(
+              title: '홍길동 바지',
+              category: '하의',
+              health: 10,
+              materials: {'cotton': 100},
+              careInstruction: '찬물 세탁',
+              carbonFootprint: 1.0,
+            ),
+          ],
+        );
+        expect(tester.takeException(), isNull);
+
+        for (final text in ['건강 상태: 88%', '수명 만료 (배출 권장)', '옷 이름, 소재 검색']) {
+          final finder = find.text(text);
+          final paragraph = tester.renderObject<RenderParagraph>(finder);
+          expect(paragraph.didExceedMaxLines, isFalse, reason: text);
+          expect(
+            paragraph.size.height,
+            greaterThanOrEqualTo(
+              paragraph.getMaxIntrinsicHeight(paragraph.size.width) - 0.5,
+            ),
+            reason: text,
+          );
+        }
+        // 안내가 두 줄이 되면 검색창도 그만큼 커져 안내가 칸 밖으로 나가지 않는다.
+        final field = tester.getRect(find.byType(TextField));
+        final hint = tester.getRect(find.text('옷 이름, 소재 검색'));
+        expect(hint.top, greaterThanOrEqualTo(field.top), reason: '$hint $field');
+        expect(hint.bottom, lessThanOrEqualTo(field.bottom), reason: '$hint $field');
+      });
+    }
 
     testWidgets('낭독기에서 카드 하나는 이름이 있는 한 칸이고, 순서 이동·선택됨도 그 칸에 붙는다', (
       tester,

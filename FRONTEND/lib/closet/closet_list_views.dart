@@ -396,9 +396,10 @@ extension _ClosetListViews on _ClosetScreenState {
                         Icon(statusIcon, color: statusColor, size: 16),
                         const SizedBox(width: 4),
                         Expanded(
+                          // 작은 화면·큰 글자에서는 그림·'>' 사이 폭이 좁아 두 줄로도 모자랍니다
+                          // (320 폭·1.8배에서 '84%' 가 잘렸다). 상태는 짧아 줄 수를 막지 않습니다.
                           child: Text(
                             status,
-                            maxLines: 2,
                             style: TextStyle(
                               color: statusColor,
                               fontWeight: isWarning
