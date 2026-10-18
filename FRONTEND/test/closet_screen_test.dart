@@ -504,6 +504,31 @@ void main() {
     semanticsHandle.dispose();
   });
 
+  // 분류 탭은 글자 색과 밑줄로만 고른 탭을 보여 준다. 낭독기는 TabBar 가 붙이는 '선택됨' 으로 안다.
+  testWidgets('옷장 분류 탭은 낭독기에 지금 고른 탭을 알린다', (tester) async {
+    final semantics = tester.ensureSemantics();
+    await _pumpCloset(tester, clothes: _numbered(1));
+
+    Tristate selectedOf(String tab) => find.semantics
+        .byLabel(RegExp('^$tab\n'))
+        .evaluate()
+        .single
+        .getSemanticsData()
+        .flagsCollection
+        .isSelected;
+
+    expect(selectedOf('전체'), Tristate.isTrue);
+    expect(selectedOf('상의'), Tristate.isFalse);
+    expect(selectedOf('하의'), Tristate.isFalse);
+
+    await tester.tap(_categoryTab('하의'));
+    await tester.pumpAndSettle();
+
+    expect(selectedOf('전체'), Tristate.isFalse);
+    expect(selectedOf('하의'), Tristate.isTrue);
+    semantics.dispose();
+  });
+
   // 2026-09-24: 기본 모양은 카드+아래 여백을 배경색 네모 판째 들어 올려 "블럭"처럼 보였다(사용자 피드백).
   group('순서 바꾸기에서 집어 든 카드', () {
     Future<void> pumpReorderMode(
