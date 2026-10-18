@@ -63,6 +63,16 @@ class ScanScreen extends StatefulWidget {
   static CarbonApiService Function() carbonApiServiceFactory =
       CarbonApiService.new;
 
+  /// 라벨 분석 서비스와 사진 가져오기 서비스를 만듭니다. 테스트가 카메라·서버 없이 분석 결과를
+  /// 정해 두고 촬영 → 종류 선택 → 결과 입력 흐름을 따라갈 때 갈아 끼웁니다(C11).
+  @visibleForTesting
+  static ScanAnalysisService Function() scanAnalysisServiceFactory =
+      ScanAnalysisService.new;
+
+  @visibleForTesting
+  static ScanCaptureService Function() scanCaptureServiceFactory =
+      ScanCaptureService.new;
+
   @override
   State<ScanScreen> createState() => _ScanScreenState();
 }
@@ -100,7 +110,8 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   _ResultFormSnapshot? _initialResultForm;
 
   // 분석, 촬영, 초안 생성, 계산, 저장 책임은 전용 서비스에 위임합니다.
-  final ScanAnalysisService _scanAnalysisService = ScanAnalysisService();
+  final ScanAnalysisService _scanAnalysisService =
+      ScanScreen.scanAnalysisServiceFactory();
   final CarbonApiService _carbonApiService =
       ScanScreen.carbonApiServiceFactory();
   // 결과 화면의 소재 추천 목록과 소재 선택창이 함께 쓰는 소재 목록입니다.
@@ -113,7 +124,8 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
         fetchClothingTypes:
             ClothingTypeCatalogApiService().fetchClothingTypes,
       );
-  final ScanCaptureService _scanCaptureService = ScanCaptureService();
+  final ScanCaptureService _scanCaptureService =
+      ScanScreen.scanCaptureServiceFactory();
   final ScanDraftService _scanDraftService = const ScanDraftService();
   final ScanSaveService _scanSaveService = const ScanSaveService();
 
