@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/widgets/scan_camera_view.dart';
 
@@ -77,5 +78,60 @@ void main() {
     final gaps = gapsOf(tester, 694);
 
     expect(gaps.top / gaps.bottom, closeTo(2 / 3, 0.02));
+  });
+
+  // C58: 안내 문구는 한 줄로 고정돼 큰 글자에서 '…' 로 잘렸다. 이제 세 줄까지 줄바꿈하고,
+  // 그 높이만큼 틀을 줄인다. 320×568 폰(스캔 화면 카메라 영역 512)에서는 틀을 가장 작게(150)
+  // 해도 모자라, 그때만 스크롤해 버튼까지 닿는다.
+  group('안내 문구와 큰 글자 (320 폭, 카메라 영역 512)', () {
+    final guide = find.text('케어 라벨을 프레임 안에 맞춰 촬영해 주세요');
+    const lineHeight = 15 * 1.4;
+
+    void setUpSmallPhone(WidgetTester tester, double textScale) {
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = textScale;
+      addTearDown(tester.view.reset);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    }
+
+    testWidgets('글자 2배에서는 안내 문구가 잘리지 않고 여러 줄로 보이며, 스크롤하면 앨범 버튼까지 닿는다', (
+      tester,
+    ) async {
+      setUpSmallPhone(tester, 2.0);
+      await pumpAtHeight(tester, 512);
+
+      expect(tester.takeException(), isNull);
+      expect(
+        tester.renderObject<RenderParagraph>(guide).didExceedMaxLines,
+        isFalse,
+      );
+      expect(
+        tester.getSize(guide).height,
+        greaterThanOrEqualTo(2 * lineHeight * 2),
+      );
+
+      final album = find.bySemanticsLabel('앨범에서 라벨 사진 선택');
+      expect(tester.getRect(album).bottom, greaterThan(512));
+      await tester.drag(
+        find.byType(SingleChildScrollView),
+        const Offset(0, -400),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.getRect(album).bottom, lessThanOrEqualTo(512));
+    });
+
+    // 280 폭 안내 칸에는 보통 글자로도 한 줄이 빠듯하다(시험 글꼴은 두 줄). 예전엔 '…' 로 잘렸다.
+    testWidgets('보통 글자에서는 스크롤 없이 놓이고 안내 문구도 잘리지 않는다', (tester) async {
+      setUpSmallPhone(tester, 1.0);
+      await pumpAtHeight(tester, 512);
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(SingleChildScrollView), findsNothing);
+      expect(
+        tester.renderObject<RenderParagraph>(guide).didExceedMaxLines,
+        isFalse,
+      );
+    });
   });
 }

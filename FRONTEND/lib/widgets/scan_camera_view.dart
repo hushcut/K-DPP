@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -34,6 +35,16 @@ class ScanCameraView extends StatelessWidget {
   final VoidCallback onRetryCamera;
   final VoidCallback onPickFromGallery;
   final VoidCallback onTakePicture;
+
+  static const _guideText = '케어 라벨을 프레임 안에 맞춰 촬영해 주세요';
+  static const _guideStyle = TextStyle(
+    color: Colors.white,
+    fontSize: 15,
+    height: 1.4,
+  );
+
+  /// 큰 글자에서 안내 문구가 줄바꿈될 수 있는 최대 줄 수입니다.
+  static const _guideMaxLines = 3;
 
   @override
   Widget build(BuildContext context) {
@@ -76,8 +87,17 @@ class ScanCameraView extends StatelessWidget {
                 .clamp(180.0, showsCameraError ? double.infinity : 250.0)
                 .toDouble();
             // 비율로 계산하되, 남는 공간을 넘지 않게 해 짧은 화면에서도
-            // 문구·버튼이 잘리지 않도록 합니다.
-            const fixedContentHeight = 22.0;
+            // 문구·버튼이 잘리지 않도록 합니다. 안내 문구는 큰 글자에서 여러 줄이 되므로
+            // 실제 높이를 재고, 보통 글자(한 줄)에서는 전과 같은 22 를 둡니다.
+            final guidePainter = TextPainter(
+              text: const TextSpan(text: _guideText, style: _guideStyle),
+              textAlign: TextAlign.center,
+              textDirection: Directionality.of(context),
+              textScaler: MediaQuery.textScalerOf(context),
+              maxLines: _guideMaxLines,
+            )..layout(maxWidth: constraints.maxWidth - 40);
+            final fixedContentHeight = math.max(22.0, guidePainter.height);
+            guidePainter.dispose();
             final frameSizeByLeftover =
                 availableHeight -
                 fixedContentHeight -
@@ -90,8 +110,17 @@ class ScanCameraView extends StatelessWidget {
                         : frameSizeByLeftover)
                     .clamp(150.0, frameSizeByWidth)
                     .toDouble();
+            // 아주 작은 화면(320×568)에 큰 글자면 틀을 가장 작게(150) 해도 다 들어가지 않습니다.
+            // 그때만 스크롤되게 해 촬영·앨범 버튼이 넘쳐 잘리지 않게 합니다.
+            final contentHeight =
+                fixedContentHeight +
+                guideGap +
+                frameSize +
+                buttonAreaGap +
+                buttonAreaHeight;
+            final overflows = contentHeight > availableHeight;
 
-            return Padding(
+            final content = Padding(
               padding: const EdgeInsets.fromLTRB(
                 20,
                 topContentPadding,
@@ -99,7 +128,7 @@ class ScanCameraView extends StatelessWidget {
                 bottomContentPadding,
               ),
               child: SizedBox(
-                height: availableHeight,
+                height: overflows ? contentHeight : availableHeight,
                 child: Column(
                   children: [
                     // 남는 높이를 위 2 : 아래 3으로 나눠 라벨 틀과 촬영 버튼을 화면 가운데보다
@@ -108,15 +137,11 @@ class ScanCameraView extends StatelessWidget {
                     // (2026-09-23 폰 확인 2회). 기종별 값 대신 비율로 두어 어느 화면이든 같은 인상을 줍니다.
                     const Spacer(flex: 2),
                     const Text(
-                      '케어 라벨을 프레임 안에 맞춰 촬영해 주세요',
+                      _guideText,
                       textAlign: TextAlign.center,
-                      maxLines: 1,
+                      maxLines: _guideMaxLines,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        height: 1.4,
-                      ),
+                      style: _guideStyle,
                     ),
                     SizedBox(height: guideGap),
                     Semantics(
@@ -315,6 +340,7 @@ class ScanCameraView extends StatelessWidget {
                 ),
               ),
             );
+            return overflows ? SingleChildScrollView(child: content) : content;
           },
         ),
       ),
