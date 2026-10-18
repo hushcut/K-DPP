@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
@@ -296,6 +298,26 @@ void main() {
     final slide = tester.widget<SlideTransition>(tabSlide());
     expect(slide.position.value.dx, greaterThan(0));
     await tester.pumpAndSettle();
+  });
+
+  // 하단 메뉴는 색과 채운 아이콘으로만 지금 탭을 보여 준다. 낭독기에는 '선택됨' 으로 알린다.
+  testWidgets('하단 메뉴의 홈·옷장은 낭독기에 지금 보는 탭을 알린다', (tester) async {
+    final semantics = tester.ensureSemantics();
+    await pumpMainScreen(tester);
+
+    SemanticsData tabData(String label) =>
+        find.semantics.byLabel(label).evaluate().single.getSemanticsData();
+
+    expect(tabData('홈').flagsCollection.isSelected, Tristate.isTrue);
+    expect(tabData('홈').flagsCollection.isButton, isTrue);
+    expect(tabData('옷장').flagsCollection.isSelected, Tristate.isFalse);
+
+    await tester.tap(find.text('옷장'));
+    await tester.pumpAndSettle();
+
+    expect(tabData('홈').flagsCollection.isSelected, Tristate.isFalse);
+    expect(tabData('옷장').flagsCollection.isSelected, Tristate.isTrue);
+    semantics.dispose();
   });
 
   // 스캔은 탭이 아니라 리포트·설정처럼 위에 쌓는 화면이다(2026-09-26 사용자 결정 A안: iOS 에서 밀어서 닫히게).
