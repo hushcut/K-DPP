@@ -108,7 +108,8 @@ class HomeScreen extends StatelessWidget {
                     foregroundColor: AppPalette.accent,
                     minimumSize: const Size(0, 40),
                     padding: const EdgeInsets.symmetric(horizontal: 8),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    // 보이는 버튼은 40 그대로 두고 누를 수 있는 곳만 48 로 넓힙니다(C59).
+                    tapTargetSize: MaterialTapTargetSize.padded,
                   ),
                 ),
             ],

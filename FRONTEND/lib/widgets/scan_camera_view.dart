@@ -400,6 +400,7 @@ class ScanCameraView extends StatelessWidget {
                   const SizedBox(height: 8),
                   // 두 버튼을 한 줄에 두어 카메라 틀 안에서 스크롤 없이 보이게 합니다.
                   // 글자가 커져 한 줄에 안 들어가면 자동으로 줄을 바꿉니다(2026-09-19 폰 확인).
+                  // 보이는 버튼은 36 그대로 두고 누를 수 있는 곳만 48 로 넓힙니다(C59).
                   Wrap(
                     alignment: WrapAlignment.center,
                     spacing: 4,
@@ -409,7 +410,7 @@ class ScanCameraView extends StatelessWidget {
                         style: TextButton.styleFrom(
                           minimumSize: const Size(0, 36),
                           padding: const EdgeInsets.symmetric(horizontal: 10),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          tapTargetSize: MaterialTapTargetSize.padded,
                         ),
                         child: const Text('다시 시도'),
                       ),
@@ -419,7 +420,7 @@ class ScanCameraView extends StatelessWidget {
                           style: TextButton.styleFrom(
                             minimumSize: const Size(0, 36),
                             padding: const EdgeInsets.symmetric(horizontal: 10),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            tapTargetSize: MaterialTapTargetSize.padded,
                           ),
                           child: const Text('권한 확인 방법'),
                         ),
