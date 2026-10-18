@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 from sqlalchemy.orm import Session
+from .domain import number
 
 import database
 
@@ -37,6 +39,17 @@ class FactorManifest(BaseModel):
     components: dict | None = None
     review_note: str = Field(min_length=1)
     selection_assumption: str = Field(min_length=1)
+    evidence_reviewed_at: datetime | None = None
+    technical_selector: str | None = None
+    approval_reviewer: str | None = None
+    approval_date: str | None = None
+
+    @field_validator("value_decimal")
+    @classmethod
+    def bounded_positive_factor(cls, value):
+        if number(value, "FACTOR_INVALID") <= 0:
+            raise ValueError("factor must be positive")
+        return value
 
     @field_validator("data_years")
     @classmethod
@@ -79,12 +92,19 @@ def load_manifest(path: Path) -> PolicyManifest:
     return PolicyManifest.model_validate_json(path.read_text(encoding="utf-8"))
 
 
-def validate_manifest(session: Session, manifest: PolicyManifest) -> dict:
+def validate_manifest(session: Session, manifest: PolicyManifest, *, replace_active=False,
+                      free_public_release=False) -> dict:
     profile = manifest.profile
+    if profile.usage_scope == "public_estimate":
+        from .public_policy import approved_public_manifest
+        if not free_public_release:
+            raise ValueError("public policy requires explicit free educational release acknowledgement")
+        if manifest.model_dump(mode="json") != approved_public_manifest().model_dump(mode="json"):
+            raise ValueError("only the reviewed IDEMAT free-capstone manifest is approved for public use")
     if session.query(database.CalculationProfile).filter_by(
             key=profile.key, version=profile.version).first():
         raise ValueError("profile key/version already exists")
-    if session.query(database.CalculationProfile).filter_by(
+    if not replace_active and session.query(database.CalculationProfile).filter_by(
             status="active", usage_scope=profile.usage_scope).first():
         raise ValueError("an active profile already exists for this usage_scope")
 
@@ -109,8 +129,25 @@ def validate_manifest(session: Session, manifest: PolicyManifest) -> dict:
     }
 
 
-def publish_manifest(session: Session, manifest: PolicyManifest, *, apply: bool) -> dict:
-    checked = validate_manifest(session, manifest)
+def publish_manifest(session: Session, manifest: PolicyManifest, *, apply: bool,
+                     replace_active=False, free_public_release=False) -> dict:
+    try:
+        return _publish_manifest(session, manifest, apply=apply,
+            replace_active=replace_active, free_public_release=free_public_release)
+    except Exception:
+        session.rollback()
+        raise
+
+
+def _publish_manifest(session: Session, manifest: PolicyManifest, *, apply: bool,
+                      replace_active=False, free_public_release=False) -> dict:
+    # Serialize administrators before checking the active policy. Readers continue
+    # seeing the old committed policy until the replacement commits atomically.
+    if apply:
+        from sqlalchemy import text
+        session.execute(text("SELECT pg_advisory_xact_lock(8820261019)"))
+    checked = validate_manifest(session, manifest, replace_active=replace_active,
+                                free_public_release=free_public_release)
     summary = {key: value for key, value in checked.items() if key != "resolved"}
     summary["status"] = "validated"
     if not apply:
@@ -139,12 +176,21 @@ def publish_manifest(session: Session, manifest: PolicyManifest, *, apply: bool)
             carbon_accounting_json=json.dumps(factor_data.carbon_accounting, ensure_ascii=False),
             components_json=(json.dumps(factor_data.components, ensure_ascii=False)
                              if factor_data.components is not None else None),
-            reviewed_at=database.utc_now(), review_note=factor_data.review_note)
+            reviewed_at=factor_data.evidence_reviewed_at,
+            review_note=json.dumps({"note": factor_data.review_note,
+                "technical_selector": factor_data.technical_selector,
+                "approval_reviewer": factor_data.approval_reviewer,
+                "approval_date": factor_data.approval_date}, ensure_ascii=False))
         session.add(factor)
         session.flush()
         session.add(database.ProfileFactor(profile_id=profile.id, material_id=material.id,
             factor_id=factor.id, selection_assumption=factor_data.selection_assumption))
     session.flush()
+    if replace_active:
+        for previous in session.query(database.CalculationProfile).filter_by(
+                status="active", usage_scope=profile.usage_scope).all():
+            previous.status = "retired"
+        session.flush()
     profile.status = "active"
     session.commit()
     summary.update(status="published", profile_id=profile.id)
@@ -171,6 +217,9 @@ def main(argv: list[str] | None = None) -> int:
     publish = commands.add_parser("publish", help="Validate a manifest; write only with --apply.")
     publish.add_argument("manifest", type=Path)
     publish.add_argument("--apply", action="store_true")
+    publish.add_argument("--replace-active", action="store_true")
+    publish.add_argument("--free-public-release", action="store_true",
+                         help="Acknowledge free educational use only; does not grant a commercial license.")
     retire = commands.add_parser("retire", help="Validate retirement; write only with --apply.")
     retire.add_argument("key")
     retire.add_argument("version")
@@ -180,7 +229,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with database.SessionLocal() as session:
             if args.command == "publish":
-                result = publish_manifest(session, load_manifest(args.manifest), apply=args.apply)
+                result = publish_manifest(session, load_manifest(args.manifest), apply=args.apply,
+                    replace_active=args.replace_active, free_public_release=args.free_public_release)
             else:
                 result = retire_profile(session, args.key, args.version, apply=args.apply)
         print(json.dumps(result, ensure_ascii=False, indent=2))

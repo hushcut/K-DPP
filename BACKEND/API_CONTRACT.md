@@ -1,6 +1,15 @@
 # K-DPP Backend API Contract
 
 탄소 V2 추가 계약: [CARBON_V2_API.md](CARBON_V2_API.md).
+PR 88 보완·배포·앱 전환 기준: [CARBON_V2_REVIEW_RESOLUTION.md](CARBON_V2_REVIEW_RESOLUTION.md).
+
+V2 입력도 소재 20칸/소재명 64자/OCR 4,000자 제한을 적용합니다.
+`MATERIAL_NOT_FOUND`의 `detail.unknown_materials`는 미등록 양수 소재명 목록입니다.
+`/me/history`의 V2 항목은 `provenance_status`, `result_kind`, `formula_version`,
+`calculation_snapshot: null`, `provenance_url`을 제공합니다. 전체 스냅샷은
+`GET /api/v2/carbon/results/{id}`로 별도 조회하며 본인 결과에만 접근 가능합니다.
+기존 V1 이력에는 출처를 소급 생성하지 않습니다(`provenance_status: unavailable`).
+V2의 `average_carbon_footprint`는 대표 무게 기반 값의 호환 별칭이며 통계적 평균이 아닙니다.
 DB 적용·계수 선정·연구용 실행: [CARBON_V2_INTEGRATION.md](CARBON_V2_INTEGRATION.md).
 
 기준 브랜치: `develop(중간통합)`

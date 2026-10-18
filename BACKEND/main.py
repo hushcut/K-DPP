@@ -25,7 +25,6 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, BeforeValidator, Field, StringConstraints
-from pydantic_core import PydanticCustomError
 import asyncio
 import base64
 import certifi
@@ -47,6 +46,10 @@ import hmac
 import secrets
 import database
 from carbon.api import build_router, history_provenance
+from carbon.input_limits import (
+    MAX_MATERIAL_ENTRIES, MAX_MATERIAL_NAME_LENGTH, MAX_RAW_OCR_TEXT_LENGTH,
+    MaterialName, RawOcrText, reject_too_many_materials,
+)
 
 AI_MODULE_PATH = Path(__file__).resolve().parents[1] / "AI" / "kdpp_ai_ocr_integrated"
 if AI_MODULE_PATH.exists() and str(AI_MODULE_PATH) not in sys.path:
@@ -524,36 +527,10 @@ class WithdrawRequest(BaseModel):
 # 소재 계산은 입력 소재 수에 비례해 반복되므로 개수·길이를 제한하지 않으면
 # 요청 1건으로 워커를 오래 점유시킬 수 있습니다. 실제 케어 라벨의 소재는
 # 많아야 몇 개이고, 오류 응답이 입력을 되돌려주는 경로도 있어 상한이 곧 응답 크기 상한입니다.
-MAX_MATERIAL_ENTRIES = 20
-MAX_MATERIAL_NAME_LENGTH = 64
 # 라벨 OCR 원문은 수천 자를 넘을 이유가 없습니다. 상한이 없으면 요청 1건이
 # 본문 상한(11MB)만큼을 그대로 DB에 적재합니다.
-MAX_RAW_OCR_TEXT_LENGTH = 4000
 # 이력 조회는 전건을 한 번에 올리므로 상한을 둡니다. 넘치면 has_more로 알립니다.
 MAX_HISTORY_ITEMS = 200
-
-MaterialName = Annotated[str, StringConstraints(max_length=MAX_MATERIAL_NAME_LENGTH)]
-
-
-def reject_too_many_materials(value):
-    """소재 칸이 상한을 넘으면 칸마다 검증하기 전에 거절한다.
-
-    dict 의 Field(max_length) 는 칸마다 키·값을 다 검증하고 오류를 모두 만든 뒤에야 개수를
-    본다(pydantic 2.12). 숫자 아닌 값 수십만 칸이면 오류 객체만 수십만 개라 요청 한 건이
-    메모리를 수백 MB 올렸다(DECISIONS 244). 오류 모양은 Field(max_length) 의 too_long 과 같다.
-    """
-    if isinstance(value, dict) and len(value) > MAX_MATERIAL_ENTRIES:
-        raise PydanticCustomError(
-            "too_long",
-            "Dictionary should have at most {max_length} items after validation, not {actual_length}",
-            {
-                "field_type": "Dictionary",
-                "max_length": MAX_MATERIAL_ENTRIES,
-                "actual_length": len(value),
-            },
-        )
-    return value
-
 
 MaterialRatios = Annotated[
     dict[MaterialName, float],
@@ -561,7 +538,6 @@ MaterialRatios = Annotated[
     Field(max_length=MAX_MATERIAL_ENTRIES),
     BeforeValidator(reject_too_many_materials),
 ]
-RawOcrText = Annotated[str, StringConstraints(max_length=MAX_RAW_OCR_TEXT_LENGTH)]
 
 
 class AnalyzeRequest(BaseModel):

@@ -1,5 +1,12 @@
 # 탄소계수·정책 관리 명령
 
+PR 88 이후: [보완·배포 절차](CARBON_V2_REVIEW_RESOLUTION.md)를 우선 따른다.
+공개 등록은 `python -m carbon.public_policy`가 생성한 승인 선택과 정확히 일치해야 하며
+`--free-public-release`가 필요하다. TE manifest의 usage_scope만 바꾸면 거부한다.
+`publish ... --replace-active --apply`는 기존 정책 종료와 새 정책 활성화를 원자적으로 처리한다.
+등록 시각은 created_at, 문헌 확인일은 evidence_reviewed_at이다. 승인 담당자/날짜가
+없는 경우 null을 보존한다. 등록 자체가 팀 승인이나 외부 검증을 의미하지 않는다.
+
 문헌계수와 계산정책을 직접 SQL로 수정하지 않고, JSON manifest를 검증한 뒤 새 버전으로 등록하기 위한 명령이다. 기본 실행은 **검증만 수행하며 DB를 변경하지 않는다**.
 
 ## 등록 절차

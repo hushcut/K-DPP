@@ -28,7 +28,7 @@ status=active, usage_scope=public_estimate인 정책이 정확히 하나 있어�
 
 기존 Flutter가 요구하는 carbon_factor, carbon_footprint, carbon_footprint_min/max, min/max_weight_grams, unit, saved_result_id를 제공한다. 대표 무게, 계산 버전, 정책 버전, 적용 가정, 계수 출처와 버전도 반환한다. 평균 필드는 대표값의 호환 별칭이다.
 
-한 DB 커밋으로 결과 숫자와 스냅샷을 함께 저장한다. 스냅샷에는 원본 소재 입력·정규화 비율·계수의 조건과 출처·정책·무게·반올림 전후 결과를 담는다. /me/history와 /history에서 calculation_snapshot으로 반환한다. 기존 스냅샷 없는 이력은 provenance_status=unavailable로 표시한다.
+한 DB 커밋으로 결과 숫자와 스냅샷을 함께 저장한다. 스냅샷에는 원본 소재 입력·정규화 비율·계수의 조건과 출처·정책·무게·반올림 전후 결과를 담는다. /me/history와 /history에서는 calculation_snapshot=null과 provenance_url만 반환한다. 전체 스냅샷은 인증된 소유자가 GET /api/v2/carbon/results/{id}로 조회한다. 기존 스냅샷 없는 이력은 provenance_status=unavailable로 표시한다.
 
 스냅샷 JSON이 손상된 이력은 전체 조회를 실패시키지 않고 provenance_status=invalid와 빈 스냅샷으로 표시한다. 손상된 저장 결과는 같은 Idempotency-Key로 재생하지 않고 500 SAVED_RESULT_INVALID로 중단해 잘못된 근거를 정상 결과처럼 반환하지 않는다.
 
@@ -44,6 +44,6 @@ status=active, usage_scope=public_estimate인 정책이 정확히 하나 있어�
 
 새 정책 버전의 검증·등록·종료는 `python -m carbon.policy_admin` 관리 명령으로 수행한다. 기본 실행은 검증만 하고 `--apply`를 붙인 경우에만 한 트랜잭션으로 반영한다. 사용법과 manifest 형식은 `POLICY_ADMIN.md`에 정리했다.
 
-면 2.88과 폴리에스터 4.55의 연구용 manifest를 제공한다. 자동 등록하지 않으며, 관리 명령으로 등록하고 연구 설정을 켠 경우에만 새 계산에 사용한다. 공개용 정책으로 승격하지 않는다.
+면 2.88과 폴리에스터 EF 3.1 표 71~73 표시값에서 파생한 평균 4.543333…의 연구용 manifest v3를 제공한다. 기존 공표 평균 4.55와 구분한다. 자동 등록하지 않으며, 관리 명령으로 등록하고 연구 설정을 켠 경우에만 새 계산에 사용한다. 공개용 정책으로 승격하지 않는다.
 
-프런트의 V2 전환, 미계산 상태 UI와 공개 서비스용 계수 확보는 남아 있다. V1은 기존 경로를 사용한다. 서버 시작 때 구조를 바꾸지 않고 Alembic head 여부만 검사한다. 직접 입력 무게는 1~100000g으로 제한하며, 탈퇴와 저장이 겹쳐 사용자 외래키가 실패하면 401을 반환한다.
+공개 서비스용 계수는 무료 교육용 IDEMAT 선택으로 한정했다(PUBLIC_FACTOR_DECISION.md). 프런트의 V2 전환, 출처·제약 표시와 미계산 상태 UI는 남아 있다. V1은 기존 경로를 사용한다. 서버 시작 때 구조를 바꾸지 않고 Alembic head 여부만 검사한다. 직접 입력 무게는 1~100000g으로 제한하며, 탈퇴와 저장이 겹쳐 사용자 외래키가 실패하면 401을 반환한다.

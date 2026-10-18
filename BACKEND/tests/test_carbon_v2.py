@@ -50,7 +50,8 @@ def test_v2_snapshot_and_replay_survive_profile_retirement(client):
     assert retry.json() == body
     history = client.get("/me/history", headers=headers).json()["history"]
     assert len(history) == 1
-    snapshot = history[0]["calculation_snapshot"]
+    assert history[0]["calculation_snapshot"] is None
+    snapshot = client.get(history[0]["provenance_url"], headers=headers).json()["calculation_snapshot"]
     assert snapshot["factors"][0]["value_decimal"] == "8.3"
     assert snapshot["results"]["raw"]["representative"] == "1.66"
     assert history[0]["provenance_status"] == "available"

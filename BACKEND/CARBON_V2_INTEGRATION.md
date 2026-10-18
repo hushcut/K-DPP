@@ -1,5 +1,8 @@
 # 탄소 V2 develop 통합 — 2026-10-18
 
+2026-10-19 리뷰 보완 및 무료 공개용 IDEMAT 절차는
+[CARBON_V2_REVIEW_RESOLUTION.md](CARBON_V2_REVIEW_RESOLUTION.md)를 우선 따른다.
+
 기준: develop 1cb3684. 로그인·카카오·옷장 백업·V1 API를 유지하고
 jw/carbon-v2-postgres의 계산·계수 정책·스냅샷을 편입했다.
 앱은 아직 V1을 사용하며 전환은 별도 작업이다.
@@ -22,8 +25,8 @@ V2 근거가 있으면 downgrade를 중단한다. 복원은 기존 배포 백업
 
 - 면: 2.88 kg CO2eq/kg fiber. Cotton 2026 인쇄 p.250 표 G-14,
   GLO country averages의 EF 3.1 climate-change total.
-- 폴리에스터: 4.55 kg CO2eq/kg fiber. Polyester 2026 인쇄 p.143 표 67,
-  버진 단섬유 SF1~SF3의 보고서 발표 평균. 필라멘트·재생 폴리에스터의 대표값이 아니다.
+- 폴리에스터 연구 v3: EF 3.1 표 71~73 표시 총값의 단순 평균 4.543333… kg CO2eq/kg fiber.
+  표 67 공표 평균 4.55와 구분한다. 필라멘트·재생 폴리에스터의 대표값이 아니다.
 - 총 의류 무게를 섬유 무게로 가정한 소재 생산 단계 추정. 제조·운송·사용·폐기는 제외한다.
 - 나머지 소재는 근거 확보 전 V2 계산 거부. 개발용 계수로 보충하지 않는다.
 

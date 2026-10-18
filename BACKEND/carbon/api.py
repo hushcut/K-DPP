@@ -1,29 +1,32 @@
 """V2 API, immutable result snapshots and account-scoped request replay."""
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 import hashlib
 import json
 import os
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 import database
 from .domain import CarbonError, calculate, normalize
 from .factors import resolve_factors
+from .input_limits import MaterialName, RawOcrText, reject_too_many_materials
 
 
 class CalculationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
-    materials: dict[str, Decimal] = Field(min_length=1, max_length=50)
+    materials: Annotated[dict[MaterialName, Decimal], Field(min_length=1, max_length=20),
+                         BeforeValidator(reject_too_many_materials)]
     weight_grams: Decimal | None = None
     clothing_type_id: str | None = Field(default=None, max_length=100)
     composition_scope: Literal["single", "unknown", "multiple"]
-    raw_ocr_text: str | None = Field(default=None, max_length=20000)
+    raw_ocr_text: RawOcrText | None = None
 
     @field_validator("materials", "weight_grams", mode="before")
     @classmethod
     def reject_boolean(cls, value):
+        reject_too_many_materials(value)
         values = value.values() if isinstance(value, dict) else [value]
         if any(isinstance(item, bool) for item in values):
             raise ValueError("Boolean values are not measurements.")
@@ -34,7 +37,7 @@ def encode(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str, allow_nan=False)
 
 
-def fail(code, status=422):
+def fail(code, status=422, **details):
     messages = {
         "CALCULATION_PROFILE_UNAVAILABLE": "사용 가능한 계산 기준이 아직 준비되지 않았습니다.",
         "COMPOSITION_SCOPE_UNSUPPORTED": "전체 소재 비율을 확인할 수 있는 단일 부위만 계산할 수 있습니다.",
@@ -45,7 +48,7 @@ def fail(code, status=422):
         "IDEMPOTENCY_CONFLICT": "같은 요청 키에 다른 입력값이 사용되었습니다.",
     }
     raise HTTPException(status, detail={"error_code": code,
-        "message": messages.get(code, "계산 입력 또는 계수 설정을 확인해 주세요.")})
+        "message": messages.get(code, "계산 입력 또는 계수 설정을 확인해 주세요."), **details})
 
 
 def replay(result, request_hash):
@@ -61,7 +64,7 @@ def replay(result, request_hash):
     return {**response, "saved_result_id": result.id}
 
 
-def history_provenance(result):
+def history_provenance(result, *, include_snapshot=False):
     if not result.calculation_snapshot_json:
         return {"provenance_status": "unavailable", "calculation_snapshot": None,
                 "result_kind": result.result_kind or "legacy_unknown"}
@@ -73,12 +76,20 @@ def history_provenance(result):
         return {"provenance_status": "invalid", "calculation_snapshot": None,
                 "result_kind": result.result_kind or "legacy_unknown",
                 "formula_version": result.formula_version}
-    return {"provenance_status": "available", "calculation_snapshot": snapshot,
+    return {"provenance_status": "available", "calculation_snapshot": snapshot if include_snapshot else None,
+            "provenance_url": f"/api/v2/carbon/results/{result.id}",
             "result_kind": result.result_kind, "formula_version": result.formula_version}
 
 
 def build_router(get_db, get_user, clothing_options):
     router = APIRouter()
+
+    @router.get("/api/v2/carbon/results/{result_id}", tags=["v2-carbon"])
+    def result_detail(result_id: int, db=Depends(get_db), user=Depends(get_user)):
+        result = db.query(database.AnalysisResult).filter_by(id=result_id, user_id=user.id).first()
+        if result is None:
+            raise HTTPException(404, detail="결과를 찾을 수 없습니다.")
+        return history_provenance(result, include_snapshot=True)
 
     @router.post("/api/v2/carbon/calculate", tags=["v2-carbon"])
     def endpoint(request: CalculationRequest, db=Depends(get_db), user=Depends(get_user),
@@ -152,7 +163,10 @@ def build_router(get_db, get_user, clothing_options):
                 {name: factor["value"] for name, factor in factors.items()},
                 representative, minimum, maximum)
         except CarbonError as exc:
-            fail(exc.code, 400 if exc.code == "MATERIAL_NOT_FOUND" else 422)
+            details = ({"unknown_materials": [name for name, ratio in request.materials.items()
+                        if ratio > 0 and name.strip().lower() not in aliases]}
+                       if exc.code == "MATERIAL_NOT_FOUND" else {})
+            fail(exc.code, 400 if exc.code == "MATERIAL_NOT_FOUND" else 422, **details)
         factor_snapshots = []
         for name, details in factors.items():
             link = db.get(database.ProfileFactor, (profile.id, by_name[name].id))
@@ -177,6 +191,7 @@ def build_router(get_db, get_user, clothing_options):
             "unit": "kg CO2eq", "source": "backend", "result_kind": "garment_estimate",
             "formula_version": calculated["formula_version"], "profile_version": profile.version,
             "usage_scope": profile.usage_scope,
+            "value_basis": "representative_weight_not_statistical_average",
             "research_only": profile.usage_scope == "research_scenario",
             "calculation_scope": profile.scope, "provenance_status": "available",
             "assumptions": ["total_garment_mass_as_fiber_proxy"],

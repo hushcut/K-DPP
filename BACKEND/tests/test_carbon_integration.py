@@ -53,7 +53,8 @@ def test_selected_research_policy_is_explicit_and_unsupported_fibers_fail(client
     assert unsupported.json()["error_code"] == "FACTOR_UNAVAILABLE"
     history = client.get("/me/history", headers=headers).json()["history"]
     assert len(history) == 1
-    assert history[0]["calculation_snapshot"]["response"]["research_only"] is True
+    snapshot = client.get(history[0]["provenance_url"], headers=headers).json()["calculation_snapshot"]
+    assert snapshot["response"]["research_only"] is True
 
 
 def test_v2_result_removed_with_account_and_closet(client):
