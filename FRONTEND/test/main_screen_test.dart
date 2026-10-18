@@ -1229,6 +1229,46 @@ void main() {
     await pumpMainScreen(tester, navigationBarOpacity: 1.0);
     expect(find.byType(BackdropFilter), findsNothing);
   });
+
+  // C58: 글자를 키우면 스캔 버튼 아래 '스캔' 이 18 칸에 위아래가 잘렸다(1.8배부터).
+  // 이제 상자(94) 안에서 2배까지 늘어나고, 그보다 크면 세 이름 모두 2배에서 멈춘다.
+  for (final scale in [2.0, 3.0]) {
+    testWidgets('글자 $scale배·320 폭에서도 하단 메뉴 이름이 잘리지 않고, 세 이름이 같은 크기다', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = scale;
+      addTearDown(tester.view.reset);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+      await pumpMainScreen(tester);
+      expect(tester.takeException(), isNull);
+
+      final barBottom = tester
+          .getRect(
+            find
+                .ancestor(
+                  of: find.text('홈'),
+                  matching: find.byType(FrostedSurface),
+                )
+                .first,
+          )
+          .bottom;
+      for (final label in ['스캔', '홈', '옷장']) {
+        // 12pt 이름은 2배(24)까지만 커진다.
+        expect(
+          tester.widget<Text>(find.text(label)).textScaler?.scale(12),
+          24,
+          reason: label,
+        );
+        // 글자 높이(24 × 줄 높이 1.1)를 다 받았다(칸에 잘리지 않는다).
+        final rect = tester.getRect(find.text(label));
+        expect(rect.height, greaterThanOrEqualTo(24 * 1.1 - 0.5), reason: label);
+        expect(rect.bottom, lessThanOrEqualTo(barBottom), reason: label);
+      }
+    });
+  }
 }
 
 /// 탄소 계산 응답을 붙잡아 두는 서비스입니다. 계산을 기다리는 사이 계정을 바꿔 보는 데 씁니다(C26).

@@ -15,4 +15,11 @@ abstract final class BottomNavigationMetrics {
 
   /// 탭이 놓인 둥근 막대 높이입니다.
   static const double barHeight = 70;
+
+  /// 탭 이름 글자가 시스템 글자 크기를 따라 커질 수 있는 최대 배율입니다.
+  ///
+  /// 스캔 버튼은 원(66) 아래 1 띄워 이름을 쓰므로, 상자([boxHeight]) 안에 남는 높이는 27 입니다.
+  /// 12pt·줄 높이 1.1 글자는 2배에서 약 26.7 이라 여기까지는 잘리지 않습니다. 세 탭이 같은
+  /// 크기로 보이도록 홈·옷장도 같은 배율에서 멈춥니다.
+  static const double labelMaxTextScale = 2.0;
 }
