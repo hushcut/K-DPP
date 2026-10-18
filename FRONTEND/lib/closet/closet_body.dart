@@ -276,6 +276,8 @@ extension _ClosetBody on _ClosetScreenState {
       textInputAction: TextInputAction.search,
       decoration: InputDecoration(
         hintText: '옷 이름, 소재 검색',
+        // 큰 글자에서는 한 줄에 다 들어가지 않아 '…' 로 잘리므로 두 줄까지 보여 줍니다.
+        hintMaxLines: 2,
         hintStyle: TextStyle(color: palette.secondaryText, fontSize: 14),
         prefixIcon: Icon(
           Icons.search,
