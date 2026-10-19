@@ -28,6 +28,7 @@ BACKEND/
 ## 처음 실행
 
 Windows 기준입니다. DB 는 PostgreSQL 이고, 로컬에서는 Docker Desktop 으로 띄웁니다.
+이 문서의 명령은 저장소를 받은 폴더(루트)에서 시작합니다 — `cd BACKEND` 가 첫 줄입니다.
 
 **Python 3.10 이상이 필요합니다.** requirements.txt의 고정 버전들이 3.9 이하에서는
 설치되지 않습니다(3.12에서 동작 확인). 여러 버전이 설치돼 있다면 `py -3.12 -m venv .venv`처럼
@@ -42,25 +43,29 @@ Windows 기준입니다. DB 는 PostgreSQL 이고, 로컬에서는 Docker Deskto
 설치 전에 열어 둔 터미널은 `docker` 를 찾지 못하니 새로 여세요.
 
 ```bat
-cd C:\DEV\K-DPP\BACKEND
+cd BACKEND
 python -m venv .venv
 .venv\Scripts\activate.bat
 python -m pip install -r requirements.txt
 docker compose up -d --wait
 alembic upgrade head
-python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 - `docker compose up -d --wait`: 로컬 PostgreSQL(`compose.yaml`)을 띄웁니다. 처음 한 번은 이미지를 받습니다.
 - `alembic upgrade head`: 표를 만들고 소재 시드를 넣습니다. 코드를 받은 뒤 새 리비전이 있으면 다시 실행합니다.
   빼먹고 서버를 켜면 "DB 스키마가 최신이 아닙니다" 로 시작하지 않습니다.
 - 주소를 따로 주지 않으면 `postgresql+psycopg://kdpp:kdpp@127.0.0.1:5432/k_dpp`(compose 의 개발용 DB)를 씁니다.
+- 서버는 `--host 127.0.0.1` 로 이 PC 안에서만 받습니다. Android Emulator(`10.0.2.2`)·iOS Simulator·USB 실기기
+  (`adb reverse tcp:8000 tcp:8000`)는 모두 이 주소로 닿습니다. `0.0.0.0` 은 같은 Wi-Fi 의 폰이 PC IP 로 부를 때만
+  쓰고 끝나면 되돌립니다 — 공유기·방화벽 설정에 따라 바깥 인터넷에서도 8000 번이 열립니다(2026-09-17 서버 로그에
+  외부 스캐너 접속이 찍힌 적이 있음).
 
 PowerShell에서 가상환경 활성화가 막히면 다음처럼 가상환경 Python을 직접 실행해도 됩니다.
 
 ```powershell
-cd C:\DEV\K-DPP\BACKEND
-.\.venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+cd BACKEND
+.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 서버 문서는 브라우저에서 확인합니다.
@@ -99,7 +104,7 @@ http://10.0.2.2:8000
 **되돌릴 수 없습니다.** 배포 서버에서는 하지 마세요.
 
 ```bat
-cd C:\DEV\K-DPP\BACKEND
+cd BACKEND
 docker compose down -v
 docker compose up -d --wait
 alembic upgrade head
@@ -113,7 +118,7 @@ alembic upgrade head
 테스트 전용 DB(`k_dpp_test`)를 씁니다. 먼저 Docker Desktop을 설치하고 PostgreSQL을 띄웁니다.
 
 ```bat
-cd C:\DEV\K-DPP\BACKEND
+cd BACKEND
 docker compose up -d --wait
 .venv\Scripts\activate.bat
 python -m pytest
@@ -155,13 +160,14 @@ PostgreSQL 스키마와 소재 시드는 `migrations/`의 Alembic 리비전으�
 주소를 주지 않으면 로컬 개발용 DB(`compose.yaml`의 `k_dpp`)를 씁니다.
 
 ```bat
-cd C:\DEV\K-DPP\BACKEND
+cd BACKEND
 .venv\Scripts\activate.bat
 alembic upgrade head
 ```
 
 - 리비전: `98b9938f3cd5` 기준선(develop 표 4개) → `09f14728ed0b` 소재 시드 22종 → `19b7eee3b75c` 카카오 로그인(`social_accounts`,
-  users 이메일·비밀번호 NULL 허용) → `a28c2a50b363` 옷장 서버 백업(`closet_snapshots`). 뒤의 둘은 지킬 행이 있으면 downgrade 를 거부합니다.
+  users 이메일·비밀번호 NULL 허용) → `a28c2a50b363` 옷장 서버 백업(`closet_snapshots`) → `c7d2e0180001` 탄소 V2 계수·정책 표와 결과 출처 칸
+  ([CARBON_V2_INTEGRATION.md](CARBON_V2_INTEGRATION.md)). 뒤의 셋은 지킬 행이 있으면 downgrade 를 거부합니다.
 - 모델(`database.py`)을 바꾸면 `alembic revision --autogenerate -m "설명"`으로 리비전을 만들고 **내용을 꼭 손으로 검토**합니다.
   `alembic check`가 `No new upgrade operations detected.`면 모델과 리비전이 맞습니다.
 - 소재·계수를 바꿀 때는 `init_data.py`의 `MATERIAL_SEEDS`(프런트 사본 두 파일도 함께)를 고치고, 같은 변경을 하는 새 리비전(UPDATE·INSERT)을 더합니다.
@@ -218,6 +224,15 @@ AI/**/key.json
 ```
 
 실제 Google Vision 인증키는 `AI/kdpp_ai_ocr_integrated/key.json` 위치에 둘 수 있지만, `key.json`은 절대 GitHub에 올리지 않습니다.
+
+## 라벨 OCR(Google Vision) 켜기
+
+- 서버는 `AI/kdpp_ai_ocr_integrated/key.json` 이 있으면 그 키로, 없으면 환경변수 `GOOGLE_APPLICATION_CREDENTIALS`
+  가 가리키는 키로 Vision 을 부릅니다(`main.py` `/api/scan`).
+- 키가 없으면 `/api/scan` 은 502(`AI OCR 처리에 실패했습니다.`)이고 서버 로그에 `OcrConfigurationError` 가 찍힙니다.
+  앱은 '라벨을 읽지 못했어요' 직접 입력 화면으로 넘어가므로, OCR 없이 화면만 볼 때는 키를 빼 두면 됩니다.
+- 키가 있으면 사진 분석마다 Vision 요금이 나갈 수 있습니다(결제가 연결된 프로젝트). 하루 상한은
+  `docs/SCAN_API_CONTRACT.md` 2-5절.
 
 ## API 문서
 

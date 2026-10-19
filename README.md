@@ -45,7 +45,7 @@ python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt
 docker compose up -d --wait
 .venv/Scripts/alembic.exe upgrade head
-.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000
+.venv/Scripts/python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
 DB 는 Docker Desktop 으로 띄우는 로컬 PostgreSQL 입니다. 자세한 것은 [BACKEND/README.md](BACKEND/README.md).
