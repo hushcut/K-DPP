@@ -8,6 +8,7 @@ import '../services/auth_api_service.dart';
 import '../theme/app_palette.dart';
 import '../utils/accessibility_announcer.dart';
 import '../utils/auth_form_validators.dart';
+import '../utils/motion_preference.dart';
 import 'app_banner.dart';
 import 'auth_form_widgets.dart';
 
@@ -143,12 +144,6 @@ class EmailCodeSectionState extends State<EmailCodeSection>
 
   bool get _isWaitingToResend => _secondsUntil(_resendAvailableAt) > 0;
 
-  /// '동작 줄이기'를 켰는지입니다. iOS 는 이 설정을 `reduceMotion` 으로만 알려
-  /// [MediaQuery.disableAnimationsOf](Android '애니메이션 삭제')에 실리지 않으므로 둘 다 봅니다.
-  bool _reducesMotion(BuildContext context) =>
-      MediaQuery.disableAnimationsOf(context) ||
-      View.of(context).platformDispatcher.accessibilityFeatures.reduceMotion;
-
   void _handleEmailChanged() {
     final target = _targetEmail;
     if (target == null) return;
@@ -213,8 +208,8 @@ class EmailCodeSectionState extends State<EmailCodeSection>
       _isCodeFieldVisible = true;
     });
     if (!wasCodeFieldVisible) {
-      // '동작 줄이기'면 펼치지 않고 바로 다 보입니다.
-      if (_reducesMotion(context)) {
+      // '동작 줄이기'(iOS 포함)면 펼치지 않고 바로 다 보입니다.
+      if (reducesMotion(context)) {
         _revealController.value = 1;
       } else {
         _revealController.forward();
