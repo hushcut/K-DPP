@@ -803,9 +803,9 @@ class ScanResultView extends StatelessWidget {
               labelStyle: TextStyle(color: secondaryText),
               hintStyle: TextStyle(color: secondaryText),
               isDense: true,
-              contentPadding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-              // 촘촘한 칸(43)도 누를 수 있는 높이는 48 이 되게 합니다(C59).
-              constraints: const BoxConstraints(minHeight: 48),
+              // 촘촘한 칸도 높이가 48 이 되게 위아래 여백을 정합니다(C59). 최소 높이 제약으로 늘리면
+              // 누를 곳만 커지고 테두리는 43 으로 그려져, ☰ 아이콘 때문에 48 인 칸과 높이가 어긋났습니다.
+              contentPadding: const EdgeInsets.fromLTRB(12, 14.5, 12, 12.5),
               // 좁은 화면에서 오류 문구가 한 줄로 잘리지 않게 합니다.
               errorMaxLines: 2,
               suffixIcon: materialCatalog == null
@@ -855,8 +855,7 @@ class ScanResultView extends StatelessWidget {
               suffixText: '%',
               suffixStyle: TextStyle(color: secondaryText),
               isDense: true,
-              contentPadding: const EdgeInsets.fromLTRB(8, 12, 8, 10),
-              constraints: const BoxConstraints(minHeight: 48),
+              contentPadding: const EdgeInsets.fromLTRB(8, 14.5, 8, 12.5),
               errorMaxLines: 2,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
