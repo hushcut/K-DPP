@@ -804,6 +804,8 @@ class ScanResultView extends StatelessWidget {
               hintStyle: TextStyle(color: secondaryText),
               isDense: true,
               contentPadding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+              // 촘촘한 칸(43)도 누를 수 있는 높이는 48 이 되게 합니다(C59).
+              constraints: const BoxConstraints(minHeight: 48),
               // 좁은 화면에서 오류 문구가 한 줄로 잘리지 않게 합니다.
               errorMaxLines: 2,
               suffixIcon: materialCatalog == null
@@ -854,6 +856,7 @@ class ScanResultView extends StatelessWidget {
               suffixStyle: TextStyle(color: secondaryText),
               isDense: true,
               contentPadding: const EdgeInsets.fromLTRB(8, 12, 8, 10),
+              constraints: const BoxConstraints(minHeight: 48),
               errorMaxLines: 2,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
