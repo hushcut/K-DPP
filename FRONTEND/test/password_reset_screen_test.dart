@@ -60,7 +60,74 @@ void main() {
 
     expect(find.byType(PasswordResetScreen), findsOneWidget);
     expect(fieldText(tester, '이메일'), 'honggildong@example.com');
+    // 이메일이 채워져 있어도 번호 칸은 [인증번호 받기]를 눌러야 나타납니다(DECISIONS 266).
+    expect(field('인증번호'), findsNothing);
+  });
+
+  testWidgets('번호를 받기 전에 다시 설정하면 [인증번호 받기] 아래에서 막고, 누르면 시간 초과로 끝나도 칸이 남는다', (
+    tester,
+  ) async {
+    await pumpLoginWithReset(tester);
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await tapVisible(tester, find.text('비밀번호를 잊으셨나요?'));
+    await tester.enterText(field('새 비밀번호'), 'newpassword123');
+    await tester.enterText(field('새 비밀번호 확인'), 'newpassword123');
+    await tapVisible(tester, find.widgetWithText(ElevatedButton, '비밀번호 다시 설정'));
+
+    final error = find.text('인증번호를 받아 입력해 주세요');
+    expect(error, findsOneWidget);
+    expect(field('인증번호'), findsNothing);
+    expect(backend.requests, isEmpty);
+
+    final pendingCode = backend.hold('/auth/email-code');
+    final requestButton = find.byType(OutlinedButton);
+    await tester.ensureVisible(requestButton);
+    await tester.pumpAndSettle();
+    await tester.tap(requestButton);
+    await tester.pump();
+
+    expect(field('인증번호'), findsOneWidget);
+    // 안내는 칸이 펼쳐지는 동안 같이 접히고, 다 펼치면 지워집니다.
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(error, findsNothing);
+
+    await tester.pump(const Duration(seconds: 15));
+    await tester.pump();
+
+    expectAppBanner(
+      tester,
+      '응답이 늦어지고 있어요. 네트워크를 확인한 뒤 다시 시도해 주세요.',
+      AppBannerKind.failure,
+    );
+    expect(field('인증번호'), findsOneWidget);
     expect(find.text('인증번호 받기를 누르면 가입된 이메일로 6자리 숫자를 보내 드려요'), findsOneWidget);
+    pendingCode.complete();
+  });
+
+  testWidgets('너무 빨리 다시 요청한 429 에도 번호 칸은 남고, 이메일을 고쳐도 숨지 않는다', (tester) async {
+    backend.on(
+      '/auth/email-code',
+      serverErrorResponse(
+        429,
+        'EMAIL_CODE_RESEND_TOO_SOON',
+        '인증번호는 42초 후 다시 요청할 수 있습니다.',
+        extra: {'retry_after': 42},
+      ),
+    );
+    await pumpLoginWithReset(tester);
+    await tapVisible(tester, find.text('비밀번호를 잊으셨나요?'));
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await tapVisible(tester, find.byType(OutlinedButton));
+
+    expectAppBanner(tester, '인증번호는 42초 후에 다시 받을 수 있어요.', AppBannerKind.failure);
+    expect(field('인증번호'), findsOneWidget);
+
+    await tester.enterText(field('인증번호'), '123456');
+    await tester.enterText(field('이메일'), 'other@example.com');
+    await tester.pump();
+
+    expect(field('인증번호'), findsOneWidget);
+    expect(fieldText(tester, '인증번호'), isEmpty);
   });
 
   testWidgets('번호를 받아 새 비밀번호로 바꾸면 로그인 화면에 이메일을 채우고 옛 비밀번호를 지운다', (
@@ -212,8 +279,11 @@ void main() {
   });
 
   testWidgets('iOS 에서 번호 칸 막대의 ∧ 는 이메일, ∨ 는 새 비밀번호로 옮긴다', (tester) async {
+    backend.on('/auth/email-code', emailCodeSentResponse());
     await pumpLoginWithReset(tester);
     await tapVisible(tester, find.text('비밀번호를 잊으셨나요?'));
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await tapVisible(tester, find.byType(OutlinedButton));
 
     Finder arrow(String label) => find.descendant(
       of: find.byType(NumberKeyboardToolbar),
@@ -244,15 +314,17 @@ void main() {
   }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
   testWidgets('새 비밀번호도 가입과 같은 규칙으로 먼저 거른다', (tester) async {
+    backend.on('/auth/email-code', emailCodeSentResponse());
     await pumpLoginWithReset(tester);
     await tapVisible(tester, find.text('비밀번호를 잊으셨나요?'));
     await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await tapVisible(tester, find.byType(OutlinedButton));
     await tester.enterText(field('인증번호'), '123456');
     await tester.enterText(field('새 비밀번호'), 'short');
     await tester.enterText(field('새 비밀번호 확인'), 'short');
     await tapVisible(tester, find.widgetWithText(ElevatedButton, '비밀번호 다시 설정'));
 
     expect(find.text('비밀번호는 8자 이상 입력해 주세요'), findsOneWidget);
-    expect(backend.requests, isEmpty);
+    expect(backend.bodiesFor('/auth/password-reset'), isEmpty);
   });
 }

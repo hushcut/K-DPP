@@ -1,3 +1,5 @@
+import 'dart:ui' show SemanticsFlag;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -5,6 +7,7 @@ import 'package:k_dpp/email_login_screen.dart';
 import 'package:k_dpp/services/auth_api_service.dart';
 import 'package:k_dpp/signup_screen.dart';
 import 'package:k_dpp/widgets/app_banner.dart';
+import 'package:k_dpp/widgets/email_code_section.dart';
 import 'package:k_dpp/widgets/number_keyboard_toolbar.dart';
 
 import 'helpers/app_back_button_state.dart';
@@ -23,6 +26,10 @@ void main() {
 
   Finder field(String label) =>
       find.widgetWithText(TextFormField, label, skipOffstage: false);
+
+  /// 화면에 나와 있는 칸만 찾습니다. 받기 전의 번호 칸처럼 숨겨 둔 칸은 빠집니다.
+  Finder visibleField(String label) =>
+      find.widgetWithText(TextFormField, label);
 
   Finder requestButton() => find.byType(OutlinedButton);
 
@@ -76,6 +83,41 @@ void main() {
   /// 처음 화면의 번호 칸 안내이자, 받은 뒤 남은 시간이 보이는 자리입니다.
   Finder helperText(String text) => find.text(text, skipOffstage: false);
 
+  /// 낭독기에 보낸 알림 문장을 차례로 모읍니다.
+  List<String> recordAnnouncements(WidgetTester tester) {
+    final announcements = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockDecodedMessageHandler<dynamic>(
+      SystemChannels.accessibility,
+      (message) async {
+        final map = message as Map<dynamic, dynamic>;
+        if (map['type'] == 'announce') {
+          announcements.add((map['data'] as Map)['message'] as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger
+          .setMockDecodedMessageHandler<dynamic>(
+            SystemChannels.accessibility,
+            null,
+          ),
+    );
+    return announcements;
+  }
+
+  /// 번호 칸이 펼쳐지는 자리의 높이입니다(숨어 있으면 0).
+  double codeSectionHeight(WidgetTester tester) => tester
+      .getSize(
+        find
+            .descendant(
+              of: find.byType(EmailCodeSection),
+              matching: find.byType(SizeTransition),
+            )
+            .first,
+      )
+      .height;
+
   testWidgets('비밀번호 앞뒤 공백은 가입 검증에서 거부된다', (tester) async {
     await pumpSignupScreen(tester);
     await tester.enterText(field('이메일'), 'honggildong@example.com');
@@ -99,20 +141,101 @@ void main() {
     expect(find.text('비밀번호가 일치하지 않습니다'), findsOneWidget);
   });
 
-  testWidgets('번호 칸은 처음부터 보이고, 번호 없이 가입하면 번호를 받아 넣으라고 막는다', (tester) async {
+  testWidgets('번호 칸은 받기 전엔 숨어 있고, 번호 없이 가입하면 [인증번호 받기] 아래에 받아 넣으라고 막는다', (
+    tester,
+  ) async {
+    backend.on('/auth/email-code', emailCodeSentResponse());
+    final semantics = tester.ensureSemantics();
     await pumpSignupScreen(tester);
 
-    expect(field('인증번호'), findsOneWidget);
+    expect(visibleField('인증번호'), findsNothing);
+    expect(find.semantics.byFlag(SemanticsFlag.isTextField), findsExactly(4));
+    expect(codeSectionHeight(tester), 0);
     expect(requestButtonLabel(tester), '인증번호 받기');
-    expect(helperText('인증번호 받기를 누르면 메일로 6자리 숫자를 보내 드려요'), findsOneWidget);
 
     await tester.enterText(field('이메일'), 'honggildong@example.com');
     await fillAccountFields(tester);
     await submitSignupForm(tester);
 
-    expect(find.text('인증번호를 받아 입력해 주세요'), findsOneWidget);
+    // 숨은 칸 대신 버튼 바로 아래(닉네임 칸 위)에 붙고, 서버에는 보내지 않습니다.
+    final error = find.text('인증번호를 받아 입력해 주세요');
+    expect(error, findsOneWidget);
+    expect(
+      tester.getTopLeft(error).dy,
+      greaterThan(tester.getBottomLeft(requestButton()).dy),
+    );
+    expect(
+      tester.getBottomLeft(error).dy,
+      lessThan(tester.getTopLeft(field('닉네임')).dy),
+    );
+    expect(visibleField('인증번호'), findsNothing);
     expect(backend.requests, isEmpty);
+
+    // 번호를 받으러 누르면 칸이 나타나고 버튼 아래 안내는 사라집니다.
+    await requestCode(tester);
+
+    expect(visibleField('인증번호'), findsOneWidget);
+    expect(find.semantics.byFlag(SemanticsFlag.isTextField), findsExactly(5));
+    expect(error, findsNothing);
+    semantics.dispose();
   });
+
+  testWidgets(
+    'iOS 에서 번호를 받기 전 가입하면 버튼 아래 안내를 폼 검증처럼 1초 뒤 낭독기에 알린다',
+    (tester) async {
+      final announcements = recordAnnouncements(tester);
+      await pumpSignupScreen(tester);
+      await tester.enterText(field('이메일'), 'honggildong@example.com');
+      await fillAccountFields(tester);
+      await submitSignupForm(tester);
+
+      await tester.pump(const Duration(seconds: 1));
+
+      // 칸은 숨은 채라, 이 낭독은 버튼 아래 안내에서 온 것입니다.
+      expect(visibleField('인증번호'), findsNothing);
+      expect(announcements, ['인증번호를 받아 입력해 주세요']);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets('알림을 받지 않는 낭독기(최근 Android)는 버튼 아래 안내를 나타날 때 스스로 읽는다', (
+    tester,
+  ) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(supportsAnnounce: false);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    final semantics = tester.ensureSemantics();
+    await pumpSignupScreen(tester);
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await fillAccountFields(tester);
+    await submitSignupForm(tester);
+
+    expect(visibleField('인증번호'), findsNothing);
+    final node = find.semantics.byLabel('인증번호를 받아 입력해 주세요').evaluate().single;
+    expect(node.getSemanticsData().flagsCollection.isLiveRegion, isTrue);
+    semantics.dispose();
+  });
+
+  testWidgets(
+    'iOS 에서 번호와 닉네임이 함께 비면 화면 순서대로 번호 칸 오류부터 읽는다',
+    (tester) async {
+      final announcements = recordAnnouncements(tester);
+      backend.on('/auth/email-code', emailCodeSentResponse());
+      await pumpSignupScreen(tester);
+      await tester.enterText(field('이메일'), 'honggildong@example.com');
+      await requestCode(tester);
+      await tester.enterText(field('비밀번호'), 'password123');
+      await tester.enterText(field('비밀번호 확인'), 'password123');
+      await submitSignupForm(tester);
+
+      await tester.pump(const Duration(seconds: 1));
+
+      expect(find.text('닉네임을 입력해 주세요'), findsOneWidget);
+      expect(announcements, contains('인증번호를 받아 입력해 주세요'));
+      expect(announcements, isNot(contains('닉네임을 입력해 주세요')));
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
 
   testWidgets('이메일이 올바르지 않으면 번호를 요청하지 않고 이메일 칸에 알린다', (tester) async {
     await pumpSignupScreen(tester);
@@ -121,7 +244,193 @@ void main() {
 
     expect(find.text('올바른 이메일 형식을 입력해 주세요'), findsOneWidget);
     expect(backend.requests, isEmpty);
+    // 요청을 보내지 않았으니 번호 칸도 나타나지 않습니다.
+    expect(visibleField('인증번호'), findsNothing);
   });
+
+  testWidgets(
+    '[인증번호 받기]를 누르는 순간 칸이 펼쳐지고, 요청이 시간 초과로 끝나도 남아 메일로 온 번호를 넣을 수 있다',
+    (tester) async {
+      final pendingCode = backend.hold('/auth/email-code');
+      backend.on(
+        '/auth/signup',
+        jsonResponse({
+          'status': 'success',
+          'message': '회원가입이 완료되었습니다.',
+          'user': {
+            'id': 1,
+            'email': 'honggildong@example.com',
+            'nickname': '홍길동',
+          },
+        }, 200),
+      );
+      await pumpSignupScreen(tester);
+      await tester.enterText(field('이메일'), 'honggildong@example.com');
+      await tester.ensureVisible(requestButton());
+      await tester.pumpAndSettle();
+      await tester.tap(requestButton());
+      await tester.pump();
+
+      // 응답을 기다리는 동안에도 칸은 이미 나와 있습니다.
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(visibleField('인증번호'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 15));
+      await tester.pump();
+
+      expectAppBanner(
+        tester,
+        '응답이 늦어지고 있어요. 네트워크를 확인한 뒤 다시 시도해 주세요.',
+        AppBannerKind.failure,
+      );
+      expect(visibleField('인증번호'), findsOneWidget);
+      expect(find.text('인증번호 받기를 누르면 메일로 6자리 숫자를 보내 드려요'), findsOneWidget);
+      expect(isRequestButtonEnabled(tester), isTrue);
+
+      // 메일은 와 있었다면 그 번호로 가입할 수 있습니다.
+      await tester.enterText(field('인증번호'), '123456');
+      await fillAccountFields(tester);
+      await submitSignupForm(tester);
+
+      expect(backend.bodiesFor('/auth/signup').single['code'], '123456');
+      pendingCode.complete();
+    },
+  );
+
+  testWidgets('번호 칸은 아래 칸을 한 번에 밀지 않고 펼쳐진다', (tester) async {
+    backend.on('/auth/email-code', emailCodeSentResponse());
+    await pumpSignupScreen(tester);
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await tester.ensureVisible(requestButton());
+    await tester.pumpAndSettle();
+    await tester.tap(requestButton());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final halfway = codeSectionHeight(tester);
+
+    await tester.pump(const Duration(milliseconds: 200));
+
+    final opened = codeSectionHeight(tester);
+    expect(opened, greaterThan(60));
+    expect(halfway, greaterThan(0));
+    expect(halfway, lessThan(opened));
+
+    await tester.pumpAndSettle();
+    expect(codeSectionHeight(tester), opened);
+  });
+
+  testWidgets('버튼 아래 안내가 붙은 채 누르면 안내를 칸과 함께 접어, 아래 칸이 위로 튀지 않는다', (
+    tester,
+  ) async {
+    final pendingCode = backend.hold('/auth/email-code');
+    backend.on('/auth/email-code', emailCodeSentResponse());
+    await pumpSignupScreen(tester);
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await fillAccountFields(tester);
+    await submitSignupForm(tester);
+    final error = find.text('인증번호를 받아 입력해 주세요');
+    expect(error, findsOneWidget);
+
+    double sectionHeight() =>
+        tester.getSize(find.byType(EmailCodeSection)).height;
+    final before = sectionHeight();
+    await tester.ensureVisible(requestButton());
+    await tester.pumpAndSettle();
+    await tester.tap(requestButton());
+
+    final heights = <double>[];
+    await tester.pump();
+    heights.add(sectionHeight());
+    for (var frame = 0; frame < 15; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      heights.add(sectionHeight());
+    }
+
+    // 어느 프레임에서도 누르기 전보다 낮아지거나 앞 프레임보다 줄지 않습니다.
+    expect(heights.first, greaterThanOrEqualTo(before));
+    for (var i = 1; i < heights.length; i++) {
+      expect(heights[i], greaterThanOrEqualTo(heights[i - 1]));
+    }
+    expect(heights.last, greaterThan(before));
+    expect(error, findsNothing);
+
+    pendingCode.complete();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('번호 칸이 숨어 있는 동안은 Tab 으로도, 직접 옮기려 해도 포커스가 들어가지 않는다', (
+    tester,
+  ) async {
+    await pumpSignupScreen(tester);
+    FocusNode focusOf(String label) => tester
+        .widget<EditableText>(
+          // 숨은 칸은 화면 밖이라 안쪽 찾기에도 따로 줍니다.
+          find.descendant(
+            of: field(label),
+            matching: find.byType(EditableText, skipOffstage: false),
+            skipOffstage: false,
+          ),
+        )
+        .focusNode;
+
+    focusOf('이메일').requestFocus();
+    await tester.pump();
+    // 이메일 → [인증번호 받기] → 닉네임 차례로, 숨은 번호 칸은 건너뜁니다.
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    expect(focusOf('닉네임').hasFocus, isTrue);
+
+    focusOf('인증번호').requestFocus();
+    await tester.pump();
+    expect(focusOf('인증번호').hasFocus, isFalse);
+  });
+
+  /// '동작 줄이기'를 켠 채 [인증번호 받기]를 누르면 펼치지 않고 첫 프레임에 칸이 다 보이는지 봅니다.
+  Future<void> expectCodeFieldShownAtOnce(
+    WidgetTester tester,
+    FakeAccessibilityFeatures features,
+  ) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue = features;
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    backend.on('/auth/email-code', emailCodeSentResponse());
+    await pumpSignupScreen(tester);
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await tester.ensureVisible(requestButton());
+    await tester.pumpAndSettle();
+    await tester.tap(requestButton());
+    await tester.pump();
+
+    final shown = codeSectionHeight(tester);
+    expect(shown, greaterThan(60));
+
+    await tester.pumpAndSettle();
+    expect(codeSectionHeight(tester), shown);
+  }
+
+  testWidgets('Android 애니메이션 삭제를 켜 두면 번호 칸이 펼쳐지지 않고 바로 나타난다', (tester) async {
+    await expectCodeFieldShownAtOnce(
+      tester,
+      const FakeAccessibilityFeatures(disableAnimations: true),
+    );
+  });
+
+  // iOS 는 '동작 줄이기'를 disableAnimations 가 아니라 reduceMotion 으로만 알립니다.
+  testWidgets(
+    'iOS 동작 줄이기를 켜 두면 번호 칸이 펼쳐지지 않고 바로 나타난다',
+    (tester) async {
+      await expectCodeFieldShownAtOnce(
+        tester,
+        const FakeAccessibilityFeatures(
+          reduceMotion: true,
+          supportsAnnounce: true,
+        ),
+      );
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
 
   testWidgets('번호를 받으면 알리고, 다시 받기 대기와 남은 시간을 기기 시계로 센다', (tester) async {
     backend.on('/auth/email-code', emailCodeSentResponse());
@@ -190,10 +499,15 @@ void main() {
     expect(requestButtonLabel(tester), '인증번호 받기');
     expect(isRequestButtonEnabled(tester), isTrue);
     expect(helperText('인증번호 받기를 누르면 메일로 6자리 숫자를 보내 드려요'), findsOneWidget);
+    // 비우기만 하고 칸은 다시 숨기지 않습니다(DECISIONS 266).
+    expect(visibleField('인증번호'), findsOneWidget);
   });
 
   testWidgets('번호 칸은 숫자 6자리까지만 받는다', (tester) async {
+    backend.on('/auth/email-code', emailCodeSentResponse());
     await pumpSignupScreen(tester);
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await requestCode(tester);
     await tester.enterText(field('인증번호'), '12 34-5678');
     await tester.pump();
 
@@ -342,11 +656,14 @@ void main() {
     );
     expect(requestButtonLabel(tester), '인증번호 받기 (42초 후)');
     expect(isRequestButtonEnabled(tester), isFalse);
+    // 거절돼도 칸은 나와 있어, 앞서 받은 번호가 있으면 넣을 수 있습니다.
+    expect(visibleField('인증번호'), findsOneWidget);
 
     // 그 대기는 그 이메일 것이라, 다른 이메일이면 바로 받을 수 있습니다.
     await tester.enterText(field('이메일'), 'other@example.com');
     await tester.pump();
     expect(isRequestButtonEnabled(tester), isTrue);
+    expect(visibleField('인증번호'), findsOneWidget);
   });
 
   testWidgets('요청 한도에 닿은 긴 대기는 시간 단위로 보인다', (tester) async {
@@ -380,28 +697,13 @@ void main() {
       AppBannerKind.failure,
     );
     expect(isRequestButtonEnabled(tester), isTrue);
+    expect(visibleField('인증번호'), findsOneWidget);
   });
 
   testWidgets(
     'iOS 에서 번호 칸 오류는 폼 검증처럼 1초 뒤 낭독기에 알린다',
     (tester) async {
-      final announcements = <String>[];
-      tester.binding.defaultBinaryMessenger.setMockDecodedMessageHandler<
-        dynamic
-      >(SystemChannels.accessibility, (message) async {
-        final map = message as Map<dynamic, dynamic>;
-        if (map['type'] == 'announce') {
-          announcements.add((map['data'] as Map)['message'] as String);
-        }
-        return null;
-      });
-      addTearDown(
-        () => tester.binding.defaultBinaryMessenger
-            .setMockDecodedMessageHandler<dynamic>(
-              SystemChannels.accessibility,
-              null,
-            ),
-      );
+      final announcements = recordAnnouncements(tester);
 
       backend
         ..on('/auth/email-code', emailCodeSentResponse())
@@ -431,7 +733,10 @@ void main() {
   testWidgets('iOS 에서 번호 칸에 포커스가 있으면 키패드 위 막대의 ∨ 로 닉네임에 옮긴다', (
     tester,
   ) async {
+    backend.on('/auth/email-code', emailCodeSentResponse());
     await pumpSignupScreen(tester);
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await requestCode(tester);
     await tester.tap(field('인증번호'));
     await tester.pumpAndSettle();
 
@@ -453,7 +758,10 @@ void main() {
   }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
   testWidgets('iOS 에서 번호 칸 막대의 ∧ 로 이메일에 옮긴다', (tester) async {
+    backend.on('/auth/email-code', emailCodeSentResponse());
     await pumpSignupScreen(tester);
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await requestCode(tester);
     await tester.tap(field('인증번호'));
     await tester.pumpAndSettle();
 
