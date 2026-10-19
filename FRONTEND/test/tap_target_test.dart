@@ -230,6 +230,79 @@ void main() {
       });
     }
 
+    // 칸 최소 높이(constraints)만 48 로 주면 누를 곳은 48 이 되지만 테두리는 원래 높이(43)로 그려져,
+    // 함유율 칸이 ☰ 아이콘 때문에 48 인 소재명 칸보다 낮아 보였다(10-19 폰 확인). 테두리까지 48 인지 본다.
+    for (final withCatalog in [true, false]) {
+      testWidgets(
+        '스캔 결과 소재명·함유율 칸은 테두리까지 48 이다(소재 목록 ${withCatalog ? '있음' : '없음'})',
+        (tester) async {
+          usePhone(tester);
+          final catalog = withCatalog
+              ? MaterialCatalogController(
+                  fetchMaterials: () async => const [
+                    MaterialCatalogItem(
+                      id: 1,
+                      nameKo: '면',
+                      nameEn: 'cotton',
+                      aliases: [],
+                    ),
+                  ],
+                )
+              : null;
+          await catalog?.load();
+          final materialInputs = MaterialInputCollection()
+            ..setFromMaterials({'cotton': 100});
+          final titleController = TextEditingController(text: '새로 스캔한 의류');
+          addTearDown(() => catalog?.dispose());
+          addTearDown(materialInputs.dispose);
+          addTearDown(titleController.dispose);
+          await pump(
+            tester,
+            Scaffold(
+              body: ScanResultView(
+                formKey: GlobalKey<FormState>(),
+                hasTriedSubmit: false,
+                isSaving: false,
+                isScanFailed: true,
+                titleController: titleController,
+                selectedClothingType: ClothingTypeCatalog.defaultOption,
+                materialInputs: materialInputs,
+                materialCatalog: catalog,
+                scannedCare: '찬물 세탁',
+                originalMaterials: const {},
+                validateTitle: (_) => null,
+                validateMaterialName: (_) => null,
+                validateMaterialValue: (_) => null,
+                onSelectClothingType: () {},
+                onAddMaterial: () {},
+                onRemoveMaterial: (_) {},
+                onSubmit: () {},
+                onReset: () {},
+              ),
+            ),
+          );
+
+          // 첫 칸은 의류 이름이고, 그 뒤 두 칸이 한 줄의 소재명·함유율이다.
+          final fields = find.byType(TextFormField);
+          expect(fields, findsNWidgets(3));
+          for (final (label, field) in [
+            ('소재명', fields.at(1)),
+            ('함유율', fields.at(2)),
+          ]) {
+            final borderHeight = find
+                .descendant(of: field, matching: find.byType(CustomPaint))
+                .evaluate()
+                .map(
+                  (element) => (element.renderObject! as RenderBox).size.height,
+                )
+                .reduce((a, b) => a > b ? a : b);
+            expect(borderHeight, greaterThanOrEqualTo(48), reason: label);
+            expect(borderHeight, tester.getSize(field).height, reason: label);
+          }
+        },
+      );
+    }
+
     for (final message in ['카메라를 열지 못했어요.', '카메라 권한이 필요해요.']) {
       testWidgets('카메라 오류: $message', (tester) async {
         usePhone(tester);
