@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/utils/motion_preference.dart';
 
@@ -66,6 +67,45 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
+
+  testWidgets(
+    'iOS 동작 줄이기면 Flutter 의 애니메이션 줄이기(SemanticsBinding.disableAnimations)도 켜진다',
+    (tester) async {
+      expect(SemanticsBinding.instance.disableAnimations, isFalse);
+
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(
+            reduceMotion: true,
+            supportsAnnounce: true,
+          );
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+
+      expect(SemanticsBinding.instance.disableAnimations, isTrue);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  test('main() 은 기본 바인딩 대신 앱 바인딩을 만든다', () {
+    expect(
+      File('lib/main.dart').readAsStringSync(),
+      contains('AppWidgetsBinding();'),
+    );
+
+    final offenders = <String>[];
+    for (final file in Directory('lib').listSync(recursive: true)) {
+      if (file is! File || !file.path.endsWith('.dart')) continue;
+      final lines = file.readAsLinesSync();
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i].contains('WidgetsFlutterBinding.ensureInitialized()') &&
+            !lines[i].trimLeft().startsWith('//')) {
+          offenders.add('${file.path}:${i + 1}');
+        }
+      }
+    }
+    expect(offenders, isEmpty);
+  });
 
   test('앱 코드는 동작 줄이기를 reducesMotion 으로만 본다', () {
     final offenders = <String>[];

@@ -15,6 +15,7 @@ import 'signup_screen.dart';
 import 'settings_screen.dart';
 import 'theme/app_theme.dart';
 import 'theme_provider.dart';
+import 'utils/motion_preference.dart';
 import 'display_settings_screen.dart';
 import 'material_name_display_provider.dart';
 import 'navigation_bar_opacity_provider.dart';
@@ -22,7 +23,8 @@ import 'widgets/app_banner.dart';
 
 /// Flutter 바인딩과 화면 방향을 설정한 뒤 앱 전역 Provider를 주입합니다.
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  // iOS '동작 줄이기'도 Flutter 가 애니메이션을 줄이게 기본 바인딩 대신 앱 바인딩을 만듭니다.
+  AppWidgetsBinding();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
   // 키가 있는 빌드에서만 카카오 SDK 를 준비합니다(KakaoConfig). 실패해도 앱은 띄우고,
