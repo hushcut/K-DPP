@@ -24,18 +24,26 @@ void main() {
       );
     }
 
-    test('기준 없는 소재는 첫 소재와 남은 개수만 보인다', () {
+    // AI 연동 협의안 R1: 입력 거절이면 저장하지 않으므로 '저장했어요' 라고 하지 않는다.
+    test('기준 없는 소재는 첫 소재와 남은 개수만 보이고, 저장하지 못했다고 알린다', () {
       expect(
         badRequest(const ['텐셀']).userMessage,
-        '텐셀 소재는 기준이 없어 임시 추정값으로 저장했어요.',
+        '텐셀 소재는 탄소 계산 기준이 없어 저장하지 못했어요.',
       );
       expect(
         badRequest(const ['텐셀', '모달', '큐프라']).userMessage,
-        '텐셀 외 2개 소재는 기준이 없어 임시 추정값으로 저장했어요.',
+        '텐셀 외 2개 소재는 탄소 계산 기준이 없어 저장하지 못했어요.',
       );
     });
 
-    test('인터넷 끊김과 로그인 만료만 따로 알리고, 나머지 원인은 한 문장이다', () {
+    test('기준 없는 소재가 없는 입력 거절은 저장하지 못했다고 하고 소재와 혼용률을 확인하게 한다', () {
+      expect(
+        badRequest(const []).userMessage,
+        '탄소량을 계산할 수 없어 저장하지 못했어요. 소재와 혼용률을 확인해 주세요.',
+      );
+    });
+
+    test('인터넷 끊김과 로그인 만료만 따로 알리고, 입력 거절이 아닌 나머지 원인은 한 문장이다', () {
       String messageFor(CarbonApiErrorType type) =>
           CarbonApiException(type: type, message: '').userMessage;
 
@@ -48,7 +56,6 @@ void main() {
         '로그인이 만료됐어요. 탄소량은 임시 추정값으로 저장했어요.',
       );
       for (final type in [
-        CarbonApiErrorType.badRequest,
         CarbonApiErrorType.forbidden,
         CarbonApiErrorType.server,
         CarbonApiErrorType.timeout,
