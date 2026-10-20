@@ -284,7 +284,7 @@ OCR을 실행하지 않으므로 파일 여러 개의 합산 크기도 제한됩
 `ocr.conflicting_parts`에 해당 부위를 기록합니다. 충돌하거나 비율이 불완전한 부위는
 확정 조성에서 제외하고, 다음 우선순위의 확인된 부위를 선택합니다.
 
-대표 부위 우선순위는 `outer → generic → outer_2 → lining → filling → pocket → rib
+대표 부위 우선순위는 `outer → outer_2 → generic → lining → filling → pocket → rib
 → sleeve → color_block → embroidery_yarn`입니다. 상위 부위가 미확정이면
 `부위:composition_not_confirmed`와 `representative_part_fallback:선택부위` 경고를 남깁니다.
 `materials`는 정확히 `parts[selected_part]`의 조성이며, 의류 전체의 평균 조성이 아닙니다.
