@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -577,6 +578,227 @@ void main() {
         AppBannerKind.info,
       ));
     });
+
+    // AI 연동 협의안 R1: 서버가 계산할 수 없는 입력이라고 거절(400/422)하면 근거 없는 임시값으로
+    // 저장하지 않고, 입력을 그대로 둔 채 고치거나 다시 찍게 한다. 거절 본문은 서버 오류 처리
+    // (BACKEND main.py)가 보내는 모양 그대로다. 정상 계산(200)은 위 첫 시험이 본다.
+    group('계산 입력 거절(400/422)만 저장을 멈춘다 — AI 연동 협의안 R1', () {
+      const _ServerRejection materialNotFound = (
+        statusCode: 400,
+        body: {
+          'status': 'error',
+          'error_code': 'MATERIAL_NOT_FOUND',
+          'message': '등록되지 않은 소재가 있습니다.',
+          'detail': {
+            'error_code': 'MATERIAL_NOT_FOUND',
+            'message': '등록되지 않은 소재가 있습니다.',
+            'unknown_materials': ['아세테이트'],
+          },
+        },
+      );
+
+      ScanResult acetateResult() => ScanResult(
+        materials: const {'아세테이트': 60, '면': 40},
+        careInstruction: '드라이클리닝',
+        title: '분석한 블라우스',
+        category: 'knit',
+        health: 70,
+      );
+
+      Future<void> openAcetateResult(WidgetTester tester) async {
+        await tapAlbum(tester);
+        await finishAnalysis(tester, ScanAnalysisSuccess(acetateResult()));
+        await chooseType(tester, '니트');
+        expect(find.byType(ScanResultView), findsOneWidget);
+      }
+
+      // 옷장에도 저장 완료 콜백(리포트 열기)에도 가지 않고, 저장 중 표시가 풀린 결과 화면에 남는다.
+      Future<void> expectNotSavedAndEditable(
+        WidgetTester tester,
+        ClosetProvider provider,
+      ) async {
+        expect(savedClothes, isEmpty);
+        expect(provider.items, isEmpty);
+        expect(
+          (await storage.loadClothesListOrNullFor('a@example.com')) ??
+              const <Clothes>[],
+          isEmpty,
+        );
+        expect(find.byType(ScanResultView), findsOneWidget);
+        expect(find.byType(ScanCameraView), findsNothing);
+        expect(find.textContaining('저장했어요'), findsNothing);
+        // 저장 중이면 버튼 글자 대신 도는 표시가 들어가 이 버튼을 찾지 못한다.
+        expect(
+          tester
+              .widget<ElevatedButton>(
+                find.widgetWithText(ElevatedButton, '옷장에 저장하기'),
+              )
+              .onPressed,
+          isNotNull,
+        );
+      }
+
+      testWidgets(
+        '400 MATERIAL_NOT_FOUND 면 옷장에 넣지 않고 리포트도 열지 않으며, 입력과 소재명을 둔 채 기준이 없다고 알린다',
+        (tester) async {
+          carbon.rejectWith = materialNotFound;
+          final provider = await pumpScanScreen(tester, signedIn: true);
+          await openAcetateResult(tester);
+
+          await tapSave(tester);
+
+          expect(carbon.calls, hasLength(1));
+          await expectNotSavedAndEditable(tester, provider);
+          expect(titleText(tester), '분석한 블라우스');
+          expect(materialField('아세테이트'), findsOneWidget);
+          expect(materialField('60'), findsOneWidget);
+          expect(materialField('면'), findsOneWidget);
+          expect(materialField('40'), findsOneWidget);
+          expect(
+            tester.widget<TextFormField>(materialField('아세테이트')).enabled,
+            isTrue,
+          );
+          expect(shownBanner(tester), (
+            '아세테이트 소재는 탄소 계산 기준이 없어 저장하지 못했어요.',
+            AppBannerKind.failure,
+          ));
+        },
+      );
+
+      testWidgets(
+        '400 이 소재 비율 같은 다른 입력 거절이면 저장하지 않고, 저장했다는 말 없이 혼용률을 확인하라고 알린다',
+        (tester) async {
+          carbon.rejectWith = (
+            statusCode: 400,
+            body: {
+              'status': 'error',
+              'error_code': 'MATERIAL_RATIO_INVALID',
+              'message': '계산 입력 또는 계수 설정을 확인해 주세요.',
+              'detail': {
+                'error_code': 'MATERIAL_RATIO_INVALID',
+                'message': '계산 입력 또는 계수 설정을 확인해 주세요.',
+              },
+            },
+          );
+          final provider = await pumpScanScreen(tester, signedIn: true);
+          await openKnitResult(tester);
+
+          await tapSave(tester);
+
+          expect(carbon.calls, hasLength(1));
+          await expectNotSavedAndEditable(tester, provider);
+          expect(titleText(tester), '분석한 니트');
+          expect(materialField('80'), findsOneWidget);
+          expect(materialField('20'), findsOneWidget);
+          expect(shownBanner(tester), (
+            '탄소량을 계산할 수 없어 저장하지 못했어요. 소재와 혼용률을 확인해 주세요.',
+            AppBannerKind.failure,
+          ));
+        },
+      );
+
+      testWidgets('422 VALIDATION_ERROR 면 저장하지 않고 입력을 둔 채 저장 중 표시를 푼다', (
+        tester,
+      ) async {
+        carbon.rejectWith = (
+          statusCode: 422,
+          body: {
+            'status': 'error',
+            'error_code': 'VALIDATION_ERROR',
+            'message': '요청 형식이 올바르지 않습니다.',
+            'detail': [
+              {
+                'loc': ['body', 'materials', '면'],
+                'msg': 'Input should be a valid number',
+                'type': 'float_parsing',
+              },
+            ],
+          },
+        );
+        final provider = await pumpScanScreen(tester, signedIn: true);
+        await openKnitResult(tester);
+
+        await tapSave(tester);
+
+        expect(carbon.calls, hasLength(1));
+        await expectNotSavedAndEditable(tester, provider);
+        expect(titleText(tester), '분석한 니트');
+        expect(materialField('면'), findsOneWidget);
+        expect(find.bySemanticsLabel('의류 저장 중'), findsNothing);
+        expect(shownBanner(tester)?.$2, AppBannerKind.failure);
+      });
+
+      testWidgets('거절된 뒤 소재를 고쳐 다시 누르면 새 입력으로 계산을 다시 받고, 성공하면 한 번만 저장한다', (
+        tester,
+      ) async {
+        carbon.rejectWith = materialNotFound;
+        final provider = await pumpScanScreen(tester, signedIn: true);
+        await openAcetateResult(tester);
+        await tapSave(tester);
+        expect(provider.items, isEmpty);
+
+        carbon.rejectWith = null;
+        await tester.enterText(materialField('아세테이트'), '폴리에스터');
+        await tester.pump();
+        await tapSave(tester);
+
+        expect(carbon.calls.map((call) => call.materials), [
+          {'아세테이트': 60.0, '면': 40.0},
+          {'폴리에스터': 60.0, '면': 40.0},
+        ]);
+        final saved = savedClothes.single;
+        expect(saved.materials, {'폴리에스터': 60.0, '면': 40.0});
+        expect(saved.carbonFootprintSource, CarbonFootprintSource.server);
+        expect(saved.savedResultId, 4242);
+        expect(provider.items.single.savedResultId, 4242);
+        expect(find.byType(ScanCameraView), findsOneWidget);
+      });
+
+      // 입력 거절이 아닌 실패는 전처럼 임시 추정값으로 저장한다. 401·서버 오류·세션 만료는 위 시험들이 본다.
+      for (final (type, message) in [
+        (CarbonApiErrorType.network, '인터넷에 연결할 수 없어 임시 추정값으로 저장했어요.'),
+        (CarbonApiErrorType.timeout, '탄소량은 임시 추정값으로 저장했어요.'),
+        (CarbonApiErrorType.forbidden, '탄소량은 임시 추정값으로 저장했어요.'),
+        (CarbonApiErrorType.invalidResponse, '탄소량은 임시 추정값으로 저장했어요.'),
+        (CarbonApiErrorType.unknown, '탄소량은 임시 추정값으로 저장했어요.'),
+      ]) {
+        testWidgets('계산이 ${type.name} 로 실패하면 입력 거절이 아니므로 전처럼 임시 추정값으로 저장한다', (
+          tester,
+        ) async {
+          carbon.failWith = type;
+          final provider = await pumpScanScreen(tester, signedIn: true);
+          await openKnitResult(tester);
+
+          await tapSave(tester);
+
+          expect(carbon.calls, hasLength(1));
+          expect(
+            savedClothes.single.carbonFootprintSource,
+            CarbonFootprintSource.localEstimate,
+          );
+          expect(provider.items, hasLength(1));
+          expect(shownBanner(tester), (message, AppBannerKind.info));
+        });
+      }
+
+      // 비로그인 저장은 R1 범위 밖이다(서버 계산을 거치지 않음 — 사용자 2026-10-20).
+      testWidgets('로그인하지 않았으면 미지원 소재도 서버에 묻지 않고 전처럼 기기 추정값으로 저장한다', (
+        tester,
+      ) async {
+        carbon.rejectWith = materialNotFound;
+        final provider = await pumpScanScreen(tester);
+        await openAcetateResult(tester);
+
+        await tapSave(tester);
+
+        expect(carbon.calls, isEmpty);
+        expect(
+          savedClothes.single.carbonFootprintSource,
+          CarbonFootprintSource.localEstimate,
+        );
+        expect(provider.items, hasLength(1));
+      });
+    });
   });
 
   // C53·C54: 라이트 모드에서 흰 바탕 대비 4.5:1 에 못 미치던 green·redAccent 글자와 버튼 바탕.
@@ -690,7 +912,11 @@ class _FakeScanCaptureService extends ScanCaptureService {
   }
 }
 
+/// 서버가 계산 요청을 거절할 때 돌려주는 상태 코드와 본문입니다.
+typedef _ServerRejection = ({int statusCode, Map<String, Object?> body});
+
 /// 받은 요청을 기록하고 정해 둔 계산값을 돌려주거나 [failWith] 오류로 실패하는 탄소 계산 서비스입니다.
+/// [rejectWith] 를 정하면 서버 오류 본문을 실제 서비스와 같은 변환으로 예외로 바꿔 던집니다.
 class _FakeCarbonApiService extends CarbonApiService {
   final List<
     ({
@@ -702,6 +928,7 @@ class _FakeCarbonApiService extends CarbonApiService {
   >
   calls = [];
   CarbonApiErrorType? failWith;
+  _ServerRejection? rejectWith;
 
   @override
   Future<CarbonCalculationResult> calculate({
@@ -716,6 +943,13 @@ class _FakeCarbonApiService extends CarbonApiService {
       maxWeightGram: maxWeightGram,
       accessToken: accessToken,
     ));
+    final rejection = rejectWith;
+    if (rejection != null) {
+      throw CarbonApiException.fromStatusCode(
+        statusCode: rejection.statusCode,
+        responseBody: jsonEncode(rejection.body),
+      );
+    }
     final type = failWith;
     if (type != null) {
       throw CarbonApiException(type: type, message: '');

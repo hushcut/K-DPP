@@ -1123,6 +1123,45 @@ void main() {
       expect(await savedIdsFor(storage, 'a@example.com'), [null]);
       expect(find.textContaining('로그인이 만료됐어요'), findsNothing);
     });
+
+    // AI 연동 협의안 R1: 입력 거절(400/422)이면 근거 없는 임시값으로 어느 옷장에도 넣지 않는다.
+    // 저장 구간의 finally 를 거치지 않으므로 설정·"<" 잠금이 따로 풀리는지도 본다.
+    testWidgets('계산이 입력 거절이면 어느 옷장에도 넣지 않고 리포트를 열지 않으며 설정 잠금을 푼다', (
+      tester,
+    ) async {
+      final (provider, storage, carbonApi) = await startHeldServerSave(tester);
+      expect(settingsButton(tester).onPressed, isNull);
+
+      carbonApi.fail(CarbonApiErrorType.badRequest);
+      await tester.pump();
+      await tester.pump(routeTransition);
+
+      expect(provider.items, isEmpty);
+      expect(
+        await savedIdsFor(storage, 'a@example.com'),
+        anyOf(isNull, isEmpty),
+      );
+      expect(find.byType(ScanResultView), findsOneWidget);
+      expect(find.text('상세 리포트'), findsNothing);
+      expect(settingsButton(tester).onPressed, isNotNull);
+    });
+
+    testWidgets('로그아웃 뒤 계산이 입력 거절이면 저장을 시작한 계정 옷장에도 넣지 않는다', (tester) async {
+      final (provider, storage, carbonApi) = await startHeldServerSave(tester);
+
+      await provider.logout();
+      carbonApi.fail(CarbonApiErrorType.badRequest);
+      await tester.pump();
+      await tester.pump(routeTransition);
+
+      expect(provider.items, isEmpty);
+      expect(await storage.loadClothesListOrNull(), isNull);
+      expect(
+        await savedIdsFor(storage, 'a@example.com'),
+        anyOf(isNull, isEmpty),
+      );
+      expect(find.text('상세 리포트'), findsNothing);
+    });
   });
 
   // 2026-10-01 DECISIONS 75: 선택 모드에선 하단 메뉴를 높이는 남긴 채 아래로 밀어 숨기고,
