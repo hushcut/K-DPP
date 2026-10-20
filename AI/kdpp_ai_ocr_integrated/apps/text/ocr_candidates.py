@@ -8,10 +8,16 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from apps.text.composition_candidates import equivalent_composition
-from apps.text.material_extraction import PART_PATTERNS, _material_evidence, extract_materials, normalize_text
+from apps.text.material_extraction import extract_materials, normalize_text
 from apps.text.rules import EQUIVALENT_MATERIALS
 from apps.text.part_policy import OUTER_PARTS, PART_PRIORITY, part_rank
 from apps.text.ocr_layout import OcrWord, _horizontal_rows, _projected_height
+from apps.text.candidate_evidence import (
+    _has_explicit_complete_pairs,
+    _is_plain_part_heading,
+    # 기존 import 경로(ocr_text, 테스트)를 유지하기 위한 재공개
+    literal_yarn_table_over_failed_layout as literal_yarn_table_over_failed_layout,
+)
 
 
 @dataclass(frozen=True)
@@ -111,40 +117,6 @@ def _matching_word_tokens(text: str, layout_text: str, words: tuple[OcrWord, ...
     )
 
 
-def literal_yarn_table_over_failed_layout(raw: OcrCandidate, layout: OcrCandidate) -> bool:
-    """Keep a complete provider language table when row grouping breaks it.
-
-    This is one response with identical complete annotations, not an extra
-    OCR supporter. A different successful composition or any missing box is
-    never discarded. Unreadable foreign clauses remain in the raw evidence.
-    """
-    if (raw.layout_used or not layout.layout_used or raw.parser_status != "success"
-            or layout.parser_status != "failed" or layout.parts or layout.conflicting_parts
-            or raw.selected_part != "embroidery_yarn"
-            or "country_labelled_yarn_translations" not in raw.parser_warnings
-            or not raw.image_key or not raw.image_variant_key or not raw.image_words
-            or len(raw.image_region) != 4 or raw.source != layout.source
-            or raw.image_key != layout.image_key or raw.image_variant_key != layout.image_variant_key
-            or raw.image_words != layout.image_words or raw.image_region != layout.image_region
-            or len({word.page for word in raw.image_words}) != 1):
-        return False
-    from apps.text.scoped_materials import confirmed_yarn_declaration
-    from apps.text.ocr_geometry import _annotation_tokens, _covers_row_tokens
-
-    declaration = confirmed_yarn_declaration(raw.text)
-    if not declaration or len({item["language"] for item in declaration[1]["observations"]}) < 3:
-        return False
-    left, top, right, bottom = raw.image_region
-    if any(not (left - 2 <= word.left and word.right <= right + 2
-                and top - 2 <= word.top and word.bottom <= bottom + 2) for word in raw.image_words):
-        return False
-    return (Counter(_annotation_tokens(raw.text)) == Counter(_annotation_tokens(layout.text))
-            and _covers_row_tokens(_annotation_tokens(raw.text), list(raw.image_words),
-                                   tokenise=_annotation_tokens)
-            and _covers_row_tokens(_annotation_tokens(layout.text), list(layout.image_words),
-                                   tokenise=_annotation_tokens))
-
-
 def _upright_rotated_rows(words: tuple[OcrWord, ...]) -> str | None:
     """Use every polygon to prove one direction before checking upright rows."""
 
@@ -192,55 +164,6 @@ def _upright_rotated_rows(words: tuple[OcrWord, ...]) -> str | None:
     ):
         return None
     return _horizontal_rows(upright, slope)
-
-
-def _has_explicit_complete_pairs(
-    candidate: OcrCandidate, *, allow_translation_warnings: bool = False,
-) -> bool:
-    """Every observed material and ratio must have a same-row explicit pair."""
-
-    warnings = set(candidate.parser_warnings)
-    if allow_translation_warnings:
-        warnings -= {"registered_translation_alternatives", "damaged_translation_fragment",
-                     "multilingual_translation_rows", "unread_translation_rows"}
-    if (
-        candidate.parser_status != "success" or warnings
-        or candidate.conflicting_parts or candidate.unpaired_ratio_parts
-        or candidate.rejected_composition_parts or not candidate.parts
-        or candidate.observed_materials.keys() != candidate.parts.keys()
-        or candidate.observed_ratios.keys() != candidate.parts.keys()
-        or candidate.paired_material_ratios.keys() != candidate.parts.keys()
-    ):
-        return False
-    from apps.text.parse_label import build_line_infos
-
-    for info in build_line_infos(candidate.text):
-        if not info.materials or info.is_metadata:
-            continue
-        if not info.explicit_percent:
-            return False
-        materials = _material_evidence(info.normalized)
-        numbers = list(re.finditer(r"\d+(?:[.,]\d+)?\s*%", info.normalized))
-        order = sorted(
-            [(item.start, "material") for item in materials]
-            + [(item.start(), "ratio") for item in numbers]
-        )
-        # A material column followed by its ratio column still guesses the
-        # pairing, even when the parser records them on one reconstructed row.
-        if (
-            len(materials) != len(info.materials) or len(numbers) != len(info.numbers)
-            or any(left[1] == right[1] for left, right in zip(order, order[1:]))
-        ):
-            return False
-    for part, pairs in candidate.paired_material_ratios.items():
-        if (
-            Counter(material for material, _ratio in pairs) != Counter(candidate.observed_materials[part])
-            or Counter(ratio for _material, ratio in pairs) != Counter(candidate.observed_ratios[part])
-            or set((EQUIVALENT_MATERIALS.get(material, material), ratio) for material, ratio in pairs)
-            != set(equivalent_composition(candidate.parts[part]))
-        ):
-            return False
-    return True
 
 
 def rotated_layout_evidence(
@@ -335,11 +258,6 @@ def find_unpaired_ratio_parts(candidates: list[OcrCandidate]) -> tuple[str, ...]
                 located = located_generic_rejection_parts(candidate, candidates) if part == "generic" else ()
                 unresolved.update(located or (part,))
     return tuple(sorted(unresolved))
-
-
-def _is_plain_part_heading(text: str, part: str) -> bool:
-    heading = normalize_text(text).strip(" :;()[]{}")
-    return heading in {normalize_text(alias) for alias in PART_PATTERNS.get(part, [])}
 
 
 def _can_resolve_duplicate_material_rows(

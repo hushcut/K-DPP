@@ -79,7 +79,7 @@ def _evidence_rows(candidate: OcrCandidate, part: str, *, tokenise=_tokens):
 
 def _context_words(alternative: OcrCandidate, core: tuple[OcrWord, ...], *, tokenise=_tokens) -> tuple[OcrWord, ...]:
     """Preserve complete, non-composition text in a geometrically valid reread."""
-    from apps.text.ocr_candidates import _has_explicit_complete_pairs
+    from apps.text.candidate_evidence import _has_explicit_complete_pairs
     from apps.text.parse_label import build_line_infos, _is_metadata_line
 
     if not _has_explicit_complete_pairs(alternative):
@@ -151,7 +151,7 @@ def _bounded_composition_context(candidate: OcrCandidate, *, allow_care_heading:
 
 def _has_unclassified_context(candidate: OcrCandidate, *, bounded: bool = True) -> bool:
     """Do not discard opaque rows just because they lack a percent marker."""
-    from apps.text.ocr_candidates import _is_plain_part_heading
+    from apps.text.candidate_evidence import _is_plain_part_heading
     from apps.text.parse_label import (
         build_line_infos, _is_metadata_line, _mask_storage_caption,
         _looks_like_non_composition_number, COMPOSITION_HINTS, _CARE_PHRASES,
@@ -453,7 +453,7 @@ def _same_response_source_recovery(candidate: OcrCandidate, alternative: OcrCand
 def _joined_separator_recovery(candidate: OcrCandidate, alternative: OcrCandidate,
                                part: str, target_part: str, candidates: list[OcrCandidate]) -> bool:
     """Release one alias-dot-digit with independent explicit repaired-row evidence."""
-    from apps.text.ocr_candidates import _has_explicit_complete_pairs
+    from apps.text.candidate_evidence import _has_explicit_complete_pairs
     from apps.text.parse_label import build_line_infos, _is_metadata_line, _ORIGIN_ROW_PATTERN
 
     if candidate.parser_status != "failed":
@@ -620,7 +620,7 @@ def _percent_glyph_recovery(
     rereads must separately observe the unchanged integer prefix and percent
     inside the source word, in the same complete physical material row.
     """
-    from apps.text.ocr_candidates import _has_explicit_complete_pairs
+    from apps.text.candidate_evidence import _has_explicit_complete_pairs
     from apps.text.parse_label import build_line_infos, _is_metadata_line
 
     forbidden = NEGATING_MODIFIERS | UNPRICED_MATERIALS | {"unknown", "olefin", "未知繊維", "未知纤维"}
@@ -2452,7 +2452,7 @@ def _same_response_translated_layout_recovery(candidate, alternative, part):
         return False
     from apps.text.multilingual_rows import _TAG
     from apps.text.material_extraction import extract_materials
-    from apps.text.ocr_candidates import literal_yarn_table_over_failed_layout
+    from apps.text.candidate_evidence import literal_yarn_table_over_failed_layout
 
     if len(list(_TAG.finditer(normalize_text(alternative.text)))) < 2:
         return False
