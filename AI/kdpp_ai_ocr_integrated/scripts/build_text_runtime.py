@@ -24,6 +24,7 @@ RUNTIME_FILES = (
     "apps/text/candidate_evidence.py",
     "apps/text/composition_candidates.py",
     "apps/text/line_analysis_cache.py",
+    "apps/text/line_context.py",
     "apps/text/material_extraction.py",
     "apps/text/multilingual_rows.py",
     "apps/text/scoped_materials.py",

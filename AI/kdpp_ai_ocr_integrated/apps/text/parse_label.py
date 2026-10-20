@@ -9,6 +9,16 @@ from apps.text.part_policy import OUTER_PARTS
 from apps.text.ratio_contract import EXACT_RATIO_TOTAL, has_exact_total
 from apps.text.translation_alternatives import prepare_translation_alternatives
 from apps.text.scoped_materials import read_yarn_materials, confirmed_yarn_declaration
+from apps.text.line_context import (
+    _CARE_PHRASES,
+    COMPOSITION_HINTS,
+    _contains_only_known_phrases,
+    _EXPLICIT_PART_HEADER_CONTEXTS,
+    _MATERIAL_ONLY_LINE_CONTEXTS,
+    _mentions_care,
+    _RATIO_PAIR_DESCRIPTORS,
+    _RATIO_PREFIX_CONTEXTS,
+)
 
 from apps.text.composition_candidates import (
     CompositionCandidate,
@@ -79,25 +89,6 @@ DESCRIPTIVE_MATERIAL_PHRASES = {
     "wool-like",
 }
 
-COMPOSITION_HINTS = {
-    "섬유의 조성",
-    "혼용률",
-    "혼용율",
-    "소재",
-    "composition",
-    "fabric content",
-    "material",
-    "materials",
-    "fiber content",
-    "纤维成分",
-    "纖維成分",
-    "面料成分",
-    "材质",
-    "材質",
-    "組成表示",
-    "混用率",
-    "品質表示",
-}
 
 _RATIO_ROW_LABELS = COMPOSITION_HINTS | {
     normalize_text(alias) for aliases in PART_PATTERNS.values() for alias in aliases
@@ -126,26 +117,7 @@ _TEMPERATURE_PATTERN = re.compile(
 )
 
 
-_CARE_PHRASES = tuple(
-    {alias.casefold() for aliases in CARE_RULES.values() for alias in aliases}
-)
 _SPLIT_CARE_BOUNDARY_PHRASES = frozenset(_CARE_PHRASES) | {"dry cleaning only"}
-# Number safety needs broader context than the phrases used to display care
-# instructions. These words alone do not imply a specific care recommendation.
-_CARE_CONTEXT_PATTERN = re.compile(
-    r"(?<![a-z])(?:wash(?:ing)?|rinse|bleach(?:ing)?|iron(?:ing)?|dry(?:ing)?)(?![a-z])"
-    r"|세탁|표백|다림질|건조|드라이"
-    r"|水洗|洗涤|洗滌|漂白|熨|烘|干洗|乾洗"
-    r"|洗濯|手洗|アイロン|乾燥|ドライ"
-)
-
-
-def _mentions_care(line: str) -> bool:
-    """Whether a row also carries care text, whose numbers are not ratios."""
-
-    return bool(_CARE_CONTEXT_PATTERN.search(line)) or any(
-        phrase in line for phrase in _CARE_PHRASES
-    )
 
 
 def _mask_temperatures(line: str) -> str:
@@ -1690,47 +1662,8 @@ _METADATA_VALUE_PATTERNS = {
 _UNLABELED_KOREAN_GARMENT_SIZE_VALUES = {
     str(value) for value in range(80, 125, 5)
 }
-_RATIO_PAIR_DESCRIPTORS = {
-    "organic",
-    "recycled",
-    "combed",
-    "certified",
-    "pure",
-    "fiber",
-    "fibre",
-    "content",
-    "blend",
-    "of",
-    "and",
-    "유기농",
-    "재생",
-    "섬유",
-    "함량",
-    "혼방",
-    "및",
-}
-_RATIO_PREFIX_CONTEXTS = {
-    *COMPOSITION_HINTS,
-    *(alias for aliases in PART_PATTERNS.values() for alias in aliases),
-    "fiber",
-    "fibre",
-    "fabric",
-    "content",
-    "body",
-    "組成",
-    "組成表示",
-    "纤维",
-    "纤维成分",
-    "成分",
-}
-_EXPLICIT_PART_HEADER_CONTEXTS = _RATIO_PREFIX_CONTEXTS | {
-    "fabric",
-    "재질",
-}
 
 
-
-_MATERIAL_ONLY_LINE_CONTEXTS = set(ALIAS_TO_MATERIAL) | _RATIO_PAIR_DESCRIPTORS | _EXPLICIT_PART_HEADER_CONTEXTS
 _RESTORED_ROW_CONTEXTS = (
     _RATIO_PAIR_DESCRIPTORS | _EXPLICIT_PART_HEADER_CONTEXTS
     | _STORAGE_CAPTION_WORDS | set(_CARE_PHRASES)
@@ -1870,25 +1803,6 @@ def _read_numbers(
         item.explicit_percent for item in evidence
     )
     return result, invalid, explicit_percent, evidence
-
-
-def _contains_only_known_phrases(text: str, phrases: set[str]) -> bool:
-    remainder = normalize_text(text)
-    # Use the same normalized aliases and OCR corrections as extraction. This
-    # preserves multilingual names such as bombaž that normalize to bombaz.
-    if phrases is _MATERIAL_ONLY_LINE_CONTEXTS:
-        for evidence in reversed(_material_evidence(remainder)):
-            remainder = remainder[:evidence.start] + " " * (evidence.end - evidence.start) + remainder[evidence.end:]
-    for phrase in sorted(phrases, key=len, reverse=True):
-        if phrase.isascii():
-            remainder = re.sub(
-                rf"(?<![a-z]){re.escape(phrase.casefold())}(?![a-z])",
-                " ",
-                remainder,
-            )
-        else:
-            remainder = remainder.replace(phrase.casefold(), " ")
-    return _TOKEN_PATTERN.search(remainder) is None
 
 
 def _same_line_pairing_is_supported(

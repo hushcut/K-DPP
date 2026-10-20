@@ -9,6 +9,7 @@ import re
 
 from apps.text.rules import EQUIVALENT_MATERIALS
 from apps.text.material_extraction import ALIAS_TO_MATERIAL, _TOKEN_PATTERN, find_material_key
+from apps.text.line_context import COMPOSITION_HINTS, _CARE_PHRASES, _contains_only_known_phrases, _mentions_care
 
 from apps.text.ratio_contract import EXACT_RATIO_TOTAL, has_exact_total, sum_ratios
 
@@ -376,8 +377,6 @@ def _adjacent_line_candidates(infos: list[LineInfo]) -> list[CompositionCandidat
             neighbor = infos[next_position]
             if neighbor.part != info.part or neighbor.materials:
                 break
-            from apps.text.parse_label import COMPOSITION_HINTS
-
             if (not neighbor.numbers and _TOKEN_PATTERN.search(neighbor.normalized)
                     and neighbor.normalized.rstrip(" :") not in COMPOSITION_HINTS):
                 break
@@ -665,7 +664,6 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
 
 def _has_registered_translation_run(infos: list[LineInfo], position: int, primary: LineInfo) -> bool:
     """Require a composition heading and two distinct, complete translations."""
-    from apps.text.parse_label import COMPOSITION_HINTS, _CARE_PHRASES, _contains_only_known_phrases, _mentions_care
 
     headed = primary.marker_part == primary.part
     for preceding in reversed(infos[:position]):
