@@ -259,6 +259,16 @@ def clean_ocr_preview(text: str, max_len: int = 220) -> str:
     return preview if len(preview) <= max_len else preview[:max_len] + "..."
 
 
+# 단어마다 부위명 별칭을 다시 정규화하지 않도록 비ASCII 접두어를 원래 순서대로 한 번만 만든다.
+_NON_ASCII_PART_PREFIXES = tuple(
+    normalized_prefix
+    for aliases in PART_PATTERNS.values()
+    for prefix in aliases
+    for normalized_prefix in (_normalized_alias(prefix),)
+    if not normalized_prefix.isascii()
+)
+
+
 def find_material_key(word: str) -> str | None:
     token = _normalized_alias(word.strip(" .,:;/()[]{}<>|+-_=*\"'"))
     if not token:
@@ -272,17 +282,14 @@ def find_material_key(word: str) -> str | None:
     # OCR sometimes joins a Korean part marker and its first material
     # (for example, ``배색면``). Only split a known non-ASCII marker and
     # require the remainder to be a complete material alias.
-    for aliases in PART_PATTERNS.values():
-        for prefix in aliases:
-            normalized_prefix = _normalized_alias(prefix)
-            if (
-                not normalized_prefix.isascii()
-                and corrected.startswith(normalized_prefix)
-                and len(corrected) > len(normalized_prefix)
-            ):
-                material = ALIAS_TO_MATERIAL.get(corrected[len(normalized_prefix) :])
-                if material:
-                    return material
+    for normalized_prefix in _NON_ASCII_PART_PREFIXES:
+        if (
+            corrected.startswith(normalized_prefix)
+            and len(corrected) > len(normalized_prefix)
+        ):
+            material = ALIAS_TO_MATERIAL.get(corrected[len(normalized_prefix) :])
+            if material:
+                return material
     return None
 
 
