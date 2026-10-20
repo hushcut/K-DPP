@@ -1,6 +1,7 @@
 import re
 from dataclasses import replace, dataclass
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 
 from apps.text.line_analysis_cache import LineAnalysis, line_analysis_scope, reuse_line_analysis
 from apps.text.part_policy import PART_PRIORITY as PART_PRIORITY
@@ -337,11 +338,7 @@ def _split_part_markers(text: str) -> str:
     for line in text.split("\n"):
         prepared_line = line
         for marker in sorted(markers, key=len, reverse=True):
-            suffix = re.search(
-                rf"(?i)({_part_alias_pattern(marker)})"
-                r"[\s)\]}>:;,./|\-‐‑‒–—]*$",
-                prepared_line,
-            )
+            suffix = _trailing_part_marker_pattern(marker).search(prepared_line)
             if not suffix or suffix.start() == 0:
                 continue
 
@@ -355,13 +352,28 @@ def _split_part_markers(text: str) -> str:
 
     prepared = "\n".join(prepared_lines)
     for marker in sorted(markers, key=len, reverse=True):
-        prepared = re.sub(
-            rf"(?i)(?<!^)(?<!\n)({_part_alias_pattern(marker)})"
-            r"(?=[^\n]*[0-9a-zà-ÿ가-힣一-龥ぁ-んァ-ン])",
+        prepared = _inline_part_marker_pattern(marker).sub(
             lambda match: "\n" + match.group() if is_part_marker_match(prepared, match) else match.group(),
             prepared,
         )
     return prepared
+
+
+# 부위명별 패턴을 한 번만 컴파일해 re 모듈 내부 캐시의 반복 재컴파일을 막는다.
+@lru_cache(maxsize=1024)
+def _trailing_part_marker_pattern(marker: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"(?i)({_part_alias_pattern(marker)})"
+        r"[\s)\]}>:;,./|\-‐‑‒–—]*$"
+    )
+
+
+@lru_cache(maxsize=1024)
+def _inline_part_marker_pattern(marker: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"(?i)(?<!^)(?<!\n)({_part_alias_pattern(marker)})"
+        r"(?=[^\n]*[0-9a-zà-ÿ가-힣一-龥ぁ-んァ-ン])"
+    )
 
 
 def _apply_trailing_part_markers(infos: list[LineInfo]) -> list[LineInfo]:

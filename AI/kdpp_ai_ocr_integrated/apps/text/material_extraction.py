@@ -2,6 +2,7 @@
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 import unicodedata
 
 from apps.text.rules import MATERIAL_ALIASES, OCR_CORRECTIONS
@@ -208,12 +209,18 @@ def restore_registered_han_aliases(text: str, *, allow_newlines: bool = False) -
     return _HAN_ALIAS_PATTERNS[allow_newlines].sub(restore, text)
 
 
-def _replace_token(text: str, wrong: str, correct: str) -> str:
+@lru_cache(maxsize=1024)
+def _token_pattern(wrong: str) -> re.Pattern[str]:
+    # 동적으로 만든 패턴이 re 모듈의 내부 캐시에서 밀려나 반복 컴파일되지 않게 한다.
     if wrong.isascii():
         pattern = rf"(?<![a-z]){re.escape(wrong)}(?![a-z])"
     else:
         pattern = re.escape(wrong)
-    return re.sub(pattern, correct, text, flags=re.IGNORECASE)
+    return re.compile(pattern, re.IGNORECASE)
+
+
+def _replace_token(text: str, wrong: str, correct: str) -> str:
+    return _token_pattern(wrong).sub(correct, text)
 
 
 def normalize_text(text: str) -> str:
