@@ -57,7 +57,7 @@ void main() {
     );
 
     expect(exception.type, ScanApiErrorType.unauthorized);
-    expect(exception.userMessage, contains('다시 로그인'));
+    expect(exception.userMessage, '로그인이 만료돼 스캔하지 못했어요. 다시 로그인해 주세요.');
   });
 
   group('오류 본문의 부분 인식 결과', () {

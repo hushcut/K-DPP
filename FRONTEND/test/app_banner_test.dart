@@ -11,6 +11,7 @@ import 'package:k_dpp/theme_provider.dart';
 import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:provider/provider.dart';
 
+import 'helpers/fake_auth_session_storage.dart';
 import 'helpers/fake_closet_storage.dart';
 
 // 알림 29곳을 대신하는 앱바 아래 공용 배너(DECISIONS 76·88)의 규칙을 고정한다.
@@ -40,13 +41,14 @@ void main() {
         ),
         const Duration(milliseconds: 3800),
       );
-      // 43자: 가장 긴 앱 문구(스캔 중 로그인 만료 + 정리 실패).
+      // 54자: 앞선 탈퇴 결과를 모르는 채 로그인 만료 + 정리 실패(할 일 안내를 남겨 세 문장, DECISIONS 102).
       expect(
         AppBanner.durationFor(
-          '로그인 정보가 만료되었어요. 다시 로그인한 뒤 스캔해 주세요. 일부 로그인 정보는 지우지 못했어요.',
+          '로그인이 만료돼 탈퇴됐는지 확인하지 못했어요. 다시 로그인되면 탈퇴를 다시 해 주세요. '
+          '일부 로그인 정보는 지우지 못했어요.',
           AppBannerKind.failure,
         ),
-        const Duration(milliseconds: 5300),
+        const Duration(milliseconds: 6400),
       );
       // 공백·줄바꿈은 세지 않는다.
       expect(
@@ -786,7 +788,10 @@ void main() {
         MultiProvider(
           providers: [
             ChangeNotifierProvider(
-              create: (_) => ClosetProvider(storage: FakeClosetStorage()),
+              create: (_) => ClosetProvider(
+                storage: FakeClosetStorage(),
+                authSessionStorage: FakeAuthSessionStorage(),
+              ),
             ),
             ChangeNotifierProvider(create: (_) => ThemeProvider()),
             ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),

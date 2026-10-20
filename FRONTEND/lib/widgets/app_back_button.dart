@@ -1,7 +1,13 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import 'app_glass_button.dart';
+
 /// 이전 화면으로 돌아가는 공용 뒤로가기 버튼("<")입니다.
+///
+/// iOS 는 반투명 유리 원 위에 "<" 를 두고 누르면 물방울처럼 부풀며, Android 는 원 없이 "<" 만 두고
+/// 누르면 동그란 물결이 퍼집니다(DECISIONS 224·225·229). 앱바에 둘 때는
+/// `leadingWidth: AppGlassStyle.leadingWidth` 와 왼쪽 여백 [AppGlassStyle.leadingInset] 을 줍니다.
 ///
 /// [onPressed] 를 주지 않으면 현재 경로를 닫습니다. 메인 화면처럼 경로를 닫는 대신
 /// 상태를 바꿔 돌아가는 곳은 [onPressed]·[tooltip] 을 넘겨 같은 모양을 씁니다.
@@ -11,6 +17,7 @@ class AppBackButton extends StatelessWidget {
     this.onPressed,
     this.tooltip = '뒤로 가기',
     this.color,
+    this.enabled = true,
   });
 
   /// 누를 때 동작. null 이면 `Navigator.pop`.
@@ -22,20 +29,29 @@ class AppBackButton extends StatelessWidget {
   /// 아이콘 색. null 이면 밝기에 따라 흰색/회색.
   final Color? color;
 
+  /// false 면 흐리게 그리고 누를 수 없습니다(TalkBack '사용 중지됨'). 서버 요청을 기다리는 인증
+  /// 화면처럼 지금 떠나면 응답을 받을 화면이 없어지는 곳에서 씁니다. 시스템 뒤로가기는 그 화면이
+  /// `PopScope` 로 따로 막습니다(DECISIONS 2026-10-14 C25).
+  final bool enabled;
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final iconColor =
+        color ?? (isDark ? Colors.white : const Color(0xFF6F6F6F));
 
-    return IconButton(
-      onPressed: onPressed ?? () => Navigator.pop(context),
+    return AppGlassIconButton(
+      onPressed: enabled ? onPressed ?? () => Navigator.pop(context) : null,
       tooltip: tooltip,
-      padding: EdgeInsets.zero,
-      splashRadius: 22,
-      alignment: Alignment.centerLeft,
-      icon: Icon(
-        CupertinoIcons.chevron_left,
-        size: 30,
-        color: color ?? (isDark ? Colors.white : const Color(0xFF6F6F6F)),
+      icon: Padding(
+        // "<" 는 왼쪽이 뾰족해 정가운데에 두면 오른쪽으로 쏠려 보여서 조금 왼쪽으로 옮깁니다.
+        padding: const EdgeInsets.only(right: 2),
+        child: Icon(
+          CupertinoIcons.chevron_left,
+          // 색을 아이콘에 바로 주므로 버튼의 disabledColor 가 닿지 않아 여기서 흐리게 합니다
+          // (설정 버튼의 막힘과 같은 0.38).
+          color: enabled ? iconColor : iconColor.withValues(alpha: 0.38),
+        ),
       ),
     );
   }

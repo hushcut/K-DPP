@@ -135,20 +135,21 @@ extension _ClosetBody on _ClosetScreenState {
 
     final actions = selecting
         ? [
-            TextButton(
+            AppGlassTextButton(
+              label: '취소',
               onPressed: _deleteInProgress
                   ? null
                   : () => _setSelectionMode(false),
-              child: const Text('취소'),
             ),
           ]
         : [
             // 정렬과 상관없이 고르고 지우는 모드입니다. 옷이 없으면 고를 것이 없어 누를 수 없습니다.
-            TextButton(
+            AppGlassTextButton(
+              label: '선택',
               onPressed: hasClothes ? () => _setSelectionMode(true) : null,
-              child: const Text('선택'),
             ),
-            IconButton(
+            const SizedBox(width: 6),
+            AppGlassIconButton(
               onPressed: _showSortBottomSheet,
               tooltip: '옷장 정렬',
               icon: const Icon(Icons.sort, color: AppPalette.accent),
@@ -222,32 +223,41 @@ extension _ClosetBody on _ClosetScreenState {
           offset: Offset(0, (1 - t) * (bottom + size)),
           child: child,
         ),
-        child: SizedBox.square(
-          dimension: size,
-          child: FrostedSurface(
-            opacity: opacity,
-            color: appPalette.card,
-            borderRadius: BorderRadius.circular(size / 2),
-            border: Border.all(color: appPalette.border),
-            boxShadow: [
-              BoxShadow(
-                color: isDark
-                    ? Colors.black.withValues(alpha: 0.30)
-                    : Colors.black.withValues(alpha: 0.10),
-                blurRadius: 22,
-                offset: const Offset(0, 8),
-              ),
-            ],
-            child: IconButton(
-              onPressed: canDelete ? _deleteSelectedItems : null,
-              color: Colors.redAccent,
-              // 이름은 tooltip 대신 아이콘 낭독 이름으로 줍니다. iOS VoiceOver 는 tooltip 만 있고 누를 수
-              // 없는 칸을 건너뛰어, 아무것도 고르지 않았을 때 휴지통이 사라집니다(2026-10-02).
-              // 확인창 제목('선택한 의류 삭제')과 겹치지 않는 이름입니다.
-              icon: const Icon(
-                Icons.delete_outline,
-                size: 26,
-                semanticLabel: '선택한 의류 지우기',
+        // iOS 는 위쪽 유리 버튼과 같이 누르면 바탕이 바뀌며 부풀고(원이 커서 덜 키움), Android 는
+        // Material 물결 그대로입니다(DECISIONS 224·225·229).
+        child: GlassPressBuilder(
+          pressedScale: 1.14,
+          builder: (context, states, pressed) => SizedBox.square(
+            dimension: size,
+            child: FrostedSurface(
+              opacity: opacity,
+              color: pressed
+                  ? AppGlassStyle.pressedFill(context)
+                  : appPalette.card,
+              borderRadius: BorderRadius.circular(size / 2),
+              border: Border.all(color: appPalette.border),
+              boxShadow: [
+                BoxShadow(
+                  color: isDark
+                      ? Colors.black.withValues(alpha: 0.30)
+                      : Colors.black.withValues(alpha: 0.10),
+                  blurRadius: 22,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+              child: IconButton(
+                onPressed: canDelete ? _deleteSelectedItems : null,
+                statesController: states,
+                color: Colors.redAccent,
+                style: AppGlassStyle.floatingPressStyle(context),
+                // 이름은 tooltip 대신 아이콘 낭독 이름으로 줍니다. iOS VoiceOver 는 tooltip 만 있고 누를 수
+                // 없는 칸을 건너뛰어, 아무것도 고르지 않았을 때 휴지통이 사라집니다(2026-10-02).
+                // 확인창 제목('선택한 의류 삭제')과 겹치지 않는 이름입니다.
+                icon: const Icon(
+                  Icons.delete_outline,
+                  size: 26,
+                  semanticLabel: '선택한 의류 지우기',
+                ),
               ),
             ),
           ),
@@ -266,6 +276,8 @@ extension _ClosetBody on _ClosetScreenState {
       textInputAction: TextInputAction.search,
       decoration: InputDecoration(
         hintText: '옷 이름, 소재 검색',
+        // 큰 글자에서는 한 줄에 다 들어가지 않아 '…' 로 잘리므로 두 줄까지 보여 줍니다.
+        hintMaxLines: 2,
         hintStyle: TextStyle(color: palette.secondaryText, fontSize: 14),
         prefixIcon: Icon(
           Icons.search,
@@ -371,11 +383,14 @@ class _ClosetPalette {
     required this.warningBgColor,
     required this.leadingBgColor,
     required this.shadowColor,
+    required this.statusGoodText,
+    required this.statusBadText,
     required this.isDark,
   });
 
   factory _ClosetPalette.from(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final appPalette = AppPalette.of(context);
 
     return _ClosetPalette(
       primaryText: isDark ? Colors.white : const Color(0xFF1A1A1A),
@@ -398,6 +413,8 @@ class _ClosetPalette {
       shadowColor: isDark
           ? Colors.black.withValues(alpha: 0.16)
           : Colors.black.withValues(alpha: 0.03),
+      statusGoodText: appPalette.successText,
+      statusBadText: appPalette.dangerText,
       isDark: isDark,
     );
   }
@@ -410,5 +427,9 @@ class _ClosetPalette {
   final Color warningBgColor;
   final Color leadingBgColor;
   final Color shadowColor;
+
+  /// 카드의 건강 상태 글자색입니다. 수명 만료 글자는 붉은 카드 바탕에서도 4.5:1 을 넘습니다(C54).
+  final Color statusGoodText;
+  final Color statusBadText;
   final bool isDark;
 }

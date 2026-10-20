@@ -36,7 +36,7 @@ Future<void> _confirmDelete(
           ElevatedButton(
             onPressed: () => Navigator.pop(dialogContext, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.redAccent,
+              backgroundColor: AppPalette.danger,
             ),
             child: const Text('삭제', style: TextStyle(color: Colors.white)),
           ),
@@ -77,7 +77,7 @@ Future<void> _confirmDelete(
     return;
   }
 
-  // 스캔 저장 경로와 같은 이유로 스택을 정리합니다.
+  // 맨 위 라우트만 바꾸면 그 위에 연 화면이 남거나 /main 이 두 겹이 되므로 스택을 정리합니다.
   // (현재 셸은 항상 onDeleted를 넘기므로 도달하지 않지만, 단독 라우트로 열릴 때를 위한 대비입니다.)
   Navigator.pushNamedAndRemoveUntil(context, '/main', (route) => false, arguments: 2);
 }

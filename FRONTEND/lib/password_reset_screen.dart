@@ -7,6 +7,7 @@ import 'services/auth_api_service.dart';
 import 'theme/app_palette.dart';
 import 'utils/auth_form_validators.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/app_glass_button.dart';
 import 'widgets/app_banner.dart';
 import 'widgets/auth_form_widgets.dart';
 import 'widgets/email_code_section.dart';
@@ -164,217 +165,225 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
     final palette = AppPalette.of(context);
     final backgroundColor = palette.background;
     final primaryText = palette.textPrimary;
-    final secondaryText = isDark
-        ? const Color(0xFFD1D1D6)
-        : const Color(0xFF8C8C8C);
+    final secondaryText = palette.textSecondary;
     final iconColor = isDark
         ? const Color(0xFFB8B8BE)
         : const Color(0xFF8C8C8C);
 
-    return Scaffold(
-      backgroundColor: backgroundColor,
-      appBar: AppBar(
+    return PopScope(
+      // 요청 중에 닫히면 서버 비밀번호는 바뀌었는데 안내가 없고, 로그인 화면엔 옛 비밀번호가
+      // 남는다(C25 — DECISIONS 2026-10-14).
+      canPop: !_isLoading,
+      child: Scaffold(
         backgroundColor: backgroundColor,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        centerTitle: true,
-        automaticallyImplyLeading: false,
-        leadingWidth: 52,
-        leading: const Padding(
-          padding: EdgeInsets.only(left: 8),
-          child: AppBackButton(),
-        ),
-        title: Text(
-          '비밀번호 찾기',
-          style: TextStyle(
-            color: primaryText,
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
+        appBar: AppBar(
+          backgroundColor: backgroundColor,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          centerTitle: true,
+          automaticallyImplyLeading: false,
+          leadingWidth: AppGlassStyle.leadingWidth,
+          // 누르면 부푸는 유리 버튼이 앱바 아래 경계에서 잘리지 않게 합니다(앱바 기본은 잘라 냄).
+          clipBehavior: Clip.none,
+          leading: Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: AppBackButton(enabled: !_isLoading),
+          ),
+          title: Text(
+            '비밀번호 찾기',
+            style: TextStyle(
+              color: primaryText,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
-      ),
-      body: SafeArea(
-        // 본문이 키보드만큼 줄어들므로, 맨 아래에 둔 막대가 키보드 바로 위에 놓입니다.
-        child: Column(
-          children: [
-            Expanded(
-              child: Form(
-                key: _formKey,
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    return SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: ConstrainedBox(
-                        // 아래 인셋(자판 등)이 앱바 아래를 다 덮으면 maxHeight 가 0 이 되므로
-                        // 빼고 남은 값이 음수가 되지 않게 0 에서 멈춥니다.
-                        constraints: BoxConstraints(
-                          minHeight: math.max(0.0, constraints.maxHeight - 12),
-                        ),
-                        child: IntrinsicHeight(
-                          child: Column(
-                            children: [
-                              const SizedBox(height: 40),
-                              Text(
-                                '비밀번호를 새로 정해요',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                  color: primaryText,
+        body: SafeArea(
+          // 본문이 키보드만큼 줄어들므로, 맨 아래에 둔 막대가 키보드 바로 위에 놓입니다.
+          child: Column(
+            children: [
+              Expanded(
+                child: Form(
+                  key: _formKey,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      return SingleChildScrollView(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        child: ConstrainedBox(
+                          // 아래 인셋(자판 등)이 앱바 아래를 다 덮으면 maxHeight 가 0 이 되므로
+                          // 빼고 남은 값이 음수가 되지 않게 0 에서 멈춥니다.
+                          constraints: BoxConstraints(
+                            minHeight: math.max(
+                              0.0,
+                              constraints.maxHeight - 12,
+                            ),
+                          ),
+                          child: IntrinsicHeight(
+                            child: Column(
+                              children: [
+                                const SizedBox(height: 40),
+                                Text(
+                                  '비밀번호를 새로 정해요',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w700,
+                                    color: primaryText,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 10),
-                              Text(
-                                // 한글은 글자 단위로 줄이 바뀌어 '다 / 른'처럼 끊기므로 문장마다 줄을 나눕니다.
-                                '가입한 이메일로 받은 인증번호를 넣어 주세요.\n'
-                                '다른 기기의 로그인도 모두 풀려요.',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: secondaryText,
-                                  height: 1.5,
+                                const SizedBox(height: 10),
+                                Text(
+                                  // 한글은 글자 단위로 줄이 바뀌어 '다 / 른'처럼 끊기므로 문장마다 줄을 나눕니다.
+                                  '가입한 이메일로 받은 인증번호를 넣어 주세요.\n'
+                                  '다른 기기의 로그인도 모두 풀려요.',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: secondaryText,
+                                    height: 1.5,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 36),
-                              TextFormField(
-                                key: _emailFieldKey,
-                                controller: _emailController,
-                                focusNode: _emailFocusNode,
-                                keyboardType: TextInputType.emailAddress,
-                                textInputAction: TextInputAction.next,
-                                autofillHints: const [
-                                  AutofillHints.username,
-                                  AutofillHints.email,
-                                ],
-                                autocorrect: false,
-                                validator: validateEmailInput,
-                                style: TextStyle(color: primaryText),
-                                cursorColor: AppPalette.accent,
-                                decoration: authInputDecoration(
-                                  context,
-                                  labelText: '이메일',
-                                  hintText: 'honggildong@example.com',
+                                const SizedBox(height: 36),
+                                TextFormField(
+                                  key: _emailFieldKey,
+                                  controller: _emailController,
+                                  focusNode: _emailFocusNode,
+                                  keyboardType: TextInputType.emailAddress,
+                                  textInputAction: TextInputAction.next,
+                                  autofillHints: const [
+                                    AutofillHints.username,
+                                    AutofillHints.email,
+                                  ],
+                                  autocorrect: false,
+                                  validator: validateEmailInput,
+                                  style: TextStyle(color: primaryText),
+                                  cursorColor: AppPalette.accent,
+                                  decoration: authInputDecoration(
+                                    context,
+                                    labelText: '이메일',
+                                    hintText: 'honggildong@example.com',
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 12),
-                              EmailCodeSection(
-                                key: _codeSectionKey,
-                                purpose: EmailCodePurpose.passwordReset,
-                                authApiService: _authApiService,
-                                emailFieldKey: _emailFieldKey,
-                                emailController: _emailController,
-                                codeController: _codeController,
-                                codeFocusNode: _codeFocusNode,
-                                enabled: !_isLoading,
-                                onCodeSubmitted: (_) =>
-                                    _passwordFocusNode.requestFocus(),
-                                now: widget.now ?? DateTime.now,
-                              ),
-                              const SizedBox(height: 16),
-                              TextFormField(
-                                controller: _passwordController,
-                                focusNode: _passwordFocusNode,
-                                obscureText: _obscurePassword,
-                                textInputAction: TextInputAction.next,
-                                // 기본 '다음'은 칸 안의 눈 아이콘으로 가 키보드가 내려갑니다.
-                                onEditingComplete:
-                                    _confirmPasswordFocusNode.requestFocus,
-                                autofillHints: const [
-                                  AutofillHints.newPassword,
-                                ],
-                                enableSuggestions: false,
-                                autocorrect: false,
-                                validator: validateNewPassword,
-                                style: TextStyle(color: primaryText),
-                                cursorColor: AppPalette.accent,
-                                decoration: authInputDecoration(
-                                  context,
-                                  labelText: '새 비밀번호',
-                                  hintText: '8자 이상 입력',
-                                  suffixIcon: IconButton(
-                                    onPressed: () {
-                                      setState(() {
-                                        _obscurePassword = !_obscurePassword;
-                                      });
-                                    },
-                                    tooltip: _obscurePassword
-                                        ? '새 비밀번호 표시'
-                                        : '새 비밀번호 숨기기',
-                                    icon: Icon(
-                                      _obscurePassword
-                                          ? Icons.visibility_off_outlined
-                                          : Icons.visibility_outlined,
-                                      color: iconColor,
+                                const SizedBox(height: 12),
+                                EmailCodeSection(
+                                  key: _codeSectionKey,
+                                  purpose: EmailCodePurpose.passwordReset,
+                                  authApiService: _authApiService,
+                                  emailFieldKey: _emailFieldKey,
+                                  emailController: _emailController,
+                                  codeController: _codeController,
+                                  codeFocusNode: _codeFocusNode,
+                                  enabled: !_isLoading,
+                                  onCodeSubmitted: (_) =>
+                                      _passwordFocusNode.requestFocus(),
+                                  now: widget.now ?? DateTime.now,
+                                ),
+                                const SizedBox(height: 16),
+                                TextFormField(
+                                  controller: _passwordController,
+                                  focusNode: _passwordFocusNode,
+                                  obscureText: _obscurePassword,
+                                  textInputAction: TextInputAction.next,
+                                  // 기본 '다음'은 칸 안의 눈 아이콘으로 가 키보드가 내려갑니다.
+                                  onEditingComplete:
+                                      _confirmPasswordFocusNode.requestFocus,
+                                  autofillHints: const [
+                                    AutofillHints.newPassword,
+                                  ],
+                                  enableSuggestions: false,
+                                  autocorrect: false,
+                                  validator: validateNewPassword,
+                                  style: TextStyle(color: primaryText),
+                                  cursorColor: AppPalette.accent,
+                                  decoration: authInputDecoration(
+                                    context,
+                                    labelText: '새 비밀번호',
+                                    hintText: '8자 이상 입력',
+                                    suffixIcon: IconButton(
+                                      onPressed: () {
+                                        setState(() {
+                                          _obscurePassword = !_obscurePassword;
+                                        });
+                                      },
+                                      tooltip: _obscurePassword
+                                          ? '새 비밀번호 표시'
+                                          : '새 비밀번호 숨기기',
+                                      icon: Icon(
+                                        _obscurePassword
+                                            ? Icons.visibility_off_outlined
+                                            : Icons.visibility_outlined,
+                                        color: iconColor,
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                              const SizedBox(height: 16),
-                              TextFormField(
-                                controller: _confirmPasswordController,
-                                focusNode: _confirmPasswordFocusNode,
-                                obscureText: _obscureConfirmPassword,
-                                textInputAction: TextInputAction.done,
-                                autofillHints: const [
-                                  AutofillHints.newPassword,
-                                ],
-                                enableSuggestions: false,
-                                autocorrect: false,
-                                validator: (value) =>
-                                    validatePasswordConfirmation(
-                                      value,
-                                      _passwordController.text,
-                                    ),
-                                style: TextStyle(color: primaryText),
-                                cursorColor: AppPalette.accent,
-                                decoration: authInputDecoration(
-                                  context,
-                                  labelText: '새 비밀번호 확인',
-                                  hintText: '새 비밀번호 다시 입력',
-                                  suffixIcon: IconButton(
-                                    onPressed: () {
-                                      setState(() {
-                                        _obscureConfirmPassword =
-                                            !_obscureConfirmPassword;
-                                      });
-                                    },
-                                    tooltip: _obscureConfirmPassword
-                                        ? '새 비밀번호 확인 표시'
-                                        : '새 비밀번호 확인 숨기기',
-                                    icon: Icon(
-                                      _obscureConfirmPassword
-                                          ? Icons.visibility_off_outlined
-                                          : Icons.visibility_outlined,
-                                      color: iconColor,
+                                const SizedBox(height: 16),
+                                TextFormField(
+                                  controller: _confirmPasswordController,
+                                  focusNode: _confirmPasswordFocusNode,
+                                  obscureText: _obscureConfirmPassword,
+                                  textInputAction: TextInputAction.done,
+                                  autofillHints: const [
+                                    AutofillHints.newPassword,
+                                  ],
+                                  enableSuggestions: false,
+                                  autocorrect: false,
+                                  validator: (value) =>
+                                      validatePasswordConfirmation(
+                                        value,
+                                        _passwordController.text,
+                                      ),
+                                  style: TextStyle(color: primaryText),
+                                  cursorColor: AppPalette.accent,
+                                  decoration: authInputDecoration(
+                                    context,
+                                    labelText: '새 비밀번호 확인',
+                                    hintText: '새 비밀번호 다시 입력',
+                                    suffixIcon: IconButton(
+                                      onPressed: () {
+                                        setState(() {
+                                          _obscureConfirmPassword =
+                                              !_obscureConfirmPassword;
+                                        });
+                                      },
+                                      tooltip: _obscureConfirmPassword
+                                          ? '새 비밀번호 확인 표시'
+                                          : '새 비밀번호 확인 숨기기',
+                                      icon: Icon(
+                                        _obscureConfirmPassword
+                                            ? Icons.visibility_off_outlined
+                                            : Icons.visibility_outlined,
+                                        color: iconColor,
+                                      ),
                                     ),
                                   ),
+                                  onFieldSubmitted: (_) {
+                                    if (!_isLoading) {
+                                      _handleReset();
+                                    }
+                                  },
                                 ),
-                                onFieldSubmitted: (_) {
-                                  if (!_isLoading) {
-                                    _handleReset();
-                                  }
-                                },
-                              ),
-                              const SizedBox(height: 32),
-                              AuthSubmitButton(
-                                label: '비밀번호 다시 설정',
-                                loadingSemanticsLabel: '비밀번호 재설정 처리 중',
-                                isLoading: _isLoading,
-                                onPressed: _handleReset,
-                              ),
-                              const Spacer(),
-                              const SizedBox(height: 24),
-                            ],
+                                const SizedBox(height: 32),
+                                AuthSubmitButton(
+                                  label: '비밀번호 다시 설정',
+                                  loadingSemanticsLabel: '비밀번호 재설정 처리 중',
+                                  isLoading: _isLoading,
+                                  onPressed: _handleReset,
+                                ),
+                                const Spacer(),
+                                const SizedBox(height: 24),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
               ),
-            ),
-            _buildNumberKeyboardToolbar(context),
-          ],
+              _buildNumberKeyboardToolbar(context),
+            ],
+          ),
         ),
       ),
     );

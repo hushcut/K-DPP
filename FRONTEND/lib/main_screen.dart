@@ -7,21 +7,19 @@ import 'closet_provider.dart';
 import 'closet_screen.dart';
 import 'home_screen.dart';
 import 'models/clothes.dart';
-import 'models/main_screen_arguments.dart';
 import 'navigation_bar_opacity_provider.dart';
 import 'report_screen.dart';
 import 'scan_screen.dart';
 import 'theme/app_palette.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/app_glass_button.dart';
 import 'widgets/bottom_navigation_metrics.dart';
 import 'widgets/frosted_surface.dart';
 import 'widgets/kdpp_logo_mark.dart';
 
 /// 하단 내비게이션의 선택 상태를 관리하고 스캔·상세 리포트·설정을 위에 쌓아 엽니다.
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key, this.initialArguments});
-
-  final MainScreenArguments? initialArguments;
+  const MainScreen({super.key});
 
   @override
   State<MainScreen> createState() => _MainScreenState();
@@ -35,9 +33,8 @@ class _MainScreenState extends State<MainScreen>
   // 탭 번호는 0 홈 · 2 옷장입니다. 1(스캔)은 탭이 아니라 위에 쌓아 여는 화면이라 여기에 들어오지 않습니다.
   int _selectedIndex = 0;
   bool _didReadInitialArgs = false;
-  // 스캔 저장 직후처럼 진입하자마자 스캔 화면·리포트를 쌓아 열어야 하는지 나타냅니다.
+  // 경로 인자(탭 번호 1)로 진입하자마자 스캔 화면을 쌓아 열어야 하는지 나타냅니다.
   bool _shouldOpenInitialScan = false;
-  bool _shouldOpenInitialReport = false;
   // 이 화면이 위에 쌓은 스캔·리포트·설정 라우트 수입니다. 스캔 저장 직후에는 스캔 화면과
   // 리포트가 함께 쌓이므로, 둘 다 닫혀야 덮이지 않은 것으로 봅니다.
   int _coveringRouteCount = 0;
@@ -111,9 +108,22 @@ class _MainScreenState extends State<MainScreen>
     return _pushCoveringRoute(
       () => Navigator.push<void>(
         context,
-        MaterialPageRoute<void>(builder: (_) => const _ScanPage()),
+        MaterialPageRoute<void>(
+          builder: (_) => _ScanPage(onSaved: _openSavedReport),
+        ),
       ),
     );
+  }
+
+  // 스캔 저장이 끝나면 스캔 화면 위에 그 의류 리포트를 쌓아 엽니다. 이 화면을 새로 만들지 않으므로
+  // 스캔까지 닫으면 들어왔던 탭과 옷장 검색어·스크롤이 그대로 있습니다(C04, DECISIONS 2026-10-14).
+  void _openSavedReport(Clothes item) {
+    if (!mounted) return;
+
+    // 결과 입력 칸에 남은 초점과 키보드를 먼저 정리합니다.
+    FocusManager.instance.primaryFocus?.unfocus();
+    context.read<ClosetProvider>().selectClothes(item);
+    _pushReport();
   }
 
   // 선택 의류를 Provider에 기록한 뒤 상세 리포트를 탭 위에 쌓아 엽니다.
@@ -178,17 +188,9 @@ class _MainScreenState extends State<MainScreen>
     return 0;
   }
 
-  /// 외부 경로에서 전달된 초기 탭과 스캔·리포트 표시 요청을 한 번만 적용합니다.
+  /// 외부 경로에서 전달된 초기 탭 번호(그 밖의 인자는 홈)를 한 번만 적용합니다.
   void _applyInitialArguments(Object? args) {
-    final int requestedIndex;
-    if (args is MainScreenArguments) {
-      requestedIndex = args.initialIndex;
-      _shouldOpenInitialReport =
-          args.showReport &&
-          context.read<ClosetProvider>().currentReportItem != null;
-    } else {
-      requestedIndex = args is int ? args : 0;
-    }
+    final requestedIndex = args is int ? args : 0;
 
     _shouldOpenInitialScan = requestedIndex == 1;
     _selectedIndex = _normalizeInitialIndex(requestedIndex);
@@ -242,19 +244,15 @@ class _MainScreenState extends State<MainScreen>
   @override
   Widget build(BuildContext context) {
     if (!_didReadInitialArgs) {
-      final args =
-          widget.initialArguments ?? ModalRoute.of(context)?.settings.arguments;
-      _applyInitialArguments(args);
+      _applyInitialArguments(ModalRoute.of(context)?.settings.arguments);
       _didReadInitialArgs = true;
 
-      if (_shouldOpenInitialScan || _shouldOpenInitialReport) {
-        // 빌드 중에는 라우트를 쌓을 수 없으므로 첫 프레임 뒤에 엽니다. 스캔 저장 직후에는 새 스캔 화면
-        // 위에 리포트를 쌓아, 리포트를 닫으면 바로 다음 옷을 찍을 수 있게 합니다.
+      if (_shouldOpenInitialScan) {
+        // 빌드 중에는 라우트를 쌓을 수 없으므로 첫 프레임 뒤에 엽니다.
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
 
-          if (_shouldOpenInitialScan) _pushScan();
-          if (_shouldOpenInitialReport) _pushReport();
+          _pushScan();
         });
       }
     }
@@ -305,7 +303,9 @@ PreferredSizeWidget _buildMainAppBar(
     scrolledUnderElevation: 0,
     automaticallyImplyLeading: false,
     centerTitle: true,
-    leadingWidth: 52,
+    leadingWidth: AppGlassStyle.leadingWidth,
+    // 누르면 부푸는 유리 버튼이 앱바 아래 경계에서 잘리지 않게 합니다(앱바 기본은 잘라 냄).
+    clipBehavior: Clip.none,
     leading: leading,
     title: const KdppLogoMark(size: 34),
     actions: [
@@ -337,7 +337,7 @@ class _SettingsButton extends StatelessWidget {
   Widget _buildButton(BuildContext context, {required bool isLocked}) {
     final color = _appBarIconColor(context);
 
-    return IconButton(
+    return AppGlassIconButton(
       // 막힌 동안 TalkBack 은 '사용 중지됨'으로 읽어 왜 안 열리는지 알 수 있습니다.
       onPressed: isLocked ? null : onPressed,
       tooltip: '설정',
@@ -352,10 +352,14 @@ class _SettingsButton extends StatelessWidget {
 ///
 /// 라우트라서 "<"·시스템 뒤로가기·iOS 왼쪽 끝 밀기로 닫히고, 하단 메뉴까지 덮습니다.
 /// 결과를 입력하는 동안에는 [ScanScreen] 이 곧바로 닫히지 않게 막고 버릴지 묻습니다.
-/// 저장하는 동안에는 설정 버튼도 막습니다. 저장이 끝나면 스택을 통째로 정리하므로, 그 사이에
-/// 연 설정은 보던 중에 사라지기 때문입니다(2026-10-08 Android 재현, DECISIONS 2026-10-09).
+/// 저장하는 동안에는 설정 버튼도 막습니다. 저장이 끝나면 이 화면 위에 리포트를 여므로, 그 사이에
+/// 연 설정은 보던 중에 리포트로 덮이기 때문입니다(2026-10-08 Android 재현 — 그땐 스택을 통째로
+/// 바꿔 설정이 사라졌다, DECISIONS 2026-10-09).
 class _ScanPage extends StatefulWidget {
-  const _ScanPage();
+  const _ScanPage({required this.onSaved});
+
+  /// 저장이 끝난 의류를 받아 이 화면 위에 리포트를 엽니다.
+  final ValueChanged<Clothes> onSaved;
 
   @override
   State<_ScanPage> createState() => _ScanPageState();
@@ -402,7 +406,11 @@ class _ScanPageState extends State<_ScanPage> {
         },
         settingsLocked: _saving,
       ),
-      body: ScanScreen(isActive: !isCovered, saving: _saving),
+      body: ScanScreen(
+        isActive: !isCovered,
+        saving: _saving,
+        onSaved: widget.onSaved,
+      ),
     );
   }
 }
@@ -429,7 +437,9 @@ class _ReportPage extends StatelessWidget {
         backgroundColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
-        leadingWidth: 52,
+        leadingWidth: AppGlassStyle.leadingWidth,
+        // 누르면 부푸는 유리 버튼이 앱바 아래 경계에서 잘리지 않게 합니다(앱바 기본은 잘라 냄).
+        clipBehavior: Clip.none,
         leading: Padding(
           padding: const EdgeInsets.only(left: 8),
           child: AppBackButton(tooltip: '리포트 닫기', color: appBarIconColor),
@@ -600,7 +610,8 @@ class _CenterScanButton extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         child: SizedBox(
           width: 88,
-          height: 90,
+          // 큰 글자에서 이름이 길어질 자리까지 상자 높이를 다 씁니다.
+          height: BottomNavigationMetrics.boxHeight,
           child: ExcludeSemantics(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -648,11 +659,16 @@ class _CenterScanButton extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 1),
-                SizedBox(
-                  height: 18,
+                // 보통 글자에서는 18 칸 가운데에 두고, 큰 글자에서는 칸이 글자만큼 늘어납니다.
+                ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 18),
                   child: Center(
                     child: Text(
                       '스캔',
+                      textScaler: MediaQuery.textScalerOf(context).clamp(
+                        maxScaleFactor:
+                            BottomNavigationMetrics.labelMaxTextScale,
+                      ),
                       style: TextStyle(
                         color: palette.textSecondary,
                         fontSize: 12,
@@ -728,6 +744,10 @@ class _BottomTabItem extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       label,
+                      textScaler: MediaQuery.textScalerOf(context).clamp(
+                        maxScaleFactor:
+                            BottomNavigationMetrics.labelMaxTextScale,
+                      ),
                       style: TextStyle(
                         color: animatedColor,
                         fontSize: 12,

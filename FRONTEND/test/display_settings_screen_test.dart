@@ -1,3 +1,5 @@
+import 'dart:ui' show Tristate;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
@@ -101,6 +103,43 @@ void main() {
       '소재 이름 표시 설정을 저장하지 못했어요. 다시 시도해 주세요.',
       AppBannerKind.failure,
     );
+  });
+
+  // 테마·소재 이름 칸은 테두리 색과 라디오 아이콘으로만 고른 칸을 보여 준다.
+  // 낭독기에는 칸마다 '선택됨' 여부를 알려야 셋 중 무엇이 켜져 있는지 안다.
+  testWidgets('테마·소재 이름 칸은 낭독기에 고른 칸만 선택됐다고 알린다', (tester) async {
+    final semantics = tester.ensureSemantics();
+    await pumpDisplaySettings(tester, MaterialNameDisplayProvider());
+
+    Tristate selectedOf(Pattern label) => find.semantics
+        .byLabel(label)
+        .evaluate()
+        .single
+        .getSemanticsData()
+        .flagsCollection
+        .isSelected;
+
+    // 테마 기본값은 시스템 설정이다.
+    expect(selectedOf('시스템 설정 테마'), Tristate.isTrue);
+    expect(selectedOf('블랙 테마'), Tristate.isFalse);
+    expect(selectedOf('화이트 테마'), Tristate.isFalse);
+
+    await tester.tap(find.text('화이트'));
+    await tester.pumpAndSettle();
+
+    expect(selectedOf('화이트 테마'), Tristate.isTrue);
+    expect(selectedOf('시스템 설정 테마'), Tristate.isFalse);
+
+    await scrollTo(tester, find.text('면 (COTTON) 80%'));
+    expect(selectedOf(RegExp(r'^소재 이름 한글, ')), Tristate.isTrue);
+    expect(selectedOf(RegExp(r'^소재 이름 영문, ')), Tristate.isFalse);
+
+    await tester.tap(find.text('영문'));
+    await tester.pumpAndSettle();
+
+    expect(selectedOf(RegExp(r'^소재 이름 영문, ')), Tristate.isTrue);
+    expect(selectedOf(RegExp(r'^소재 이름 한글, ')), Tristate.isFalse);
+    semantics.dispose();
   });
 
   testWidgets('하단 메뉴 불투명도 슬라이더는 85%에서 시작하고, 끌면 바로 반영되며 손을 떼면 저장된다', (

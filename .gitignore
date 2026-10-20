@@ -387,9 +387,17 @@ BACKEND/__pycache__/
 /AI/kdpp_ai_ocr_integrated/scripts/audit_symbol_dataset.py
 /AI/kdpp_ai_ocr_integrated/scripts/check_split_leakage.py
 /AI/kdpp_ai_ocr_integrated/tests/test_symbol_*.py
+# AI 의존성 잠금 파일은 추적합니다(위 *.lock 규칙의 예외 — AI 검사 CI 가 이 둘을 대조).
+!/AI/kdpp_ai_ocr_integrated/requirements-ci.lock
+!/AI/kdpp_ai_ocr_integrated/requirements-text.lock
 AI/**/key.json
 **/key.json
 venv/
+# 배포 비밀값(Vision 키 등). deploy/.env 는 위의 .env 규칙으로 빠집니다.
+deploy/secrets/
+deploy/backups/
+# 카카오 네이티브 앱 키(앱 빌드용, 모양은 FRONTEND/kakao.env.example — DECISIONS 181)
+FRONTEND/kakao.env
 
 # 파트별 전달용 협업 문서 (커밋하지 않고 직접 공유)
 docs/BACKEND_REQUESTS.md

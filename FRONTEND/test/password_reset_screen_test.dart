@@ -6,6 +6,7 @@ import 'package:k_dpp/services/auth_api_service.dart';
 import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:k_dpp/widgets/number_keyboard_toolbar.dart';
 
+import 'helpers/app_back_button_state.dart';
 import 'helpers/app_banner_expect.dart';
 import 'helpers/fake_auth_backend.dart';
 
@@ -106,6 +107,56 @@ void main() {
       'code': '123456',
       'new_password': 'newpassword123',
     });
+    expect(find.byType(PasswordResetScreen), findsNothing);
+    expect(fieldText(tester, '이메일'), 'honggildong@example.com');
+    expect(fieldText(tester, '비밀번호'), isEmpty);
+    expectAppBanner(
+      tester,
+      '비밀번호를 다시 설정했어요. 새 비밀번호로 로그인해 주세요.',
+      AppBannerKind.success,
+    );
+  });
+
+  // C25(DECISIONS 2026-10-14): 요청 중에 떠나면 서버 비밀번호는 바뀌었는데 안내가 없고, 로그인
+  // 화면엔 옛 비밀번호가 남았다.
+  testWidgets('재설정을 기다리는 동안은 "<"·뒤로가기로 떠날 수 없고, 끝나면 이메일을 넘겨 돌아간다', (
+    tester,
+  ) async {
+    backend
+      ..on('/auth/email-code', emailCodeSentResponse())
+      ..on(
+        '/auth/password-reset',
+        jsonResponse({
+          'status': 'success',
+          'message': '비밀번호를 다시 설정했습니다. 새 비밀번호로 로그인해 주세요.',
+        }, 200),
+      );
+    await pumpLoginWithReset(tester);
+    await tester.enterText(field('비밀번호'), 'old-password');
+    await tapVisible(tester, find.text('비밀번호를 잊으셨나요?'));
+
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await tapVisible(tester, find.byType(OutlinedButton));
+    await tester.enterText(field('인증번호'), '123456');
+    await tester.enterText(field('새 비밀번호'), 'newpassword123');
+    await tester.enterText(field('새 비밀번호 확인'), 'newpassword123');
+    final pendingReset = backend.hold('/auth/password-reset');
+    final submit = find.widgetWithText(ElevatedButton, '비밀번호 다시 설정');
+    await tester.ensureVisible(submit);
+    await tester.pumpAndSettle();
+    await tester.tap(submit);
+    await tester.pump();
+
+    expect(backend.bodiesFor('/auth/password-reset'), hasLength(1));
+    expect(isAppBackButtonEnabled(tester), isFalse);
+
+    await tryToLeave(tester);
+
+    expect(find.byType(PasswordResetScreen), findsOneWidget);
+
+    pendingReset.complete();
+    await tester.pumpAndSettle();
+
     expect(find.byType(PasswordResetScreen), findsNothing);
     expect(fieldText(tester, '이메일'), 'honggildong@example.com');
     expect(fieldText(tester, '비밀번호'), isEmpty);

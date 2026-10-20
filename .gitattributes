@@ -1,3 +1,5 @@
 # Git hooks and their POSIX launcher need LF even with Windows autocrlf enabled.
 /.githooks/* text eol=lf
 /scripts/security/*.sh text eol=lf
+# 배포 스크립트는 리눅스 컨테이너의 bash 가 읽습니다 — Windows 에서 받아도 줄바꿈을 LF 로 둡니다.
+*.sh text eol=lf

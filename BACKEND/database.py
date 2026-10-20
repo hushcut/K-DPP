@@ -10,11 +10,13 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    Index,
     MetaData,
     String,
     Text,
     UniqueConstraint,
     create_engine,
+    text,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -37,6 +39,7 @@ SQLALCHEMY_DATABASE_URL = os.getenv(
 # 기본값(5 + 10 = 15)이면 그런 요청 15개가 겹칠 때 다른 요청이 모두 연결을 기다리다 30초 뒤 500 이
 # 됩니다(DECISIONS 167). 평소엔 5개만 두고 몰릴 때만 늘립니다. 워커 1개 기준이며 PostgreSQL 기본
 # 연결 상한(100) 안입니다 — 워커를 늘리면 워커 수만큼 곱해집니다.
+# hide_parameters: DB 오류 traceback 에 SQL 매개변수(옷장 JSON·OCR 원문)가 남지 않게(DECISIONS 242).
 DB_POOL_SIZE = 5
 DB_MAX_OVERFLOW = 35
 engine = create_engine(
@@ -44,6 +47,7 @@ engine = create_engine(
     pool_pre_ping=True,
     pool_size=DB_POOL_SIZE,
     max_overflow=DB_MAX_OVERFLOW,
+    hide_parameters=True,
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -126,8 +130,76 @@ class Material(Base):
     unit = Column(String, nullable=False, default="kg CO2eq/kg textile")
 
 # 4. 라벨 분석 및 탄소배출량 계산 결과 저장 테이블
+class MaterialFactor(Base):
+    __tablename__ = "material_factors"
+    __table_args__ = (
+        UniqueConstraint("factor_key", "version"),
+        CheckConstraint("review_status IN ('candidate', 'selected', 'rejected')", name="factor_review_status"),
+        CheckConstraint("evidence_type IN ('literature', 'derived', 'placeholder')", name="factor_evidence_type"),
+    )
+    id = Column(Integer, primary_key=True)
+    factor_key = Column(String, nullable=False)
+    version = Column(String, nullable=False)
+    material_id = Column(Integer, ForeignKey("materials.id"), nullable=False)
+    value_decimal = Column(Text, nullable=False)
+    unit = Column(String, nullable=False)
+    method = Column(String, nullable=False)
+    scope = Column(String, nullable=False)
+    product_form = Column(String, nullable=False)
+    production_system = Column(String, nullable=False)
+    geography = Column(String, nullable=False, default="unknown")
+    publication_year = Column(Integer)
+    data_years_json = Column(Text, nullable=False, default="[]")
+    source_name = Column(String, nullable=False)
+    source_url = Column(String, nullable=False)
+    source_locator = Column(String, nullable=False)
+    evidence_type = Column(String, nullable=False)
+    review_status = Column(String, nullable=False, default="candidate")
+    usage_scope = Column(String, nullable=False)
+    limitations_json = Column(Text, nullable=False, default="[]")
+    carbon_accounting_json = Column(Text, nullable=False, default="{}")
+    components_json = Column(Text)
+    reviewed_at = Column(DateTime)
+    review_note = Column(Text)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+
+
+class CalculationProfile(Base):
+    __tablename__ = "calculation_profiles"
+    __table_args__ = (
+        UniqueConstraint("key", "version"),
+        CheckConstraint("status IN ('draft', 'active', 'retired')", name="profile_status"),
+        Index("uq_active_carbon_profile", "usage_scope", unique=True,
+              postgresql_where=text("status = 'active'")),
+    )
+    id = Column(Integer, primary_key=True)
+    key = Column(String, nullable=False)
+    version = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="draft")
+    formula_version = Column(String, nullable=False)
+    method = Column(String, nullable=False)
+    scope = Column(String, nullable=False)
+    usage_scope = Column(String, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+
+
+class ProfileFactor(Base):
+    __tablename__ = "profile_factors"
+    profile_id = Column(Integer, ForeignKey("calculation_profiles.id"), primary_key=True)
+    material_id = Column(Integer, ForeignKey("materials.id"), primary_key=True)
+    factor_id = Column(Integer, ForeignKey("material_factors.id"), nullable=False)
+    selection_assumption = Column(Text, nullable=False)
+
 class AnalysisResult(Base):
     __tablename__ = "analysis_results"
+    __table_args__ = (Index("uq_analysis_request", "user_id", "client_request_id", unique=True),)
+    result_kind = Column(String)
+    formula_version = Column(String)
+    profile_id = Column(Integer, ForeignKey("calculation_profiles.id"))
+    snapshot_schema_version = Column(Integer)
+    calculation_snapshot_json = Column(Text)
+    client_request_id = Column(String)
+    request_hash = Column(String)
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
@@ -141,6 +213,32 @@ class AnalysisResult(Base):
     raw_ocr_text = Column(Text)
     unknown_materials = Column(Text, nullable=False, default="[]")
     created_at = Column(DateTime, nullable=False, default=utc_now)
+
+
+class ClosetSnapshot(Base):
+    """옷장 서버 백업(DECISIONS 100·242) — 사용자당 한 행.
+
+    앱이 만든 옷 JSON 배열(Clothes.toJson 원소, 배열 순서 = 사용자 순서)을 해석하지 않고 그대로
+    보관한다. version 은 서버만 매긴다 — 첫 저장 1, 내용이 바뀔 때만 +1(행이 없으면 0 으로 본다).
+    탈퇴는 main.delete_user_rows 가 지운다(외래 키에 ON DELETE 없음).
+    """
+
+    __tablename__ = "closet_snapshots"
+    __table_args__ = (
+        # alembic check 는 CHECK 를 비교하지 않으므로 리비전에도 같은 이름으로 손으로 적는다.
+        CheckConstraint("version >= 1", name="version_positive"),
+        CheckConstraint("item_count >= 0", name="item_count_nonnegative"),
+    )
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True, autoincrement=False)
+    version = Column(Integer, nullable=False)
+    # len(items) — 운영자가 items 를 열지 않고 백업 상태를 볼 수 있게 둔다.
+    item_count = Column(Integer, nullable=False)
+    # json.dumps(ensure_ascii=False, separators=(',', ':')) 결과. 같은 내용 비교가 글자 비교라 JSONB 가 아니라 Text.
+    items = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+    # 내용이 바뀔 때 코드가 직접 넣는다(같은 내용 재전송은 그대로).
+    updated_at = Column(DateTime, nullable=False, default=utc_now)
 
 
 # 5. 서버 시작 때 스키마 확인

@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.policy import default as email_policy
 from email.utils import format_datetime, make_msgid, parseaddr
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import (
     BackgroundTasks,
@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, BeforeValidator, Field, StringConstraints
 import asyncio
 import base64
 import certifi
@@ -45,6 +45,11 @@ import hashlib
 import hmac
 import secrets
 import database
+from carbon.api import build_router, history_provenance
+from carbon.input_limits import (
+    MAX_MATERIAL_ENTRIES, MAX_MATERIAL_NAME_LENGTH, MAX_RAW_OCR_TEXT_LENGTH,
+    MaterialName, RawOcrText, reject_too_many_materials,
+)
 
 AI_MODULE_PATH = Path(__file__).resolve().parents[1] / "AI" / "kdpp_ai_ocr_integrated"
 if AI_MODULE_PATH.exists() and str(AI_MODULE_PATH) not in sys.path:
@@ -91,7 +96,9 @@ SCAN_IMAGE_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 # 탄소 계산에 허용하는 의류 무게 상한(100kg).
 MAX_WEIGHT_GRAMS = 100_000
-MATERIAL_FACTOR_SOURCE = "K-DPP backend material carbon factor table (development estimates)"
+# 리포트 '계산 기준'의 출처 줄에 그대로 보이는 이름입니다. 계수가 아직 개발용 추정값이라
+# '추정값'을 붙여 둡니다(팀 승인 출처가 정해지면 바꿈 — DECISIONS 227·233).
+MATERIAL_FACTOR_SOURCE = "K-DPP 소재별 배출계수 표(추정값)"
 CALCULATION_SCOPE = "material_production_estimate"
 CLOTHING_TYPE_OPTIONS = [
     {
@@ -219,20 +226,34 @@ app = FastAPI(
 # 지적), 실제 수신 바이트를 누적 계산해 상한 초과 즉시 413을 돌려줍니다.
 # 실배포에서는 프록시(nginx 등)의 client_max_body_size도 함께 두어야 합니다.
 MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 1024 * 1024
+# 사진 업로드(multipart/form-data)가 아닌 요청 — JSON 이거나 Content-Type 이 없는 요청 — 의 상한.
+# 앱의 JSON 요청은 몇 KB 인데 11MB 까지 받으면, 파싱한 객체와 검증 오류가 본문의 수십 배로
+# 불어나 인증 없는 /analyze 한 건이 메모리를 수백 MB 넘게 올렸습니다(DECISIONS 244).
+MAX_JSON_REQUEST_BYTES = 1024 * 1024
+
+
+def is_multipart_request(content_type: bytes | None) -> bool:
+    """Content-Type 이 multipart/form-data 인지(대소문자·매개변수 무시)."""
+    if content_type is None:
+        return False
+    return content_type.split(b";", 1)[0].strip().lower() == b"multipart/form-data"
 
 
 class BodySizeLimitMiddleware:
     """요청 본문 상한 미들웨어.
 
+    - 상한은 Content-Type 으로 고릅니다: multipart/form-data(사진 업로드)는
+      max_bytes, 그 밖(JSON·Content-Type 없음 등)은 max_json_bytes.
     - Content-Length가 있으면 그 값으로 조기 차단합니다.
     - 길이 미표기(chunked) 요청은 상한까지만 직접 수신해 보고,
       초과하면 앱에 전달하지 않고 413을 반환합니다. 상한 이내면
       버퍼를 재생(replay)해 앱에 그대로 넘깁니다.
     """
 
-    def __init__(self, app, max_bytes: int):
+    def __init__(self, app, max_bytes: int, max_json_bytes: int):
         self.app = app
         self.max_bytes = max_bytes
+        self.max_json_bytes = max_json_bytes
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -240,16 +261,24 @@ class BodySizeLimitMiddleware:
             return
 
         declared_length = None
+        content_type = None
         for name, value in scope.get("headers") or []:
             if name == b"content-length":
                 try:
                     declared_length = int(value)
                 except ValueError:
                     declared_length = None
+            # 헤더가 여럿이면 Starlette(request.headers.get)처럼 첫 값을 씁니다 — 앱이 본문을
+            # 읽는 방식과 상한을 고르는 기준이 어긋나지 않게.
+            elif name == b"content-type" and content_type is None:
+                content_type = value
+
+        multipart = is_multipart_request(content_type)
+        max_bytes = self.max_bytes if multipart else self.max_json_bytes
 
         if declared_length is not None:
-            if declared_length > self.max_bytes:
-                await self._send_413(send)
+            if declared_length > max_bytes:
+                await self._send_413(send, multipart)
                 return
             # 길이가 신고돼 있고 상한 이내면 버퍼링 없이 그대로 통과시킵니다.
             # (신고 길이를 속여 더 보내는 경우는 서버(h11)가 프로토콜
@@ -267,8 +296,8 @@ class BodySizeLimitMiddleware:
             chunk = message.get("body", b"")
             body_chunks.append(chunk)
             received_bytes += len(chunk)
-            if received_bytes > self.max_bytes:
-                await self._send_413(send)
+            if received_bytes > max_bytes:
+                await self._send_413(send, multipart)
                 return
             if not message.get("more_body", False):
                 break
@@ -289,12 +318,16 @@ class BodySizeLimitMiddleware:
 
         await self.app(scope, replay_receive, send)
 
-    async def _send_413(self, send):
+    async def _send_413(self, send, multipart: bool):
+        if multipart:
+            message = f"요청이 너무 큽니다. 이미지는 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB 이하로 올려 주세요."
+        else:
+            message = f"요청이 너무 큽니다. 사진 업로드가 아닌 요청은 {self.max_json_bytes // (1024 * 1024)}MB 이하여야 합니다."
         body = json.dumps(
             {
                 "status": "error",
                 "error_code": "PAYLOAD_TOO_LARGE",
-                "message": f"요청이 너무 큽니다. 이미지는 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB 이하로 올려 주세요.",
+                "message": message,
                 "detail": None,
             },
             ensure_ascii=False,
@@ -325,7 +358,11 @@ def parse_cors_origins(value: str | None) -> list[str]:
 CORS_ALLOWED_ORIGINS = parse_cors_origins(os.getenv("K_DPP_CORS_ORIGINS"))
 
 # CORS를 나중에 추가해야 바깥층이 되어 413 응답에도 CORS 헤더가 붙습니다.
-app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
+app.add_middleware(
+    BodySizeLimitMiddleware,
+    max_bytes=MAX_REQUEST_BYTES,
+    max_json_bytes=MAX_JSON_REQUEST_BYTES,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -369,10 +406,36 @@ async def request_validation_error_code_handler(
     request: Request,
     exc: RequestValidationError,
 ):
+    errors = exc.errors()
+
+    # 옷장 백업의 벌 수 상한은 사용자가 닿을 수 있는 상한이라 앱 버그(422)와 나눠 413 으로 알립니다.
+    # list 의 max_length 는 501번째 원소에서 멈추므로 원소 오류를 다 만들지 않습니다(DECISIONS 242).
+    # 다른 오류가 함께 있어도 이것이 이깁니다.
+    if request.url.path == CLOSET_PATH and any(
+        error.get("type") == "too_long" and tuple(error.get("loc", ())) == ("body", "items")
+        for error in errors
+    ):
+        log_closet("rejected reason=too_many_items")
+        detail = build_error_detail(
+            CLOSET_TOO_LARGE_MESSAGE,
+            "CLOSET_TOO_LARGE",
+            reason="too_many_items",
+            max_items=MAX_CLOSET_ITEMS,
+        )
+        return JSONResponse(
+            status_code=413,
+            content={
+                "status": "error",
+                "error_code": "CLOSET_TOO_LARGE",
+                "message": CLOSET_TOO_LARGE_MESSAGE,
+                "detail": detail,
+            },
+        )
+
     error_code = "VALIDATION_ERROR"
     message = "요청 형식이 올바르지 않습니다."
 
-    for error in exc.errors():
+    for error in errors:
         if "image" in error.get("loc", ()):
             error_code = "IMAGE_MISSING"
             message = "이미지 파일을 첨부해 주세요."
@@ -383,7 +446,7 @@ async def request_validation_error_code_handler(
     # 부담이 되므로, 위치와 사유만 남기고 개수도 제한합니다.
     safe_errors = [
         {key: value for key, value in error.items() if key in ("loc", "msg", "type")}
-        for error in exc.errors()[:20]
+        for error in errors[:20]
     ]
 
     return JSONResponse(
@@ -464,20 +527,17 @@ class WithdrawRequest(BaseModel):
 # 소재 계산은 입력 소재 수에 비례해 반복되므로 개수·길이를 제한하지 않으면
 # 요청 1건으로 워커를 오래 점유시킬 수 있습니다. 실제 케어 라벨의 소재는
 # 많아야 몇 개이고, 오류 응답이 입력을 되돌려주는 경로도 있어 상한이 곧 응답 크기 상한입니다.
-MAX_MATERIAL_ENTRIES = 20
-MAX_MATERIAL_NAME_LENGTH = 64
 # 라벨 OCR 원문은 수천 자를 넘을 이유가 없습니다. 상한이 없으면 요청 1건이
 # 본문 상한(11MB)만큼을 그대로 DB에 적재합니다.
-MAX_RAW_OCR_TEXT_LENGTH = 4000
 # 이력 조회는 전건을 한 번에 올리므로 상한을 둡니다. 넘치면 has_more로 알립니다.
 MAX_HISTORY_ITEMS = 200
 
-MaterialName = Annotated[str, StringConstraints(max_length=MAX_MATERIAL_NAME_LENGTH)]
 MaterialRatios = Annotated[
     dict[MaterialName, float],
+    # 문서(OpenAPI maxProperties)와 마지막 안전선으로 남깁니다. 실제 거절은 아래 BeforeValidator.
     Field(max_length=MAX_MATERIAL_ENTRIES),
+    BeforeValidator(reject_too_many_materials),
 ]
-RawOcrText = Annotated[str, StringConstraints(max_length=MAX_RAW_OCR_TEXT_LENGTH)]
 
 
 class AnalyzeRequest(BaseModel):
@@ -493,6 +553,27 @@ class CarbonRangeRequest(BaseModel):
     clothing_type: str | None = None
     category: str | None = None
     raw_ocr_text: RawOcrText | None = None
+
+
+# 옷장 서버 백업(DECISIONS 100·242 — 설계 전문 docs/옷장백업-설계안.md). 한 벌은 약 0.55~0.7KB 라
+# 500벌이 약 350KB 입니다. 모두 상수이고 환경변수는 두지 않습니다.
+CLOSET_PATH = "/me/closet"
+MAX_CLOSET_ITEMS = 500
+MAX_CLOSET_BYTES = 512 * 1024  # 524,288 — 직렬화한 items 의 UTF-8 바이트
+MAX_CLOSET_DEPTH = 8  # items 배열 = 1단. 옷 한 벌은 3단(배열 → 옷 → materials)
+CLOSET_TOO_LARGE_MESSAGE = "옷장이 너무 커서 서버에 백업할 수 없습니다. 옷은 500벌, 크기는 512KB까지입니다."
+CLOSET_INVALID_MESSAGE = "옷장 데이터 형식이 올바르지 않습니다."
+
+StrictInt = Annotated[int, Field(strict=True)]
+
+
+class ClosetSaveRequest(BaseModel):
+    # 로그인 전환 틈에 옛 계정 옷장이 새 토큰으로 올라가지 않게, 앱이 아는 주인을 함께 보냅니다(403).
+    user_id: StrictInt
+    # 앱이 마지막으로 맞춘 서버 version(처음이면 0). 내용이 다르고 이 값이 지금 version 과 다르면 409.
+    base_version: Annotated[StrictInt, Field(ge=0)]
+    # 서버는 옷 내용을 해석하지 않고 원소가 객체인지만 봅니다. 501번째 원소에서 멈춥니다(위 처리기가 413).
+    items: Annotated[list[dict[str, Any]], Field(max_length=MAX_CLOSET_ITEMS)]
 
 # 4. 소재명 매칭 및 탄소발자국 계산 함수
 def normalize_email(email: str) -> str:
@@ -1207,10 +1288,40 @@ def compose_email_code_message(
     return None
 
 
+# 서버 로그의 [email] 줄에는 받는 주소를 남기지 않습니다(DECISIONS 253) — 컨테이너 로그는 크기로만
+# 돌아 탈퇴 뒤 최대 30일(243)을 넘겨 남을 수 있습니다. log 모드 줄은 주소 대신 서버가 켜질 때 만든
+# 비밀 키의 지문을 찍어 같은 주소의 줄끼리만 묶어 볼 수 있게 합니다. 키는 메모리에만 있어 이메일 목록을
+# 대입해 주소를 되찾을 수 없고, 재시작하면 지문이 바뀝니다.
+_EMAIL_LOG_KEY = secrets.token_bytes(32)
+# 공백·주소 문법 글자(EMAIL_SPECIAL_CHARACTERS)는 이메일에 못 들어오므로 그 밖의 글자가 이어진 토막을 본다.
+_LOG_TOKEN = re.compile(r"""[^\s"<>(),;:\\\[\]]+""")
+
+
+def email_log_tag(email: str) -> str:
+    digest = hmac.new(_EMAIL_LOG_KEY, email.encode("utf-8", "surrogatepass"), hashlib.sha256)
+    return "#" + digest.hexdigest()[:8]
+
+
+def hide_email_addresses(text: str, email: str) -> str:
+    """로그에 남길 문구에서 주소를 가린다. 받는 서버는 주소의 대소문자를 바꿔(NEW@EXAMPLE.COM) 되돌려
+    주거나 @ 앞부분만 돌려줄 수 있어, @ 가 든 토막은 누구 주소든 모두 가리고 받는 주소의 앞부분은 따로
+    나와도 대소문자와 상관없이 가립니다. 원인 문구(인증서·시간 초과·거절 이유)는 그대로 둡니다."""
+    text = _LOG_TOKEN.sub(lambda match: "<주소>" if "@" in match.group() else match.group(), text)
+    local_part = email.rsplit("@", 1)[0]
+    if local_part:
+        text = re.sub(
+            rf"(?<![A-Za-z0-9]){re.escape(local_part)}(?![A-Za-z0-9])",
+            "<주소>",
+            text,
+            flags=re.IGNORECASE,
+        )
+    return text
+
+
 def log_email(message: OutgoingEmail) -> None:
-    """log 모드: 메일 대신 서버 로그에 찍는다(로컬·CI·시연은 여기서 번호를 본다)."""
+    """log 모드: 메일 대신 서버 로그에 찍는다(로컬·CI·시연은 여기서 번호를 본다). 주소 대신 지문."""
     print(
-        f"[email] {message.to} | {message.subject} | 인증번호 {message.code or '없음'}",
+        f"[email] {email_log_tag(message.to)} | {message.subject} | 인증번호 {message.code or '없음'}",
         file=sys.stderr,
         flush=True,
     )
@@ -1263,8 +1374,8 @@ def send_smtp_email(message: OutgoingEmail, settings: SmtpSettings) -> None:
 
 class EmailDeliveryError(Exception):
     """SMTP 발송 실패. 받는 서버는 거부 문구에 받는 주소나 받은 AUTH 줄을 되돌려 줄 수 있어, 서버 로그에
-    남기기 전에 원래 예외의 repr 에서 받는 주소·비밀번호(와 AUTH 로 보낸 base64)를 가린다. 로그에는
-    가린 repr 만 보이게 repr 을 그 문구로 둔다(send_email_code_message 가 {exc!r} 로 찍음)."""
+    남기기 전에 원래 예외의 repr 에서 비밀번호(와 AUTH 로 보낸 base64)·주소(hide_email_addresses)를
+    가린다. 로그에는 가린 repr 만 보이게 repr 을 그 문구로 둔다(send_email_code_message 가 찍음)."""
 
     def __repr__(self) -> str:
         return str(self)
@@ -1281,7 +1392,7 @@ def describe_smtp_failure(exc: Exception, message: OutgoingEmail, settings: Smtp
     for secret in sorted(hidden, key=len, reverse=True):
         text = text.replace(secret, "<비밀번호>")
     # 비밀번호 찾기 메일은 가입된 이메일에만 가므로, 실패 줄의 주소는 가입 여부까지 남깁니다.
-    return text.replace(message.to, "<받는 주소>")
+    return hide_email_addresses(text, message.to)
 
 
 def deliver_email(message: OutgoingEmail) -> None:
@@ -1310,16 +1421,27 @@ def send_email_code_message(email: str, purpose: str, code: str) -> None:
             db.close()
         message = compose_email_code_message(email, purpose, code, registered)
         if message is None:
+            # 요청마다 보냄·실패·안 보냄 중 한 줄은 남깁니다 — smtp 모드에서 이 줄이 빠지면 '200 인데
+            # 기록 없음'이 발송 고장처럼 보입니다(DECISIONS 259). smtp 줄은 보냄 줄처럼 지문도 없습니다.
             if EMAIL_DELIVERY == "log":
                 print(
-                    f"[email] {email} | 가입되지 않은 이메일이라 비밀번호 찾기 메일을 보내지 않습니다.",
+                    f"[email] {email_log_tag(email)} | 가입되지 않은 이메일이라 비밀번호 찾기 메일을 "
+                    "보내지 않습니다.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[email] 가입되지 않은 이메일이라 메일을 보내지 않았습니다({purpose}).",
                     file=sys.stderr,
                     flush=True,
                 )
             return
         deliver_email(message)
     except Exception as exc:  # noqa: BLE001 — 백그라운드 작업이라 올려 보낼 곳이 없습니다.
-        print(f"[email] 인증 메일 처리 실패({purpose}): {exc!r}", file=sys.stderr, flush=True)
+        # SMTP 실패(EmailDeliveryError)는 이미 가렸지만, 다른 예외의 문구에도 주소가 들 수 있어 한 번 더.
+        reason = hide_email_addresses(repr(exc), email)
+        print(f"[email] 인증 메일 처리 실패({purpose}): {reason}", file=sys.stderr, flush=True)
 
 
 # --- 카카오 로그인 (DECISIONS 140·143·152·153) ------------------------------------------
@@ -1638,9 +1760,14 @@ def lock_user_row(db: Session, user_id: int) -> bool:
 
 
 def delete_user_rows(db: Session, user_id: int) -> None:
-    """탈퇴: 계정과 그 토큰·분석 이력·소셜 연결을 지운다(커밋은 부르는 쪽, users 행을 잠근 뒤).
+    """탈퇴: 계정과 그 토큰·분석 이력·소셜 연결·옷장 백업을 지운다(커밋은 부르는 쪽, users 행을 잠근 뒤).
     외래 키에 ON DELETE 가 없어 users 를 마지막에 지운다."""
-    for model in (database.AnalysisResult, database.AccessToken, database.SocialAccount):
+    for model in (
+        database.AnalysisResult,
+        database.AccessToken,
+        database.SocialAccount,
+        database.ClosetSnapshot,
+    ):
         db.query(model).filter(model.user_id == user_id).delete(synchronize_session=False)
     db.query(database.User).filter(database.User.id == user_id).delete(
         synchronize_session=False
@@ -1940,6 +2067,7 @@ def build_analysis_response(
 
 def serialize_analysis_result(result: database.AnalysisResult) -> dict:
     return {
+        **history_provenance(result),
         "id": result.id,
         "user_id": result.user_id,
         "materials": json.loads(result.materials),
@@ -2595,7 +2723,7 @@ def withdraw(
     db: Session = Depends(get_db),
 ):
     """재인증(비밀번호 계정은 비밀번호, 카카오 계정은 카카오 로그인)한 뒤 계정·토큰·분석 이력·
-    소셜 연결을 한 트랜잭션에서 지운다.
+    소셜 연결·옷장 백업을 한 트랜잭션에서 지운다.
 
     DELETE 메서드 대신 POST를 쓰는 이유는 프론트 공용 HTTP 헬퍼가
     GET/POST만 지원하기 때문이다(docs/SCAN_API_CONTRACT.md 참조).
@@ -2881,7 +3009,8 @@ def calculate_carbon_range(
         "calculation_basis": "소재별 탄소배출계수(kg CO2eq/kg)와 의류 무게(g)를 곱해 계산했습니다.",
         "emission_factors": emission_factors,
         "calculation_source": MATERIAL_FACTOR_SOURCE,
-        "calculation_note": "현재 소재별 배출계수는 개발용 추정값입니다. 최종 발표 전 팀 승인 출처로 교체해야 합니다.",
+        # 예전엔 팀 내부 메모를 실어 리포트에 그대로 보였습니다. 칸은 계약대로 두고 비웁니다(DECISIONS 233).
+        "calculation_note": None,
         "saved_result_id": result.id,
     }
 
@@ -2899,6 +3028,174 @@ def get_my_history(
     db: Session = Depends(get_db),
 ):
     return get_user_history_response(current_user, db)
+
+
+def log_closet(message: str) -> None:
+    # 충돌·거절만 남깁니다. 성공·같은 내용·401 은 남기지 않고, 옷 내용은 어디에도 찍지 않습니다.
+    print(f"[closet] {message}", file=sys.stderr, flush=True)
+
+
+def closet_rejection(
+    user_id: int, item_count: int, status_code: int, reason: str, **extra
+) -> HTTPException:
+    """413 CLOSET_TOO_LARGE 또는 422 CLOSET_INVALID 를 만들고 거절 줄을 남긴다(입력 원문은 싣지 않음)."""
+    log_closet(f"rejected user={user_id} reason={reason} items={item_count}")
+    if status_code == 413:
+        detail = build_error_detail(CLOSET_TOO_LARGE_MESSAGE, "CLOSET_TOO_LARGE", reason=reason, **extra)
+    else:
+        detail = build_error_detail(CLOSET_INVALID_MESSAGE, "CLOSET_INVALID", reason=reason, **extra)
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+def check_closet_depth(items: list, user_id: int) -> None:
+    """items 배열을 1단으로 세어 MAX_CLOSET_DEPTH 를 넘으면 422 too_deep.
+
+    재귀 없이 스택으로 셉니다. 깊은 값이 저장되면 응답을 만들 때 재귀 직렬화가 터질 수 있어
+    저장 전에 막습니다(DECISIONS 242).
+    """
+    stack = [(items, 1)]
+    while stack:
+        value, depth = stack.pop()
+        if depth > MAX_CLOSET_DEPTH:
+            raise closet_rejection(user_id, len(items), 422, "too_deep")
+        children = value.values() if isinstance(value, dict) else value
+        for child in children:
+            if isinstance(child, (dict, list)):
+                stack.append((child, depth + 1))
+
+
+def serialize_closet_items(items: list, user_id: int) -> str:
+    """저장·비교에 쓰는 글자. NaN·Infinity(1e400 포함)·짝 없는 서로게이트는 422, 512KB 넘으면 413."""
+    try:
+        payload = json.dumps(items, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    except ValueError:
+        raise closet_rejection(user_id, len(items), 422, "invalid_number") from None
+    try:
+        size = len(payload.encode("utf-8"))
+    except UnicodeEncodeError:
+        raise closet_rejection(user_id, len(items), 422, "invalid_unicode") from None
+    if size > MAX_CLOSET_BYTES:
+        raise closet_rejection(user_id, len(items), 413, "too_many_bytes", max_bytes=MAX_CLOSET_BYTES)
+    return payload
+
+
+def closet_updated_at(value: datetime | None) -> str | None:
+    return None if value is None else value.replace(tzinfo=timezone.utc).isoformat()
+
+
+@app.get(CLOSET_PATH, tags=["v1-closet"])
+def get_my_closet(
+    current_user: database.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """옷장 서버 백업 조회. 백업이 없으면 version 0·items []."""
+    row = (
+        db.query(database.ClosetSnapshot)
+        .filter(database.ClosetSnapshot.user_id == current_user.id)
+        .first()
+    )
+    # dict 를 돌려주면 FastAPI 가 jsonable_encoder(파이썬 재귀, '_sa' 로 시작하는 키를 버림)를 거칩니다.
+    # 소재 이름은 자유 입력이라 저장한 그대로 돌려주도록 JSONResponse 를 직접 만듭니다.
+    return JSONResponse(
+        content={
+            "status": "success",
+            "user_id": current_user.id,
+            "version": row.version if row else 0,
+            "item_count": row.item_count if row else 0,
+            "items": json.loads(row.items) if row else [],
+            "updated_at": closet_updated_at(row.updated_at if row else None),
+        }
+    )
+
+
+@app.post(CLOSET_PATH, tags=["v1-closet"])
+def save_my_closet(
+    request: ClosetSaveRequest,
+    current_user: database.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """옷장 서버 백업 저장(폰 우선 — DECISIONS 100·242).
+
+    내용이 저장된 것과 같으면 base_version 과 상관없이 200 changed=false. 다르고 base_version 이
+    지금 version 과 다르면 409 CLOSET_VERSION_CONFLICT. 그 밖에는 version +1 로 씁니다.
+    검사·직렬화는 잠금 전에 끝내 users 잠금을 SELECT 한 번 + 쓰기 한 번 동안만 쥡니다.
+    """
+    user_id = current_user.id
+    item_count = len(request.items)
+    if request.user_id != user_id:
+        log_closet(f"rejected user={user_id} reason=owner_mismatch items={item_count}")
+        raise HTTPException(
+            status_code=403,
+            detail=build_error_detail("로그인한 계정의 옷장이 아닙니다.", "CLOSET_OWNER_MISMATCH"),
+        )
+    check_closet_depth(request.items, user_id)
+    payload = serialize_closet_items(request.items, user_id)
+
+    # 잠그는 순서는 탈퇴와 같다(users → closet_snapshots). 같은 계정의 동시 첫 업로드는 여기서 줄을
+    # 서므로 PK 가 겹치지 않고, 탈퇴가 먼저 커밋됐으면 401, 이 저장이 먼저면 탈퇴가 이 행까지 지운다.
+    if not lock_user_row(db, user_id):
+        db.rollback()
+        raise HTTPException(status_code=401, detail="로그인이 만료되었습니다.")
+
+    row = (
+        db.query(database.ClosetSnapshot)
+        .filter(database.ClosetSnapshot.user_id == user_id)
+        .first()
+    )
+    current_version = row.version if row else 0
+    current_items = row.items if row else "[]"
+    current_updated_at = row.updated_at if row else None
+
+    if payload == current_items:
+        db.rollback()
+        return {
+            "status": "success",
+            "version": current_version,
+            "changed": False,
+            "item_count": item_count,
+            "updated_at": closet_updated_at(current_updated_at),
+        }
+
+    if request.base_version != current_version:
+        db.rollback()
+        log_closet(f"conflict user={user_id} base={request.base_version} current={current_version}")
+        raise HTTPException(
+            status_code=409,
+            detail=build_error_detail(
+                "다른 기기에서 옷장 백업이 바뀌었습니다.",
+                "CLOSET_VERSION_CONFLICT",
+                current_version=current_version,
+            ),
+        )
+
+    now = utc_now()
+    if row is None:
+        db.add(
+            database.ClosetSnapshot(
+                user_id=user_id,
+                version=1,
+                item_count=item_count,
+                items=payload,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        new_version = 1
+    else:
+        new_version = current_version + 1
+        row.version = new_version
+        row.item_count = item_count
+        row.items = payload
+        row.updated_at = now
+    db.commit()
+
+    return {
+        "status": "success",
+        "version": new_version,
+        "changed": True,
+        "item_count": item_count,
+        "updated_at": closet_updated_at(now),
+    }
 
 
 def get_user_history_response(
@@ -2949,3 +3246,6 @@ def get_clothing_types():
         "unit": "g",
         "items": CLOTHING_TYPE_OPTIONS,
     }
+
+
+app.include_router(build_router(get_db, get_current_user, CLOTHING_TYPE_OPTIONS))

@@ -1,5 +1,12 @@
 part of '../scan_screen.dart';
 
+/// 결과 폼에서 사용자가 고칠 수 있는 값(제목·의류 종류·소재 행 글자)을 비교용으로 모은 모습입니다.
+typedef _ResultFormSnapshot = ({
+  String title,
+  Object clothingType,
+  List<(String, String)> materialRows,
+});
+
 /// 분석 초안을 결과 폼에 반영하고 의류·소재 편집 상태를 관리합니다.
 extension _ScanResultActions on _ScanScreenState {
   /// 분석 또는 수동 입력 초안을 화면 상태와 서버 원본 값에 반영합니다.
@@ -32,6 +39,43 @@ extension _ScanResultActions on _ScanScreenState {
       _titleController.text = draft.title;
       _hasTriedSubmit = false;
     });
+
+    _initialResultForm = _captureResultForm();
+  }
+
+  _ResultFormSnapshot _captureResultForm() => (
+    title: _titleController.text,
+    clothingType: _clothingTypeKey(_selectedClothingType),
+    materialRows: [
+      for (var i = 0; i < _materialInputs.length; i++)
+        (
+          _materialInputs[i].nameController.text,
+          _materialInputs[i].percentController.text,
+        ),
+    ],
+  );
+
+  // 같은 종류를 다시 고르면(서버 무게표가 늦게 와 다른 객체여도) 고친 것으로 보지 않게 값으로 비교합니다.
+  Object _clothingTypeKey(ClothingTypeOption option) => (
+    option.id,
+    option.label,
+    option.category,
+    option.minWeightGram,
+    option.maxWeightGram,
+    option.estimatedWeightGram,
+    option.isDirectWeight,
+  );
+
+  /// 결과 폼을 채운 뒤 사용자가 제목·종류·소재를 고쳤는지입니다. 고쳤다가 처음 글자로
+  /// 되돌렸으면 고치지 않은 것으로 봅니다.
+  bool get _hasEditedResultForm {
+    final initial = _initialResultForm;
+    if (initial == null) return false;
+
+    final current = _captureResultForm();
+    return current.title != initial.title ||
+        current.clothingType != initial.clothingType ||
+        !listEquals(current.materialRows, initial.materialRows);
   }
 
   bool _shouldReplaceTitleWithType(String title) {
@@ -112,6 +156,39 @@ extension _ScanResultActions on _ScanScreenState {
   Future<void> _confirmDiscardAndClose() async {
     if (_isSaving) return;
 
+    final shouldDiscard = await _askDiscardInput(
+      title: '작성 중인 내용을 버릴까요?',
+      message: '스캔 화면을 닫으면 지금까지 입력한 내용이 사라져요.',
+      discardLabel: '버리고 닫기',
+    );
+
+    if (!shouldDiscard || !mounted) return;
+
+    Navigator.pop(context);
+  }
+
+  /// 결과 화면 '다시 촬영': 입력을 고쳤으면 버릴지 묻고, 스캔 직후 그대로면 묻지 않고
+  /// 촬영 화면으로 돌아갑니다(DECISIONS 2026-10-14 C24).
+  Future<void> _confirmRetake() async {
+    if (_hasEditedResultForm) {
+      final shouldRetake = await _askDiscardInput(
+        title: '다시 촬영할까요?',
+        message: '다시 촬영하면 지금까지 입력한 내용이 사라져요.',
+        discardLabel: '다시 촬영',
+      );
+
+      if (!shouldRetake || !mounted) return;
+    }
+
+    _resetScan();
+  }
+
+  /// 입력을 버릴지 묻고, [discardLabel] 버튼을 골랐을 때만 true 를 돌려줍니다.
+  Future<bool> _askDiscardInput({
+    required String title,
+    required String message,
+    required String discardLabel,
+  }) async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final palette = AppPalette.of(context);
 
@@ -120,12 +197,9 @@ extension _ScanResultActions on _ScanScreenState {
       builder: (dialogContext) {
         return AlertDialog(
           backgroundColor: palette.card,
-          title: Text(
-            '작성 중인 내용을 버릴까요?',
-            style: TextStyle(color: palette.textPrimary),
-          ),
+          title: Text(title, style: TextStyle(color: palette.textPrimary)),
           content: Text(
-            '스캔 화면을 닫으면 지금까지 입력한 내용이 사라져요.',
+            message,
             style: TextStyle(
               height: 1.5,
               color: isDark ? const Color(0xFFD1D1D6) : const Color(0xFF444444),
@@ -139,11 +213,11 @@ extension _ScanResultActions on _ScanScreenState {
             ElevatedButton(
               onPressed: () => Navigator.pop(dialogContext, true),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent,
+                backgroundColor: AppPalette.danger,
               ),
-              child: const Text(
-                '버리고 닫기',
-                style: TextStyle(color: Colors.white),
+              child: Text(
+                discardLabel,
+                style: const TextStyle(color: Colors.white),
               ),
             ),
           ],
@@ -151,13 +225,18 @@ extension _ScanResultActions on _ScanScreenState {
       },
     );
 
-    if (shouldDiscard != true || !mounted) return;
-
-    Navigator.pop(context);
+    return shouldDiscard == true;
   }
 
   /// 새 스캔을 위해 이미지·폼·서버 결과와 카메라 상태를 초기화합니다.
   void _resetScan() {
+    _clearScanResult();
+    _cameraLifecycle.startIfNeeded();
+  }
+
+  /// 이미지·폼·서버 결과를 지워 촬영 화면 상태로 되돌립니다. 카메라는 켜지 않습니다 — 저장 직후엔
+  /// 곧바로 리포트가 위에 쌓이고, 리포트가 닫혀 이 화면이 다시 보일 때 켭니다.
+  void _clearScanResult() {
     _materialInputs.clear();
 
     _updateState(() {
@@ -177,7 +256,5 @@ extension _ScanResultActions on _ScanScreenState {
       _hasTriedSubmit = false;
       _isSaving = false;
     });
-
-    _cameraLifecycle.startIfNeeded();
   }
 }

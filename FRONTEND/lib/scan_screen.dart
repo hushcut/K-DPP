@@ -2,13 +2,13 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'closet_provider.dart';
 import 'models/clothes.dart';
 import 'models/clothing_type_option.dart';
-import 'models/main_screen_arguments.dart';
 import 'services/carbon_api_service.dart';
 import 'services/clothing_type_catalog_api_service.dart';
 import 'services/clothing_type_catalog_controller.dart';
@@ -40,13 +40,38 @@ part 'scan/scan_view_builders.dart';
 ///
 /// 결과를 입력하는 동안에는 이 화면을 담은 라우트가 곧바로 닫히지 않게 막고 버릴지 묻습니다.
 class ScanScreen extends StatefulWidget {
-  const ScanScreen({super.key, this.isActive = true, this.saving});
+  const ScanScreen({
+    super.key,
+    this.isActive = true,
+    this.saving,
+    required this.onSaved,
+  });
 
   final bool isActive;
 
   /// 저장 중인지 담는 값입니다. 이 화면을 담은 라우트가 넘기면 같은 값을 보고 위 막대의
   /// 설정 버튼을 막습니다. 이 화면만 값을 바꿉니다.
   final ValueNotifier<bool>? saving;
+
+  /// 저장이 끝나 지금 계정 옷장에 들어간 의류를 받습니다. 이 화면은 이미 새 촬영 상태로
+  /// 돌아가 있고, 이 화면을 담은 라우트가 그 위에 리포트를 엽니다(C04).
+  final ValueChanged<Clothes> onSaved;
+
+  /// 탄소 계산 서비스를 만듭니다. 테스트가 계산 응답을 붙잡아 두고 그 사이 계정을 바꿔 볼 때
+  /// 갈아 끼웁니다(C26).
+  @visibleForTesting
+  static CarbonApiService Function() carbonApiServiceFactory =
+      CarbonApiService.new;
+
+  /// 라벨 분석 서비스와 사진 가져오기 서비스를 만듭니다. 테스트가 카메라·서버 없이 분석 결과를
+  /// 정해 두고 촬영 → 종류 선택 → 결과 입력 흐름을 따라갈 때 갈아 끼웁니다(C11).
+  @visibleForTesting
+  static ScanAnalysisService Function() scanAnalysisServiceFactory =
+      ScanAnalysisService.new;
+
+  @visibleForTesting
+  static ScanCaptureService Function() scanCaptureServiceFactory =
+      ScanCaptureService.new;
 
   @override
   State<ScanScreen> createState() => _ScanScreenState();
@@ -63,8 +88,8 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   bool _hasTriedSubmit = false;
   bool _isSavingValue = false;
 
-  // 저장 중에는 "<"·뒤로가기처럼 설정도 열리지 않아야, 저장 끝에 스택을 정리할 때 연 설정이
-  // 사라지지 않습니다. 위 막대는 이 화면 밖에 있어 바꿀 때마다 [ScanScreen.saving] 에도 씁니다.
+  // 저장 중에는 "<"·뒤로가기처럼 설정도 열리지 않아야, 저장 끝에 여는 리포트가 보던 설정을
+  // 덮지 않습니다. 위 막대는 이 화면 밖에 있어 바꿀 때마다 [ScanScreen.saving] 에도 씁니다.
   bool get _isSaving => _isSavingValue;
   set _isSaving(bool value) {
     _isSavingValue = value;
@@ -81,10 +106,14 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   double? _serverCarbonFootprint;
   double? _serverWeightGram;
   String? _serverCalculationMethod;
+  // 결과 폼을 채운 직후의 모습입니다. '다시 촬영' 때 지금 폼과 다르면 버릴지 묻습니다.
+  _ResultFormSnapshot? _initialResultForm;
 
   // 분석, 촬영, 초안 생성, 계산, 저장 책임은 전용 서비스에 위임합니다.
-  final ScanAnalysisService _scanAnalysisService = ScanAnalysisService();
-  final CarbonApiService _carbonApiService = CarbonApiService();
+  final ScanAnalysisService _scanAnalysisService =
+      ScanScreen.scanAnalysisServiceFactory();
+  final CarbonApiService _carbonApiService =
+      ScanScreen.carbonApiServiceFactory();
   // 결과 화면의 소재 추천 목록과 소재 선택창이 함께 쓰는 소재 목록입니다.
   final MaterialCatalogController _materialCatalog = MaterialCatalogController(
     fetchMaterials: MaterialCatalogApiService().fetchMaterials,
@@ -95,7 +124,8 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
         fetchClothingTypes:
             ClothingTypeCatalogApiService().fetchClothingTypes,
       );
-  final ScanCaptureService _scanCaptureService = ScanCaptureService();
+  final ScanCaptureService _scanCaptureService =
+      ScanScreen.scanCaptureServiceFactory();
   final ScanDraftService _scanDraftService = const ScanDraftService();
   final ScanSaveService _scanSaveService = const ScanSaveService();
 

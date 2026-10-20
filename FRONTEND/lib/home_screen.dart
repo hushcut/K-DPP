@@ -108,7 +108,8 @@ class HomeScreen extends StatelessWidget {
                     foregroundColor: AppPalette.accent,
                     minimumSize: const Size(0, 40),
                     padding: const EdgeInsets.symmetric(horizontal: 8),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    // 보이는 버튼은 40 그대로 두고 누를 수 있는 곳만 48 로 넓힙니다(C59).
+                    tapTargetSize: MaterialTapTargetSize.padded,
                   ),
                 ),
             ],
@@ -146,6 +147,7 @@ class HomeScreen extends StatelessWidget {
                   primaryText: primaryText,
                   secondaryText: secondaryText,
                   progressBackgroundColor: progressBackgroundColor,
+                  palette: palette,
                 ),
               ),
             ),
@@ -436,10 +438,15 @@ class HomeScreen extends StatelessWidget {
     required Color primaryText,
     required Color secondaryText,
     required Color progressBackgroundColor,
+    required AppPalette palette,
   }) {
+    // 막대는 3:1 이면 되어 밝은 색을 그대로 두고, 퍼센트 글자만 4.5:1 을 넘는 글자색을 씁니다(C54).
     final Color statusColor = percentage > 70
         ? Colors.green
         : (percentage > 40 ? Colors.orange : Colors.redAccent);
+    final Color statusTextColor = percentage > 70
+        ? palette.successText
+        : (percentage > 40 ? palette.warningText : palette.dangerText);
 
     return Semantics(
       button: onTap != null,
@@ -476,7 +483,7 @@ class HomeScreen extends StatelessWidget {
                       '$percentage%',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        color: statusColor,
+                        color: statusTextColor,
                       ),
                     ),
                     if (onTap != null) ...[

@@ -1,0 +1,99 @@
+{
+  "decision_status": "selected_for_free_public_capstone",
+  "decision_date": "2026-10-18",
+  "automatic_activation": false,
+  "deployment_manifest": false,
+  "profile_key": "idemat-2026-free-public-capstone",
+  "version": "2026-10-18-v1",
+  "method": "IPCC2021_GWP100_Idemat2026",
+  "scope": "fiber_production_estimate",
+  "unit": "kg CO2eq/kg fiber",
+  "source": {
+    "publisher": "Stichting Sustainability Impact Metrics (SSIM)",
+    "workbook": "Idemat_2026RevB2.xlsx",
+    "sheet": "Idemat2026",
+    "url": "https://www.ecocostsvalue.com/EVR/img/Idemat_2026RevB2.xlsx",
+    "sha256": "31253400aa2bf7b142dc92cbcf5a9426ae17bc531a083dea06bcd58895d35e6d",
+    "metadata_url": "https://www.ecocostsvalue.com/EVR/img/SimaproMETAdata260520.xlsx",
+    "license_page": "https://www.ecocostsvalue.com/data-tools-books/",
+    "license_agreement": "https://www.ecocostsvalue.com/EVR/img/User_License_Agreement_2026_(260228)_.pdf",
+    "method_locator": "Introduction!A9: IPCC 2021 GWP 100a; Idemat2026!G2:G3: carbon, kgCO2e",
+    "required_attribution": "data from www.ecocostsvalue.com"
+  },
+  "permitted_project_use": {
+    "release": "free-of-charge public educational capstone",
+    "paid_software": "separate SSIM commercial licensing review and agreement required",
+    "comparative_environmental_claims": false,
+    "product_certification_claims": false,
+    "redistribute_full_source_database": false
+  },
+  "factors": [
+    {
+      "material": "cotton",
+      "value_decimal": "0.9358808000000001",
+      "display_value": "0.94",
+      "evidence_type": "literature",
+      "source_cells": ["Idemat2026!A1111", "Idemat2026!F1111", "Idemat2026!G1111"],
+      "source_process": "A.140.01.106.230701",
+      "product_form": "cotton fibre trade mix, without global sea transport",
+      "geography": "source trade mix China, India and USA; not a Korean production average",
+      "assumptions": ["Use the source trade-mix fibre proxy when origin is unknown."],
+      "excluded": ["global sea transport", "yarn spinning", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"]
+    },
+    {
+      "material": "polyester",
+      "value_decimal": "2.8318708",
+      "display_value": "2.83",
+      "evidence_type": "derived",
+      "source_cells": ["Idemat2026!G1120", "Idemat2026!G1143"],
+      "source_processes": ["A.140.01.115.230701", "A.140.03.116.230701"],
+      "product_form": "virgin PET untextured filament / POY production proxy (80-500 dtex)",
+      "derivation": {
+        "operation": "sum",
+        "pet_pellets_kgCO2eq_per_kg": "2.0377328",
+        "filament_extrusion_kgCO2eq_per_kg": "0.794138",
+        "expression": "2.0377328 + 0.794138 = 2.8318708",
+        "pet_input_kg_per_kg_output_assumption": "1"
+      },
+      "assumptions": [
+        "The extrusion process is an incremental process, not a second PET material inventory.",
+        "Use a 1:1 pellet-to-output mass proxy; no unreported yield-loss correction is invented.",
+        "For labels with unknown production form, explicitly display the virgin untextured-filament assumption.",
+        "This is not a measured or global-average factor for all polyester."
+      ],
+      "excluded": ["texturing", "staple cutting", "additional drawing not documented in the source process", "yarn spinning after fibre formation", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"],
+      "unsupported_variants": ["recycled polyester", "verified staple fibre production"]
+    },
+    {
+      "material": "acrylic",
+      "value_decimal": "5.13",
+      "display_value": "5.13",
+      "evidence_type": "literature",
+      "source_cells": ["Idemat2026!A1106", "Idemat2026!F1106", "Idemat2026!G1106"],
+      "source_process": "A.140.01.101.240814",
+      "product_form": "acrylic fibres",
+      "assumptions": ["Use the source acrylic-fibre proxy; do not add the PET extrusion process to an existing fibre inventory."],
+      "excluded": ["yarn spinning", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"]
+    },
+    {
+      "material": "linen",
+      "value_decimal": "1.5057799333333333",
+      "display_value": "1.51",
+      "evidence_type": "literature",
+      "source_cells": ["Idemat2026!A1126", "Idemat2026!F1126", "Idemat2026!G1126"],
+      "source_process": "A.140.01.121.230701",
+      "product_form": "European scutched flax fibres for spinning linen, source metadata states 12% moisture",
+      "assumptions": ["Use the European flax-fibre proxy for linen; do not map ramie or hemp to linen."],
+      "excluded": ["yarn spinning", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"]
+    }
+  ],
+  "unsupported_material_policy": "Reject the whole estimate if any positive-ratio material has no selected compatible factor. Never drop it or substitute a V1/TE value.",
+  "cross_version_policy": "Keep the original result and source version. Do not present differences between V1, TE research and IDEMAT as emission reductions.",
+  "activation_prerequisites": [
+    "Complete PR 88 input-limit and policy-validation review fixes.",
+    "Add executable license/use constraints and actual review metadata to policy administration.",
+    "Convert this decision record to a validated deployment manifest; do not pass this file to policy_admin publish.",
+    "Expose source attribution, estimate scope, polyester assumptions and free-release restrictions in the app.",
+    "Keep third-party reviewer approval separate from this delegated technical selection."
+  ]
+}

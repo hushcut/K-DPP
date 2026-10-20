@@ -1,15 +1,17 @@
 import 'dart:async';
+import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
 import 'package:k_dpp/main_screen.dart';
 import 'package:k_dpp/material_name_display_provider.dart';
 import 'package:k_dpp/models/clothes.dart';
-import 'package:k_dpp/models/main_screen_arguments.dart';
 import 'package:k_dpp/navigation_bar_opacity_provider.dart';
 import 'package:k_dpp/scan_screen.dart';
+import 'package:k_dpp/services/carbon_api_service.dart';
 import 'package:k_dpp/services/scan_api_service.dart';
 import 'package:k_dpp/widgets/app_back_button.dart';
 import 'package:k_dpp/widgets/app_banner.dart';
@@ -17,6 +19,7 @@ import 'package:k_dpp/widgets/frosted_surface.dart';
 import 'package:k_dpp/widgets/scan_result_view.dart';
 import 'package:provider/provider.dart';
 
+import 'helpers/fake_auth_session_storage.dart';
 import 'helpers/fake_closet_storage.dart';
 
 void main() {
@@ -102,240 +105,6 @@ void main() {
     // 설정처럼 라우트로 쌓여 하단 메뉴는 가려진다(2026-09-24 사용자 결정 A안).
     expect(find.text('홈'), findsNothing);
     expect(find.text('옷장'), findsNothing);
-  });
-
-  testWidgets('스캔 저장 후에는 새 스캔 화면 위에 리포트를 쌓아 열고, 리포트를 닫으면 카메라를 켠다', (
-    tester,
-  ) async {
-    final provider = ClosetProvider(storage: FakeClosetStorage());
-    final clothes = Clothes(
-      title: '홍길동 코튼 셔츠',
-      category: '상의',
-      health: 88,
-      materials: {'cotton': 100},
-      careInstruction: '찬물 세탁',
-      carbonFootprint: 4.2,
-    );
-    await provider.addClothes(clothes);
-
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          ChangeNotifierProvider.value(value: provider),
-          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
-          ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
-        ],
-        child: MaterialApp(
-          builder: AppBannerHost.builder,
-          home: const MainScreen(
-            initialArguments: MainScreenArguments(
-              initialIndex: 1,
-              showReport: true,
-            ),
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('상세 리포트'), findsOneWidget);
-    expect(find.text('홍길동 코튼 셔츠'), findsOneWidget);
-    expect(find.text('홈'), findsNothing);
-    // 리포트 아래는 새 스캔 화면이지만 가려져 있으므로 카메라를 켜지 않는다.
-    ScanScreen scanScreen() =>
-        tester.widget<ScanScreen>(find.byType(ScanScreen, skipOffstage: false));
-    expect(scanScreen().isActive, isFalse);
-
-    // 리포트를 닫으면 바로 다음 옷을 찍을 수 있게 스캔 화면이 보인다.
-    await tester.tap(find.byTooltip('리포트 닫기'));
-    await tester.pump();
-    await tester.pump(routeTransition);
-
-    expect(find.text('상세 리포트'), findsNothing);
-    expect(find.text(scanGuide), findsOneWidget);
-    expect(scanScreen().isActive, isTrue);
-
-    // 스캔 화면을 닫으면 그 아래 홈이 나오고, 스캔 화면은 정리된다.
-    await tester.tap(find.byTooltip('스캔 화면 닫기'));
-    await tester.pump();
-    await tester.pump(routeTransition);
-
-    expect(find.text('홈'), findsOneWidget);
-    expect(find.byType(ScanScreen, skipOffstage: false), findsNothing);
-  });
-
-  // 2026-10-05 Android 확인(이슈 #18 1차 5): 리포트 앱바만 44 라 "<" 가 6dp 위에 있었다.
-  testWidgets('리포트의 "<" 는 스캔 화면의 "<" 와 같은 높이에 있다', (tester) async {
-    final provider = ClosetProvider(storage: FakeClosetStorage());
-    await provider.addClothes(
-      Clothes(
-        title: '홍길동 코튼 셔츠',
-        category: '상의',
-        health: 88,
-        materials: {'cotton': 100},
-        careInstruction: '찬물 세탁',
-        carbonFootprint: 4.2,
-      ),
-    );
-
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          ChangeNotifierProvider.value(value: provider),
-          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
-          ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
-        ],
-        child: MaterialApp(
-          builder: AppBannerHost.builder,
-          home: const MainScreen(
-            initialArguments: MainScreenArguments(
-              initialIndex: 1,
-              showReport: true,
-            ),
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    final reportBack = tester.getCenter(find.byTooltip('리포트 닫기'));
-    await tester.tap(find.byTooltip('리포트 닫기'));
-    await tester.pump();
-    await tester.pump(routeTransition);
-    final scanBack = tester.getCenter(find.byTooltip('스캔 화면 닫기'));
-
-    expect(reportBack.dy, scanBack.dy);
-    expect(reportBack.dx, scanBack.dx);
-  });
-
-  testWidgets('스캔 저장 직후 리포트에서 의류를 지우면 스캔 화면까지 닫히고 옷장 탭이 보인다', (tester) async {
-    final provider = ClosetProvider(storage: FakeClosetStorage());
-    await provider.addClothes(
-      Clothes(
-        title: '홍길동 데님 재킷',
-        category: '아우터',
-        health: 70,
-        materials: {'cotton': 100},
-        careInstruction: '찬물 세탁',
-        carbonFootprint: 6.3,
-      ),
-    );
-
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          ChangeNotifierProvider.value(value: provider),
-          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
-          ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
-        ],
-        child: const MaterialApp(
-          builder: AppBannerHost.builder,
-          home: MainScreen(
-            initialArguments: MainScreenArguments(
-              initialIndex: 1,
-              showReport: true,
-            ),
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.scrollUntilVisible(
-      find.text('이 의류 삭제하기'),
-      300,
-      scrollable: find.byType(Scrollable).last,
-    );
-    await tester.tap(find.text('이 의류 삭제하기'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ElevatedButton, '삭제'));
-    await tester.pumpAndSettle();
-
-    expect(provider.items, isEmpty);
-    expect(find.text('상세 리포트'), findsNothing);
-    expect(find.byType(ScanScreen, skipOffstage: false), findsNothing);
-    expect(find.text('내 옷장'), findsOneWidget);
-  });
-
-  testWidgets('리포트가 열린 상태의 시스템 뒤로가기는 앱을 닫는 대신 리포트를 닫는다', (tester) async {
-    final provider = ClosetProvider(storage: FakeClosetStorage());
-    final clothes = Clothes(
-      title: '홍길동 후드집업',
-      category: '상의',
-      health: 80,
-      materials: {'cotton': 100},
-      careInstruction: '찬물 세탁',
-      carbonFootprint: 2.4,
-    );
-    await provider.addClothes(clothes);
-
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          ChangeNotifierProvider.value(value: provider),
-          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
-          ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
-        ],
-        child: const MaterialApp(
-          builder: AppBannerHost.builder,
-          home: MainScreen(
-            initialArguments: MainScreenArguments(showReport: true),
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('상세 리포트'), findsOneWidget);
-
-    // Android 시스템 뒤로가기와 동일한 popRoute 플랫폼 메시지를 보냅니다.
-    final backMessage = const JSONMethodCodec().encodeMethodCall(
-      const MethodCall('popRoute'),
-    );
-    await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
-      'flutter/navigation',
-      backMessage,
-      (_) {},
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('상세 리포트'), findsNothing);
-    expect(find.byType(MainScreen), findsOneWidget);
-  });
-
-  testWidgets('리포트가 열려 있어도 탭 위젯 트리를 해제하지 않고 보존한다', (tester) async {
-    final provider = ClosetProvider(storage: FakeClosetStorage());
-    final clothes = Clothes(
-      title: '홍길동 가디건',
-      category: '상의',
-      health: 77,
-      materials: {'wool': 100},
-      careInstruction: '드라이클리닝 권장',
-      carbonFootprint: 5.1,
-    );
-    await provider.addClothes(clothes);
-
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          ChangeNotifierProvider.value(value: provider),
-          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
-          ChangeNotifierProvider(create: (_) => NavigationBarOpacityProvider()),
-        ],
-        child: const MaterialApp(
-          builder: AppBannerHost.builder,
-          home: MainScreen(
-            initialArguments: MainScreenArguments(showReport: true),
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('상세 리포트'), findsOneWidget);
-
-    // 리포트가 위에 쌓여 있는 동안에도 아래 메인 화면의 탭 스택은 유지되어야 합니다.
-    expect(find.byType(IndexedStack, skipOffstage: false), findsOneWidget);
   });
 
   // 리포트는 설정처럼 라우트로 쌓인다(2026-09-24 사용자 결정 A안: iOS 에서 밀어서 닫히게).
@@ -425,6 +194,55 @@ void main() {
       expect(find.text('상세 리포트'), findsNothing);
       expect(find.text('내 옷장'), findsOneWidget);
     });
+
+    testWidgets('리포트가 열린 상태의 시스템 뒤로가기는 앱을 닫는 대신 리포트를 닫는다', (tester) async {
+      await pumpHomeWithClothes(tester);
+      await tester.tap(find.text('홍길동 린넨 셔츠'));
+      await tester.pumpAndSettle();
+      expect(find.text('상세 리포트'), findsOneWidget);
+
+      // Android 시스템 뒤로가기와 동일한 popRoute 플랫폼 메시지를 보냅니다.
+      final backMessage = const JSONMethodCodec().encodeMethodCall(
+        const MethodCall('popRoute'),
+      );
+      await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+        'flutter/navigation',
+        backMessage,
+        (_) {},
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('상세 리포트'), findsNothing);
+      expect(find.byType(MainScreen), findsOneWidget);
+    });
+
+    testWidgets('리포트가 열려 있어도 탭 위젯 트리를 해제하지 않고 보존한다', (tester) async {
+      await pumpHomeWithClothes(tester);
+      await tester.tap(find.text('홍길동 린넨 셔츠'));
+      await tester.pumpAndSettle();
+      expect(find.text('상세 리포트'), findsOneWidget);
+
+      // 리포트가 위에 쌓여 있는 동안에도 아래 메인 화면의 탭 스택은 유지되어야 합니다.
+      expect(find.byType(IndexedStack, skipOffstage: false), findsOneWidget);
+    });
+
+    // 2026-10-05 Android 확인(이슈 #18 1차 5): 리포트 앱바만 44 라 "<" 가 6dp 위에 있었다.
+    testWidgets('리포트의 "<" 는 스캔 화면의 "<" 와 같은 높이에 있다', (tester) async {
+      await pumpHomeWithClothes(tester);
+      await tester.tap(find.text('홍길동 린넨 셔츠'));
+      await tester.pumpAndSettle();
+      final reportBack = tester.getCenter(find.byTooltip('리포트 닫기'));
+
+      await tester.tap(find.byTooltip('리포트 닫기'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('스캔'));
+      await tester.pump();
+      await tester.pump(routeTransition);
+      final scanBack = tester.getCenter(find.byTooltip('스캔 화면 닫기'));
+
+      expect(reportBack.dy, scanBack.dy);
+      expect(reportBack.dx, scanBack.dx);
+    });
   });
 
   // 아래는 탭 전환·스캔 화면과 하단 메뉴 반투명(F) 검증입니다.
@@ -433,8 +251,12 @@ void main() {
     double navigationBarOpacity = NavigationBarOpacityProvider.defaultOpacity,
     Map<String, WidgetBuilder> routes = const {},
     FakeClosetStorage? storage,
+    FakeAuthSessionStorage? authSessionStorage,
   }) async {
-    final provider = ClosetProvider(storage: storage ?? FakeClosetStorage());
+    final provider = ClosetProvider(
+      storage: storage ?? FakeClosetStorage(),
+      authSessionStorage: authSessionStorage,
+    );
     final opacityProvider = NavigationBarOpacityProvider();
     if (navigationBarOpacity != NavigationBarOpacityProvider.defaultOpacity) {
       opacityProvider.preview(navigationBarOpacity);
@@ -476,6 +298,26 @@ void main() {
     final slide = tester.widget<SlideTransition>(tabSlide());
     expect(slide.position.value.dx, greaterThan(0));
     await tester.pumpAndSettle();
+  });
+
+  // 하단 메뉴는 색과 채운 아이콘으로만 지금 탭을 보여 준다. 낭독기에는 '선택됨' 으로 알린다.
+  testWidgets('하단 메뉴의 홈·옷장은 낭독기에 지금 보는 탭을 알린다', (tester) async {
+    final semantics = tester.ensureSemantics();
+    await pumpMainScreen(tester);
+
+    SemanticsData tabData(String label) =>
+        find.semantics.byLabel(label).evaluate().single.getSemanticsData();
+
+    expect(tabData('홈').flagsCollection.isSelected, Tristate.isTrue);
+    expect(tabData('홈').flagsCollection.isButton, isTrue);
+    expect(tabData('옷장').flagsCollection.isSelected, Tristate.isFalse);
+
+    await tester.tap(find.text('옷장'));
+    await tester.pumpAndSettle();
+
+    expect(tabData('홈').flagsCollection.isSelected, Tristate.isFalse);
+    expect(tabData('옷장').flagsCollection.isSelected, Tristate.isTrue);
+    semantics.dispose();
   });
 
   // 스캔은 탭이 아니라 리포트·설정처럼 위에 쌓는 화면이다(2026-09-26 사용자 결정 A안: iOS 에서 밀어서 닫히게).
@@ -689,6 +531,165 @@ void main() {
     expect(find.text('홈'), findsOneWidget);
   });
 
+  // DECISIONS 2026-10-14 C24: 결과 화면 '다시 촬영'은 입력을 고쳤을 때만 버릴지 묻는다.
+  // '다시 촬영' 글자는 종류 선택 시트에도 있으므로 결과 화면 안에서 찾는다.
+  Future<void> tapRetake(WidgetTester tester) async {
+    final retake = find.descendant(
+      of: find.byType(ScanResultView),
+      matching: find.text('다시 촬영'),
+    );
+    // 입력 칸에 초점이 남은 채 내리면 스크롤 애니메이션이 돌고, 도는 동안 목록이 탭을 받지 않는다
+    // (실행 확인). 폰에서도 칸 밖을 누르면 키보드가 닫히므로 먼저 닫는다.
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    await tester.ensureVisible(retake);
+    await tester.pump();
+    await tester.tap(retake);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+
+  Future<void> keepWriting(WidgetTester tester) async {
+    await tester.tap(find.text('계속 작성하기'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+
+  Finder titleField() => find.widgetWithText(TextFormField, '의류 이름');
+
+  String titleText(WidgetTester tester) =>
+      tester.widget<TextFormField>(titleField()).controller!.text;
+
+  testWidgets('결과를 고치지 않았으면 "다시 촬영" 은 묻지 않고 바로 촬영 화면으로 돌아간다', (tester) async {
+    await pumpMainScreen(tester);
+    await openScanResultForm(tester);
+
+    // 고쳤다가 처음 글자로 되돌린 것도 고치지 않은 것으로 본다.
+    final originalTitle = titleText(tester);
+    await tester.enterText(titleField(), '바뀐 이름');
+    await tester.enterText(titleField(), originalTitle);
+
+    await tapRetake(tester);
+
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(ScanResultView), findsNothing);
+    expect(find.text(scanGuide), findsOneWidget);
+  });
+
+  testWidgets(
+    '이름을 고쳤으면 "다시 촬영" 은 버릴지 묻고, 계속 작성하면 고친 이름이 남고 다시 촬영하면 촬영 화면으로 간다',
+    (tester) async {
+      await pumpMainScreen(tester);
+      await openScanResultForm(tester);
+
+      await tester.enterText(titleField(), '내 셔츠');
+      await tapRetake(tester);
+      expect(find.text('다시 촬영할까요?'), findsOneWidget);
+
+      await keepWriting(tester);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(titleText(tester), '내 셔츠');
+
+      await tapRetake(tester);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('다시 촬영'),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(ScanResultView), findsNothing);
+      expect(find.text(scanGuide), findsOneWidget);
+    },
+  );
+
+  testWidgets('소재를 적거나 소재 행을 더하거나 종류를 바꿔도 "다시 촬영" 은 묻고, 되돌리면 묻지 않는다', (
+    tester,
+  ) async {
+    await pumpMainScreen(tester);
+    await openScanResultForm(tester);
+
+    Future<void> chooseType(String label) async {
+      // '무게 기준' 칸은 위에 겹친 누름 영역이 받으므로 칸 전체(Stack)를 누른다.
+      final weightField = find
+          .ancestor(of: find.text('무게 기준'), matching: find.byType(Stack))
+          .first;
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      await tester.ensureVisible(weightField);
+      await tester.pump();
+      await tester.tap(weightField);
+      await tester.pump();
+      await tester.pump(routeTransition);
+      // 같은 글자가 이름 칸에도 있을 수 있어 종류 시트 안에서 찾는다.
+      await tester.tap(
+        find.descendant(
+          of: find.byType(BottomSheet),
+          matching: find.text(label),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(routeTransition);
+    }
+
+    final percentField = find.byWidgetPredicate(
+      (widget) => widget is TextField && widget.decoration?.suffixText == '%',
+    );
+    final originalPercent = tester
+        .widget<TextField>(percentField)
+        .controller!
+        .text;
+
+    final edits = <String, (Future<void> Function(), Future<void> Function())>{
+      '소재명': (
+        () => tester.enterText(find.widgetWithText(TextFormField, '소재명'), '면'),
+        () => tester.enterText(find.widgetWithText(TextFormField, '소재명'), ''),
+      ),
+      '함유율': (
+        () => tester.enterText(percentField, '70'),
+        () => tester.enterText(percentField, originalPercent),
+      ),
+      '소재 행': (
+        () async {
+          await tester.ensureVisible(find.text('소재 추가'));
+          await tester.tap(find.text('소재 추가'));
+          await tester.pump();
+        },
+        () async {
+          await tester.ensureVisible(find.byTooltip('소재 삭제').last);
+          await tester.tap(find.byTooltip('소재 삭제').last);
+          await tester.pump();
+        },
+      ),
+      // 종류를 바꾸면 기본 이름도 따라 바뀌므로, 이름은 처음 글자로 되돌려 종류만 다르게 둔다.
+      '종류': (
+        () async {
+          final originalTitle = titleText(tester);
+          await tester.enterText(titleField(), '내 옷');
+          await chooseType('셔츠 / 블라우스');
+          await tester.enterText(titleField(), originalTitle);
+        },
+        () => chooseType('반팔 티셔츠'),
+      ),
+    };
+
+    for (final MapEntry(key: what, value: (edit, undo)) in edits.entries) {
+      await edit();
+      await tapRetake(tester);
+      expect(find.text('다시 촬영할까요?'), findsOneWidget, reason: what);
+      await keepWriting(tester);
+
+      await undo();
+    }
+
+    await tapRetake(tester);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.text(scanGuide), findsOneWidget);
+  });
+
   // 입력 칸이 초점을 가졌는지입니다. 초점은 칸 안의 EditableText 가 가집니다.
   bool fieldHasFocus(WidgetTester tester, Finder field) => tester
       .state<EditableTextState>(
@@ -819,7 +820,7 @@ void main() {
     expect(find.text('설정 화면'), findsNothing);
     expect(find.byType(ScanResultView), findsOneWidget);
 
-    // 저장이 끝나면 새 스캔 화면 위에 리포트가 열린다(스택 정리는 그대로).
+    // 저장이 끝나면 새 촬영 상태로 돌아간 스캔 화면 위에 리포트가 열린다.
     releaseSave();
     await tester.pump();
     await tester.pump(routeTransition);
@@ -862,6 +863,266 @@ void main() {
     expect(find.text('설정 화면'), findsOneWidget);
     // 실패 배너가 저절로 닫힐 때까지 시간을 흘려 타이머를 남기지 않는다.
     await tester.pump(const Duration(seconds: 10));
+  });
+
+  // C04(DECISIONS 2026-10-14): 저장 끝에 /main 을 새로 만들면 홈에서 다시 시작해, 스캔까지 닫았을 때
+  // 들어왔던 탭과 옷장 검색어가 사라졌다. 지금은 메인 화면을 그대로 두고 스캔 화면 위에 리포트를 연다.
+  group('스캔 저장 뒤 화면 쌓임', () {
+    const searchHint = '옷 이름, 소재 검색';
+
+    ScanScreen scanScreen(WidgetTester tester) =>
+        tester.widget<ScanScreen>(find.byType(ScanScreen, skipOffstage: false));
+
+    String closetSearchText(WidgetTester tester) => tester
+        .widget<TextField>(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is TextField &&
+                widget.decoration?.hintText == searchHint,
+            skipOffstage: false,
+          ),
+        )
+        .controller!
+        .text;
+
+    Future<void> saveScannedClothes(WidgetTester tester) async {
+      await openScanResultForm(tester);
+      await fillOneMaterial(tester);
+      await tapSave(tester);
+      await tester.pump(routeTransition);
+      await tester.pump(routeTransition);
+    }
+
+    Future<void> tapAndWait(WidgetTester tester, Finder target) async {
+      await tester.tap(target);
+      await tester.pump();
+      await tester.pump(routeTransition);
+    }
+
+    testWidgets('옷장 탭에서 검색하다 스캔해 저장하면, 리포트와 스캔 화면을 닫았을 때 옷장 탭과 검색어가 그대로다', (
+      tester,
+    ) async {
+      final provider = await pumpMainScreen(tester);
+      for (final title in ['홍길동 옥스퍼드 셔츠', '홍길동 울 니트']) {
+        await provider.addClothes(
+          Clothes(
+            title: title,
+            category: '상의',
+            health: 80,
+            materials: {'cotton': 100},
+            careInstruction: '찬물 세탁',
+            carbonFootprint: 3.0,
+          ),
+        );
+      }
+      await tester.tap(find.text('옷장'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, searchHint), '셔츠');
+      await tester.pumpAndSettle();
+      expect(find.text('홍길동 울 니트'), findsNothing);
+      final mainState = tester.state(find.byType(MainScreen));
+
+      await saveScannedClothes(tester);
+
+      // 메인 화면은 그대로이고, 새 촬영 상태로 돌아간 스캔 화면 위에 리포트가 열린다.
+      expect(find.text('상세 리포트'), findsOneWidget);
+      expect(provider.items, hasLength(3));
+      expect(
+        tester.state(find.byType(MainScreen, skipOffstage: false)),
+        same(mainState),
+      );
+      expect(scanScreen(tester).isActive, isFalse);
+
+      await tapAndWait(tester, find.byTooltip('리포트 닫기'));
+      expect(find.text(scanGuide), findsOneWidget);
+      expect(find.byType(ScanResultView), findsNothing);
+      expect(scanScreen(tester).isActive, isTrue);
+
+      await tapAndWait(tester, find.byTooltip('스캔 화면 닫기'));
+      expect(find.byType(ScanScreen, skipOffstage: false), findsNothing);
+      expect(tester.state(find.byType(MainScreen)), same(mainState));
+      expect(find.text('내 옷장'), findsOneWidget);
+      expect(closetSearchText(tester), '셔츠');
+      expect(find.text('홍길동 옥스퍼드 셔츠'), findsOneWidget);
+      expect(find.text('홍길동 울 니트'), findsNothing);
+    });
+
+    testWidgets('저장 뒤 리포트를 닫고 다시 찍으면 앞서 넣은 소재 없이 처음과 같은 결과 화면이 열린다', (
+      tester,
+    ) async {
+      TextEditingController field(String label) => tester
+          .widget<TextFormField>(find.widgetWithText(TextFormField, label))
+          .controller!;
+
+      await pumpMainScreen(tester);
+      await openScanResultForm(tester);
+      final firstForm = (field('소재명').text, field('%').text);
+      await fillOneMaterial(tester);
+      expect((field('소재명').text, field('%').text), ('면', '100'));
+      await tapSave(tester);
+      await tester.pump(routeTransition);
+      await tester.pump(routeTransition);
+      await tapAndWait(tester, find.byTooltip('리포트 닫기'));
+
+      // 앨범 선택은 openScanResultForm 이 걸어 둔 가짜 응답을 그대로 쓴다.
+      await tester.tap(find.byIcon(Icons.photo_library_outlined));
+      final typeOption = find.text('반팔 티셔츠');
+      for (var i = 0; i < 30 && typeOption.evaluate().isEmpty; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      await tester.pump(routeTransition);
+      await tapAndWait(tester, typeOption);
+
+      expect(find.byType(ScanResultView), findsOneWidget);
+      expect((field('소재명').text, field('%').text), firstForm);
+    });
+
+    testWidgets('저장 뒤 리포트에서 그 의류를 지우면 스캔 화면까지 닫히고 옷장 탭이 보인다', (tester) async {
+      final provider = await pumpMainScreen(tester);
+      await saveScannedClothes(tester);
+      expect(provider.items, hasLength(1));
+
+      await tester.scrollUntilVisible(
+        find.text('이 의류 삭제하기'),
+        300,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tapAndWait(tester, find.text('이 의류 삭제하기'));
+      await tapAndWait(tester, find.widgetWithText(ElevatedButton, '삭제'));
+      await tester.pump(routeTransition);
+
+      expect(provider.items, isEmpty);
+      expect(find.text('상세 리포트'), findsNothing);
+      expect(find.byType(ScanScreen, skipOffstage: false), findsNothing);
+      expect(find.text('내 옷장'), findsOneWidget);
+      // 삭제 배너가 저절로 닫힐 때까지 시간을 흘려 타이머를 남기지 않는다.
+      await tester.pump(const Duration(seconds: 10));
+    });
+  });
+
+  // C26(DECISIONS 2026-10-14): 저장은 서버 계산을 기다린 뒤 옷장에 넣는다. 그 사이 로그아웃하면 공용 칸에
+  // 들어가 다음에 앱을 켠 이메일 계정 옷장에 합쳐졌다. 지금은 저장 중 설정·"<"·뒤로가기가 막혀 화면으로는
+  // 그 사이 계정을 못 바꾸므로, 계산 응답을 붙잡아 두고 provider 로 직접 바꾼다.
+  group('계산을 기다리는 사이 계정이 바뀐 스캔 저장', () {
+    Future<(ClosetProvider, FakeClosetStorage, _HeldCarbonApiService)>
+    startHeldServerSave(WidgetTester tester) async {
+      final carbonApi = _HeldCarbonApiService();
+      ScanScreen.carbonApiServiceFactory = () => carbonApi;
+      addTearDown(
+        () => ScanScreen.carbonApiServiceFactory = CarbonApiService.new,
+      );
+      final storage = FakeClosetStorage();
+      final provider = await pumpMainScreen(
+        tester,
+        storage: storage,
+        authSessionStorage: FakeAuthSessionStorage(),
+        routes: {'/main': (_) => const MainScreen()},
+      );
+      await provider.setAuthenticatedUser(
+        nickname: 'A',
+        email: 'a@example.com',
+        accessToken: 'token-a',
+        expiresInSeconds: 3600,
+      );
+      await tester.pump();
+
+      await openScanResultForm(tester);
+      await fillOneMaterial(tester);
+      await tapSave(tester);
+      expect(carbonApi.calls, 1);
+      return (provider, storage, carbonApi);
+    }
+
+    Future<List<int?>?> savedIdsFor(FakeClosetStorage storage, String owner) {
+      return storage
+          .loadClothesListOrNullFor(owner)
+          .then((items) => items?.map((item) => item.savedResultId).toList());
+    }
+
+    testWidgets('같은 계정이면 서버 저장 ID 를 달아 옷장에 넣고 리포트를 연다', (tester) async {
+      final (provider, storage, carbonApi) = await startHeldServerSave(tester);
+
+      carbonApi.respond(savedResultId: 4242);
+      await tester.pump();
+      await tester.pump(routeTransition);
+      await tester.pump(routeTransition);
+
+      expect(provider.items.single.savedResultId, 4242);
+      expect(await savedIdsFor(storage, 'a@example.com'), [4242]);
+      expect(find.text('상세 리포트'), findsOneWidget);
+    });
+
+    testWidgets('로그아웃했으면 공용 칸이 아니라 저장을 시작한 계정 옷장에 넣고 리포트를 열지 않는다', (
+      tester,
+    ) async {
+      final (provider, storage, carbonApi) = await startHeldServerSave(tester);
+
+      await provider.logout();
+      carbonApi.respond(savedResultId: 4242);
+      await tester.pump();
+      await tester.pump(routeTransition);
+
+      expect(provider.items, isEmpty);
+      expect(await storage.loadClothesListOrNull(), isNull);
+      expect(await savedIdsFor(storage, 'a@example.com'), [4242]);
+      // 실제 앱에선 로그아웃이 화면을 로그인으로 바꾸지만, 여기선 화면이 남아 있어도 넘어가지 않는다.
+      expect(find.byType(ScanResultView), findsOneWidget);
+      expect(find.text('상세 리포트'), findsNothing);
+    });
+
+    testWidgets('다른 계정이 로그인했으면 그 계정 옷장에 넣지 않고 그 계정 리포트도 열지 않는다', (
+      tester,
+    ) async {
+      final (provider, storage, carbonApi) = await startHeldServerSave(tester);
+
+      await provider.logout();
+      await provider.setAuthenticatedUser(
+        nickname: 'B',
+        email: 'b@example.com',
+        accessToken: 'token-b',
+        expiresInSeconds: 3600,
+      );
+      await provider.addClothes(
+        Clothes(
+          title: 'B 셔츠',
+          category: '상의',
+          health: 80,
+          materials: {'cotton': 100},
+          careInstruction: '찬물 세탁',
+          carbonFootprint: 3.0,
+          savedResultId: 7,
+        ),
+      );
+      carbonApi.respond(savedResultId: 4242);
+      await tester.pump();
+      await tester.pump(routeTransition);
+      await tester.pump(routeTransition);
+
+      expect(provider.items.map((item) => item.savedResultId), [7]);
+      expect(await savedIdsFor(storage, 'b@example.com'), [7]);
+      expect(await savedIdsFor(storage, 'a@example.com'), [4242]);
+      expect(find.byType(ScanResultView), findsOneWidget);
+      expect(find.text('상세 리포트'), findsNothing);
+    });
+
+    testWidgets('로그아웃 뒤 계산이 401 이면 저장을 시작한 계정 옷장에 넣고 만료 안내를 하지 않는다', (
+      tester,
+    ) async {
+      final (provider, storage, carbonApi) = await startHeldServerSave(tester);
+
+      await provider.logout();
+      carbonApi.fail(CarbonApiErrorType.unauthorized);
+      await tester.pump();
+      await tester.pump(routeTransition);
+
+      expect(provider.items, isEmpty);
+      expect(await storage.loadClothesListOrNull(), isNull);
+      expect(await savedIdsFor(storage, 'a@example.com'), [null]);
+      expect(find.textContaining('로그인이 만료됐어요'), findsNothing);
+    });
   });
 
   // 2026-10-01 DECISIONS 75: 선택 모드에선 하단 메뉴를 높이는 남긴 채 아래로 밀어 숨기고,
@@ -968,6 +1229,82 @@ void main() {
     await pumpMainScreen(tester, navigationBarOpacity: 1.0);
     expect(find.byType(BackdropFilter), findsNothing);
   });
+
+  // C58: 글자를 키우면 스캔 버튼 아래 '스캔' 이 18 칸에 위아래가 잘렸다(1.8배부터).
+  // 이제 상자(94) 안에서 2배까지 늘어나고, 그보다 크면 세 이름 모두 2배에서 멈춘다.
+  for (final scale in [2.0, 3.0]) {
+    testWidgets('글자 $scale배·320 폭에서도 하단 메뉴 이름이 잘리지 않고, 세 이름이 같은 크기다', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = scale;
+      addTearDown(tester.view.reset);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+      await pumpMainScreen(tester);
+      expect(tester.takeException(), isNull);
+
+      final barBottom = tester
+          .getRect(
+            find
+                .ancestor(
+                  of: find.text('홈'),
+                  matching: find.byType(FrostedSurface),
+                )
+                .first,
+          )
+          .bottom;
+      for (final label in ['스캔', '홈', '옷장']) {
+        // 12pt 이름은 2배(24)까지만 커진다.
+        expect(
+          tester.widget<Text>(find.text(label)).textScaler?.scale(12),
+          24,
+          reason: label,
+        );
+        // 글자 높이(24 × 줄 높이 1.1)를 다 받았다(칸에 잘리지 않는다).
+        final rect = tester.getRect(find.text(label));
+        expect(rect.height, greaterThanOrEqualTo(24 * 1.1 - 0.5), reason: label);
+        expect(rect.bottom, lessThanOrEqualTo(barBottom), reason: label);
+      }
+    });
+  }
+}
+
+/// 탄소 계산 응답을 붙잡아 두는 서비스입니다. 계산을 기다리는 사이 계정을 바꿔 보는 데 씁니다(C26).
+class _HeldCarbonApiService extends CarbonApiService {
+  final Completer<CarbonCalculationResult> _response = Completer();
+  int calls = 0;
+
+  void respond({required int savedResultId}) {
+    _response.complete(
+      CarbonCalculationResult(
+        carbonFactor: 8.3,
+        carbonFootprint: 1.5,
+        carbonFootprintMin: 0.8,
+        carbonFootprintMax: 2.1,
+        minWeightGram: 100,
+        maxWeightGram: 250,
+        unit: 'kg CO2eq',
+        savedResultId: savedResultId,
+      ),
+    );
+  }
+
+  void fail(CarbonApiErrorType type) {
+    _response.completeError(CarbonApiException(type: type, message: ''));
+  }
+
+  @override
+  Future<CarbonCalculationResult> calculate({
+    required Map<String, double> materials,
+    required double minWeightGram,
+    required double maxWeightGram,
+    required String accessToken,
+  }) {
+    calls++;
+    return _response.future;
+  }
 }
 
 /// 옷장 저장을 붙잡아 두어 스캔 화면의 '저장 중' 상태를 만들 수 있는 저장소입니다.

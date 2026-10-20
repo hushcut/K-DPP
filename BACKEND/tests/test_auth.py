@@ -239,6 +239,9 @@ def test_withdraw_deletes_user_tokens_and_history(client, monkeypatch):
                 unit="kg CO2eq",
             )
         )
+        session.add(
+            database.ClosetSnapshot(user_id=user_id, version=1, item_count=0, items="[]")
+        )
         session.commit()
     finally:
         session.close()
@@ -264,6 +267,12 @@ def test_withdraw_deletes_user_tokens_and_history(client, monkeypatch):
         assert (
             session.query(database.AnalysisResult)
             .filter(database.AnalysisResult.user_id == user_id)
+            .count()
+            == 0
+        )
+        assert (
+            session.query(database.ClosetSnapshot)
+            .filter(database.ClosetSnapshot.user_id == user_id)
             .count()
             == 0
         )

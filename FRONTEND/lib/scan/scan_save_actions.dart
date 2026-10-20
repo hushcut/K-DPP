@@ -6,12 +6,14 @@ extension _ScanSaveActions on _ScanScreenState {
   /// 저장이 실패해도 저장 버튼이 잠긴 채 남지 않도록 상태를 되돌립니다.
   Future<void> _saveLocallyAfterSessionExpiry({
     required ClosetProvider provider,
+    required String? ownerKey,
     required Clothes clothes,
   }) async {
     var isSaved = false;
+    var isInCurrentCloset = false;
 
     try {
-      await provider.addClothes(clothes);
+      isInCurrentCloset = await provider.addClothesForOwner(ownerKey, clothes);
       isSaved = true;
     } catch (error) {
       debugPrint('세션 만료 후 로컬 저장에 실패했습니다: $error');
@@ -23,7 +25,8 @@ extension _ScanSaveActions on _ScanScreenState {
       }
     }
 
-    if (!mounted) return;
+    // 기다리는 사이 계정이 바뀌었으면 원래 계정 옷장에 넣었으니 지금 계정에 안내하지 않습니다.
+    if (!mounted || (isSaved && !isInCurrentCloset)) return;
 
     if (!isSaved) {
       AppBanner.of(context).show(
@@ -79,10 +82,14 @@ extension _ScanSaveActions on _ScanScreenState {
         var clothesToSave = clothes;
         String? fallbackMessage;
         final accessToken = provider.accessToken;
+        // 계산을 기다리는 사이 로그아웃하거나 다른 계정으로 바뀌어도 이 계정 옷장에 넣도록,
+        // 기다리기 전에 주인을 잡아 둡니다(C26, DECISIONS 2026-10-14).
+        final ownerKey = provider.closetOwnerKey;
 
         if (accessToken != null && !provider.isAuthenticated) {
           await _saveLocallyAfterSessionExpiry(
             provider: provider,
+            ownerKey: ownerKey,
             clothes: clothesToSave,
           );
           return;
@@ -116,6 +123,7 @@ extension _ScanSaveActions on _ScanScreenState {
             if (error.type == CarbonApiErrorType.unauthorized) {
               await _saveLocallyAfterSessionExpiry(
                 provider: provider,
+                ownerKey: ownerKey,
                 clothes: clothesToSave,
               );
               return;
@@ -126,8 +134,13 @@ extension _ScanSaveActions on _ScanScreenState {
           }
         }
 
+        var isInCurrentCloset = false;
+
         try {
-          await provider.addClothes(clothesToSave);
+          isInCurrentCloset = await provider.addClothesForOwner(
+            ownerKey,
+            clothesToSave,
+          );
         } catch (error) {
           // Provider가 목록을 되돌리므로 실패를 알리고 화면에 머무릅니다.
           debugPrint('옷장 저장에 실패했습니다: $error');
@@ -147,23 +160,20 @@ extension _ScanSaveActions on _ScanScreenState {
           }
         }
 
-        if (!mounted) return;
+        // 원래 계정 옷장에 넣었으면 지금 계정의 리포트를 열지 않습니다.
+        if (!mounted || !isInCurrentCloset) return;
 
         if (fallbackMessage != null) {
           // 저장은 됐고 탄소량만 임시 추정값으로 대신했으므로 안내다.
           AppBanner.of(context).show(fallbackMessage, kind: AppBannerKind.info);
         }
 
-        // pushReplacement는 이 화면이 아니라 **맨 위 라우트**를 교체합니다.
-        // 저장을 기다리는 동안 설정 화면을 열어 두면 그 설정이 교체돼 사라지고
-        // /main이 두 겹으로 쌓여, 뒤로가기로 이미 저장된 스캔 폼에 되돌아갈 수 있습니다.
-        // 스택을 통째로 정리해 항상 한 겹만 남깁니다.
-        Navigator.pushNamedAndRemoveUntil(
-          context,
-          '/main',
-          (route) => false,
-          arguments: MainScreenArguments(initialIndex: 1, showReport: true),
-        );
+        // 메인 화면은 그대로 두고 이 화면을 새 촬영 상태로 되돌린 뒤, 이 화면을 담은 라우트가 그 위에
+        // 리포트를 엽니다. 리포트를 닫으면 바로 다음 옷을 찍고, 이 화면까지 닫으면 들어왔던 탭과 옷장
+        // 검색어가 그대로 있습니다. 예전처럼 /main 을 새로 만들면 홈에서 다시 시작했습니다(C04,
+        // DECISIONS 2026-10-14). 저장 중엔 설정·"<"·뒤로가기가 막혀 있어 이 화면이 맨 위입니다.
+        _clearScanResult();
+        widget.onSaved(clothesToSave);
     }
   }
 }

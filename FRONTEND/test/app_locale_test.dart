@@ -6,6 +6,7 @@ import 'package:k_dpp/material_name_display_provider.dart';
 import 'package:k_dpp/theme_provider.dart';
 import 'package:provider/provider.dart';
 
+import 'helpers/fake_auth_session_storage.dart';
 import 'helpers/fake_closet_storage.dart';
 
 // 앱 문구가 전부 한국어인데 앱 언어가 기본값(영어)이면 Flutter가 모든 글자를
@@ -16,7 +17,10 @@ void main() {
       MultiProvider(
         providers: [
           ChangeNotifierProvider(
-            create: (_) => ClosetProvider(storage: FakeClosetStorage()),
+            create: (_) => ClosetProvider(
+              storage: FakeClosetStorage(),
+              authSessionStorage: FakeAuthSessionStorage(),
+            ),
           ),
           ChangeNotifierProvider(create: (_) => ThemeProvider()),
           ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),

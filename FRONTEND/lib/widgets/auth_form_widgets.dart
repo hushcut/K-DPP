@@ -17,7 +17,7 @@ InputDecoration authInputDecoration(
 }) {
   final isDark = Theme.of(context).brightness == Brightness.dark;
   final fillColor = isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF1F1F4);
-  final hintColor = isDark ? const Color(0xFF9A9A9A) : const Color(0xFF9E9E9E);
+  final palette = AppPalette.of(context);
   final enabledBorderColor = isDark
       ? const Color(0xFF2C2C2E)
       : Colors.transparent;
@@ -30,8 +30,8 @@ InputDecoration authInputDecoration(
     // 서버 문장은 두 문장까지라 한 줄로 자르면 뒤 문장(무엇을 할지)이 잘립니다.
     helperMaxLines: 2,
     errorMaxLines: 3,
-    labelStyle: TextStyle(color: hintColor, fontSize: 15),
-    hintStyle: TextStyle(color: hintColor, fontSize: 15),
+    labelStyle: TextStyle(color: palette.inputLabel, fontSize: 15),
+    hintStyle: TextStyle(color: palette.inputHint, fontSize: 15),
     filled: true,
     fillColor: fillColor,
     contentPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 22),

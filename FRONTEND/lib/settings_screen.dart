@@ -13,6 +13,7 @@ import 'theme_provider.dart';
 import 'utils/accessibility_announcer.dart';
 import 'utils/session_expiry_handler.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/app_glass_button.dart';
 import 'widgets/app_banner.dart';
 import 'widgets/kakao_login_button.dart';
 
@@ -524,7 +525,7 @@ class SettingsScreen extends StatelessWidget {
     final secondaryText = palette.textSecondary;
     final sectionText = isDark
         ? const Color(0xFF9A9A9A)
-        : const Color(0xFF8E8E93);
+        : palette.textSecondary;
     final profileBoxColor = isDark
         ? const Color(0xFF2A2A2E)
         : const Color(0xFFEEF1FF);
@@ -537,7 +538,9 @@ class SettingsScreen extends StatelessWidget {
         scrolledUnderElevation: 0,
         centerTitle: true,
         automaticallyImplyLeading: false,
-        leadingWidth: 52,
+        leadingWidth: AppGlassStyle.leadingWidth,
+        // 누르면 부푸는 유리 버튼이 앱바 아래 경계에서 잘리지 않게 합니다(앱바 기본은 잘라 냄).
+        clipBehavior: Clip.none,
         leading: const Padding(
           padding: EdgeInsets.only(left: 8),
           child: AppBackButton(),
@@ -712,7 +715,7 @@ class SettingsScreen extends StatelessWidget {
                 title: '회원 탈퇴',
                 subtitle: '계정을 삭제합니다.',
                 iconColor: Colors.redAccent,
-                textColor: Colors.redAccent,
+                textColor: palette.dangerText,
                 subtitleColor: secondaryText,
                 onTap: () => _confirmWithdraw(context),
               ),
@@ -1255,7 +1258,7 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
                 : _usesKakao
                 ? _submitWithKakao
                 : _submit,
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            style: ElevatedButton.styleFrom(backgroundColor: AppPalette.danger),
             child: _isBusy
                 ? const _SubmitProgress()
                 // 카카오 계정도 화면엔 '탈퇴' 한 단어만 둡니다. 긴 문구는 보통 폭·글자 크기에서도

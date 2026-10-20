@@ -539,6 +539,13 @@ def test_withdraw_kakao_account_deletes_everything_then_unlinks(client, kakao):
             ),
             {"u": user_id},
         )
+        connection.execute(
+            text(
+                "INSERT INTO closet_snapshots (user_id, version, item_count, items, created_at, updated_at) "
+                "VALUES (:u, 1, 0, '[]', now(), now())"
+            ),
+            {"u": user_id},
+        )
     seen = {}
 
     def on_unlink(token):
@@ -554,7 +561,7 @@ def test_withdraw_kakao_account_deletes_everything_then_unlinks(client, kakao):
     assert response.json() == {"status": "success", "message": "회원 탈퇴가 완료되었습니다."}
     # 삭제를 커밋한 뒤에 그 토큰으로 연결을 끊습니다.
     assert seen == {"token": "reauth", "users_left": 0}
-    for table in ("users", "access_tokens", "analysis_results", "social_accounts"):
+    for table in ("users", "access_tokens", "analysis_results", "social_accounts", "closet_snapshots"):
         assert count(table) == 0, table
     assert ip_failures() == {}
     # 같은 카카오 계정으로 다시 로그인하면 새 계정입니다.
@@ -941,7 +948,9 @@ def test_social_revision_keeps_existing_email_users(alembic_config):
 
 
 def test_social_revision_downgrade_refuses_while_kakao_users_exist(alembic_config):
-    command.upgrade(alembic_config, "head")
+    # head 가 아니라 이 리비전까지만 올립니다. env.py 가 한 트랜잭션이라 head 에서 내리면 그 위 리비전의
+    # downgrade 까지 함께 되돌려져 실패 뒤 버전이 head 에 남습니다(옷장 리비전, DECISIONS 242).
+    command.upgrade(alembic_config, SOCIAL_REVISION)
     with database.engine.begin() as connection:
         _insert_user(connection, "keep@example.com", "hash")
         _insert_user(connection, None, None)

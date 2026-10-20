@@ -3,7 +3,7 @@
 AI 기반 의류 수명 예측 및 탄소 발자국 추적 앱.
 
 의류 케어 라벨을 촬영하면 소재 혼용률을 읽어내고, 소재별 탄소배출계수와 의류 무게를
-근거로 **생산·제조 단계의 탄소배출량을 추정**합니다. 추정 결과는 디지털 제품 여권(DPP)
+근거로 **원료·소재 생산 단계의 탄소배출량을 추정**합니다. 추정 결과는 디지털 제품 여권(DPP)
 형태의 상세 리포트로 제공되며, 등록한 옷들은 옷장에 모여 전체 탄소 현황으로 집계됩니다.
 
 > **DPP(Digital Product Passport)** — 제품의 소재·관리 정보·환경 영향을 하나의
@@ -40,9 +40,10 @@ GitHub 보안 CI는 설정이 반영된 브랜치에서 **업로드 후** 실행
 | 폴더 | 내용 | 문서 |
 | --- | --- | --- |
 | `FRONTEND/` | Flutter 앱 (Android·iOS) | [README](FRONTEND/README.md) |
-| `BACKEND/` | FastAPI 서버 + SQLite | [README](BACKEND/README.md) · [API 계약](BACKEND/API_CONTRACT.md) |
+| `BACKEND/` | FastAPI 서버 + PostgreSQL | [README](BACKEND/README.md) · [API 계약](BACKEND/API_CONTRACT.md) |
 | `AI/` | OCR 소재·혼용률 분석 모듈 | [README](AI/kdpp_ai_ocr_integrated/README.md) |
 | `QA/` | 라벨 데이터셋 배치 검증 도구 | [README](QA/README.md) |
+| `deploy/` | 배포 묶음 — 앱 + PostgreSQL + Caddy(HTTPS) Docker Compose | [README](deploy/README.md) |
 | `docs/` | 파트 간 협업 문서 | [스캔 API 계약](docs/SCAN_API_CONTRACT.md) |
 
 키·자격증명·로컬 데이터의 업로드 금지 기준과 브랜치별 보완 항목은 [Git 업로드 보안 규칙](GIT_SECURITY.md)을 따릅니다. 규칙 문서와 실제 자동 차단 설정의 완료 여부는 구분합니다.
@@ -52,7 +53,7 @@ GitHub 보안 CI는 설정이 반영된 브랜치에서 **업로드 후** 실행
 | 파트 | 스택 |
 | --- | --- |
 | 프론트엔드 | Flutter (Dart SDK `^3.11.3`) |
-| 백엔드 | FastAPI · SQLAlchemy · SQLite (Python 3.10+, 3.12 검증) |
+| 백엔드 | FastAPI · SQLAlchemy · PostgreSQL 18 · Alembic (Python 3.10+, 3.12 검증) |
 | AI | Google Cloud Vision OCR · 소재/혼용률 파서 |
 | CI | GitHub Actions ([ci.yml](.github/workflows/ci.yml)) |
 
@@ -66,9 +67,12 @@ GitHub 보안 CI는 설정이 반영된 브랜치에서 **업로드 후** 실행
 cd BACKEND
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt
-.venv/Scripts/python.exe init_data.py
-.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000
+docker compose up -d --wait
+.venv/Scripts/alembic.exe upgrade head
+.venv/Scripts/python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
 ```
+
+DB 는 Docker Desktop 으로 띄우는 로컬 PostgreSQL 입니다. 자세한 것은 [BACKEND/README.md](BACKEND/README.md).
 
 API 문서는 `http://127.0.0.1:8000/docs` 에서 확인합니다.
 
@@ -113,12 +117,16 @@ flutter run --dart-define=API_BASE_URL=http://127.0.0.1:8000
 ## 테스트
 
 ```bash
-cd FRONTEND && flutter analyze && flutter test    # 155건
-cd BACKEND && .venv/Scripts/python.exe -m pytest  # 42건
+cd FRONTEND && flutter analyze && flutter test
+cd BACKEND && docker compose up -d --wait && .venv/Scripts/python.exe -m pytest
 ```
 
-CI는 push·PR마다 실행됩니다. 프론트엔드 잡은 필수, 백엔드 잡은 자문(`continue-on-error`)
-상태입니다.
+백엔드 테스트는 로컬 PostgreSQL의 테스트 전용 DB(`k_dpp_test`)를 씁니다. 준비와 다른 DB를
+가리키는 법은 [BACKEND/README.md](BACKEND/README.md)의 '테스트' 절에 있습니다.
+
+CI는 push·PR마다 세 잡을 실행합니다 — 프론트엔드 분석·테스트, 백엔드 pytest(PostgreSQL
+서비스 포함), 배포 이미지 빌드. `continue-on-error`는 쓰지 않아 하나라도 실패하면 CI가
+실패로 표시됩니다. 백엔드 잡은 `BACKEND` 폴더가 없으면 건너뛰지 않고 실패합니다.
 
 ---
 
