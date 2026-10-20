@@ -18,7 +18,7 @@ import 'auth_form_widgets.dart';
 /// - 누르기 전에 제출하면 칸 대신 버튼 아래에 번호를 받으라고 붙입니다(DECISIONS 267).
 /// - 남은 시간과 다시 받기 대기는 기기 시계의 마감 시각으로 셉니다. 메일 앱에 다녀오는
 ///   동안 앱의 타이머가 멈춰도 돌아오면 맞는 값을 보입니다.
-/// - 번호는 그 이메일에만 맞으므로, 받은 뒤 이메일을 고치면 번호 칸과 시간을 비웁니다.
+/// - 번호는 그 이메일에만 맞으므로, 번호를 요청한 뒤 이메일을 고치면 번호 칸과 시간을 비웁니다.
 ///
 /// 이 위젯의 버튼과 번호 칸은 가장 가까운 [Form] 에 들어가 화면의 제출 검사에 함께 걸립니다.
 /// 제출 응답의 인증번호 오류는 [EmailCodeSectionState.showSubmitError] 로 넘깁니다.
@@ -80,7 +80,9 @@ class EmailCodeSectionState extends State<EmailCodeSection>
   /// 칸이 펼쳐지는 만큼 버튼 아래 안내(267)를 접습니다.
   late final Animation<double> _requestErrorFactor;
 
-  /// 지금 화면에 걸린 번호·대기 시간이 어느 이메일(공백 제거·소문자) 것인지입니다.
+  /// 번호 칸의 번호와 대기 시간이 어느 이메일(공백 제거·소문자) 것인지입니다. [인증번호 받기]를
+  /// 누를 때 응답을 기다리지 않고 정해 두어, 요청이 시간 초과·503 으로 끝난 뒤 메일로 온 번호를
+  /// 넣었어도 이메일을 고치면 그 번호를 비웁니다(DECISIONS 170).
   String? _targetEmail;
 
   /// [_targetEmail] 로 번호를 받은 적이 있는지입니다. 버튼 문구가 '다시 받기'로 바뀝니다.
@@ -90,6 +92,10 @@ class EmailCodeSectionState extends State<EmailCodeSection>
 
   /// 서버가 거절한 이유입니다. 번호 칸 아래에 붙고, 번호를 고치면 지웁니다.
   String? _codeError;
+
+  /// 새 번호를 받으면 번호 칸의 제출 검사 오류를 지우려고 둡니다.
+  final GlobalKey<FormFieldState<String>> _codeFieldKey =
+      GlobalKey<FormFieldState<String>>();
 
   @override
   void initState() {
@@ -126,6 +132,11 @@ class EmailCodeSectionState extends State<EmailCodeSection>
   }
 
   static String _normalizeEmail(String email) => email.trim().toLowerCase();
+
+  /// 이메일 칸이 아직 [email] 인지입니다. 응답을 기다리는 동안 고쳤으면 그 응답의 번호·대기는
+  /// 지금 칸의 이메일 것이 아닙니다.
+  bool _isCurrentEmail(String email) =>
+      _normalizeEmail(widget.emailController.text) == _normalizeEmail(email);
 
   // 다 펼친 뒤에 버튼 아래 안내(267)를 지웁니다. 그동안은 칸과 함께 접어 두어, 안내가 먼저
   // 사라져 아래 칸이 위로 튀었다 내려가지 않게 합니다.
@@ -211,6 +222,7 @@ class EmailCodeSectionState extends State<EmailCodeSection>
     setState(() {
       _isRequesting = true;
       _isCodeFieldVisible = true;
+      _targetEmail = _normalizeEmail(email);
     });
     if (!wasCodeFieldVisible) {
       // '동작 줄이기'면 펼치지 않고 바로 다 보입니다.
@@ -230,8 +242,7 @@ class EmailCodeSectionState extends State<EmailCodeSection>
       if (!mounted) return;
 
       // 기다리는 동안 이메일을 고쳤으면 번호는 지금 칸의 이메일 것이 아니므로 걸지 않습니다.
-      if (_normalizeEmail(widget.emailController.text) ==
-          _normalizeEmail(email)) {
+      if (_isCurrentEmail(email)) {
         final now = widget.now();
 
         setState(() {
@@ -243,7 +254,10 @@ class EmailCodeSectionState extends State<EmailCodeSection>
           );
           _codeError = null;
         });
-        // 새 번호를 받으면 같은 이메일의 이전 번호는 쓸 수 없습니다.
+        // 새 번호를 받으면 같은 이메일의 이전 번호는 쓸 수 없습니다. 기다리는 동안 제출해 붙은
+        // '인증번호를 받아 입력해 주세요'도 지워 남은 시간이 보이게 합니다. reset 은 칸을 마지막으로
+        // 그린 때의 값으로 되돌리므로 그 뒤에 비웁니다.
+        _codeFieldKey.currentState?.reset();
         widget.codeController.clear();
         _syncTicker();
         // 응답이 칸을 펼친 화면보다 먼저 오면 칸이 아직 포커스를 받지 못해, 그린 뒤 옮깁니다.
@@ -261,7 +275,8 @@ class EmailCodeSectionState extends State<EmailCodeSection>
           error.errorCode == AuthErrorCode.emailCodeResendTooSoon ||
           error.errorCode == AuthErrorCode.tooManyAttempts;
 
-      if (isWaitLimit && retryAfter != null) {
+      // 대기도 요청한 이메일 것이라, 기다리는 동안 고쳤으면 지금 칸의 이메일에 걸지 않습니다.
+      if (isWaitLimit && retryAfter != null && _isCurrentEmail(email)) {
         setState(() {
           if (_targetEmail != _normalizeEmail(email)) {
             _resetForNewEmail();
@@ -456,6 +471,7 @@ class EmailCodeSectionState extends State<EmailCodeSection>
             child: Padding(
               padding: const EdgeInsets.only(top: 16),
               child: TextFormField(
+                key: _codeFieldKey,
                 controller: widget.codeController,
                 focusNode: widget.codeFocusNode,
                 keyboardType: TextInputType.number,

@@ -130,6 +130,101 @@ void main() {
     expect(fieldText(tester, '인증번호'), isEmpty);
   });
 
+  testWidgets('요청을 기다리는 동안 이메일을 고치면 늦게 온 요청 한도 429 대기를 새 이메일에 걸지 않는다', (
+    tester,
+  ) async {
+    final pendingCode = backend.hold('/auth/email-code');
+    backend.on(
+      '/auth/email-code',
+      serverErrorResponse(
+        429,
+        'TOO_MANY_ATTEMPTS',
+        '인증번호 요청이 너무 많습니다. 10분 후 다시 시도해 주세요.',
+        extra: {'retry_after': 600},
+      ),
+    );
+    await pumpLoginWithReset(tester);
+    await tapVisible(tester, find.text('비밀번호를 잊으셨나요?'));
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    final requestButton = find.byType(OutlinedButton);
+    await tester.ensureVisible(requestButton);
+    await tester.pumpAndSettle();
+    await tester.tap(requestButton);
+    await tester.pump();
+
+    await tester.enterText(field('이메일'), 'other@example.com');
+    await tester.pump();
+    pendingCode.complete();
+    await tester.pumpAndSettle();
+
+    final button = tester.widget<OutlinedButton>(requestButton);
+    expect((button.child! as Text).data, '인증번호 받기');
+    expect(button.onPressed, isNotNull);
+  });
+
+  testWidgets('하루 발송 상한 503 뒤 넣은 번호도 이메일을 고치면 비운다', (tester) async {
+    backend.on(
+      '/auth/email-code',
+      serverErrorResponse(
+        503,
+        'EMAIL_SEND_UNAVAILABLE',
+        '지금은 인증 메일을 보낼 수 없습니다. 나중에 다시 시도해 주세요.',
+      ),
+    );
+    await pumpLoginWithReset(tester);
+    await tapVisible(tester, find.text('비밀번호를 잊으셨나요?'));
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await tapVisible(tester, find.byType(OutlinedButton));
+
+    expectAppBanner(
+      tester,
+      '지금은 인증 메일을 보낼 수 없어요. 나중에 다시 시도해 주세요.',
+      AppBannerKind.failure,
+    );
+    // 앞서 온 메일의 번호를 넣었더라도 그 이메일 것이라, 이메일을 고치면 비웁니다(DECISIONS 170).
+    await tester.enterText(field('인증번호'), '123456');
+    await tester.enterText(field('이메일'), 'other@example.com');
+    await tester.pump();
+
+    expect(field('인증번호'), findsOneWidget);
+    expect(fieldText(tester, '인증번호'), isEmpty);
+  });
+
+  testWidgets('번호를 기다리는 동안 다시 설정을 눌러 번호 칸에 붙은 오류는 번호가 오면 지우고 남은 시간을 보인다', (
+    tester,
+  ) async {
+    final pendingCode = backend.hold('/auth/email-code');
+    backend.on('/auth/email-code', emailCodeSentResponse());
+    await pumpLoginWithReset(tester);
+    await tapVisible(tester, find.text('비밀번호를 잊으셨나요?'));
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await tester.enterText(field('새 비밀번호'), 'newpassword123');
+    await tester.enterText(field('새 비밀번호 확인'), 'newpassword123');
+    final requestButton = find.byType(OutlinedButton);
+    await tester.ensureVisible(requestButton);
+    await tester.pumpAndSettle();
+    await tester.tap(requestButton);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // 기다리는 동안은 pumpAndSettle 을 부르지 않습니다(요청 시간 초과를 넘겨 버림).
+    final submit = find.widgetWithText(ElevatedButton, '비밀번호 다시 설정');
+    await tester.ensureVisible(submit);
+    await tester.pump();
+    await tester.tap(submit);
+    await tester.pump();
+
+    final error = find.text('인증번호를 받아 입력해 주세요');
+    expect(error, findsOneWidget);
+    expect(backend.bodiesFor('/auth/password-reset'), isEmpty);
+
+    pendingCode.complete();
+    await tester.pumpAndSettle();
+
+    expect(error, findsNothing);
+    expect(find.text('남은 시간 10:00'), findsOneWidget);
+  });
+
   testWidgets('번호를 받아 새 비밀번호로 바꾸면 로그인 화면에 이메일을 채우고 옛 비밀번호를 지운다', (
     tester,
   ) async {
