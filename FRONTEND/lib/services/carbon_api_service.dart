@@ -33,6 +33,7 @@ class CarbonApiException implements Exception {
 
   /// 배너에 띄우는 문장입니다. 원인마다 길게 다르던 문장은 한 문장으로 줄이고,
   /// 기준 없는 소재·인터넷 끊김·로그인 만료만 따로 알립니다(DECISIONS 98).
+  /// 입력 거절(400/422)은 저장하지 않으므로 저장하지 못했다고 알립니다(AI 연동 협의안 R1).
   String get userMessage {
     switch (type) {
       case CarbonApiErrorType.badRequest:
@@ -43,9 +44,9 @@ class CarbonApiException implements Exception {
           final names = others == 0
               ? unknownMaterials.first
               : '${unknownMaterials.first} 외 $others개';
-          return '$names 소재는 기준이 없어 임시 추정값으로 저장했어요.';
+          return '$names 소재는 탄소 계산 기준이 없어 저장하지 못했어요.';
         }
-        return _estimatedMessage;
+        return '탄소량을 계산할 수 없어 저장하지 못했어요. 소재와 혼용률을 확인해 주세요.';
       case CarbonApiErrorType.unauthorized:
         return '로그인이 만료됐어요. 탄소량은 임시 추정값으로 저장했어요.';
       case CarbonApiErrorType.network:
