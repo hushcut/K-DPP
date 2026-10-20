@@ -24,6 +24,34 @@ from apps.service.response_contract import normalize_label_response
 
 API_VERSION = "1.0"
 
+_PUBLIC_PART_NAMES = {
+    "outer": "outer",
+    "outer_2": "outer_2",
+    "generic": "unidentified",
+    "lining": "lining",
+    "filling": "filling",
+    "pocket": "pocket",
+    "rib": "rib",
+    "sleeve": "sleeve",
+    "color_block": "color_block",
+    "embroidery_yarn": "embroidery_yarn",
+}
+
+
+def _with_public_guidance(parsed: dict[str, Any]) -> dict[str, Any]:
+    """최종 부위·재촬영 근거만 공개 코드로 전달하고 원래 판정은 유지한다."""
+
+    warnings = [warning for warning in parsed.get("warnings", [])
+                if not warning.startswith(("composition_part:", "composition_action:"))]
+    if parsed.get("status") == "success":
+        part = _PUBLIC_PART_NAMES.get(parsed.get("selected_part"), "unidentified")
+        warnings.append(f"composition_part:{part}")
+    elif (parsed.get("status") == "failed"
+          and parsed.get("parse_evidence", {}).get("recapture", {}).get("action")
+          == "retake_composition_region"):
+        warnings.append("composition_action:retake_composition_region")
+    return {**parsed, "warnings": warnings}
+
 
 def _with_part_uncertainty(parsed: dict[str, Any]) -> dict[str, Any]:
     """확정 소재와 부위 미확정을 구분하되 후보 선택에는 영향을 주지 않는다."""
@@ -211,7 +239,7 @@ def analyze_ocr_result(
             "option_id": review[0],
         }
     if confirmed_review_id is None:
-        return _with_recapture_guidance(automatic)
+        return _with_public_guidance(_with_recapture_guidance(automatic))
 
     if review is None or review[0] != confirmed_review_id:
         raise ValueError("선택 ID가 현재 OCR의 확인 후보와 일치하지 않습니다.")
@@ -235,7 +263,7 @@ def analyze_ocr_result(
         "automatic_ocr_source": automatic["ocr"]["source"],
         "automatic_warnings": list(automatic["warnings"]),
     }
-    return normalize_label_response(reviewed, api_version=API_VERSION)
+    return normalize_label_response(_with_public_guidance(reviewed), api_version=API_VERSION)
 
 
 @line_analysis_scope()
@@ -272,7 +300,7 @@ def analyze_label_text(
 ) -> dict[str, Any]:
     """Parse extracted text; explicit per-label review options never imply OCR confidence."""
 
-    return normalize_label_response(_with_part_uncertainty(parse_label(
+    return normalize_label_response(_with_public_guidance(_with_part_uncertainty(parse_label(
         text, confirmed_polyester_poly=confirmed_polyester_poly,
         confirmed_first_generic=confirmed_first_generic,
-    )), api_version=API_VERSION)
+    ))), api_version=API_VERSION)

@@ -212,8 +212,45 @@ def test_scan_returns_successful_ocr_materials_without_internal_metadata(
 
     assert response["materials"] == {"cotton": 80, "polyester": 20}
     assert response["ai_success"] is True
-    assert response["warnings"] == []
+    assert response["warnings"] == ["composition_part:unidentified"]
     assert not INTERNAL_KEYS & response.keys()
+    assert scan_db.saved == []
+    assert scan_db.committed is False
+
+
+@pytest.mark.parametrize("text,code,status_code", [
+    ("OUTER COTTON 100%", "composition_part:outer", 200),
+    ("겉감2 면 100%", "composition_part:outer_2", 200),
+    ("LINING POLYESTER 100%", "composition_part:lining", 200),
+    ("COTTON 100%", "composition_part:unidentified", 200),
+    ("OUTER COTTON 95%\nLINING POLYESTER 100%",
+     "composition_action:retake_composition_region", 422),
+])
+def test_scan_passes_public_guidance_without_internal_metadata_or_saving(
+    backend_main, scan_db, monkeypatch, text, code, status_code,
+) -> None:
+    reading = ocr_text.OcrResult(text, ocr_text.OcrMetadata(
+        source="original", confidence="medium", candidate_count=1,
+        image_format="JPEG", width=4, height=4,
+        attempts=(ocr_text.OcrAttempt("original", "success", 0, False),), attempt_count=1,
+    ))
+    monkeypatch.setattr(backend_main, "run_ocr", lambda *_args, **_kwargs: reading)
+    arguments = dict(
+        image=make_upload(), raw_ocr_text=None, db=scan_db,
+        current_user=SimpleNamespace(id=1),
+    )
+    if status_code == 422:
+        with pytest.raises(HTTPException) as raised:
+            backend_main.scan_label(**arguments)
+        assert raised.value.status_code == 422
+        payload = raised.value.detail
+        assert payload["materials"] == {}
+        assert not any(warning.startswith("composition_part:") for warning in payload["warnings"])
+    else:
+        payload = backend_main.scan_label(**arguments)
+        assert payload["materials"]
+    assert code in payload["warnings"]
+    assert not INTERNAL_KEYS & payload.keys()
     assert scan_db.saved == []
     assert scan_db.committed is False
 

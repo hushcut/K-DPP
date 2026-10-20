@@ -479,6 +479,40 @@ Google SDK 자동 재시도는 끄고 각 RPC에 후보·전체 예산의 남은
 RPC 시도 수를 기록하고 QA CSV의 `ocr_rpc_attempt_count`로 내보냅니다. 캐시 적중·오프라인
 실행의 RPC 시도 수는 0이며, RPC 시도 수가 청구된 요청 수를 보장하지는 않습니다.
 
+### 공개 부위·재촬영 안내 (`warnings`, R4)
+
+AI 분석 서비스는 기존 `warnings: string[]`에 아래 공개 코드를 추가합니다.
+성공 결과에는 최종 `selected_part`에 해당하는 부위 코드 한 개만 넣습니다.
+다른 진단 경고와 소재·비율·성공/실패·부위 선택·내부 근거는 유지합니다.
+
+| 공개 코드 | 의미 |
+| --- | --- |
+| `composition_part:outer` | 겉감 |
+| `composition_part:outer_2` | 겉감2 |
+| `composition_part:unidentified` | `generic` 또는 공개 목록에 없는 부위: 부위 미확정 |
+| `composition_part:lining` | 안감 |
+| `composition_part:filling` | 충전재 |
+| `composition_part:pocket` | 주머니 |
+| `composition_part:rib` | 시보리 |
+| `composition_part:sleeve` | 소매 |
+| `composition_part:color_block` | 배색 |
+| `composition_part:embroidery_yarn` | 자수실 |
+| `composition_action:retake_composition_region` | 소재·혼용률 영역 재촬영 권고 |
+
+실패에는 부위 성공 코드를 넣지 않습니다. 재촬영 코드는 기존
+`parse_evidence.recapture.action=retake_composition_region` 근거가 있는 실패에만
+넣습니다. OCR 장애·시간 초과·캐시 누락·후보 충돌·수동 확인 대기·시도 기록 부재와
+텍스트 전용 실패에는 재촬영 코드를 만들지 않습니다. 예약된 `composition_part:`·
+`composition_action:` 코드는 최종 판정으로 다시 구성해 중복·이전 부위 안내를 막습니다.
+
+제품 백엔드 `/api/scan`은 성공의 `warnings`, 소재 추출 실패 422의
+`detail.warnings`로 문자열을 전달합니다. 해당 경로의 통과 검사는 AI 영역의
+`tests/test_backend_ai_wiring.py`에서 모의 OCR·임시 DB로 확인합니다.
+앱은 알려진 공개 코드만 안내 문구로 바꾸고, 다른 진단 경고를 원문 그대로 표시하지
+않아야 합니다. 부위 코드가 있다는 사실만으로 계산 진행이나 겉감 확인이 승인되지는
+않습니다. 부위 미확정의 확인 절차·계산 진행 정책과 앱 표시는 연동 담당과 별도 확정하며,
+이 AI 변경은 R5 후보 확인 연결을 재개하지 않습니다.
+
 ### 라벨 분석 응답 계약
 
 OCR·파서·분석 서비스는 한 분석 작업 안에서 같은 원문의 행 분석 결과를 재사용합니다.
@@ -515,7 +549,7 @@ Google Vision이 제공한 신뢰도 점수로 해석하지 않습니다.
     "ocr": "unknown",
     "parser": "high"
   },
-  "warnings": [],
+  "warnings": ["composition_part:unidentified"],
   "care_instruction": "",
   "care_instructions": [],
   "selected_part": "generic",

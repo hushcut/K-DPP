@@ -39,8 +39,11 @@ def test_recapture_preserves_failure_and_all_existing_fields(text, reason):
     assert result['selected_part'] == ''
     assert result['parse_evidence']['recapture'] == {
         'action': 'retake_composition_region', 'reason': reason, 'basis': 'current_ocr'}
+    assert result['warnings'] == [
+        *baseline['warnings'], 'composition_action:retake_composition_region']
+    assert not any(warning.startswith('composition_part:') for warning in result['warnings'])
     for key in baseline:
-        if key not in {'ocr', 'parse_evidence'}:
+        if key not in {'ocr', 'parse_evidence', 'warnings'}:
             assert result[key] == baseline[key]
     assert {k: v for k, v in result['parse_evidence'].items() if k != 'recapture'} == baseline['parse_evidence']
     LabelResponseContract.model_validate(result)
@@ -64,6 +67,7 @@ def test_failed_or_incomplete_attempts_do_not_imply_a_bad_photo(outcome, code, t
     result = analyze_ocr_result(source)
     assert result['status'] == 'failed'
     assert 'recapture' not in result['parse_evidence']
+    assert 'composition_action:retake_composition_region' not in result['warnings']
 
 
 @pytest.mark.parametrize('change', [
@@ -75,6 +79,7 @@ def test_missing_attempt_history_and_conflicts_do_not_recommend_recapture(change
     source = reading(text)
     result = analyze_ocr_result(replace(source, metadata=replace(source.metadata, **change)))
     assert 'recapture' not in result['parse_evidence']
+    assert 'composition_action:retake_composition_region' not in result['warnings']
 
 
 def test_manual_review_takes_priority_over_recapture():
@@ -84,9 +89,12 @@ def test_manual_review_takes_priority_over_recapture():
     assert result['status'] == 'failed'
     assert result['parse_evidence']['review']['available']
     assert 'recapture' not in result['parse_evidence']
+    assert not any(warning.startswith(('composition_part:', 'composition_action:'))
+                   for warning in result['warnings'])
     confirmed = analyze_ocr_result(source, confirmed_review_id=option['id'])
     assert confirmed['status'] == 'success'
     assert 'recapture' not in confirmed['parse_evidence']
+    assert confirmed['warnings'].count('composition_part:unidentified') == 1
 
 
 @pytest.mark.parametrize('text', [
@@ -97,10 +105,13 @@ def test_success_does_not_gain_a_recapture_instruction(text):
     result = analyze_ocr_result(reading(text))
     assert result['status'] == 'success'
     assert 'recapture' not in result['parse_evidence']
+    assert 'composition_action:retake_composition_region' not in result['warnings']
 
 
 def test_text_only_failure_cannot_assess_photo_acquisition():
-    assert 'recapture' not in analyze_label_text('UNKNOWN 100%')['parse_evidence']
+    result = analyze_label_text('UNKNOWN 100%')
+    assert 'recapture' not in result['parse_evidence']
+    assert 'composition_action:retake_composition_region' not in result['warnings']
 
 
 @pytest.mark.parametrize('text', [
@@ -113,3 +124,4 @@ def test_ambiguous_outer_is_not_described_as_incomplete_capture(text):
     assert result['error_code'] == 'incomplete_part_composition'
     assert any('ambiguous_composition_candidates' in warning for warning in result['warnings'])
     assert 'recapture' not in result['parse_evidence']
+    assert 'composition_action:retake_composition_region' not in result['warnings']
