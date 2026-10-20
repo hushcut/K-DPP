@@ -297,6 +297,70 @@ void main() {
     },
   );
 
+  testWidgets('요청이 시간 초과로 끝난 뒤 넣은 번호도 이메일을 고치면 비운다', (tester) async {
+    final pendingCode = backend.hold('/auth/email-code');
+    await pumpSignupScreen(tester);
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await tester.ensureVisible(requestButton());
+    await tester.pumpAndSettle();
+    await tester.tap(requestButton());
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 15));
+    await tester.pump();
+
+    expectAppBanner(
+      tester,
+      '응답이 늦어지고 있어요. 네트워크를 확인한 뒤 다시 시도해 주세요.',
+      AppBannerKind.failure,
+    );
+    await tester.enterText(field('인증번호'), '123456');
+
+    // 대소문자·앞뒤 공백만 다르면 같은 이메일이라 그대로 둡니다.
+    await tester.enterText(field('이메일'), ' HONGGILDONG@example.com');
+    await tester.pump();
+    expect(find.text('123456', skipOffstage: false), findsOneWidget);
+
+    // 메일로 온 번호는 요청을 보낸 이메일 것이라, 다른 이메일로 고치면 비웁니다(DECISIONS 170).
+    await tester.enterText(field('이메일'), 'other@example.com');
+    await tester.pump();
+
+    expect(find.text('123456', skipOffstage: false), findsNothing);
+    expect(visibleField('인증번호'), findsOneWidget);
+    pendingCode.complete();
+  });
+
+  testWidgets('번호를 기다리는 동안 가입을 눌러 번호 칸에 붙은 오류는 번호가 오면 지우고 남은 시간을 보인다', (
+    tester,
+  ) async {
+    final pendingCode = backend.hold('/auth/email-code');
+    backend.on('/auth/email-code', emailCodeSentResponse());
+    await pumpSignupScreen(tester);
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await fillAccountFields(tester);
+    await tester.ensureVisible(requestButton());
+    await tester.pumpAndSettle();
+    await tester.tap(requestButton());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // 기다리는 동안은 pumpAndSettle 을 부르지 않습니다(요청 시간 초과를 넘겨 버림).
+    final submit = find.widgetWithText(ElevatedButton, '회원가입');
+    await tester.ensureVisible(submit);
+    await tester.pump();
+    await tester.tap(submit);
+    await tester.pump();
+
+    final error = find.text('인증번호를 받아 입력해 주세요');
+    expect(error, findsOneWidget);
+    expect(backend.bodiesFor('/auth/signup'), isEmpty);
+
+    pendingCode.complete();
+    await tester.pumpAndSettle();
+
+    expect(error, findsNothing);
+    expect(helperText('남은 시간 10:00'), findsOneWidget);
+  });
+
   testWidgets('번호 칸은 아래 칸을 한 번에 밀지 않고 펼쳐진다', (tester) async {
     backend.on('/auth/email-code', emailCodeSentResponse());
     await pumpSignupScreen(tester);
@@ -478,6 +542,27 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
 
     expect(helperText('유효 시간이 지났어요. 인증번호를 다시 받아 주세요.'), findsOneWidget);
+  });
+
+  testWidgets('번호를 다시 받으면 앞서 넣은 번호를 비우고 남은 시간을 새로 센다', (tester) async {
+    backend.on('/auth/email-code', emailCodeSentResponse());
+    await pumpSignupScreen(tester);
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await requestCode(tester);
+    await tester.enterText(field('인증번호'), '111111');
+    // 위로 끌어올린 버튼을 보냄 배너가 가리지 않게, 배너가 사라질 때까지 기다립니다.
+    await tester.pump(const Duration(seconds: 10));
+    await tester.pumpAndSettle();
+
+    now = now.add(const Duration(seconds: 60));
+    await tester.pump(const Duration(seconds: 1));
+    expect(requestButtonLabel(tester), '인증번호 다시 받기');
+    await requestCode(tester);
+
+    // 번호 칸의 검사 오류를 지우는 reset 이 옛 번호를 되살리지 않습니다.
+    expect(backend.bodiesFor('/auth/email-code'), hasLength(2));
+    expect(find.text('111111', skipOffstage: false), findsNothing);
+    expect(helperText('남은 시간 10:00'), findsOneWidget);
   });
 
   testWidgets('번호를 받은 뒤 이메일을 고치면 번호 칸과 시간을 비운다', (tester) async {
@@ -664,6 +749,36 @@ void main() {
     await tester.pump();
     expect(isRequestButtonEnabled(tester), isTrue);
     expect(visibleField('인증번호'), findsOneWidget);
+  });
+
+  testWidgets('요청을 기다리는 동안 이메일을 고치면 늦게 온 429 대기를 새 이메일에 걸지 않는다', (
+    tester,
+  ) async {
+    final pendingCode = backend.hold('/auth/email-code');
+    backend.on(
+      '/auth/email-code',
+      serverErrorResponse(
+        429,
+        'EMAIL_CODE_RESEND_TOO_SOON',
+        '인증번호는 42초 후 다시 요청할 수 있습니다.',
+        extra: {'retry_after': 42},
+      ),
+    );
+    await pumpSignupScreen(tester);
+    await tester.enterText(field('이메일'), 'honggildong@example.com');
+    await tester.ensureVisible(requestButton());
+    await tester.pumpAndSettle();
+    await tester.tap(requestButton());
+    await tester.pump();
+
+    await tester.enterText(field('이메일'), 'other@example.com');
+    await tester.pump();
+    pendingCode.complete();
+    await tester.pumpAndSettle();
+
+    // 그 대기는 요청을 보낸 옛 이메일 것이라, 지금 이메일은 바로 받을 수 있습니다.
+    expect(requestButtonLabel(tester), '인증번호 받기');
+    expect(isRequestButtonEnabled(tester), isTrue);
   });
 
   testWidgets('요청 한도에 닿은 긴 대기는 시간 단위로 보인다', (tester) async {
