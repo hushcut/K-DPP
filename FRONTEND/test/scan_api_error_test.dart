@@ -107,6 +107,50 @@ void main() {
       expect(exception.message, '라벨을 인식하지 못했습니다.');
     });
 
+    // AI 연동 협의안 R4: 422 detail.warnings 의 재촬영 권고 코드를 실패 시트가 읽는다.
+    test('422 detail 의 warnings 문자열을 보존하고, 없거나 목록이 아니면 비어 있다', () {
+      final exception = ScanApiException.fromStatusCode(
+        statusCode: 422,
+        responseBody:
+            '{"status":"error","error_code":"MATERIAL_EXTRACTION_FAILED",'
+            '"message":"라벨에서 소재 혼용률을 찾지 못했습니다.",'
+            '"detail":{"message":"라벨에서 소재 혼용률을 찾지 못했습니다.",'
+            '"error_code":"MATERIAL_EXTRACTION_FAILED","materials":{},'
+            '"partial_materials":{"cotton":60},"ai_success":false,'
+            '"parser_error_code":"composition_not_found",'
+            '"warnings":["generic:unpaired_ratio_rows",7,'
+            '"composition_action:retake_composition_region"]}}',
+      );
+
+      expect(exception.type, ScanApiErrorType.aiRecognitionFailed);
+      expect(exception.warnings, [
+        'generic:unpaired_ratio_rows',
+        'composition_action:retake_composition_region',
+      ]);
+      expect(exception.partialMaterials, {'cotton': 60.0});
+
+      for (final body in [
+        recognitionFailureBody,
+        '{"detail":{"warnings":"composition_action:retake_composition_region"}}',
+        '<html>504 Gateway Timeout</html>',
+      ]) {
+        expect(
+          ScanApiException.fromStatusCode(
+            statusCode: 422,
+            responseBody: body,
+          ).warnings,
+          isEmpty,
+        );
+      }
+      expect(
+        const ScanApiException(
+          type: ScanApiErrorType.network,
+          message: '',
+        ).warnings,
+        isEmpty,
+      );
+    });
+
     test('JSON이 아닌 본문에서도 기본 메시지로 떨어진다', () {
       final exception = ScanApiException.fromStatusCode(
         statusCode: 422,

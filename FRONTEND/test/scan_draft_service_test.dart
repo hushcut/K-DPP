@@ -82,6 +82,35 @@ void main() {
       expect(draft.materials, {'면(cotton)': 100.0});
     });
 
+    // AI 연동 협의안 R4: 아는 공개 코드만 안내 문구가 되고, 직접 입력 초안에는 안내가 없다.
+    test('buildFromResult는 warnings 의 공개 코드를 안내 문구로 바꾸고 나머지는 버린다', () {
+      final result = ScanResult(
+        materials: const {'leather': 100},
+        careInstruction: '전문 세탁',
+        warnings: const [
+          'implicit_leather_composition:outer',
+          'generic:unpaired_ratio_rows',
+          'composition_part:outer',
+        ],
+      );
+
+      final draft = service.buildFromResult(
+        result: result,
+        clothingType: ClothingTypeCatalog.defaultOption,
+      );
+
+      expect(draft.notices, [
+        '겉감 기준으로 읽었어요.',
+        '라벨에 비율이 없어 가죽 100%로 보았어요. 확인해 주세요.',
+      ]);
+      expect(
+        service
+            .buildManual(clothingType: ClothingTypeCatalog.defaultOption)
+            .notices,
+        isEmpty,
+      );
+    });
+
     test('buildManual creates empty manual draft', () {
       final draft = service.buildManual(
         clothingType: ClothingTypeCatalog.defaultOption,

@@ -7,6 +7,7 @@ class ScanResult {
     required Map<String, double> materials,
     required this.careInstruction,
     List<ScanMaterialDetail> materialDetails = const [],
+    List<String> warnings = const [],
     this.title,
     this.category,
     this.health,
@@ -16,7 +17,8 @@ class ScanResult {
     this.unit,
     this.savedResultId,
   }) : materials = Map.unmodifiable(materials),
-       materialDetails = List.unmodifiable(materialDetails);
+       materialDetails = List.unmodifiable(materialDetails),
+       warnings = List.unmodifiable(warnings);
 
   static const String defaultCareInstruction = '라벨의 세탁 지침을 확인해 주세요.';
 
@@ -25,6 +27,10 @@ class ScanResult {
 
   /// 서버가 정규화한 소재별 표시명·표준명·지원 여부 정보입니다.
   final List<ScanMaterialDetail> materialDetails;
+
+  /// AI 가 붙인 주의 메모(`warnings`) 원문입니다. 공개 코드와 진단 경고가 섞여 있어 화면에 그대로
+  /// 보이지 않고, `ScanWarningNotices` 가 아는 코드만 안내 문구로 바꿉니다(AI 연동 협의안 R4).
+  final List<String> warnings;
 
   /// 소재명에 대응하는 서버 표시명을 돌려주고, 정보가 없으면 원래 이름을 씁니다.
   String displayNameFor(String materialName) {
@@ -73,6 +79,7 @@ class ScanResult {
     return ScanResult(
       materials: _parseMaterials(rawMaterials),
       materialDetails: _parseMaterialDetails(json['material_details']),
+      warnings: parseWarnings(json['warnings']),
       careInstruction:
           _readOptionalString(json, const [
             'care_instruction',
@@ -172,6 +179,14 @@ class ScanResult {
     if (value == null) return null;
     if (value is num) return value.toDouble();
     return double.tryParse(value.toString());
+  }
+
+  /// 스캔 응답(성공 본문·422 `detail`)의 `warnings` 에서 문자열만 모읍니다.
+  /// 목록이 아니면 비어 있습니다.
+  static List<String> parseWarnings(dynamic value) {
+    if (value is! List) return const [];
+
+    return List.unmodifiable(value.whereType<String>());
   }
 
   static List<ScanMaterialDetail> _parseMaterialDetails(dynamic value) {

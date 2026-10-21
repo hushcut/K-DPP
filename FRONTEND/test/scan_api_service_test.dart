@@ -143,6 +143,75 @@ void main() {
       },
     );
 
+    // AI 연동 협의안 R4: 백엔드(main.py)가 성공 본문 warnings 와 422 detail.warnings 로
+    // AI 코드를 그대로 넘기는 모양 그대로다(BACKEND/tests/test_ai_agreement_contract.py).
+    test('성공 본문과 422 detail 의 warnings 를 끝까지 읽어 온다', () async {
+      const warnings = [
+        'generic:unpaired_ratio_rows',
+        'composition_part:outer',
+      ];
+      final responses = [
+        http.Response(
+          jsonEncode({
+            'status': 'success',
+            'message': '라벨 인식 완료',
+            'ai_success': true,
+            'analysis_failure_reason': null,
+            'materials': {'cotton': 80, 'polyester': 20},
+            'material_details': const [],
+            'care_instruction': '라벨 표기법에 맞춰 관리하세요.',
+            'raw_ocr_preview': 'OUTER COTTON 80% POLYESTER 20%',
+            'warnings': warnings,
+            'clothing': {'name': '스캔한 의류', 'category': '상의'},
+            'title': '스캔한 의류',
+            'category': '상의',
+          }),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        ),
+        http.Response(
+          jsonEncode({
+            'status': 'error',
+            'error_code': 'MATERIAL_EXTRACTION_FAILED',
+            'message': '라벨에서 소재 혼용률을 찾지 못했습니다.',
+            'detail': {
+              'message': '라벨에서 소재 혼용률을 찾지 못했습니다.',
+              'error_code': 'MATERIAL_EXTRACTION_FAILED',
+              'materials': const {},
+              'partial_materials': const {},
+              'care_instruction': '라벨 표기법에 맞춰 관리하세요.',
+              'raw_ocr_preview': 'COTTON',
+              'ai_success': false,
+              'parser_error_code': 'composition_not_found',
+              'warnings': ['composition_action:retake_composition_region'],
+            },
+          }),
+          422,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        ),
+      ];
+      final client = MockClient((_) async => responses.removeAt(0));
+      final service = ScanApiService(client: client);
+
+      try {
+        final result = await service.scanLabel(imageFile: imageFile);
+        expect(result.warnings, warnings);
+
+        await expectLater(
+          service.scanLabel(imageFile: imageFile),
+          throwsA(
+            isA<ScanApiException>()
+                .having((error) => error.statusCode, 'statusCode', 422)
+                .having((error) => error.warnings, 'warnings', [
+                  'composition_action:retake_composition_region',
+                ]),
+          ),
+        );
+      } finally {
+        client.close();
+      }
+    });
+
     test('maps the current backend 503 response to server failure', () async {
       final responseBody = await _readFixture(
         'backend_scan_module_failure.json',

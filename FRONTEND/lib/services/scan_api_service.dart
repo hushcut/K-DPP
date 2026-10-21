@@ -30,6 +30,7 @@ class ScanApiException implements Exception {
     this.partialMaterials = const {},
     this.careInstruction,
     this.rawOcrPreview,
+    this.warnings = const [],
   });
 
   final ScanApiErrorType type;
@@ -46,6 +47,10 @@ class ScanApiException implements Exception {
 
   /// 서버가 인식한 라벨 원문 미리보기다. 값이 없으면 null이다.
   final String? rawOcrPreview;
+
+  /// 서버가 오류 본문(detail)에 실어 보낸 AI 주의 메모 원문이다. 재촬영 권고 같은 공개 코드가
+  /// 들어 있으며, 화면에는 `ScanWarningNotices` 가 아는 코드만 문구로 바꿔 보인다(R4).
+  final List<String> warnings;
 
   String get userMessage {
     switch (type) {
@@ -105,6 +110,7 @@ class ScanApiException implements Exception {
           'raw_ocr_preview',
           'rawOcrPreview',
         ]),
+        warnings: ScanResult.parseWarnings(detail['warnings']),
       );
     }
 

@@ -1,6 +1,7 @@
 import '../models/clothing_type_option.dart';
 import '../models/scan_result.dart';
 import '../utils/clothing_type_catalog.dart';
+import '../utils/scan_warning_notices.dart';
 
 /// 스캔 결과 편집 화면을 초기화하는 데 필요한 임시 입력 상태다.
 class ScanDraft {
@@ -11,6 +12,7 @@ class ScanDraft {
     required this.title,
     required this.isManualMaterialMode,
     this.rawOcrPreview = '',
+    this.notices = const [],
     this.serverHealth,
     this.serverCarbonFootprint,
     this.serverWeightGram,
@@ -26,6 +28,10 @@ class ScanDraft {
   /// 서버가 인식한 라벨 원문이다. 직접 입력 시 참고용으로만 보여 주며,
   /// 값이 없으면 빈 문자열이다.
   final String rawOcrPreview;
+
+  /// AI 가 보낸 공개 코드를 바꾼 안내 문구(부위·가죽 추정 — R4)다. 소재를 확인하는 동안 결과 화면에
+  /// 보이기만 하고 저장 이력·옷장에는 남기지 않는다. 없으면 빈 목록이다.
+  final List<String> notices;
 
   final int? serverHealth;
   final double? serverCarbonFootprint;
@@ -62,6 +68,7 @@ class ScanDraftService {
           ? scannedTitle!
           : clothingType.defaultTitle,
       isManualMaterialMode: false,
+      notices: ScanWarningNotices.forSuccess(result.warnings),
       serverHealth: result.health,
       serverCarbonFootprint: result.carbonFootprint,
       serverWeightGram: result.weightGram,
