@@ -257,10 +257,9 @@ def test_outer_conflict_keeps_confirmed_lining_and_outer_evidence(monkeypatch):
     )])
     analysis = analyze_ocr_result(result)
 
-    assert analysis["status"] == "success"
-    assert analysis["selected_part"] == "lining"
-    assert analysis["materials"] == {"polyester": 100}
-    assert "outer" not in analysis["parts"]
+    assert analysis["status"] == "failed"
+    assert analysis["error_code"] == "incomplete_part_composition"
+    assert analysis["materials"] == analysis["parts"] == {}
     assert "outer:ambiguous_composition_candidates" in analysis["warnings"]
 
 
@@ -319,10 +318,9 @@ def test_rejected_composition_cannot_disappear_in_another_candidate(
     analysis = analyze_ocr_result(result)
 
     if raw == "OUTER POLYESTER\nLINING COTTON 100%":
-        assert analysis["status"] == "success"
-        assert analysis["selected_part"] == "lining"
-        assert analysis["materials"] == {"cotton": 100}
-        assert "outer" not in analysis["parts"]
+        assert analysis["status"] == "failed"
+        assert analysis["error_code"] == "incomplete_part_composition"
+        assert analysis["materials"] == analysis["parts"] == {}
         assert analysis["ocr"]["rejected_composition_parts"]["outer"]
         assert len(calls) == 2
         return
@@ -722,10 +720,9 @@ def test_empty_heading_recovery_cannot_erase_raw_or_other_part_evidence(
     analysis = analyze_ocr_result(result)
 
     if raw == "LINING POLYESTER 100%":
-        assert analysis["status"] == "success"
-        assert analysis["selected_part"] == "lining"
-        assert analysis["materials"] == {"polyester": 100}
-        assert "outer" not in analysis["parts"]
+        assert analysis["status"] == "failed"
+        assert analysis["error_code"] == "incomplete_part_composition"
+        assert analysis["materials"] == analysis["parts"] == {}
         assert analysis["ocr"]["rejected_composition_parts"]["outer"]
         return
     assert analysis["status"] == "failed"

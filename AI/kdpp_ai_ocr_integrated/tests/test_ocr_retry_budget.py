@@ -12,6 +12,8 @@ import pytest
 from apps.text import ocr_text
 from apps.service.label_analysis import analyze_ocr_result
 from apps.text.ocr_cache import OcrTextCache
+from apps.text.ocr_regions import RegionImage
+from scripts.ocr_failure_diagnostics import failure_diagnostics
 
 
 @pytest.fixture
@@ -204,6 +206,42 @@ def test_client_setup_exhausting_request_budget_starts_no_rpc(monkeypatch, clock
         ocr_text.run_ocr_bytes(b"image")
 
 
+@pytest.mark.parametrize("cached_text,status,materials", [
+    ("BRAND ONLY", "failed", {}),
+    ("COTTON\n80%\nPOLYESTER\n20%", "success", {"cotton": 80, "polyester": 20}),
+])
+def test_cached_original_setup_timeout_is_a_local_budget_event(
+    monkeypatch, clock, cached_text, status, materials,
+):
+    client = client_for(lambda **_kwargs: pytest.fail("local budget must prevent RPC"))
+    pipeline_environment(monkeypatch, client)
+    cache = SimpleNamespace(get_entry=lambda content: (
+        {"text": cached_text} if content == b"original" else None
+    ))
+
+    def slow_setup(*_args):
+        clock["now"] += ocr_text.OCR_TOTAL_TIMEOUT_SECONDS + 1
+        return client
+
+    monkeypatch.setattr(ocr_text, "_get_vision_client", slow_setup)
+    result = ocr_text.run_ocr_bytes(
+        b"image", ocr_cache=cache, enable_reflection=False,
+        enable_denoised=False, enable_rotated=False, enable_material_region=False,
+    )
+    attempt = result.metadata.attempts[-1]
+    assert attempt.source == "preprocessed" and attempt.outcome == "failed"
+    assert attempt.failure_code == "total_timeout"
+    assert attempt.external_call is False
+    assert result.metadata.external_call_count == result.metadata.rpc_attempt_count == 0
+    assert attempt.rpc_attempt_count == attempt.retry_count == result.metadata.retry_count == 0
+    analysis = analyze_ocr_result(result)
+    assert analysis["status"] == status and analysis["materials"] == materials
+    diagnostic = failure_diagnostics(analysis)
+    assert diagnostic["budget_exhausted"] is True
+    assert diagnostic["service_error_codes"] == []
+    assert diagnostic["failure_stage"] == ("success" if status == "success" else "composition")
+
+
 def test_offline_cache_hit_has_zero_rpc_attempts(monkeypatch, clock, tmp_path):
     client = client_for(lambda **_kwargs: pytest.fail("offline must not call RPC"))
     pipeline_environment(monkeypatch, client)
@@ -252,3 +290,87 @@ def test_provider_payload_setup_exhausting_budget_is_not_counted_as_rpc(monkeypa
     assert result.metadata.external_call_count == 1
     assert result.metadata.attempts[-1].rpc_attempt_count == 0
     assert result.metadata.attempts[-1].external_call is False
+
+
+@pytest.mark.parametrize("path", [
+    "preprocessed", "reflection", "denoised", "rotated",
+    "material_crop", "material_crop_rotated", "early_crop",
+])
+@pytest.mark.parametrize("failure", ["invalid_image", "memory", "service", "prepare_timeout"])
+def test_optional_candidate_failure_keeps_counts_and_budget_distinct(monkeypatch, clock, path, failure):
+    """모든 추가 입력에서 준비 실패·호출 실패·전체 예산 소진을 구별한다."""
+    target = "material_crop_rotated" if path == "early_crop" else path
+    calls = []
+    preparations = []
+    pipeline_environment(monkeypatch, None)
+
+    def prepare(source):
+        preparations.append(source)
+        if source == target:
+            if failure == "invalid_image":
+                raise ocr_text.InvalidImageError("private detail")
+            if failure == "memory":
+                raise MemoryError("private detail")
+            if failure == "prepare_timeout":
+                clock["now"] = ocr_text.OCR_TOTAL_TIMEOUT_SECONDS + 1
+        return source.encode()
+
+    def ocr(_client, content, **_kwargs):
+        source = content.decode()
+        calls.append(source)
+        if source == target and failure == "service":
+            raise ocr_text.OcrUnavailableError("private detail", rpc_attempt_count=1)
+        return ocr_text.OcrPayload("BRAND ONLY", rpc_attempt_count=1)
+
+    monkeypatch.setattr(ocr_text, "_run_google_ocr", ocr)
+    for source, name in [
+        ("preprocessed", "preprocess_image_bytes"),
+        ("reflection", "preprocess_reflection_image_bytes"),
+        ("denoised", "preprocess_denoised_image_bytes"),
+        ("rotated", "preprocess_rotated_image_bytes"),
+    ]:
+        monkeypatch.setattr(ocr_text, name, lambda _content, source=source: prepare(source))
+
+    cropped = path.startswith("material_crop") or path == "early_crop"
+    region = (0.0, 0.0, 100.0, 100.0)
+    monkeypatch.setattr(ocr_text, "find_material_region", lambda *_args: region)
+    monkeypatch.setattr(ocr_text, "find_complete_material_region",
+                        lambda *_args: region if path == "early_crop" else None)
+    monkeypatch.setattr(ocr_text, "material_region_options", lambda *_args: (10.0, 0.0))
+    monkeypatch.setattr(ocr_text, "material_region_word_boxes", lambda *_args: ())
+    monkeypatch.setattr(ocr_text, "color_material_region_angle", lambda *_args: None)
+
+    def prepare_crop(_content, _region, *, rotated, **_kwargs):
+        source = "material_crop_rotated" if rotated else "material_crop"
+        return RegionImage(prepare(source), source, (1, 0, 0, 0, 1, 0), region)
+
+    monkeypatch.setattr(ocr_text, "prepare_material_region", prepare_crop)
+    result = ocr_text.run_ocr_bytes(
+        b"image", enable_reflection=path == "reflection",
+        enable_denoised=path == "denoised", enable_rotated=path == "rotated",
+        enable_material_region=cropped,
+    )
+    attempts = result.metadata.attempts
+    assert target in preparations
+    assert result.metadata.candidate_count == sum(a.outcome == "success" for a in attempts)
+    assert len(calls) == result.metadata.external_call_count == result.metadata.rpc_attempt_count
+    assert calls[0] == "original"
+    assert "private detail" not in repr(result.metadata)
+    if failure == "prepare_timeout":
+        assert target not in calls
+        assert f"{target}:total_timeout" in result.metadata.attempt_failures
+        target_attempt = next(a for a in attempts if a.source == target)
+        assert target_attempt.outcome == "skipped"
+        assert target_attempt.failure_code == "total_timeout"
+        assert not target_attempt.external_call and target_attempt.rpc_attempt_count == 0
+        assert all(a.outcome == "skipped" for a in attempts[attempts.index(target_attempt):])
+    elif failure == "service":
+        target_attempt = next(a for a in attempts if a.source == target)
+        assert target_attempt.outcome == "failed"
+        assert target_attempt.failure_code == "service_unavailable"
+        assert target_attempt.external_call and target_attempt.rpc_attempt_count == 1
+    else:
+        assert target not in calls
+        assert not any(a.source == target for a in attempts)
+        error_name = "InvalidImageError" if failure == "invalid_image" else "MemoryError"
+        assert f"{target}:{error_name}" in result.metadata.attempt_failures

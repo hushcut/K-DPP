@@ -204,23 +204,22 @@ def test_multimaterial_and_standalone_declarations_conflict() -> None:
     assert result["materials"] == {}
 
 
-def test_incomplete_outer_selects_confirmed_lining_with_its_part() -> None:
+def test_incomplete_outer_cannot_be_replaced_by_confirmed_lining() -> None:
     result = parse_label("OUTER COTTON 95%\nLINING NYLON 100%")
 
-    assert result["status"] == "success"
-    assert result["selected_part"] == "lining"
-    assert result["materials"] == {"nylon": 100}
-    assert "outer" not in result["parts"]
+    assert result["status"] == "failed"
+    assert result["error_code"] == "incomplete_part_composition"
+    assert result["materials"] == result["parts"] == {}
+    assert result["parse_evidence"]["confirmed_parts"] == {"lining": {"nylon": 100}}
     assert "outer:composition_not_confirmed" in result["warnings"]
 
 
-def test_unreadable_outer_selects_confirmed_lining_with_its_part() -> None:
+def test_unreadable_outer_cannot_be_replaced_by_confirmed_lining() -> None:
     result = parse_label("겉감: 인조모피\n안감: 폴리에스터 100%")
 
-    assert result["status"] == "success"
-    assert result["selected_part"] == "lining"
-    assert result["materials"] == {"polyester": 100}
-    assert "outer" not in result["parts"]
+    assert result["status"] == "failed"
+    assert result["error_code"] == "incomplete_part_composition"
+    assert result["materials"] == result["parts"] == {}
 
 
 def test_trailing_part_marker_keeps_each_ratio_with_its_own_part() -> None:
@@ -514,13 +513,12 @@ def test_trailing_marker_owns_the_entire_composition_block(text: str) -> None:
 @pytest.mark.parametrize(
     "main", ["COTTON 80%\nPOLYESTER", "MODACRYLIC\nCOTTON\n100%"]
 )
-def test_incomplete_trailing_outer_selects_confirmed_lining(main: str) -> None:
+def test_incomplete_trailing_outer_cannot_be_replaced_by_lining(main: str) -> None:
     result = parse_label(f"{main}\nOUTER\nNYLON 100%\nLINING")
 
-    assert result["status"] == "success"
-    assert result["selected_part"] == "lining"
-    assert result["materials"] == {"nylon": 100}
-    assert "outer" not in result["parts"]
+    assert result["status"] == "failed"
+    assert result["error_code"] == "incomplete_part_composition"
+    assert result["materials"] == result["parts"] == {}
     assert "outer:composition_not_confirmed" in result["warnings"]
 
 

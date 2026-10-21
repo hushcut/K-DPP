@@ -55,12 +55,11 @@ def test_metadata_on_unknown_percentage_row_cannot_hide_composition(unknown_row,
 @pytest.mark.parametrize("unknown_row", [
     "OLEFIN 101%", "OLEFIN 1..5%", "품번 AB123 OLEFIN 50%",
 ])
-def test_invalid_unknown_outer_remains_evidence_when_confirmed_lining_is_selected(unknown_row):
+def test_invalid_unknown_outer_prevents_confirmed_lining_substitution(unknown_row):
     result = parse_label(f"OUTER {unknown_row}\nLINING COTTON 100%")
-    assert result["status"] == "success", result
-    assert result["selected_part"] == "lining"
-    assert result["materials"] == {"cotton": 100}
-    assert "outer" not in result["parts"]
+    assert result["status"] == "failed", result
+    assert result["error_code"] == "incomplete_part_composition"
+    assert result["materials"] == result["parts"] == {}
     assert "outer" in result["parse_evidence"]["rejected_composition_parts"]
 
 
@@ -76,12 +75,11 @@ def test_invalid_unknown_lining_keeps_confirmed_outer(unknown_row):
     assert any(warning.startswith("lining:") for warning in result["warnings"])
 
 
-def test_unknown_outer_is_preserved_when_confirmed_lining_is_selected():
+def test_unknown_outer_prevents_confirmed_lining_substitution():
     result = parse_label("OUTER OLEFIN 100%\nLINING COTTON 100%")
-    assert result["status"] == "success"
-    assert result["selected_part"] == "lining"
-    assert result["materials"] == {"cotton": 100}
-    assert "outer" not in result["parts"]
+    assert result["status"] == "failed"
+    assert result["error_code"] == "incomplete_part_composition"
+    assert result["materials"] == result["parts"] == {}
     assert "outer:unresolved_material_token" in result["warnings"]
 
 def test_unknown_generic_is_preserved_when_confirmed_lining_is_selected():
@@ -143,21 +141,18 @@ def test_supported_compositions_are_preserved(text, materials):
 ])
 def test_unregistered_fiber_preserves_selected_part_and_service_response_contract(text):
     response = analyze_label_text(text)
-    fallback = text.startswith("OUTER")
-    expected_status = "success" if fallback else "failed"
-    assert response["status"] == expected_status
-    assert response["materials"] == ({"cotton": 100} if fallback else {})
-    assert response["selected_part"] == ("lining" if fallback else "")
-    assert response["parts"] == ({"lining": {"cotton": 100}} if fallback else {})
+    assert response["status"] == "failed"
+    assert response["materials"] == response["parts"] == {}
+    assert response["selected_part"] == ""
     with TestClient(app, raise_server_exceptions=False) as client:
         result = client.post("/v1/parse-text", json={"text": text})
-    assert result.status_code == (200 if fallback else 422)
+    assert result.status_code == 422
     body = result.json()
-    assert body["status"] == expected_status
+    assert body["status"] == "failed"
     assert body["materials"] == response["materials"]
     assert body["parts"] == response["parts"]
     assert body["selected_part"] == response["selected_part"]
-    if fallback:
+    if text.startswith("OUTER"):
         assert "outer:unresolved_material_token" in body["warnings"]
 
 

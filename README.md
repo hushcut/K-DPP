@@ -11,6 +11,28 @@ AI 기반 의류 수명 예측 및 탄소 발자국 추적 앱.
 
 ---
 
+## 개발 전 필수 보안 설정
+
+이 저장소에 **커밋·푸시하는 모든 팀원**은 새 clone·새 PC마다 아래 설정을 한 번 진행합니다.
+사용할 브랜치에 `scripts/security/`·`.githooks/` 등 공통 보안 구성이 반영된 최신 코드를 받은 뒤,
+**저장소 루트**에서 Python 3.11 이상으로 실행합니다. Git과 설치 시 인터넷 연결이 필요합니다.
+
+```sh
+python scripts/security/setup.py
+```
+
+설치기는 Gitleaks를 내려받아 고정된 해시·버전을 확인하고, 커밋·푸시 전 검사 훅을 설치합니다.
+`pre-commit·pre-push 보안 훅을 설치했습니다.` 메시지가 나오면 설치가 완료된 것입니다.
+이후 같은 작업 폴더에서는 새 세션에서도 자동 검사하며, 비밀정보나 게시 금지 자료가 탐지되면
+커밋·푸시를 중단합니다. 기존 훅과 충돌해 설치가 중단되면 원인을 확인하고 검사를 우회하지 않습니다.
+
+**코드를 내려받는 것만으로 각 PC의 로컬 훅이 설치되지는 않습니다.** 훅 설치 후 공통 보안 구성이
+없는 브랜치로 전환하면 커밋·푸시도 중단되므로, 해당 브랜치에 공통 보안 구성을 먼저 반영합니다.
+GitHub 보안 CI는 설정이 반영된 브랜치에서 **업로드 후** 실행됩니다.
+
+자세한 설치·검사 범위는 [Git 업로드 보안 규칙](GIT_SECURITY.md#8-자동-검사-운영2026-10-15-작업본),
+게시 후 결과는 [보안 CI 실행 내역](https://github.com/hushcut/K-DPP/actions/workflows/secret-scan.yml)에서 확인합니다.
+
 ## 저장소 구성
 
 4개 파트가 한 저장소에 모인 모노레포입니다. 각 폴더에 자체 README가 있습니다.
@@ -19,10 +41,12 @@ AI 기반 의류 수명 예측 및 탄소 발자국 추적 앱.
 | --- | --- | --- |
 | `FRONTEND/` | Flutter 앱 (Android·iOS) | [README](FRONTEND/README.md) |
 | `BACKEND/` | FastAPI 서버 + PostgreSQL | [README](BACKEND/README.md) · [API 계약](BACKEND/API_CONTRACT.md) |
-| `AI/` | OCR·심볼 인식 모듈 | [README](AI/kdpp_ai_ocr_integrated/README.md) |
+| `AI/` | OCR 소재·혼용률 분석 모듈 | [README](AI/kdpp_ai_ocr_integrated/README.md) |
 | `QA/` | 라벨 데이터셋 배치 검증 도구 | [README](QA/README.md) |
 | `deploy/` | 배포 묶음 — 앱 + PostgreSQL + Caddy(HTTPS) Docker Compose | [README](deploy/README.md) |
 | `docs/` | 파트 간 협업 문서 | [스캔 API 계약](docs/SCAN_API_CONTRACT.md) |
+
+키·자격증명·로컬 데이터의 업로드 금지 기준과 브랜치별 보완 항목은 [Git 업로드 보안 규칙](GIT_SECURITY.md)을 따릅니다. 규칙 문서와 실제 자동 차단 설정의 완료 여부는 구분합니다.
 
 ## 기술 스택
 
@@ -30,7 +54,7 @@ AI 기반 의류 수명 예측 및 탄소 발자국 추적 앱.
 | --- | --- |
 | 프론트엔드 | Flutter (Dart SDK `^3.11.3`) |
 | 백엔드 | FastAPI · SQLAlchemy · PostgreSQL 18 · Alembic (Python 3.10+, 3.12 검증) |
-| AI | Google Cloud Vision OCR · 심볼 분류 모델 |
+| AI | Google Cloud Vision OCR · 소재/혼용률 파서 |
 | CI | GitHub Actions ([ci.yml](.github/workflows/ci.yml)) |
 
 ---
