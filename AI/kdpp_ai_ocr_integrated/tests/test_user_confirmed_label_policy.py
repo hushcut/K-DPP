@@ -60,7 +60,8 @@ def test_auxiliary_extraction_requires_exact_scope_and_complete_clause(text):
     assert read_yarn_materials(text) is None
 
 
-@pytest.mark.parametrize("text", ["Adorable 40%\nChic 30%\nDream 30%", "OUTER 천연가죽(양가죽)", "YARN POLYESTER 95%"])
+# "OUTER 천연가죽(양가죽)"은 2026-10-21 가죽 정책으로 성공한다(tests/test_implicit_leather.py).
+@pytest.mark.parametrize("text", ["Adorable 40%\nChic 30%\nDream 30%", "YARN POLYESTER 95%"])
 def test_other_special_label_policies_remain_safe(text):
     result = parse_label(text)
     assert result["status"] == "failed"

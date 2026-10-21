@@ -2,6 +2,7 @@
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 import unicodedata
 
 from apps.text.rules import MATERIAL_ALIASES, OCR_CORRECTIONS
@@ -170,6 +171,18 @@ _HAN_GAP_PATTERNS = {
     False: re.compile(r"[\u4e00-\u9fff][ \t]+[\u4e00-\u9fff]"),
     True: re.compile(r"[\u4e00-\u9fff][ \t\n]+[\u4e00-\u9fff]"),
 }
+_HAN_PART_HEADING_PATTERN = re.compile(
+    r"(?m)^(?P<before>[ \t:;()\[\]{}]*)(?P<part>"
+    + "|".join(
+        r"[ \t]*".join(map(re.escape, alias))
+        for alias in sorted(
+            {alias for aliases in PART_PATTERNS.values() for alias in aliases
+             if re.fullmatch(r"[\u4e00-\u9fff]{2,}", alias)},
+            key=lambda alias: (-len(alias), alias),
+        )
+    )
+    + r")(?P<after>[ \t:;()\[\]{}]*)$"
+)
 
 
 def restore_registered_han_aliases(text: str, *, allow_newlines: bool = False) -> str:
@@ -196,12 +209,18 @@ def restore_registered_han_aliases(text: str, *, allow_newlines: bool = False) -
     return _HAN_ALIAS_PATTERNS[allow_newlines].sub(restore, text)
 
 
-def _replace_token(text: str, wrong: str, correct: str) -> str:
+@lru_cache(maxsize=1024)
+def _token_pattern(wrong: str) -> re.Pattern[str]:
+    # 동적으로 만든 패턴이 re 모듈의 내부 캐시에서 밀려나 반복 컴파일되지 않게 한다.
     if wrong.isascii():
         pattern = rf"(?<![a-z]){re.escape(wrong)}(?![a-z])"
     else:
         pattern = re.escape(wrong)
-    return re.sub(pattern, correct, text, flags=re.IGNORECASE)
+    return re.compile(pattern, re.IGNORECASE)
+
+
+def _replace_token(text: str, wrong: str, correct: str) -> str:
+    return _token_pattern(wrong).sub(correct, text)
 
 
 def normalize_text(text: str) -> str:
@@ -218,6 +237,15 @@ def normalize_text(text: str) -> str:
     for wrong, correct in OCR_CORRECTIONS.items():
         normalized = _replace_token(normalized, wrong.casefold(), correct.casefold())
 
+    # Restore only a complete heading on its own row, never metadata or
+    # characters separated by a row boundary.
+    if _HAN_GAP_PATTERNS[False].search(normalized):
+        normalized = _HAN_PART_HEADING_PATTERN.sub(
+            lambda match: match.group("before")
+            + re.sub(r"[ \t]+", "", match.group("part"))
+            + match.group("after"),
+            normalized,
+        )
     normalized = restore_registered_han_aliases(normalized)
 
     lines = [re.sub(r"[ \t]+", " ", line).strip() for line in normalized.split("\n")]
@@ -229,6 +257,16 @@ def clean_ocr_preview(text: str, max_len: int = 220) -> str:
         return ""
     preview = re.sub(r"\s+", " ", text).strip()
     return preview if len(preview) <= max_len else preview[:max_len] + "..."
+
+
+# 단어마다 부위명 별칭을 다시 정규화하지 않도록 비ASCII 접두어를 원래 순서대로 한 번만 만든다.
+_NON_ASCII_PART_PREFIXES = tuple(
+    normalized_prefix
+    for aliases in PART_PATTERNS.values()
+    for prefix in aliases
+    for normalized_prefix in (_normalized_alias(prefix),)
+    if not normalized_prefix.isascii()
+)
 
 
 def find_material_key(word: str) -> str | None:
@@ -244,17 +282,14 @@ def find_material_key(word: str) -> str | None:
     # OCR sometimes joins a Korean part marker and its first material
     # (for example, ``배색면``). Only split a known non-ASCII marker and
     # require the remainder to be a complete material alias.
-    for aliases in PART_PATTERNS.values():
-        for prefix in aliases:
-            normalized_prefix = _normalized_alias(prefix)
-            if (
-                not normalized_prefix.isascii()
-                and corrected.startswith(normalized_prefix)
-                and len(corrected) > len(normalized_prefix)
-            ):
-                material = ALIAS_TO_MATERIAL.get(corrected[len(normalized_prefix) :])
-                if material:
-                    return material
+    for normalized_prefix in _NON_ASCII_PART_PREFIXES:
+        if (
+            corrected.startswith(normalized_prefix)
+            and len(corrected) > len(normalized_prefix)
+        ):
+            material = ALIAS_TO_MATERIAL.get(corrected[len(normalized_prefix) :])
+            if material:
+                return material
     return None
 
 

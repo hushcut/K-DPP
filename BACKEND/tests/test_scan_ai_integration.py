@@ -70,7 +70,8 @@ def test_photo_scan_returns_materials_and_warnings_only(client, vision):
     assert response.status_code == 200
     assert body["materials"] == {"cotton": 80, "polyester": 20}
     assert body["ai_success"] is True
-    assert body["warnings"] == []
+    # 겉감·안감 표기가 없는 성공이라 AI 가 부위 미확정 안내만 붙인다(R4 — 소재 인식 실패가 아님).
+    assert body["warnings"] == ["composition_part:unidentified"]
     assert not any(key in body for key in INTERNAL_KEYS)
     assert counted_scans() == 1
 

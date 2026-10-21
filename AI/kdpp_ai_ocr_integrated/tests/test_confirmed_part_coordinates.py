@@ -32,7 +32,7 @@ def test_generic_errors_are_preserved_on_the_independently_located_outer():
     assert 'generic' in source[0].rejected_composition_parts
     assert located_generic_rejection_parts(source[0], source + target) == ('outer',)
     decision = _assess_candidates(source + target)
-    assert decision.status == 'success'
+    assert decision.status == 'failed'
     assert decision.best.selected_part == 'lining'
     assert decision.best.materials == {'polyester': 100}
     assert 'generic' not in decision.rejected_composition_parts

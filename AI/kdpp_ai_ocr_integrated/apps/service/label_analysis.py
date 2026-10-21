@@ -19,9 +19,38 @@ from apps.text.ocr_text import (
     run_ocr_bytes,
 )
 from apps.text.parse_label import parse_label
+from apps.text.line_analysis_cache import line_analysis_scope
 from apps.service.response_contract import normalize_label_response
 
 API_VERSION = "1.0"
+
+_PUBLIC_PART_NAMES = {
+    "outer": "outer",
+    "outer_2": "outer_2",
+    "generic": "unidentified",
+    "lining": "lining",
+    "filling": "filling",
+    "pocket": "pocket",
+    "rib": "rib",
+    "sleeve": "sleeve",
+    "color_block": "color_block",
+    "embroidery_yarn": "embroidery_yarn",
+}
+
+
+def _with_public_guidance(parsed: dict[str, Any]) -> dict[str, Any]:
+    """최종 부위·재촬영 근거만 공개 코드로 전달하고 원래 판정은 유지한다."""
+
+    warnings = [warning for warning in parsed.get("warnings", [])
+                if not warning.startswith(("composition_part:", "composition_action:"))]
+    if parsed.get("status") == "success":
+        part = _PUBLIC_PART_NAMES.get(parsed.get("selected_part"), "unidentified")
+        warnings.append(f"composition_part:{part}")
+    elif (parsed.get("status") == "failed"
+          and parsed.get("parse_evidence", {}).get("recapture", {}).get("action")
+          == "retake_composition_region"):
+        warnings.append("composition_action:retake_composition_region")
+    return {**parsed, "warnings": warnings}
 
 
 def _with_part_uncertainty(parsed: dict[str, Any]) -> dict[str, Any]:
@@ -112,6 +141,46 @@ def _first_composition_review(ocr_result: OcrResult) -> tuple[str, dict[str, Any
     return option_id, parsed
 
 
+def _with_recapture_guidance(parsed: dict[str, Any]) -> dict[str, Any]:
+    """Suggest a clearer composition photo only after completed OCR attempts.
+
+    This describes the current OCR evidence, not whether the image could ever
+    be recovered by another reader. Public failure fields remain unchanged.
+    """
+
+    evidence = parsed.get("parse_evidence", {})
+    ocr = parsed.get("ocr", {})
+    attempts = ocr.get("attempts", [])
+    # A missing primary part may be incomplete or ambiguous; a conflict
+    # needs review rather than being described as incomplete capture.
+    if (parsed.get("status") != "failed"
+            or parsed.get("error_code") not in {"composition_not_found", "incomplete_part_composition"}
+            or evidence.get("review", {}).get("available")
+            or ocr.get("conflicting_parts")
+            or any(warning.rsplit(":", 1)[-1] in {
+                "ambiguous_composition_candidates", "ambiguous_outer_compositions",
+            } for warning in parsed.get("warnings", []))
+            or ocr.get("attempt_failures")
+            or not attempts
+            or any(attempt.get("outcome") != "success" or attempt.get("failure_code")
+                   for attempt in attempts)):
+        return parsed
+    has_composition_text = any(evidence.get("observed_materials", {}).values()) or any(
+        evidence.get("observed_ratios", {}).values()
+    )
+    return {
+        **parsed,
+        "parse_evidence": {
+            **evidence,
+            "recapture": {
+                "action": "retake_composition_region",
+                "reason": "composition_incomplete" if has_composition_text else "composition_text_missing",
+                "basis": "current_ocr",
+            },
+        },
+    }
+
+
 def get_ocr_review_options(ocr_result: OcrResult) -> list[dict[str, Any]]:
     """Show a composition for human review; this never confirms a scan.
 
@@ -136,6 +205,7 @@ def get_ocr_review_options(ocr_result: OcrResult) -> list[dict[str, Any]]:
     }]
 
 
+@line_analysis_scope()
 def analyze_ocr_result(
     ocr_result: OcrResult, *, confirmed_review_id: str | None = None,
 ) -> dict[str, Any]:
@@ -169,7 +239,7 @@ def analyze_ocr_result(
             "option_id": review[0],
         }
     if confirmed_review_id is None:
-        return automatic
+        return _with_public_guidance(_with_recapture_guidance(automatic))
 
     if review is None or review[0] != confirmed_review_id:
         raise ValueError("선택 ID가 현재 OCR의 확인 후보와 일치하지 않습니다.")
@@ -193,9 +263,10 @@ def analyze_ocr_result(
         "automatic_ocr_source": automatic["ocr"]["source"],
         "automatic_warnings": list(automatic["warnings"]),
     }
-    return normalize_label_response(reviewed, api_version=API_VERSION)
+    return normalize_label_response(_with_public_guidance(reviewed), api_version=API_VERSION)
 
 
+@line_analysis_scope()
 def analyze_label_image_bytes(
     content: bytes,
     *,
@@ -229,7 +300,7 @@ def analyze_label_text(
 ) -> dict[str, Any]:
     """Parse extracted text; explicit per-label review options never imply OCR confidence."""
 
-    return normalize_label_response(_with_part_uncertainty(parse_label(
+    return normalize_label_response(_with_public_guidance(_with_part_uncertainty(parse_label(
         text, confirmed_polyester_poly=confirmed_polyester_poly,
         confirmed_first_generic=confirmed_first_generic,
-    )), api_version=API_VERSION)
+    ))), api_version=API_VERSION)

@@ -38,13 +38,13 @@ def test_confirmed_materials_do_not_acquire_an_outer_part(text, ocr):
     assert result["confidence"]["parser"] == before["confidence"]["parser"]
     assert result["parse_evidence"]["part_resolution"] == PART_RESOLUTION
     assert "part_resolution" not in before["parse_evidence"]
-    assert result["warnings"] == before["warnings"]  # Public warnings and candidate scoring stay unchanged.
+    assert result["warnings"] == [*before["warnings"], "composition_part:unidentified"]
     assert REVIEW_WARNING not in result["warnings"]
 
 
 @pytest.mark.parametrize("text,part", [
     ("OUTER COTTON 100%", "outer"),
-    ("OUTER UNKNOWN 100%\nLINING POLYESTER 100%", "lining"),
+    ("LINING POLYESTER 100%", "lining"),
     ("YARN POLYESTER 100%", "embroidery_yarn"),
 ])
 def test_an_explicit_part_or_fallback_keeps_its_existing_meaning(text, part):
@@ -124,7 +124,9 @@ def test_part_guidance_preserves_existing_evidence_and_ocr_warnings():
     source = replace(source, metadata=replace(source.metadata, warnings=("existing_warning",)))
     before = parse_label(source.text)
     result = analyze_ocr_result(source)
-    assert result["warnings"] == [*before["warnings"], "existing_warning"]
+    assert result["warnings"] == [
+        *before["warnings"], "existing_warning", "composition_part:unidentified",
+    ]
     assert result["parse_evidence"] == {**before["parse_evidence"], "part_resolution": PART_RESOLUTION}
     result["parse_evidence"]["part_resolution"]["status"] = "changed"
     assert analyze_ocr_result(source)["parse_evidence"]["part_resolution"] == PART_RESOLUTION
