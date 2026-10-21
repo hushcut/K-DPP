@@ -52,6 +52,25 @@ def literal_yarn_table_over_failed_layout(raw: OcrCandidate, layout: OcrCandidat
                                    tokenise=_annotation_tokens))
 
 
+def row_has_explicit_pairs(info) -> bool:
+    """A row's fibers and percentages alternate, each fiber beside its own ratio."""
+
+    if not info.explicit_percent:
+        return False
+    materials = _material_evidence(info.normalized)
+    numbers = list(re.finditer(r"\d+(?:[.,]\d+)?\s*%", info.normalized))
+    order = sorted(
+        [(item.start, "material") for item in materials]
+        + [(item.start(), "ratio") for item in numbers]
+    )
+    # A material column followed by its ratio column still guesses the
+    # pairing, even when the parser records them on one reconstructed row.
+    return not (
+        len(materials) != len(info.materials) or len(numbers) != len(info.numbers)
+        or any(left[1] == right[1] for left, right in zip(order, order[1:]))
+    )
+
+
 def _has_explicit_complete_pairs(
     candidate: OcrCandidate, *, allow_translation_warnings: bool = False,
 ) -> bool:
@@ -75,20 +94,7 @@ def _has_explicit_complete_pairs(
     for info in build_line_infos(candidate.text):
         if not info.materials or info.is_metadata:
             continue
-        if not info.explicit_percent:
-            return False
-        materials = _material_evidence(info.normalized)
-        numbers = list(re.finditer(r"\d+(?:[.,]\d+)?\s*%", info.normalized))
-        order = sorted(
-            [(item.start, "material") for item in materials]
-            + [(item.start(), "ratio") for item in numbers]
-        )
-        # A material column followed by its ratio column still guesses the
-        # pairing, even when the parser records them on one reconstructed row.
-        if (
-            len(materials) != len(info.materials) or len(numbers) != len(info.numbers)
-            or any(left[1] == right[1] for left, right in zip(order, order[1:]))
-        ):
+        if not row_has_explicit_pairs(info):
             return False
     for part, pairs in candidate.paired_material_ratios.items():
         if (

@@ -1467,6 +1467,8 @@ def same_region_recovery(
         return True
     if _same_response_ratio_order_recovery(candidate, alternative, part, candidates or []):
         return True
+    if _same_response_part_row_recovery(candidate, alternative, part):
+        return True
     if _same_response_bounded_recovery(candidate, alternative, part, candidates or []):
         return True
     if _shared_percent_recovery(candidate, alternative, part, target_part):
@@ -1768,6 +1770,122 @@ def _same_response_ratio_order_recovery(candidate, alternative, part, candidates
         else:
             return False
     return part in used_parts and len(used_parts) > 1
+
+
+def _same_response_part_row_recovery(candidate, alternative, part):
+    """Restore an empty raw part heading from its verified two-column row.
+
+    A table such as ``겉감 | 면 100%`` can be flattened into ``겉감 / 안감 /
+    ... / 면 100%``: the raw paragraph leaves the heading empty and moves its
+    fiber under the next heading. Only the geometry-derived view of the very
+    same response may prove that the heading and one complete composition
+    share a physical row and that the next part heading starts a separate row
+    in the same column. Every token is unchanged and each composition token
+    occurs once in the response, so nothing is added, dropped or borrowed.
+    """
+    from apps.text.candidate_evidence import _is_plain_part_heading, row_has_explicit_pairs
+    from apps.text.composition_candidates import equivalent_composition
+    from apps.text.parse_label import build_line_infos, _is_metadata_line
+    from apps.text.ratio_contract import has_exact_total
+    from apps.text.rules import EQUIVALENT_MATERIALS
+
+    if (part == "generic" or candidate.layout_used or not alternative.layout_used
+            or alternative.parser_status != "success" or part not in alternative.parts
+            or set(candidate.rejected_composition_parts.get(part, ())) != {"unpaired_material_rows"}
+            or part in candidate.unpaired_ratio_parts or part in candidate.conflicting_parts
+            or part in alternative.conflicting_parts
+            or candidate.observed_materials.get(part) or candidate.observed_ratios.get(part)
+            or not candidate.image_key or candidate.image_key != alternative.image_key
+            or not candidate.image_variant_key or candidate.image_variant_key != alternative.image_variant_key
+            or candidate.source != alternative.source
+            or not candidate.image_words or candidate.image_words != alternative.image_words
+            or len(candidate.image_region) != 4 or candidate.image_region != alternative.image_region
+            or len({word.page for word in candidate.image_words}) != 1
+            or Counter(_annotation_tokens(candidate.text)) != Counter(_annotation_tokens(alternative.text))
+            or not _covers_row_tokens(_annotation_tokens(candidate.text), list(candidate.image_words),
+                                      tokenise=_annotation_tokens)):
+        return False
+    rows = _verified_layout_rows(alternative)
+    if not rows:
+        return False
+    infos = build_line_infos(alternative.text)
+
+    def row_info(line):
+        matching = [info for info in infos if _tokens(info.raw) == _tokens(line)]
+        return matching[0] if len(matching) == 1 else None
+
+    evidence = [info for info in infos if info.part == part and not _is_metadata_line(info)
+                and (info.materials or info.numbers or info.explicit_percent
+                     or info.invalid_evidence or info.unresolved_materials)]
+    if len(evidence) != 1 or sum(info.marker_part == part for info in infos) != 1:
+        return False
+    composition = evidence[0]
+    if (composition.marker_part != part or composition.invalid_evidence or composition.unresolved_materials
+            or not composition.explicit_percent or not composition.materials
+            or len(composition.materials) != len(composition.numbers)
+            or not has_exact_total(composition.numbers)
+            or not row_has_explicit_pairs(composition)):
+        return False
+    # The parser's same-row pairs must be exactly the published composition.
+    pairs = alternative.paired_material_ratios.get(part, [])
+    if (Counter(material for material, _ratio in pairs) != Counter(alternative.observed_materials.get(part, []))
+            or Counter(ratio for _material, ratio in pairs) != Counter(alternative.observed_ratios.get(part, []))
+            or {(EQUIVALENT_MATERIALS.get(material, material), ratio) for material, ratio in pairs}
+            != set(equivalent_composition(alternative.parts[part]))
+            or Counter(composition.materials) != Counter(material for material, _ratio in pairs)):
+        return False
+    positions = [index for index, (line, _words) in enumerate(rows) if row_info(line) is composition]
+    if len(positions) != 1 or positions[0] + 1 >= len(rows):
+        return False
+    words = rows[positions[0]][1]
+    next_line, next_words = rows[positions[0] + 1]
+
+    def reading_direction(word):
+        (x0, y0), (x1, y1) = (word.vertices or ((word.left, word.top), (word.right, word.top)))[:2]
+        length = math.hypot(x1 - x0, y1 - y0)
+        return ((x1 - x0) / length, (y1 - y0) / length) if length else None
+
+    # Box grouping alone can place inverted or sideways fiber words beside an
+    # upright heading on a folded tag. A curved label tilts printed rows by a
+    # few degrees, so require one reading direction within a wide tolerance.
+    anchor = reading_direction(max(words, key=lambda word: word.right - word.left))
+    directions = [reading_direction(word) for word in words + next_words]
+    if anchor is None or any(direction is None
+                             or direction[0] * anchor[0] + direction[1] * anchor[1] < math.cos(math.radians(30))
+                             for direction in directions):
+        return False
+    fiber_words = [word for word in words if re.search(r"\d|%", normalize_text(word.text))
+                   or find_material_key(word.text)]
+    heading_words = [word for word in words if word not in fiber_words]
+    if (not fiber_words or not heading_words
+            or not _is_plain_part_heading(" ".join(word.text for word in heading_words), part)
+            or max(word.right for word in heading_words) >= min(word.left for word in fiber_words)):
+        return False
+    heading_top = min(word.top for word in heading_words)
+    heading_bottom = max(word.bottom for word in heading_words)
+    fiber_top = min(word.top for word in fiber_words)
+    fiber_bottom = max(word.bottom for word in fiber_words)
+    shared = min(heading_bottom, fiber_bottom) - max(heading_top, fiber_top)
+    if shared < 0.5 * min(heading_bottom - heading_top, fiber_bottom - fiber_top):
+        return False
+    # The next row must be another part's bare heading in the same column,
+    # fully below this row: the table continues instead of the composition.
+    following = row_info(next_line)
+    if (following is None or not following.is_standalone_marker
+            or following.marker_part in (None, part, "generic")
+            or not _is_plain_part_heading(following.normalized, following.marker_part)):
+        return False
+    heading_left = min(word.left for word in heading_words)
+    heading_width = max(word.right for word in heading_words) - heading_left
+    if (abs(min(word.left for word in next_words) - heading_left) > heading_width
+            or (min(word.top for word in next_words) + max(word.bottom for word in next_words)) / 2
+            <= max(heading_bottom, fiber_bottom)):
+        return False
+    # A repeated fiber or value elsewhere would make the moved row ambiguous.
+    required = Counter(token for word in fiber_words for token in _tokens(word.text))
+    located = Counter(token for word in candidate.image_words for token in _tokens(word.text)
+                      if token in required)
+    return located == required
 
 
 def located_generic_rejection_parts(candidate, candidates):
