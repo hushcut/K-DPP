@@ -328,6 +328,7 @@ class ScanResultView extends StatelessWidget {
                   primaryText: primaryText,
                   borderColor: borderColor,
                   cardColor: cardColor,
+                  iconColor: palette.accentForeground,
                 ),
                 const SizedBox(height: 10),
               ],
@@ -577,6 +578,7 @@ class ScanResultView extends StatelessWidget {
     required Color primaryText,
     required Color borderColor,
     required Color cardColor,
+    required Color iconColor,
   }) {
     return Container(
       width: double.infinity,
@@ -589,9 +591,9 @@ class ScanResultView extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(
+          Icon(
             Icons.info_outline_rounded,
-            color: AppPalette.accent,
+            color: iconColor,
             size: 18,
           ),
           const SizedBox(width: 8),
