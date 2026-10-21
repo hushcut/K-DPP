@@ -90,6 +90,8 @@ SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 SCAN_IMAGE_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 # 스캔 업로드 상한. 실기기 원본 사진(3~8MB)에 여유를 둔 값입니다.
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+# 사진 판정이 실패했을 때 서버가 덧붙이는 직접 입력 칸 제안의 키. 응답에는 싣지 않습니다(DECISIONS 270).
+PREFILL_MATERIALS_KEY = "_prefill_materials"
 # 탄소 계산에 허용하는 의류 무게 상한(100kg).
 MAX_WEIGHT_GRAMS = 100_000
 # 리포트 '계산 기준'의 출처 줄에 그대로 보이는 이름입니다. 계수가 아직 개발용 추정값이라
@@ -2305,7 +2307,34 @@ def extract_label_input(image: UploadFile, raw_ocr_text: str | None, user_id: in
     if isinstance(ocr_result, str):
         return ocr_result
     # 분석은 Vision 실패가 아니라 위 502·504 변환 밖에서 합니다.
-    return analyze_ocr_result(ocr_result)
+    analysis = analyze_ocr_result(ocr_result)
+    if analysis.get("status") != "success":
+        # 응답에는 이 키가 아니라 partial_materials 로만 나갑니다(parse_label_materials).
+        analysis = {**analysis, PREFILL_MATERIALS_KEY: prefill_materials_from_ocr_text(ocr_result)}
+    return analysis
+
+
+def prefill_materials_from_ocr_text(ocr_result) -> dict[str, float]:
+    """사진 판정이 소재를 확정하지 못했을 때 직접 입력 칸에 미리 채울 값(DECISIONS 270).
+
+    겉감·안감이 두 칸 표로 된 라벨은 줄 순서 판독이 '면 100%' 를 안감에, 좌표 판독이 겉감에 붙여
+    AI 가 두 부위를 다 버립니다. 조성 자체는 같으므로 고른 OCR 글자만 후보 근거 없이 다시 파싱해
+    합계가 100 이면 채우고, 확정은 사용자에게 맡깁니다. 후보끼리 조성이 다르거나(conflicting_parts)
+    고른 부위에 짝 없는 비율이 남으면(unpaired_ratio_parts) 빠진 소재가 있을 수 있어 채우지 않습니다.
+    """
+    metadata = ocr_result.metadata
+    if parse_label is None or not ocr_result.text or metadata.conflicting_parts:
+        return {}
+    parsed = parse_label(ocr_result.text)
+    materials = parsed.get("materials") or {}
+    if (
+        parsed.get("status") != "success"
+        or parsed.get("selected_part") in metadata.unpaired_ratio_parts
+        or not materials
+        or not 99.5 <= sum(materials.values()) <= 100.5
+    ):
+        return {}
+    return materials
 
 
 def ensure_label_parser() -> None:
@@ -2351,8 +2380,9 @@ def parse_label_materials(label_input: str | dict) -> tuple[dict[str, float], st
                 "message": "라벨에서 소재 혼용률을 찾지 못했습니다.",
                 "error_code": "MATERIAL_EXTRACTION_FAILED",
                 # 확정하지 못한 비율은 materials 로 내보내지 않고, 직접 입력 폼이 채울 값만 남깁니다.
+                # 사진 판정이 소재를 다 버렸으면 OCR 글자로 다시 읽은 값을 채웁니다(DECISIONS 270).
                 "materials": {},
-                "partial_materials": materials,
+                "partial_materials": materials or parsed.get(PREFILL_MATERIALS_KEY) or {},
                 "care_instruction": care_instruction,
                 "raw_ocr_preview": raw_ocr_preview,
                 "ai_success": False,

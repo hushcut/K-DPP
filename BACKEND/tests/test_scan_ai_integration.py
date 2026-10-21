@@ -93,6 +93,42 @@ def test_conflicting_ocr_candidates_are_422_without_internal_metadata(client, vi
     assert counted_scans() == 1
 
 
+def test_two_column_label_is_422_but_prefills_direct_input(client, vision):
+    # 겉감·안감 두 칸 표: 줄 순서 판독은 '면 100%' 를 안감에, 좌표 판독은 겉감에 붙인다. AI 는 두 부위를
+    # 다 버려 확정하지 않지만, 조성은 같으니 직접 입력 칸은 채운다(DECISIONS 270 — 실제 사진 재현과 같은 꼴).
+    vision.answer("혼용율\n겉감\n안감\n면 100%", "혼용율\n겉감 면 100 %\n안감")
+
+    response = scan(client)
+    detail = response.json()["detail"]
+
+    assert response.status_code == 422
+    assert detail["error_code"] == "MATERIAL_EXTRACTION_FAILED"
+    assert detail["materials"] == {}
+    assert detail["partial_materials"] == {"cotton": 100}
+    assert detail["ai_success"] is False
+    assert main.PREFILL_MATERIALS_KEY not in response.text
+    assert not any(key in detail for key in INTERNAL_KEYS)
+
+
+@pytest.mark.parametrize(
+    "reparsed",
+    [
+        {"status": "failed", "materials": {"cotton": 100}, "selected_part": "outer"},
+        {"status": "success", "materials": {"cotton": 60}, "selected_part": "outer"},
+    ],
+)
+def test_prefill_needs_a_confirmed_complete_reparse(client, vision, monkeypatch, reparsed):
+    # 다시 읽은 결과도 파서가 성공하고 합계가 100 일 때만 채운다 — 빠진 소재를 사용자가 못 볼 수 있다.
+    # 사진 판정은 AI 의 파서를 직접 쓰므로, 바꿔 끼운 main.parse_label 은 다시 읽기에만 닿는다.
+    vision.answer("혼용율\n겉감\n안감\n면 100%", "혼용율\n겉감 면 100 %\n안감")
+    monkeypatch.setattr(main, "parse_label", lambda text: reparsed)
+
+    response = scan(client)
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["partial_materials"] == {}
+
+
 def test_unpaired_ratio_row_is_422_not_a_confirmed_material(client, vision):
     # 짝 없는 비율 줄('50')이 있으면 COTTON 100% 도 확정하지 않는다.
     vision.answer("COTTON 100%\n50", "COTTON 100%")
