@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../closet_provider.dart';
 import 'auth_api_service.dart';
 
-/// 로그인 직후 서버 프로필을 반영하고 저장 ID가 일치하는 기존 의류의 분석값을 갱신한다.
+/// 로그인 직후 서버 프로필을 반영하고, 옷장을 서버 백업과 맞춘 뒤, 저장 ID가 일치하는 기존 의류의 분석값을 갱신한다.
 class PostLoginSyncService {
   const PostLoginSyncService({required this.authApiService});
 
@@ -25,6 +25,8 @@ class PostLoginSyncService {
         userId: snapshot.user.id,
         loginMethods: snapshot.user.loginMethods,
       );
+      // 백업과 처음 맞추면 서버 옷을 받아 합칩니다. 예외를 던지지 않고, 올리기는 기다리지 않습니다.
+      await provider.syncClosetBackup();
       await provider.synchronizeServerHistory(snapshot.history);
     } on AuthApiException catch (error, stackTrace) {
       if (error.type == AuthApiErrorType.unauthorized) {

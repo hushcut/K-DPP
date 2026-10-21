@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:k_dpp/models/closet_backup_state.dart';
 import 'package:k_dpp/models/closet_sort_option.dart';
 import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/services/closet_storage_service.dart';
@@ -180,6 +181,98 @@ void main() {
       await prefs.setString('closet_sort_option', '예전에_쓰던_값');
 
       expect(await service.loadClosetSortOption(), ClosetSortOption.eco);
+    });
+  });
+
+  group('옷장 서버 백업 상태(DECISIONS 242)', () {
+    String tail(String ownerKey) =>
+        base64Url.encode(utf8.encode(ownerKey)).replaceAll('=', '');
+
+    test('상태는 옷장과 같은 꼬리의 키에 저장되고, 대소문자가 다른 같은 주인으로도 읽힌다', () async {
+      final service = ClosetStorageService();
+      const state = ClosetBackupState(
+        userId: 3,
+        apiBaseUrl: 'https://api.kdpp-app.com',
+        version: 2,
+        fingerprint: '2:0011223344556677',
+      );
+
+      await service.saveClosetBackupStateFor('User@Example.com', state);
+
+      final raw = await prefs.getString(
+        'closet_backup_state_${tail('user@example.com')}',
+      );
+      expect(jsonDecode(raw!), {
+        'uid': 3,
+        'api': 'https://api.kdpp-app.com',
+        'v': 2,
+        'h': '2:0011223344556677',
+      });
+      final loaded = await service.loadClosetBackupStateFor('user@example.com');
+      expect(loaded!.version, 2);
+      expect(loaded.fingerprint, '2:0011223344556677');
+
+      await service.clearClosetBackupStateFor('user@example.com');
+      expect(
+        await service.loadClosetBackupStateFor('user@example.com'),
+        isNull,
+      );
+    });
+
+    test('기기에 저장하는 글자는 지문을 만드는 글자와 같다', () async {
+      final service = ClosetStorageService();
+      final items = [buildClothes()];
+
+      await service.saveClothesListFor('user:7', items);
+
+      expect(
+        await prefs.getString('closet_items_account_${tail('user:7')}'),
+        closetCanonicalJson(items),
+      );
+    });
+
+    test('옷장 값이 없으면 missing, 그대로 읽히면 ok, 망가졌으면 corrupt 다', () async {
+      final service = ClosetStorageService();
+      final key = 'closet_items_account_${tail('user@example.com')}';
+
+      expect(
+        (await service.loadClothesListWithStatusFor('user@example.com')).$2,
+        ClosetLoadStatus.missing,
+      );
+
+      await service.saveClothesListFor('user@example.com', [buildClothes()]);
+      final (okItems, okStatus) = await service.loadClothesListWithStatusFor(
+        'user@example.com',
+      );
+      expect(okStatus, ClosetLoadStatus.ok);
+      expect(okItems.single.title, '린넨 셔츠');
+
+      await prefs.setString(key, '[]');
+      expect(
+        (await service.loadClothesListWithStatusFor('user@example.com')).$2,
+        ClosetLoadStatus.ok,
+      );
+
+      for (final raw in [
+        '[{"title":"린넨 셔츠"',
+        '{"title":"린넨 셔츠"}',
+        '[1, {"title":"린넨 셔츠"}]',
+        '',
+      ]) {
+        await prefs.setString(key, raw);
+        final (items, status) = await service.loadClothesListWithStatusFor(
+          'user@example.com',
+        );
+        expect(status, ClosetLoadStatus.corrupt, reason: raw);
+        // 돌려주는 목록은 기존 읽기와 같다(읽을 수 있는 옷만).
+        expect(
+          items.map((item) => item.title),
+          (await service.loadClothesListOrNullFor(
+            'user@example.com',
+          ))!.map((item) => item.title),
+          reason: raw,
+        );
+      }
     });
   });
 }
