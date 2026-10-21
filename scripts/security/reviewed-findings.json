@@ -137,6 +137,41 @@
         3772
       ],
       "reason": "kyh/ai dj042_name_reread.json: image_key/image_variant_key are reviewed SHA-256 image/cache identities; exact immutable blob and finding lines only."
+    },
+    {
+      "object": "a4e07d31fccedc4fc26b490cde0aaa20ff056ddb",
+      "rule": "generic-api-key",
+      "lines": [
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        13,
+        14,
+        19,
+        20,
+        23,
+        24,
+        29,
+        30,
+        31,
+        32,
+        35,
+        36,
+        41,
+        42,
+        45,
+        46,
+        51,
+        52,
+        55,
+        56,
+        57,
+        58
+      ],
+      "reason": "candidate_set_cross_check.json: image_key/image_variant_key are reviewed SHA-256 image/cache identities already published in kyh/ai fixtures; exact immutable blob and finding lines only."
     }
   ]
 }
