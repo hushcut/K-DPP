@@ -1841,7 +1841,11 @@ def _same_response_part_row_recovery(candidate, alternative, part):
     next_line, next_words = rows[positions[0] + 1]
 
     def reading_direction(word):
-        (x0, y0), (x1, y1) = (word.vertices or ((word.left, word.top), (word.right, word.top)))[:2]
+        # Bounds alone do not prove orientation; decline this recovery when
+        # a required word lacks its four ordered polygon vertices.
+        if len(word.vertices) != 4:
+            return None
+        (x0, y0), (x1, y1) = word.vertices[:2]
         length = math.hypot(x1 - x0, y1 - y0)
         return ((x1 - x0) / length, (y1 - y0) / length) if length else None
 

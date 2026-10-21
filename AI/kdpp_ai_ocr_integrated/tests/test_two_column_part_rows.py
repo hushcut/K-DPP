@@ -11,12 +11,13 @@ Vision 원문은 ``겉감 / 안감 / ... / 면 100%`` 순서라 원문 해석은
 """
 
 import json
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
 
 from apps.text import ocr_text
+from apps.text.ocr_cache import decode_layout_words
 from apps.text.ocr_corrections import _verified_layout_rows, same_region_recovery
 from apps.text.ocr_layout import OcrWord
 from apps.text.parse_label import parse_label
@@ -144,6 +145,61 @@ def test_upside_down_composition_beside_an_upright_heading_is_not_recovered():
     assert _verified_layout_rows(flipped_layout), 'the grouping alone still pairs the row'
     assert not same_region_recovery(flipped_raw, flipped_layout, 'outer', [flipped_raw, flipped_layout])
     assert assessed([flipped_raw, flipped_layout])['status'] == 'failed'
+
+
+@pytest.mark.parametrize('missing_word', [None, '겉감', '면', '100', '%', '안감'])
+def test_cached_row_without_required_word_direction_is_not_recovered(missing_word):
+    """Bounds locate words but cannot prove their reading direction."""
+    items = candidates('server_original')
+    raw = pick(items, 'original', layout=False)
+    layout = pick(items, 'original', layout=True)
+    words = tuple(replace(word, vertices=())
+                  if missing_word is None or word.text == missing_word else word
+                  for word in raw.image_words)
+    # Empty polygons are valid legacy cache geometry; exercise the real decoder.
+    entry = json.loads(json.dumps({'layout_words_version': 1,
+                                  'layout_words': [asdict(word) for word in words]}))
+    words = decode_layout_words(entry)
+    raw, layout = (replace(item, image_words=words) for item in (raw, layout))
+    assert _verified_layout_rows(layout), 'box grouping still pairs the row'
+    assert not same_region_recovery(raw, layout, 'outer', [raw, layout])
+    assert assessed([raw, layout])['status'] == 'failed'
+    # Declining this recovery must not reject an otherwise valid layout reading.
+    assert assessed([layout])['status'] == 'success'
+
+
+def test_inverted_fibers_with_missing_cached_direction_are_not_recovered():
+    items = candidates('server_original')
+    raw = pick(items, 'original', layout=False)
+    layout = pick(items, 'original', layout=True)
+    words = []
+    for word in raw.image_words:
+        if word.text in {'면', '100', '%'}:
+            top_left, top_right, bottom_right, bottom_left = word.vertices
+            word = replace(word, vertices=(bottom_right, bottom_left, top_left, top_right))
+            word = replace(word, vertices=())
+        words.append(word)
+    entry = json.loads(json.dumps({'layout_words_version': 1,
+                                  'layout_words': [asdict(word) for word in words]}))
+    decoded = decode_layout_words(entry)
+    raw, layout = (replace(item, image_words=decoded) for item in (raw, layout))
+    assert not same_region_recovery(raw, layout, 'outer', [raw, layout])
+    assert assessed([raw, layout])['status'] == 'failed'
+
+
+def test_unrelated_words_without_direction_do_not_block_the_outer_row():
+    items = candidates('server_original')
+    raw = pick(items, 'original', layout=False)
+    layout = pick(items, 'original', layout=True)
+    required = {'겉감', '면', '100', '%', '안감'}
+    words = tuple(word if word.text in required else replace(word, vertices=())
+                  for word in raw.image_words)
+    raw, layout = (replace(item, image_words=words) for item in (raw, layout))
+    assert same_region_recovery(raw, layout, 'outer', [raw, layout])
+    result = assessed([raw, layout])
+    assert result['status'] == 'success'
+    assert result['selected_part'] == 'outer'
+    assert result['materials'] == {'cotton': 100}
 
 
 def two_column_response(composition_words):
