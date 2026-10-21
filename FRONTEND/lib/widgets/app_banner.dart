@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../theme/app_palette.dart';
+import '../utils/motion_preference.dart';
 
 /// 알림의 종류입니다. 아이콘·색과 기본 표시 시간이 달라집니다.
 ///
@@ -179,10 +180,9 @@ class AppBannerHostState extends State<AppBannerHost>
     ).animate(_curve);
   }
 
-  /// 읽기 프로그램·동작 줄이기에서는 미끄러지지 않고 바로 나타나고 사라집니다.
+  /// 읽기 프로그램·동작 줄이기(iOS 포함, DECISIONS 268)에서는 미끄러지지 않고 바로 나타나고 사라집니다.
   bool get _skipsMotion =>
-      MediaQuery.accessibleNavigationOf(context) ||
-      MediaQuery.disableAnimationsOf(context);
+      MediaQuery.accessibleNavigationOf(context) || reducesMotion(context);
 
   /// 지금 배너를 [message] 로 바로 바꾸고 시간을 새로 셉니다.
   void show(String message, {required AppBannerKind kind}) {
