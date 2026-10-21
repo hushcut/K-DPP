@@ -55,7 +55,8 @@ def _word_geometry(word: OcrWord) -> tuple[float, float] | None:
 def _supported_geometry(words: list[OcrWord]) -> tuple[float, float] | None:
     unique = []
     for word in sorted(words, key=lambda item: (item.left, item.top, item.right, item.bottom, item.text)):
-        if any(normalize_text(word.text) == normalize_text(other.text) and word.page == other.page
+        # OCR aliases at one physical location are one observation.
+        if any(word.page == other.page
                and abs(word.center_x - other.center_x) < 0.4 * min(word.right - word.left, other.right - other.left)
                and abs(word.center_y - other.center_y) < 0.4 * min(word.height, other.height)
                for other in unique):
@@ -174,8 +175,49 @@ def material_region_options(
     heights = [value[1] if (value := _word_geometry(word)) is not None else word.height for word in words]
     font_height = median(heights) if heights else None
     # 근거 없는 방향과 거의 수평인 글자는 기존 작은 회전 후보를 유지한다.
-    angle = geometry[0] if geometry is not None and abs(geometry[0]) >= 1 else -3.0
+    angle = geometry[0] if geometry is not None and abs(geometry[0]) >= 5 else -3.0
     return font_height, angle
+
+
+def color_material_region_angle(
+    candidates: list[OcrCandidate], box: tuple[int, int, int, int], angle: float,
+) -> float | None:
+    """Preserve strokes when a tilted, fully read composition lost its row links."""
+    from apps.text.ratio_contract import has_exact_total
+
+    if not 5 <= abs(angle) < 45:
+        return None
+    full = [candidate for candidate in candidates
+            if candidate.source in {"original", "preprocessed"}
+            and candidate.image_key and candidate.image_variant_key
+            and len(candidate.image_region) == 4]
+    if len({candidate.image_key for candidate in full}) != 1:
+        return None
+    # This selects pixels only. All candidates' rejection evidence is still
+    # checked after OCR; missing names, damaged ratios and parts keep the old input.
+    if not any(
+        candidate.parser_status == "failed"
+        and set(candidate.observed_ratios) == set(candidate.observed_materials) == {"generic"}
+        and len(candidate.observed_ratios["generic"]) >= 2
+        and len(set(candidate.observed_materials["generic"])) == len(candidate.observed_ratios["generic"])
+        and len(candidate.observed_materials["generic"]) == len(candidate.observed_ratios["generic"])
+        and all(0 < ratio <= 100 for ratio in candidate.observed_ratios["generic"])
+        and has_exact_total(candidate.observed_ratios["generic"])
+        and not candidate.conflicting_parts
+        and candidate.rejected_composition_parts == {"generic": ("unpaired_material_rows",)}
+        for candidate in full
+    ):
+        return None
+    left, top, right, bottom = box
+    words = list(dict.fromkeys(word for candidate in full for word in candidate.image_words
+                 if word.page == 0 and left <= word.left < word.right <= right
+                 and top <= word.top < word.bottom <= bottom
+                 and sum(character.isalpha() for character in word.text) >= 2))
+    geometry = _supported_geometry(words)
+    if (geometry is None or not 5 <= abs(geometry[0]) < 45
+            or abs(geometry[0] - angle) > 2.5):
+        return None
+    return geometry[0]
 
 
 def find_material_region(candidates: list[OcrCandidate], width: int, height: int) -> tuple[int, int, int, int] | None:
@@ -308,6 +350,7 @@ def prepare_material_region(
     content: bytes, box: tuple[int, int, int, int], *, rotated: bool = False,
     font_height: float | None = None, rotation_degrees: float | None = None,
     enhancement: str = "standard",
+    word_boxes: tuple[tuple[int, int, int, int], ...] = (),
 ) -> RegionImage:
     """Crop and enhance, returning an inverse affine map to original pixels."""
 
@@ -334,6 +377,9 @@ def prepare_material_region(
             if image.getexif().get(274, 1) != 1:
                 raise InvalidImageError('방향이 확인되지 않은 이미지의 소재 영역은 자르지 않습니다.')
             crop = image.crop(box).convert('RGB' if enhancement == 'original' else 'L')
+        threshold = _material_ink_threshold(crop, box, word_boxes) if rotated and enhancement == "standard" else None
+        if threshold is not None:
+            crop = crop.point(lambda value: 255 if value > threshold else 0)
         selected = enhancement
         if selected in {'adaptive', 'adaptive_mild'}:
             if _needs_local_contrast(crop):
@@ -362,7 +408,9 @@ def prepare_material_region(
             crop = crop.resize((max(1, int(canvas_width*final_scale)), max(1, int(canvas_height*final_scale))), Image.Resampling.LANCZOS)
         output_width, output_height = crop.size
         if selected == 'standard':
-            crop = ImageOps.autocontrast(crop).filter(ImageFilter.UnsharpMask(radius=1.4, percent=150, threshold=3))
+            crop = ImageOps.autocontrast(crop)
+            if threshold is None:
+                crop = crop.filter(ImageFilter.UnsharpMask(radius=1.4, percent=150, threshold=3))
         elif selected == 'local_contrast':
             crop = crop.filter(ImageFilter.UnsharpMask(radius=1.0, percent=100, threshold=3))
         elif selected in {'mild_contrast', 'mild_denoise'}:
@@ -383,3 +431,127 @@ def prepare_material_region(
         raise ImageTooLargeError('소재 영역 이미지가 안전한 처리 범위를 넘습니다.') from exc
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise InvalidImageError('소재 영역 이미지 처리에 실패했습니다.') from exc
+
+
+def material_region_word_boxes(
+    candidates: list[OcrCandidate], box: tuple[int, int, int, int],
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Return observed complete word boxes for pixel quality checks only."""
+    left, top, right, bottom = box
+    framed = [candidate for candidate in candidates
+              if candidate.image_key and candidate.image_variant_key and len(candidate.image_region) == 4]
+    if len({candidate.image_key for candidate in framed}) != 1:
+        return ()
+    return tuple(dict.fromkeys((word.left, word.top, word.right, word.bottom)
+                 for candidate in framed for word in candidate.image_words if word.page == 0
+                 and left <= word.left < word.right <= right and top <= word.top < word.bottom <= bottom))
+
+
+def _material_ink_threshold(
+    crop: Image.Image, box: tuple[int, int, int, int],
+    word_boxes: tuple[tuple[int, int, int, int], ...],
+) -> int | None:
+    """Use Otsu only when every complete observed word keeps ink and clear margins.
+
+    This selects an image filter, never validates text or repairs percentages.
+    Words already clipped by the existing region are not quality observations.
+    """
+    if not isinstance(word_boxes, (tuple, list)) or not 2 <= len(word_boxes) <= 256:
+        return None
+    left, top, right, bottom = box
+    if crop.mode != 'L' or crop.size != (right-left, bottom-top):
+        return None
+    unique = []
+    for bounds in word_boxes:
+        if (not isinstance(bounds, (tuple, list)) or len(bounds) != 4 or any(type(value) is not int for value in bounds)
+                or not (left <= bounds[0] < bounds[2] <= right and top <= bounds[1] < bounds[3] <= bottom)):
+            return None
+        x, y, r, b = bounds
+        if not any(abs((x+r-ox-oright)/2) < 0.4 * min(r-x, oright-ox)
+                   and abs((y+b-oy-obottom)/2) < 0.4 * min(b-y, obottom-oy)
+                   for ox, oy, oright, obottom in unique):
+            unique.append(bounds)
+    if len(unique) < 2:
+        return None
+    checks = []
+    inspected_pixels = crop.width * crop.height
+    for x, y, r, b in word_boxes:
+        padding = max(1, math.ceil(0.12 * (b-y)))
+        outer = (x-left-padding, y-top-padding, r-left+padding, b-top+padding)
+        if not (0 <= outer[0] < outer[2] <= crop.width and 0 <= outer[1] < outer[3] <= crop.height):
+            return None
+        area = (r-x)*(b-y)
+        outer_area = (outer[2]-outer[0])*(outer[3]-outer[1])
+        inspected_pixels += area + outer_area
+        if inspected_pixels > MAX_PREPROCESSED_PIXELS:
+            return None
+        checks.append(((x-left, y-top, r-left, b-top), outer, area, outer_area-area))
+    histogram = crop.histogram()
+    total = sum(histogram)
+    total_sum = sum(index*count for index, count in enumerate(histogram))
+    weight = partial_sum = 0
+    best_variance, threshold = 0.0, None
+    for index, count in enumerate(histogram[:-1]):
+        weight += count
+        partial_sum += index*count
+        if not weight or weight == total:
+            continue
+        variance = weight*(total-weight)*(partial_sum/weight-(total_sum-partial_sum)/(total-weight))**2
+        if variance > best_variance:
+            best_variance, threshold = variance, index
+    if threshold is None:
+        return None
+    mask = crop.point(lambda value: 255 if value > threshold else 0)
+    # Check all observations, including numeric, punctuation and unknown words;
+    # physical-box deduplication supplies only the minimum observation count.
+    for inner, outer, area, ring_area in checks:
+        ink = mask.crop(inner).histogram()[0]
+        outer_ink = mask.crop(outer).histogram()[0]
+        if not 0.05 <= ink/area <= 0.55 or (outer_ink-ink)/ring_area > 0.10:
+            return None
+    return threshold
+
+
+def find_complete_material_region(candidates: list[OcrCandidate], region: tuple[int, int, int, int]) -> tuple[int, int, int, int] | None:
+    """End a crop before a complete care heading instead of cutting its letters."""
+    from apps.text.ocr_geometry import _row_words
+    from apps.text.parse_label import build_line_infos, _is_metadata_line
+
+    left, top, right, bottom = region
+    heading = re.compile(
+        r"[\[(]?\s*(?:\d{1,2}\s*[.)\]:]?\s*)?"
+        r"(?:세탁\s*(?:및\s*취급\s*)?시\s*주의\s*사항"
+        r"|(?:wash(?:ing)?|care)\s+instructions?|washing\s+care)\s*[\])}:]*"
+    )
+    image_keys = {candidate.image_key for candidate in candidates if candidate.image_key}
+    if len(image_keys) != 1:
+        return None
+    words = set()
+    metadata = set()
+    for candidate in candidates:
+        if (not candidate.image_key or not candidate.image_variant_key
+                or len(candidate.image_region) != 4 or not candidate.image_words):
+            continue
+        local = tuple(word for word in candidate.image_words if word.page == 0)
+        words.update(word for word in local if word.left < right and word.right > left
+                     and word.top < bottom and word.bottom > top)
+        for info in build_line_infos(candidate.text):
+            if (heading.fullmatch(info.normalized) and _is_metadata_line(info) and not (info.materials or info.numbers
+                    or info.explicit_percent or info.invalid_evidence or info.unresolved_materials)):
+                located = _row_words(info.raw, local)
+                if located:
+                    metadata.update(located)
+    cut = {word for word in words if word.top < bottom < word.bottom}
+    if not cut or not cut <= metadata:
+        return None
+    adjusted = min(word.top for word in cut) - 2
+    removed = {word for word in words if word.bottom > adjusted}
+    if not removed <= metadata:
+        return None
+    retained = words - removed
+    # Keep a real gap below every retained word, including unknown text,
+    # separate numbers, part markers and punctuation.
+    if (not retained or adjusted - top < 32
+            or max(word.bottom for word in retained) + 2 > adjusted):
+        return None
+    return left, top, right, adjusted

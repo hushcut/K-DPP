@@ -30,13 +30,13 @@ if str(AI_ROOT) not in sys.path:
     # QA는 AI 정답지 계약을 재사용하되, API 호출 책임은 이 파일에 남긴다.
     sys.path.insert(0, str(AI_ROOT))
 
-from apps.text.qa_comparison import (  # noqa: E402 - 저장소 AI 경로를 먼저 설정한다.
+from apps.text.qa_comparison import (
     QaComparisonError,
     compare_material_compositions,
     normalize_material_mapping,
     validate_tolerance,
 )
-from apps.text.qa_dataset import load_qa_answer_key  # noqa: E402 - 위 경로 설정 이후 import한다.
+from apps.text.qa_dataset import load_qa_answer_key
 
 
 DEFAULT_API_URL = "http://127.0.0.1:8000/api/scan"

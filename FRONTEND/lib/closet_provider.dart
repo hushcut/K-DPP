@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'models/analysis_history_record.dart';
 import 'models/closet_sort_option.dart';
 import 'models/clothes.dart';
+import 'services/auth_api_service.dart';
 import 'services/auth_session_storage_service.dart';
 import 'services/closet_storage_service.dart';
 
@@ -25,8 +26,16 @@ class ClosetProvider with ChangeNotifier {
   String _userName = '홍길동';
   // 설정에서 직접 바꾼 닉네임은 서버 프로필 동기화가 덮어쓰지 않게 표시합니다.
   bool _isUserNameCustomized = false;
-  String _userEmail = 'honggildong@kdpp.com';
-  String? _closetOwnerEmail;
+  // 이메일이 없는 계정(카카오)과 로그아웃 상태에서는 null 입니다.
+  String? _userEmail;
+  int? _userId;
+  List<String> _loginMethods = const [];
+  // 계정별 옷장의 주인 키입니다([_closetOwnerKeyFor]).
+  String? _closetOwnerKey;
+  // 이번 실행에서 로그아웃한 적이 있으면 true 입니다. 그 뒤 주인 없이 들어온 저장은 공용 옷장 칸에
+  // 쓰지 않습니다 — 공용 칸은 다음에 앱을 켠 이메일 계정 옷장에 합쳐지기 때문입니다(DECISIONS 2026-10-14).
+  // 로그인 중엔 계정 칸에 쓰므로 이 값은 주인이 없을 때만 봅니다.
+  bool _hasSignedOut = false;
   ClosetSortOption _closetSortOption = ClosetSortOption.eco;
 
   // 정렬 기준은 목록·선택 상태와 무관하므로 별도 카운터를 씁니다.
@@ -73,9 +82,27 @@ class ClosetProvider with ChangeNotifier {
 
   String get userName => _userName;
 
-  String get userEmail => _userEmail;
+  /// 표시용 이메일입니다. 이메일이 없으면 기본값을 돌려주므로,
+  /// 계정에 이메일이 있는지는 [accountEmail] 로 봅니다.
+  String get userEmail => _userEmail ?? 'honggildong@kdpp.com';
+
+  /// 이 계정의 이메일입니다. 이메일이 없는 계정(카카오)이면 null 입니다.
+  String? get accountEmail => _userEmail;
+
+  /// 이 계정으로 로그인하는 방법(`user.login_methods`)입니다.
+  UnmodifiableListView<String> get loginMethods =>
+      UnmodifiableListView(_loginMethods);
+
+  /// 비밀번호로 로그인하는 계정인지 — 비밀번호 변경·탈퇴 확인 방식을 고릅니다.
+  bool get hasPasswordLogin => _loginMethods.contains(LoginMethod.password);
 
   String? get accessToken => _authSession?.accessToken;
+
+  /// 지금 옷장 주인 키입니다. 로그아웃 상태면 null 입니다.
+  ///
+  /// 서버 응답을 기다리는 사이 계정이 바뀔 수 있는 저장(스캔 저장)은 시작할 때 이 값을 잡아
+  /// 두었다가 [addClothesForOwner] 에 넘깁니다.
+  String? get closetOwnerKey => _closetOwnerKey;
 
   /// 옷장 목록에 적용 중인 정렬 기준입니다. 기기 단위 표시 설정이라
   /// 계정을 바꾸거나 로그아웃해도 유지됩니다.
@@ -107,30 +134,44 @@ class ClosetProvider with ChangeNotifier {
     }
   }
 
-  /// 사용자 프로필을 저장하며 계정이 바뀌면 해당 이메일 소유자의 옷장을 불러옵니다.
+  /// 사용자 프로필을 저장하며 계정이 바뀌면 그 계정의 옷장을 불러옵니다.
+  ///
+  /// 옷장 주인은 이메일 계정이면 이메일, 이메일이 없는 계정(카카오)이면 [userId] 입니다.
+  /// 로그인 중인데 둘 다 없으면 [StateError] 를 던집니다 — 주인 없이 저장하면 공용 옷장에
+  /// 들어가 같은 기기의 다음 이메일 계정 옷장에 합쳐지기 때문입니다.
+  /// [loginMethods] 를 주지 않으면 이메일이 있을 때 비밀번호 계정으로 봅니다.
   Future<void> setUserProfile({
     required String nickname,
-    required String email,
+    required String? email,
+    int? userId,
+    List<String>? loginMethods,
   }) async {
     final trimmedNickname = nickname.trim();
-    final trimmedEmail = email.trim();
-    final normalizedEmail = _normalizeEmail(trimmedEmail);
+    final trimmedEmail = email?.trim() ?? '';
+    final accountEmail = trimmedEmail.isEmpty ? null : trimmedEmail;
+    final ownerKey = _closetOwnerKeyFor(email: accountEmail, userId: userId);
 
-    if (_authSession != null &&
-        normalizedEmail.isNotEmpty &&
-        _closetOwnerEmail != normalizedEmail) {
-      final previousEmail = _normalizeEmail(_userEmail);
+    if (_authSession != null && ownerKey == null) {
+      throw StateError('옷장 주인을 정할 이메일이나 사용자 id 가 없습니다.');
+    }
+
+    if (_authSession != null && _closetOwnerKey != ownerKey) {
+      final previousOwnerKey = _closetOwnerKeyFor(
+        email: _userEmail,
+        userId: _userId,
+      );
 
       // 실제로 다른 계정으로 바뀐 경우에는 이전 계정에서 남긴
       // 닉네임 직접 수정 표시를 물려주지 않습니다.
-      if (previousEmail != normalizedEmail && _isUserNameCustomized) {
+      if (previousOwnerKey != ownerKey && _isUserNameCustomized) {
         _isUserNameCustomized = false;
         await _storageService.clearUserNameCustomized();
       }
 
+      // 예전 공용 옷장은 계정이 생기기 전 이메일 사용자의 것이라 이메일 계정에만 합칩니다.
       await _loadClosetForOwner(
-        normalizedEmail,
-        migrateLegacyData: previousEmail == normalizedEmail,
+        ownerKey!,
+        migrateLegacyData: accountEmail != null && previousOwnerKey == ownerKey,
       );
     }
 
@@ -138,19 +179,33 @@ class ClosetProvider with ChangeNotifier {
     if (!_isUserNameCustomized) {
       _userName = trimmedNickname.isEmpty ? '홍길동' : trimmedNickname;
     }
-    _userEmail = trimmedEmail.isEmpty ? 'honggildong@kdpp.com' : trimmedEmail;
+    _userEmail = accountEmail;
+    _userId = userId;
+    _loginMethods = List.unmodifiable(
+      loginMethods ?? _defaultLoginMethods(accountEmail),
+    );
     notifyListeners();
 
     await Future.wait([
       if (!_isUserNameCustomized) _storageService.saveUserName(_userName),
-      _storageService.saveUserEmail(_userEmail),
+      if (accountEmail == null)
+        _storageService.clearUserEmail()
+      else
+        _storageService.saveUserEmail(accountEmail),
+      if (userId == null)
+        _storageService.clearUserId()
+      else
+        _storageService.saveUserId(userId),
+      _storageService.saveLoginMethods(_loginMethods),
     ]);
   }
 
   /// 로그인 응답으로 인증 세션을 만들고 프로필·토큰을 함께 저장합니다.
   Future<void> setAuthenticatedUser({
     required String nickname,
-    required String email,
+    required String? email,
+    int? userId,
+    List<String>? loginMethods,
     required String accessToken,
     required int expiresInSeconds,
   }) async {
@@ -162,7 +217,12 @@ class ClosetProvider with ChangeNotifier {
     _authSession = session;
 
     try {
-      await setUserProfile(nickname: nickname, email: email);
+      await setUserProfile(
+        nickname: nickname,
+        email: email,
+        userId: userId,
+        loginMethods: loginMethods,
+      );
       await _authSessionStorage.saveSession(session);
     } catch (error) {
       // 절반만 로그인된 상태가 남지 않도록 메모리와 저장소의 세션을 함께 되돌립니다.
@@ -188,15 +248,17 @@ class ClosetProvider with ChangeNotifier {
   /// 기기에 남으면 다음 실행에서 이미 없는 계정으로 복원을 시도하기 때문입니다.
   /// 실패는 호출부가 사용자에게 알릴 수 있도록 마지막에 다시 던집니다.
   Future<void> purgeAccountData() async {
-    // logout()이 이메일을 기본값으로 되돌리기 때문에 먼저 읽어 둡니다.
-    final ownerEmail = _closetOwnerEmail ?? _normalizeEmail(_userEmail);
+    // logout()이 이메일·사용자 id 를 지우기 때문에 먼저 읽어 둡니다.
+    final ownerKey =
+        _closetOwnerKey ??
+        _closetOwnerKeyFor(email: _userEmail, userId: _userId);
 
     Object? closetClearError;
     StackTrace? closetClearStackTrace;
 
-    if (ownerEmail.isNotEmpty) {
+    if (ownerKey != null) {
       try {
-        await _storageService.clearClothesListFor(ownerEmail);
+        await _storageService.clearClothesListFor(ownerKey);
       } catch (error, stackTrace) {
         closetClearError = error;
         closetClearStackTrace = stackTrace;
@@ -218,16 +280,21 @@ class ClosetProvider with ChangeNotifier {
     _mutationVersion++;
     _items.clear();
     _selectedClothes = null;
-    _closetOwnerEmail = null;
+    _closetOwnerKey = null;
+    _hasSignedOut = true;
     _userName = '홍길동';
     _isUserNameCustomized = false;
-    _userEmail = 'honggildong@kdpp.com';
+    _userEmail = null;
+    _userId = null;
+    _loginMethods = const [];
     _authSession = null;
     notifyListeners();
     await Future.wait([
       _storageService.clearUserName(),
       _storageService.clearUserNameCustomized(),
       _storageService.clearUserEmail(),
+      _storageService.clearUserId(),
+      _storageService.clearLoginMethods(),
       _authSessionStorage.clearSession(),
     ]);
   }
@@ -278,11 +345,15 @@ class ClosetProvider with ChangeNotifier {
     final (
       savedUserName,
       savedUserEmail,
+      savedUserId,
+      savedLoginMethods,
       savedNameCustomized,
       savedSortOption,
     ) = await (
       _storageService.loadUserName(),
       _storageService.loadUserEmail(),
+      _storageService.loadUserId(),
+      _storageService.loadLoginMethods(),
       _storageService.loadUserNameCustomized(),
       _storageService.loadClosetSortOption(),
     ).wait;
@@ -307,12 +378,21 @@ class ClosetProvider with ChangeNotifier {
       _userEmail = savedUserEmail.trim();
     }
 
+    _userId = savedUserId;
+    // 로그인 방법을 저장하기 전 판에서 로그인한 기기는 이메일 계정뿐입니다.
+    _loginMethods = List.unmodifiable(
+      savedLoginMethods ?? _defaultLoginMethods(_userEmail),
+    );
+
     if (savedAuthSession != null && !savedAuthSession.isExpired) {
       _authSession = savedAuthSession;
-      final normalizedEmail = _normalizeEmail(savedUserEmail ?? '');
+      final ownerKey = _closetOwnerKeyFor(email: _userEmail, userId: _userId);
 
-      if (normalizedEmail.isNotEmpty) {
-        await _loadClosetForOwner(normalizedEmail, migrateLegacyData: true);
+      if (ownerKey != null) {
+        await _loadClosetForOwner(
+          ownerKey,
+          migrateLegacyData: _userEmail != null,
+        );
       } else {
         _clearClosetMemory();
       }
@@ -330,15 +410,19 @@ class ClosetProvider with ChangeNotifier {
   }
 
   // 로그인 계정이 있으면 계정별 공간에, 없으면 기존 공용 공간에 옷장을 저장합니다.
+  // 로그아웃한 뒤에는 공용 공간에도 쓰지 않고 실패로 돌려, 부른 쪽이 목록을 되돌리게 합니다.
   Future<void> _persist() async {
-    final ownerEmail = _closetOwnerEmail;
+    final ownerKey = _closetOwnerKey;
 
-    if (ownerEmail == null) {
+    if (ownerKey == null) {
+      if (_hasSignedOut) {
+        throw StateError('로그아웃한 뒤에는 옷장을 저장하지 않습니다.');
+      }
       await _storageService.saveClothesList(_items);
       return;
     }
 
-    await _storageService.saveClothesListFor(ownerEmail, _items);
+    await _storageService.saveClothesListFor(ownerKey, _items);
   }
 
   /// 새 의류를 목록과 현재 리포트 대상으로 등록한 뒤 저장합니다.
@@ -362,6 +446,31 @@ class ClosetProvider with ChangeNotifier {
       }
       rethrow;
     }
+  }
+
+  /// [ownerKey] 계정 옷장에 새 의류를 넣고, 지금 옷장에 넣었으면 true 를 돌려줍니다.
+  ///
+  /// [ownerKey] 는 저장을 시작할 때 잡아 둔 [closetOwnerKey] 입니다. 기다리는 사이 로그아웃했거나
+  /// 다른 계정으로 바뀌었으면 지금 옷장은 건드리지 않고 기기에 저장된 [ownerKey] 옷장에만 더한 뒤
+  /// false 를 돌려줍니다 — 서버엔 이미 그 계정 기록이 있으니 다시 로그인하면 보이게 합니다.
+  /// 그 옷장이 기기에 없으면(탈퇴로 지워짐) 어디에도 넣지 않습니다(DECISIONS 2026-10-14).
+  Future<bool> addClothesForOwner(String? ownerKey, Clothes newClothes) async {
+    if (ownerKey == _closetOwnerKey) {
+      await addClothes(newClothes);
+      return true;
+    }
+
+    // 로그인 전에 시작한 저장은 넣을 계정 옷장이 없습니다.
+    if (ownerKey == null) return false;
+
+    final savedItems = await _storageService.loadClothesListOrNullFor(ownerKey);
+    if (savedItems == null) return false;
+
+    await _storageService.saveClothesListFor(ownerKey, [
+      ...savedItems,
+      newClothes,
+    ]);
+    return false;
   }
 
   /// 객체 또는 서버 저장 ID로 대상 의류를 찾아 수정하고 선택 상태도 교체합니다.
@@ -517,19 +626,12 @@ class ClosetProvider with ChangeNotifier {
 
   // 계정 옷장을 불러오고, 요청이 있으면 예전 공용 옷장을 합친 뒤 과거 샘플 항목은 제거합니다.
   Future<void> _loadClosetForOwner(
-    String ownerEmail, {
+    String ownerKey, {
     required bool migrateLegacyData,
   }) async {
-    final normalizedEmail = _normalizeEmail(ownerEmail);
-
-    if (normalizedEmail.isEmpty) {
-      _clearClosetMemory();
-      return;
-    }
-
     // 존재 확인과 로드를 한 번의 읽기로 처리해 시작 경로의 저장소 I/O를 줄입니다.
     final accountItems = await _storageService.loadClothesListOrNullFor(
-      normalizedEmail,
+      ownerKey,
     );
     final hasAccountData = accountItems != null;
 
@@ -545,7 +647,7 @@ class ClosetProvider with ChangeNotifier {
         .toList();
 
     _mutationVersion++;
-    _closetOwnerEmail = normalizedEmail;
+    _closetOwnerKey = ownerKey;
     _items
       ..clear()
       ..addAll(migratedItems);
@@ -554,7 +656,7 @@ class ClosetProvider with ChangeNotifier {
     if (!hasAccountData ||
         shouldClearLegacyData ||
         migratedItems.length != savedItems.length) {
-      await _storageService.saveClothesListFor(normalizedEmail, _items);
+      await _storageService.saveClothesListFor(ownerKey, _items);
     }
 
     if (shouldClearLegacyData) {
@@ -566,11 +668,22 @@ class ClosetProvider with ChangeNotifier {
     _mutationVersion++;
     _items.clear();
     _selectedClothes = null;
-    _closetOwnerEmail = null;
+    _closetOwnerKey = null;
   }
 
-  String _normalizeEmail(String value) {
-    return value.trim().toLowerCase();
+  /// 계정별 옷장의 주인 키입니다. 이메일 계정은 지금까지처럼 정규화한 이메일을 써서 이미 저장된
+  /// 옷장 키가 바뀌지 않게 하고, 이메일이 없는 계정(카카오)은 서버 사용자 id 로 `user:<id>` 를
+  /// 씁니다. 이메일에는 늘 `@` 가 있어 두 키가 겹치지 않습니다. id 는 서버마다 따로라, 개발 중
+  /// 한 기기에서 서버를 바꾸면 다른 서버의 같은 id 와 키가 같아집니다(배포 앱은 서버 하나).
+  static String? _closetOwnerKeyFor({String? email, int? userId}) {
+    final normalizedEmail = email?.trim().toLowerCase() ?? '';
+
+    if (normalizedEmail.isNotEmpty) return normalizedEmail;
+    return userId == null ? null : 'user:$userId';
+  }
+
+  static List<String> _defaultLoginMethods(String? email) {
+    return email == null ? const [] : const [LoginMethod.password];
   }
 
   bool _isLegacySampleClothes(Clothes clothes) {
@@ -722,12 +835,12 @@ class ClosetProvider with ChangeNotifier {
     _selectedClothes = null;
     notifyListeners();
 
-    final ownerEmail = _closetOwnerEmail;
-    if (ownerEmail == null) {
+    final ownerKey = _closetOwnerKey;
+    if (ownerKey == null) {
       await _storageService.clearClothesList();
       return;
     }
 
-    await _storageService.clearClothesListFor(ownerEmail);
+    await _storageService.clearClothesListFor(ownerKey);
   }
 }

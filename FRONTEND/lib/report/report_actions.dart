@@ -36,7 +36,7 @@ Future<void> _confirmDelete(
           ElevatedButton(
             onPressed: () => Navigator.pop(dialogContext, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.redAccent,
+              backgroundColor: AppPalette.danger,
             ),
             child: const Text('삭제', style: TextStyle(color: Colors.white)),
           ),
@@ -57,22 +57,19 @@ Future<void> _confirmDelete(
     // 저장 실패 시 Provider가 목록을 되돌리므로 리포트에 머물며 재시도를 안내합니다.
     if (!context.mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('의류 삭제를 저장하지 못했어요. 다시 시도해 주세요.')),
+    AppBanner.of(context).show(
+      '의류 삭제를 저장하지 못했어요. 다시 시도해 주세요.',
+      kind: AppBannerKind.failure,
     );
     return;
   }
 
   if (!context.mounted) return;
 
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text(
-        wasRemoved
-            ? '"${item.title}"이(가) 삭제되었습니다.'
-            : '이미 옷장에서 삭제된 의류예요.',
-      ),
-    ),
+  // 이미 지워져 있었다면 요청과 상관없이 알게 된 상태라 안내다.
+  AppBanner.of(context).show(
+    wasRemoved ? '"${item.title}"이(가) 삭제됐어요.' : '이미 옷장에서 삭제된 의류예요.',
+    kind: wasRemoved ? AppBannerKind.success : AppBannerKind.info,
   );
 
   if (onDeleted != null) {
@@ -80,7 +77,7 @@ Future<void> _confirmDelete(
     return;
   }
 
-  // 스캔 저장 경로와 같은 이유로 스택을 정리합니다.
+  // 맨 위 라우트만 바꾸면 그 위에 연 화면이 남거나 /main 이 두 겹이 되므로 스택을 정리합니다.
   // (현재 셸은 항상 onDeleted를 넘기므로 도달하지 않지만, 단독 라우트로 열릴 때를 위한 대비입니다.)
   Navigator.pushNamedAndRemoveUntil(context, '/main', (route) => false, arguments: 2);
 }

@@ -1,6 +1,18 @@
 # K-DPP Backend API Contract
 
-기준 브랜치: `develop(중간통합)`
+탄소 V2 추가 계약: [CARBON_V2_API.md](CARBON_V2_API.md).
+PR 88 보완·배포·앱 전환 기준: [CARBON_V2_REVIEW_RESOLUTION.md](CARBON_V2_REVIEW_RESOLUTION.md).
+
+V2 입력도 소재 20칸/소재명 64자/OCR 4,000자 제한을 적용합니다.
+`MATERIAL_NOT_FOUND`의 `detail.unknown_materials`는 미등록 양수 소재명 목록입니다.
+`/me/history`의 V2 항목은 `provenance_status`, `result_kind`, `formula_version`,
+`calculation_snapshot: null`, `provenance_url`을 제공합니다. 전체 스냅샷은
+`GET /api/v2/carbon/results/{id}`로 별도 조회하며 본인 결과에만 접근 가능합니다.
+기존 V1 이력에는 출처를 소급 생성하지 않습니다(`provenance_status: unavailable`).
+V2의 `average_carbon_footprint`는 대표 무게 기반 값의 호환 별칭이며 통계적 평균이 아닙니다.
+DB 적용·계수 선정·연구용 실행: [CARBON_V2_INTEGRATION.md](CARBON_V2_INTEGRATION.md).
+
+기준 브랜치: `develop` (2026-08-29 `develop(중간통합)`에서 이름을 바꿈)
 
 이 문서는 프론트엔드, 백엔드, AI/OCR 파트가 같은 응답 구조를 기준으로 연동하기 위한 API 계약서입니다.
 
@@ -30,11 +42,9 @@
 - `IMAGE_MISSING`: 이미지 파일 누락
 - `UNSUPPORTED_IMAGE_FORMAT`: 지원하지 않는 이미지 형식
 - `OCR_FAILED`: OCR 처리 실패
-- `OCR_NOT_CONFIGURED`: Google Vision 설정 오류 (502)
-- `OCR_QUOTA_EXCEEDED`: Google Vision 사용 한도 초과 (502)
-- `OCR_TIMEOUT`: OCR 요청 시간 초과 (504)
-- `OCR_SERVICE_UNAVAILABLE`: OCR 서비스 일시 장애 (503)
 - `AI_MODULE_FAILED`: AI/OCR 모듈 로드 실패
+- `SCAN_DAILY_LIMIT`: 이 계정의 오늘 사진 분석(Vision) 횟수 소진 (429)
+- `SCAN_UNAVAILABLE`: 서버 전체의 오늘 사진 분석 횟수 소진 (503)
 - `MATERIAL_EXTRACTION_FAILED`: 소재 혼용률 추출 실패
 - `MATERIAL_NOT_FOUND`: DB에 없는 소재
 - `MATERIAL_RATIO_INVALID`: 혼용률 합계 또는 비율 오류
@@ -43,10 +53,102 @@
 - `WEIGHT_RANGE_INVALID`: 최소/최대 무게 범위 오류
 - `AUTH_REQUIRED`: 인증 필요
 - `INTERNAL_SERVER_ERROR`: 서버 내부 오류
+- `PAYLOAD_TOO_LARGE`: 요청 본문이 너무 큼(413) — 사진 업로드(multipart)는 11MB(이미지 10MB), 그 밖의 요청은 1MiB
+- `TOO_MANY_ATTEMPTS`: 시도·요청 횟수 한도 초과(429)
+- `EMAIL_CODE_RESEND_TOO_SOON`: 같은 이메일로 인증번호를 너무 빨리 다시 요청(429)
+- `EMAIL_SEND_UNAVAILABLE`: 서버의 하루 인증 메일 발송 상한에 닿음(503)
+- `VERIFICATION_CODE_INVALID`: 인증번호가 틀림 — 다시 입력할 기회가 남음(400)
+- `VERIFICATION_CODE_RESEND_REQUIRED`: 받은 인증번호가 없거나 만료됐거나 5번 틀림 — 다시 받아야 함(400)
+- `SOCIAL_TOKEN_INVALID`: 카카오가 토큰을 거부했거나(만료·잘못된 토큰) 우리 앱이 받은 토큰이 아님 — 카카오 로그인부터 다시(`/auth/kakao` 401, 탈퇴 400)
+- `SOCIAL_NICKNAME_REQUIRED`: 카카오 첫 로그인인데 쓸 수 있는 닉네임이 없음 — 닉네임을 받아 다시 보냄(400)
+- `SOCIAL_ACCOUNT_MISMATCH`: 탈퇴 확인에 다른 카카오 계정으로 로그인함(400)
+- `SOCIAL_PROVIDER_UNAVAILABLE`: 카카오 서버가 응답하지 않음·오류(502)
+- `SOCIAL_LOGIN_UNAVAILABLE`: 이 서버에 카카오 로그인이 설정되지 않음(503)
+- `PASSWORD_NOT_SET`: 비밀번호가 없는 계정(카카오 계정)의 비밀번호 변경(400)
+- `CLOSET_VERSION_CONFLICT`: 옷장 백업을 다른 기기가 먼저 바꿈 — `detail.current_version` 으로 다시 보냄(409, `POST /me/closet`)
+- `CLOSET_OWNER_MISMATCH`: 옷장 백업 본문의 `user_id` 가 로그인한 계정이 아님(403, `POST /me/closet`)
+- `CLOSET_TOO_LARGE`: 옷장이 500벌 또는 512KB 를 넘음(413, `POST /me/closet` — `detail.reason`)
+- `CLOSET_INVALID`: 옷장 데이터를 저장할 수 없음 — 너무 깊음·NaN 같은 수·깨진 유니코드(422, `POST /me/closet` — `detail.reason`)
+
+## 사용자 객체 (`user`)
+
+가입·로그인·카카오 로그인·비밀번호 변경 응답과 `GET /history`·`GET /me/history` 의 `user` 는 모두 같은 모양입니다(DECISIONS 152).
+앱 시작 때의 세션 확인·로그인 뒤 동기화도 이 `user` 를 읽으므로 같은 규칙을 따릅니다.
+
+```json
+{
+  "id": 1,
+  "email": "user@example.com",
+  "nickname": "홍길동",
+  "login_methods": ["password"]
+}
+```
+
+- `login_methods`: 이 계정으로 로그인하는 방법 목록. 지금은 `["password"]`(이메일·비밀번호 계정) 또는 `["kakao"]`(카카오 계정) 둘 중 하나이고,
+  나중에 `"google"` 이 더해질 수 있습니다. **목록으로 받아 '들어 있는지'로 판단하세요**(순서는 의미 없음, 모르는 값은 무시).
+- `email`: 카카오 계정은 **`null`** 입니다(카카오 이메일은 받지 않음 — DECISIONS 143). 이메일 계정은 늘 문자열.
+- 비밀번호 변경 버튼·탈퇴 확인 방식은 `login_methods` 에 `"password"` 가 있는지로 고릅니다(`docs/SCAN_API_CONTRACT.md` 2-3).
+
+## POST /auth/email-code
+
+이메일 인증번호 요청 API입니다(DECISIONS 144·147·148). 가입 전 이메일 확인과 비밀번호 찾기에 함께 씁니다.
+
+### Request
+
+```json
+{
+  "email": "user@example.com",
+  "purpose": "signup"
+}
+```
+
+- `purpose`: `signup`(가입) 또는 `password_reset`(비밀번호 찾기). 빠지거나 그 밖의 값이면 422 `VALIDATION_ERROR`.
+- 이메일은 가입·로그인과 같이 앞뒤 공백을 지우고 소문자로 다룹니다.
+- 길이 상한: `email` 254자 — 넘으면 `422 VALIDATION_ERROR`(가입·로그인과 같은 상한, 어떤 한도에도 세지 않음).
+
+### Success Response
+
+가입 여부와 상관없이 **같은 `purpose` 면 항상 같은 응답**입니다.
+
+```json
+{
+  "status": "success",
+  "message": "인증번호를 보냈습니다. 메일이 오지 않으면 주소를 확인해 주세요.",
+  "expires_in": 600,
+  "resend_after": 60
+}
+```
+
+- `expires_in`: 번호 유효 시간(초). `resend_after`: 다시 요청할 수 있을 때까지 남은 시간(초) — 보통 60 이고,
+  이번 요청으로 같은 이메일 1시간 5회·24시간 10회나 같은 IP 1시간 20회에 닿았으면 그 창이 풀릴 때까지(최대 약 24시간).
+- `password_reset` 의 `message` 는 "가입된 이메일이면 인증번호를 보냈습니다. 메일이 오지 않으면 주소를 확인해 주세요."
+- 새 번호를 받으면 같은 이메일·같은 용도의 이전 번호는 쓸 수 없습니다.
+- 서버가 실제로 하는 일(응답에는 드러나지 않음):
+
+  | purpose | 가입 안 된 이메일 | 가입된 이메일 |
+  |---|---|---|
+  | `signup` | 인증번호 메일 | '이미 가입된 이메일' 안내 메일(번호 없음, 비밀번호 찾기 안내) |
+  | `password_reset` | 메일 없음 | 인증번호 메일 |
+
+  어느 경우든 번호 기록은 똑같이 만들고 메일은 응답을 보낸 뒤 보냅니다. 그래서 이어지는 가입·재설정의 오류 응답과
+  응답 시간으로도 가입 여부가 드러나지 않습니다.
+- 로컬·CI·시연 서버(`K_DPP_EMAIL_DELIVERY` 를 비우거나 `log`)는 메일을 보내지 않고 번호를 서버 로그에 찍습니다. 흐름과 응답은 같습니다.
+
+### Error Response
+
+| 상태 | `error_code` | 언제 | `detail` 추가 값 |
+|---|---|---|---|
+| 400 | `BAD_REQUEST` | 이메일 형식 오류("올바른 이메일을 입력해 주세요.") | — |
+| 429 | `EMAIL_CODE_RESEND_TOO_SOON` | 같은 이메일로 60초 안에 다시 요청(두 용도 합산) | `retry_after`(초) |
+| 429 | `TOO_MANY_ATTEMPTS` | 같은 이메일 1시간 5회·24시간 10회, 또는 같은 IP 1시간 20회를 넘음(두 용도 합산) | `retry_after`(초) |
+| 503 | `EMAIL_SEND_UNAVAILABLE` | 서버 전체 하루(UTC 날짜) 요청 상한(`K_DPP_EMAIL_DAILY_MAX`)에 닿음, 또는 서버가 기억하는 이메일 수(1만)가 가득 참(새 이메일만) | — |
+
+- 한도 창은 가입 IP 기준(DECISIONS 142)과 같이 '그 창의 첫 요청부터 1시간·24시간'입니다. IP 기준의 IPv6 /64 묶기·공인 주소가 아니면 건너뛰기도 로그인·가입과 같습니다.
+- 429·503 도 가입 여부와 무관하게 똑같이 적용됩니다.
 
 ## POST /auth/signup
 
-회원가입 API입니다.
+회원가입 API입니다. **`POST /auth/email-code`(purpose `signup`)로 받은 인증번호가 필요합니다.** 성공해도 토큰을 주지 않습니다(가입 뒤 로그인).
 
 ### Request
 
@@ -54,9 +156,13 @@
 {
   "email": "user@example.com",
   "password": "password123",
-  "nickname": "홍길동"
+  "nickname": "홍길동",
+  "code": "123456"
 }
 ```
+
+길이 상한: `email` 254자, `password` 128자, `nickname` 50자 — 넘으면 `422 VALIDATION_ERROR`.
+로그인·비밀번호 변경·탈퇴의 이메일·비밀번호도 같은 상한입니다(아래 2026-10-05 변경 이력).
 
 ### Success Response
 
@@ -67,10 +173,24 @@
   "user": {
     "id": 1,
     "email": "user@example.com",
-    "nickname": "홍길동"
+    "nickname": "홍길동",
+    "login_methods": ["password"]
   }
 }
 ```
+
+### Error Response
+
+검사 순서: 형식(이메일·닉네임·비밀번호·번호, 400) → 가입 IP 한도(429, DECISIONS 142) → 인증번호 → 이미 가입(409) → 생성. 번호는 가입에 성공했을 때만 사라집니다.
+
+| 상태 | `error_code` | 언제 | `detail` 추가 값 |
+|---|---|---|---|
+| 422 | `VALIDATION_ERROR` | `code` 가 없음(인증번호 단계가 없는 앱 빌드) | — |
+| 400 | `BAD_REQUEST` | 이메일·닉네임·비밀번호 형식 오류, 또는 번호가 숫자 6자리가 아님("인증번호 6자리를 입력해 주세요." — 틀린 횟수에 넣지 않음) | — |
+| 400 | `VERIFICATION_CODE_INVALID` | 번호가 틀림(기회가 남음) | `remaining_attempts` |
+| 400 | `VERIFICATION_CODE_RESEND_REQUIRED` | 받은 번호가 없음·10분 지남·5번째로 틀림(그 번호는 버려짐) | — |
+| 409 | `CONFLICT` | 이미 가입된 이메일 — 맞는 번호를 가진 사람만 봄(같은 이메일 동시 가입 등) | — |
+| 429 | `TOO_MANY_ATTEMPTS` | 같은 IP 1시간 20회(DECISIONS 142, 그대로) | — |
 
 ## POST /auth/login
 
@@ -94,13 +214,17 @@
   "user": {
     "id": 1,
     "email": "user@example.com",
-    "nickname": "홍길동"
+    "nickname": "홍길동",
+    "login_methods": ["password"]
   },
   "access_token": "token-value",
   "token_type": "bearer",
   "expires_in": 2592000
 }
 ```
+
+- 한 계정의 로그인 토큰은 **최근 10개(기기 10대)까지**입니다. 서버가 새 토큰을 줄 때(이 API·`POST /auth/kakao`·`POST /auth/password`)
+  그 계정의 만료 토큰을 지우고, 10개를 넘으면 가장 오래전에 받은 토큰부터 지웁니다 — 그 기기는 다음 요청에서 401 을 받아 다시 로그인합니다(DECISIONS 160).
 
 ## POST /auth/logout
 
@@ -112,6 +236,170 @@ Header:
 Authorization: Bearer <token>
 ```
 
+## POST /auth/password · POST /auth/withdraw
+
+비밀번호 변경과 회원 탈퇴입니다. 둘 다 `Authorization: Bearer <token>` 과 현재 비밀번호 재인증이 필요합니다.
+카카오 계정은 탈퇴 때 `password` 대신 `kakao_access_token` 을 보내고, 비밀번호 변경은 400 `PASSWORD_NOT_SET` 입니다.
+요청·응답·오류 코드·탈퇴와 겹친 탄소 계산은
+[docs/SCAN_API_CONTRACT.md](../docs/SCAN_API_CONTRACT.md) 2-3절이 정본입니다(두 문서에 같은 표를
+두면 한쪽만 고쳐져 어긋나므로 여기에는 옮기지 않습니다). 카카오 계정의 경위는 아래 '변경 이력 — 카카오 로그인'.
+
+## POST /auth/password-reset
+
+비밀번호 찾기 API입니다. `POST /auth/email-code`(purpose `password_reset`)로 받은 인증번호와 새 비밀번호를 한 번에 보냅니다.
+
+### Request
+
+```json
+{
+  "email": "user@example.com",
+  "code": "123456",
+  "new_password": "newpassword123"
+}
+```
+
+길이 상한: `email` 254자, `new_password` 128자 — 넘으면 `422 VALIDATION_ERROR`(번호를 쓰지 않고 틀린 횟수에도 세지 않음).
+
+### Success Response
+
+```json
+{
+  "status": "success",
+  "message": "비밀번호를 다시 설정했습니다. 새 비밀번호로 로그인해 주세요."
+}
+```
+
+- 성공하면 그 계정의 **로그인 토큰을 모두 지우고**(모든 기기 로그아웃) 이메일 로그인 잠금을 풉니다. 새 토큰은 주지 않습니다 — 앱은 이메일을 채운 로그인 화면으로 갑니다.
+- 새 비밀번호 규칙은 가입과 같습니다(8자 이상, 앞뒤 공백 불가). 기존 비밀번호와 같아도 받습니다.
+- 검사 순서: 형식(400) → 인증번호 → 저장. 번호가 틀리면 비밀번호 해시를 하지 않습니다.
+
+### Error Response
+
+| 상태 | `error_code` | 언제 | `detail` 추가 값 |
+|---|---|---|---|
+| 400 | `BAD_REQUEST` | 이메일·새 비밀번호 형식 오류, 번호가 숫자 6자리가 아님 | — |
+| 400 | `VERIFICATION_CODE_INVALID` | 번호가 틀림(기회가 남음) | `remaining_attempts` |
+| 400 | `VERIFICATION_CODE_RESEND_REQUIRED` | 받은 번호가 없음·10분 지남·5번째로 틀림 | — |
+
+가입 안 된 이메일에는 번호 메일이 가지 않으므로 늘 위 두 번호 오류 중 하나입니다(가입 여부가 드러나지 않음).
+
+### 앱 연동 메모 (이메일 인증·비밀번호 찾기)
+
+- 가입: 이메일 → '인증번호 받기' → 번호 칸·남은 시간(`expires_in`)·'다시 받기'(`resend_after` 뒤) → 닉네임·비밀번호 → 가입. 번호는 그 이메일에만 맞으므로 이메일을 고치면 번호 칸을 비웁니다.
+- 비밀번호 찾기: 로그인 화면 '비밀번호 찾기' → 이메일 → 번호 → 새 비밀번호 → 로그인 화면(이메일 채움).
+- 분기는 `error_code` 로: `VERIFICATION_CODE_INVALID` → 번호 칸에 남은 기회 · `VERIFICATION_CODE_RESEND_REQUIRED` → 번호 칸을 비우고 '다시 받기' · `EMAIL_CODE_RESEND_TOO_SOON` → `retry_after` 초 기다리기 · `TOO_MANY_ATTEMPTS`·`EMAIL_SEND_UNAVAILABLE` → 서버 문구.
+- 서버 `message` 는 다른 API 와 같은 '~습니다' 체입니다. 앱 문구 톤은 `error_code` 로 앱이 정할 수 있습니다.
+- 로컬·시연 서버에서는 메일이 가지 않고 번호가 서버 로그에 찍힙니다.
+- 서버·앱 PR 은 같은 날 머지합니다(DECISIONS 147) — 서버만 먼저 들어가면 지금 앱의 가입이 422.
+
+## POST /auth/kakao
+
+카카오 로그인 API입니다(DECISIONS 140·143·152). **첫 로그인이 곧 가입**입니다 — 따로 가입 화면이나 인증번호가 없습니다.
+앱이 카카오 SDK 로 로그인해 받은 카카오 액세스 토큰을 보내면, 서버가 카카오에 그 토큰이 **우리 앱이 받은 토큰인지**(`app_id`) 확인한 뒤
+이메일 로그인과 같은 우리 서버 토큰을 줍니다.
+
+### Request
+
+```json
+{
+  "access_token": "카카오 SDK 로그인으로 받은 OAuthToken.accessToken",
+  "nickname": "홍길동"
+}
+```
+
+- `access_token`: 필수. 앞뒤 공백을 지우고 봅니다. 비었거나, 1,024자를 넘거나, 공백이 아닌 출력 가능한 ASCII 밖의 문자(가운데 공백·제어 문자·한글 등)가 있으면
+  400 `BAD_REQUEST` — 카카오에 묻지 않고 횟수 제한에도 세지 않습니다. 탈퇴의 `kakao_access_token` 도 같은 규칙입니다.
+- `nickname`: 선택(`null` 은 보내지 않은 것과 같음). **새 계정일 때만** 씁니다(이미 있는 계정이면 무시 — 닉네임 바꾸기가 아님). 보내면 가입과 같은 규칙(앞뒤 공백을 지우고 2자 이상, 쓸 수 없는 문자 없음)으로 늘 봅니다.
+  가입과 같이 50자를 넘으면 `422 VALIDATION_ERROR`(카카오에 묻지 않고 횟수 제한에도 세지 않음).
+- `Authorization` 헤더는 보지 않습니다. 로그인한 상태에서 계정을 잇는 API 가 아니라, 늘 그 카카오 계정으로 로그인합니다.
+
+### Success Response
+
+```json
+{
+  "status": "success",
+  "message": "카카오 계정으로 가입했습니다.",
+  "user": {
+    "id": 7,
+    "email": null,
+    "nickname": "홍길동",
+    "login_methods": ["kakao"]
+  },
+  "access_token": "token-value",
+  "token_type": "bearer",
+  "expires_in": 2592000,
+  "is_new_user": true
+}
+```
+
+- 이미 있는 계정이면 `"message": "로그인되었습니다."`, `"is_new_user": false`. 나머지는 `POST /auth/login` 응답과 같습니다(토큰 30일).
+- 새 계정의 닉네임: 요청의 `nickname` → 없으면 카카오 닉네임(`kakao_account.profile.nickname`, 동의 항목 '닉네임'). 카카오 닉네임은 첫 로그인 때 한 번만 가져오며,
+  나중에 카카오에서 바꿔도 따라가지 않습니다. 둘 다 없거나 카카오 닉네임이 규칙(2자 이상·50자 이하 등)에 맞지 않으면 `SOCIAL_NICKNAME_REQUIRED`.
+  카카오가 기본 닉네임(`is_default_nickname: true` — 닉네임이 카카오 운영 정책에 맞지 않아 카카오가 "닉네임을 등록해주세요"로 바꾼 것)을 주면 없는 것으로 봅니다(DECISIONS 155).
+- 같은 카카오 계정으로 동시에 두 번 보내도 계정은 하나입니다(늦은 쪽은 `is_new_user: false`).
+- 이메일 계정과 카카오 계정은 서로 다른 계정입니다 — 같은 사람이라도 자동으로 합치지 않습니다(DECISIONS 143).
+- 서버는 카카오 회원번호만 저장하고 카카오 토큰은 저장하지 않습니다.
+
+### Error Response
+
+검사 순서: 본문 모양(422) → 카카오 로그인 설정(503) → 형식(400) → 로그인 IP 한도(429) → 카카오 토큰 확인(401·502) → 이미 있는 계정이면 로그인 · 없으면 닉네임(400) → 계정 만들기·로그인.
+
+| 상태 | `error_code` | 언제 | 앱 처리 |
+|---|---|---|---|
+| 422 | `VALIDATION_ERROR` | `access_token` 이 빠졌거나 문자열이 아님, `nickname` 이 문자열·`null` 이 아님(가장 먼저 — 앱 버그) | 서버 문구 |
+| 503 | `SOCIAL_LOGIN_UNAVAILABLE` | 서버에 카카오 앱 ID(`K_DPP_KAKAO_APP_ID`)가 없음 — 로컬·CI 기본 | 서버 문구 |
+| 400 | `BAD_REQUEST` | `access_token` 이 비었거나(공백만 포함)·형식 오류, `nickname` 형식 오류(닉네임 문구는 가입과 같음) | 서버 문구 |
+| 429 | `TOO_MANY_ATTEMPTS` | 같은 IP 15분 30회 로그인 실패(이메일 로그인 실패와 합산 — 아래) | 서버 문구 그대로 |
+| 401 | `SOCIAL_TOKEN_INVALID` | 카카오가 토큰을 거부(만료·폐기·잘못된 형식), 또는 다른 앱이 받은 토큰(`app_id` 가 다름) | 카카오 로그인부터 다시 |
+| 502 | `SOCIAL_PROVIDER_UNAVAILABLE` | 카카오가 5초 안에 답하지 않음·카카오 일시 장애·예상 밖 응답, 또는 카카오 호출이 몰려 서버의 동시 호출 상한(10건)에 닿음 | 잠시 후 다시 |
+| 400 | `SOCIAL_NICKNAME_REQUIRED` | 새 계정인데 쓸 수 있는 닉네임이 없음 | 닉네임을 받아 **같은 `access_token`** + `nickname` 으로 다시 |
+
+- 이 401 은 `POST /auth/login` 의 401 처럼 **로그인 API 가 자격을 거부한 것**입니다(로그인 화면에서 안내). 세션 만료로 처리하는 401 은 `Authorization` 을 보낸 요청의 401 뿐입니다(`docs/SCAN_API_CONTRACT.md` 2-1).
+- 카카오 응답을 나누는 기준(카카오 문서의 오류 코드 — HTTP 상태가 아니라 본문 `code` 로 나눔. `-1` 은 일시 장애인데 HTTP 400 으로 옴):
+
+  | 카카오 응답 | 우리 응답 | 로그인 IP 기록 |
+  |---|---|---|
+  | `-401`(무효·만료 토큰)·`-2`(잘못된 형식), 또는 정상 응답인데 `app_id` 가 우리 앱이 아님 | 401 `SOCIAL_TOKEN_INVALID` | **남김** |
+  | `-1`(카카오 일시 장애)·HTTP 5xx·5초 초과·연결 실패·그 밖의 예상 밖 응답·서버의 동시 호출 상한(10건, DECISIONS 156) | 502 `SOCIAL_PROVIDER_UNAVAILABLE` | 되돌림 |
+
+  `/v2/user/me` 도 같은 표로 나눕니다(토큰 정보와 회원번호가 다르면 502).
+- 횟수 제한: **`SOCIAL_TOKEN_INVALID` 만 로그인 IP 기록에 남습니다**(15분 30회, 이메일 로그인 실패와 같은 기록 — DECISIONS 139). 카카오에 묻기 전에 한 번을 세고,
+  성공·`SOCIAL_NICKNAME_REQUIRED`·502·서버 오류면 되돌립니다. IPv6 /64 묶기·공인 주소가 아니면 건너뛰기도 로그인과 같습니다.
+  카카오 응답을 기다리는 동안(최대 10초)은 그 요청이 한 번으로 세어져 있어, 같은 IP 에서 30건이 동시에 기다리면 31번째는 실패가 없어도 429 입니다(받아들인 한계).
+  **새 카카오 계정은 가입 IP 한도(1시간 20회, DECISIONS 142)에 세지 않습니다** — 계정마다 실제 카카오 계정이 필요하고, 한 와이파이에서 여럿이 처음 로그인하는 시연을 막지 않게.
+- 서버가 카카오에 묻는 것: `GET https://kapi.kakao.com/v1/user/access_token_info`(회원번호·`app_id` 확인), 새 계정이면 `GET https://kapi.kakao.com/v2/user/me`(닉네임).
+  호출마다 **연결부터 응답을 다 받을 때까지 5초**가 넘으면 끊고 502 — 최대 두 번이라 앱 대기(15초) 안에 끝납니다.
+- 카카오 토큰은 앱(Android·iOS)에서 12시간 유효합니다(카카오 문서). 닉네임을 받은 뒤 다시 보낼 때도 같은 토큰을 쓰고, 그사이 만료됐으면 401 → 카카오 로그인부터.
+
+### 앱 연동 메모 (카카오 로그인)
+
+- 버튼은 로그아웃 상태의 로그인 화면에만 둡니다. SDK 는 `kakao_flutter_sdk_user`(DECISIONS 140) — 카카오톡이 있으면 카카오톡으로, 없으면 카카오계정으로 로그인한 뒤
+  받은 `OAuthToken.accessToken` 을 `access_token` 으로 보냅니다. 사용자가 카카오 화면에서 취소하면 서버를 부르지 않습니다.
+- **첫 요청에는 `nickname` 을 넣지 않습니다** — `SOCIAL_NICKNAME_REQUIRED` 를 받은 뒤에만 닉네임을 받아 같은 토큰으로 다시 보냅니다(DECISIONS 163).
+  서버는 새 계정이고 `nickname` 이 없을 때만 카카오 사용자 정보(`/v2/user/me`)를 묻는데, 카카오는 첫 로그인 뒤 24시간 안에 이 조회가 없던 연결을
+  '가입 미완료'로 보고 끊습니다. 처음부터 닉네임을 보내면 우리 계정은 그대로지만 카카오 쪽 연결만 끊겨, 다음 카카오 로그인에서 동의 화면이 다시 나옵니다(회원번호가 같아 같은 계정).
+- 성공하면 이메일 로그인과 똑같이 `access_token`·`user` 를 저장합니다. `is_new_user` 는 환영 안내 등에 쓸 수 있습니다(선택).
+- **지금 앱에서 바꿔야 하는 곳**(10-05 develop 기준 코드에서 찾은 것):
+  - `AuthUser.fromJson`(`FRONTEND/lib/services/auth_api_models.dart`)이 이메일이 비면 응답을 거부합니다 → `email` 이 `null` 인 응답을 받게.
+    로그인 응답뿐 아니라 시작 때 세션 확인·로그인 뒤 동기화(`/me/history` 의 `user`, `post_login_sync_service.dart`)도 같은 함수를 씁니다.
+  - (해결됨 — 앱은 이제 이메일 계정은 정규화한 이메일, 이메일 없는 계정은 `user:<id>` 를 옷장 키로 씁니다. 아래는 10-05 당시 메모)
+    **옷장의 주인을 이메일로만 정합니다**(`FRONTEND/lib/closet_provider.dart` — `setUserProfile` 은 이메일이 비면 주인을 바꾸지 않고, 그때 `_persist` 는
+    공용 `closet_items` 에 저장하며, 다음 실행에서 이메일 세션을 복원하면 그 공용 옷장을 이메일 계정 옷장에 합치고, `purgeAccountData` 는 주인 이메일이 비면 건너뜀).
+    `AuthUser.fromJson` 만 고치면 **카카오 사용자의 옷장이 같은 기기의 다음 이메일 사용자 옷장으로 넘어가고 탈퇴해도 남습니다.**
+    → 이메일 없는 계정의 옷장 키(예: 사용자 `id`)를 정하고 저장·복원·탈퇴 정리를 모두 그 키로, 공용 옷장 합치기는 이메일 계정만.
+    지금 기기에는 이름·이메일만 저장하므로(`closet_storage_service.dart`) 사용자 `id`·`login_methods` 를 세션과 함께 저장해야 합니다.
+  - 기기에 저장된 사용자 정보에 `login_methods` 가 없으면(이 판 이전에 로그인) `["password"]` 로 봅니다.
+  - 이메일이 비면 설정 화면에 기본값 `honggildong@kdpp.com` 이 보입니다(`closet_provider.dart` `_userEmail`) → 카카오 계정은 '카카오 계정' 등으로.
+  - `AuthApiException` 이 `error_code` 를 읽지 않습니다 — 이메일 인증 화면과 같은 파싱이 필요합니다.
+  - 탈퇴 대화상자는 400 이 아닌 오류를 모두 '결과를 모름'으로 봅니다(`settings_screen.dart` `_earlierAttemptUnresolved`) → 카카오 탈퇴의 502·503 은
+    삭제 전에 나므로 `error_code` 로 '진행되지 않음'으로 나눕니다(본문 없는 프록시 502 와 구분하려면 상태 코드가 아니라 `error_code`).
+- 로그아웃은 `POST /auth/logout` 그대로입니다. 기기의 카카오 SDK 토큰을 함께 지울지는 앱이 정합니다(서버는 로그인·탈퇴 확인 때 받은 토큰만 씀).
+- 설정 화면(비밀번호 변경 숨김)·카카오 계정 탈퇴는 `docs/SCAN_API_CONTRACT.md` 2-3.
+- 개인정보 안내 문구에 카카오에서 받는 정보(회원번호·닉네임)를 더합니다.
+- 등록 값: 앱 빌드엔 카카오 **네이티브 앱 키**, 서버엔 **앱 ID** 만(`K_DPP_KAKAO_APP_ID`, 비밀값 아님). 로컬 서버는 비어 있어 503 — 실기기로 시험할 때 로컬 `BACKEND/.env` 에 앱 ID 를 넣습니다.
+- 머지: 이 서버 변경은 기능을 더하기만 합니다(기존 요청 그대로, `user` 에 칸 하나). 그래서 **이메일 인증 서버·앱 PR(같은 날, DECISIONS 147)이 들어간 뒤라면**
+  카카오 서버 PR 이 카카오 앱 PR 보다 먼저 들어가도 그때의 앱은 그대로 동작합니다. 이 브랜치는 이메일 인증 위에 있어, 그 전에 들어가면 지금 앱의 가입이 422 입니다.
+
 ## POST /api/scan
 
 의류 라벨 이미지를 업로드하면 OCR과 라벨 파싱을 수행해 소재 혼용률을 반환합니다.
@@ -120,19 +408,13 @@ Authorization: Bearer <token>
 
 테스트 목적으로 OCR을 건너뛰려면 `raw_ocr_text` form field를 함께 보낼 수 있습니다.
 
-실제 이미지 경로는 OCR 원문뿐 아니라 후보 사이의 조성 충돌과 소재에 연결되지
-않은 비율을 파서에 전달합니다. `ocr`에는 선택한 입력 후보, 호출 횟수, 재시도,
-후보 충돌·미연결 부위 등 처리 메타데이터를 제공합니다. OCR 원문 전체나 인증
-정보는 포함하지 않습니다. `raw_ocr_text`로 우회한 경우 `ocr`는 빈 객체이고
-OCR 신뢰도는 `unknown`입니다. 업로드 형식·크기 검사는 우회 경로에도 적용합니다.
-
 ### Request
 
 Content-Type: `multipart/form-data`
 
 ```text
 image: care-label.jpg
-raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
+raw_ocr_text: COTTON 80% POLYESTER 20%  (optional, 4000자 이하)
 ```
 
 ### Success Response
@@ -166,17 +448,6 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
   "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
   "raw_ocr_preview": "COTTON 80% POLYESTER 20%",
   "warnings": [],
-  "confidence": {
-    "ocr": "unknown",
-    "parser": "high"
-  },
-  "parse_evidence": {
-    "composition_status": "confirmed",
-    "source": "same_line",
-    "ratio_total_before_normalization": 100,
-    "explicit_percent": true
-  },
-  "ocr": {},
   "clothing": {
     "name": "스캔한 의류",
     "category": "상의"
@@ -185,6 +456,14 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
   "category": "상의"
 }
 ```
+
+- 200 은 소재를 확정했을 때만입니다 — AI 파서가 `success` 이고 합계가 99.5~100.5(탄소 계산과 같은 폭).
+  `ai_success`·`analysis_failure_reason` 은 예전 계약과의 호환으로 남아 있고 이제 늘 `true`·`null` 입니다.
+- `warnings`: AI 가 붙인 주의 메모(`list[str]`, 없으면 `[]`, 422 `detail` 에도 있음). 두 종류가 섞여 있습니다 —
+  `<부위>:<코드>` 모양의 소재 판정 경고(예: `generic:unpaired_ratio_rows`, `generic:ambiguous_composition_candidates`)와
+  한국어 처리 안내(예: "OCR 좌표를 바탕으로 재구성한 줄 순서를 사용했습니다."). 앱에 보일 때는 아는 코드만 문구로
+  바꾸고 나머지는 무시합니다. AI 의 `confidence`·`parse_evidence`·`ocr`(호출 수·후보·처리 시간)는 응답에 넣지 않습니다
+  (DECISIONS 210 — 앞의 둘은 공개 범위 협의 중, `ocr` 는 운영용).
 
 ### Material Extraction Failure
 
@@ -198,33 +477,69 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional)
     "error_code": "MATERIAL_EXTRACTION_FAILED",
     "materials": {},
     "partial_materials": {},
-    "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
+    "care_instruction": "표백 금지; 찬물 세탁; 평평하게 뉘어서 건조",
     "raw_ocr_preview": "wash cold do not bleach dry flat",
     "ai_success": false,
     "parser_error_code": "composition_not_found",
-    "warnings": [],
-    "confidence": {
-      "ocr": "unknown",
-      "parser": "low"
-    },
-    "parse_evidence": {},
-    "ocr": {}
+    "warnings": []
   }
 }
 ```
 
-파서가 성공 상태를 반환하고 소재 비율 합계가 정확히 100%로 확인된 경우에만
-200을 반환합니다. 합계가 100%가 아니거나 조성이 불완전·모호하면 비율을
-보정하지 않고 422 `MATERIAL_EXTRACTION_FAILED`로 반환합니다. 이때 `materials`와
-`partial_materials`는 모두 빈 객체이며 `parser_error_code`, `warnings`,
-`confidence`, `parse_evidence`, `ocr`를 진단 정보로 전달합니다. 원본·좌표·전처리
-후보 사이의 대표 조성이 충돌하거나 미연결 비율이 남아 있는 경우에도 이 경로로
-처리하며 외부 OCR 서비스 실패(502)로 분류하지 않습니다. 스캔 성공·실패는 모두
-탄소 결과나 이력을 저장하지 않습니다.
+- 소재를 못 찾았을 때뿐 아니라 **부분 인식**(AI 가 확정하지 못함 — 합계가 불완전한 혼용률, 짝 없는 비율 줄,
+  후보끼리 다른 조성 등 — 또는 합계가 100 이 아님)도 422 입니다(DECISIONS 200 — 이전에는 200 + `RATIO_INCOMPLETE`).
+- `materials` 는 늘 `{}` 입니다(확정하지 못한 비율을 확정 소재로 내보내지 않음). `partial_materials` 는 직접 입력 폼이
+  채울 값으로, AI 가 실패하면 비우므로 보통 `{}` 입니다.
+- `parser_error_code`: AI 파서의 실패 코드(`composition_not_found`·`ambiguous_composition` 등, 없으면 `""`).
+  화면 분기는 상태 코드로 합니다.
+
+### OCR Failure (502 / 504)
+
+Vision 을 부른 뒤 실패하면 예외 원문은 서버 로그(`[scan] OCR 실패: …` — 예외 이름으로 원인 구분)에만 남기고
+고정 문구를 돌려줍니다(DECISIONS 211).
+
+| HTTP | error_code | 경우 |
+| --- | --- | --- |
+| 502 | `OCR_FAILED` | Vision 설정·인증 문제, Vision 사용량 한도, Vision 일시 장애, 그 밖의 실패 |
+| 504 | `OCR_TIMEOUT` | 원본 사진 Vision 요청이 10초, 또는 스캔 전체 OCR 이 25초를 넘음(AI 의 `OCR_CANDIDATE_TIMEOUT_SECONDS`·`OCR_TOTAL_TIMEOUT_SECONDS` — 전처리·소재 영역 후보는 8·5초에서 끊고 그 후보만 건너뜀) |
+
+Vision 일시 장애를 503 으로 내지 않는 것은 503 이 이미 서버 전체 하루 상한(`SCAN_UNAVAILABLE`)·AI 모듈 없음
+(`AI_MODULE_FAILED`)에 쓰이기 때문입니다.
+
+### Daily Limit (429 / 503)
+
+Google Vision 을 부르는 스캔(`raw_ocr_text` 없이 보낸 요청)은 하루 횟수를 셉니다. 하루는
+한국 자정(00:00 KST)에 바뀌고, 두 응답 모두 `detail.retry_after` 에 다음 자정까지 남은 초가 있습니다.
+
+- 한 계정 하루 **20번**(`main.SCAN_USER_DAILY_MAX`)을 넘으면 `429 SCAN_DAILY_LIMIT`.
+- 서버 전체 하루 `K_DPP_SCAN_DAILY_MAX` 번(환경변수, 비우면 없음 — 배포는 필수)을 넘으면
+  `503 SCAN_UNAVAILABLE`. 둘 다 닿았으면 429 를 줍니다.
+- Vision 을 부르기 직전에 세고 결과(성공·422·502·504)와 상관없이 되돌리지 않습니다.
+  `raw_ocr_text` 로 OCR 을 건너뛴 요청과 업로드 검사(413·415)·OCR·분석·라벨 파서 모듈 없음(503
+  `AI_MODULE_FAILED` — 모두 Vision 전에 확인)으로 끝난 요청은 세지 않습니다. 막힌 요청은 Vision 을
+  부르지 않습니다.
+
+```json
+{
+  "status": "error",
+  "error_code": "SCAN_DAILY_LIMIT",
+  "message": "사진 분석은 하루 20번까지입니다. 소재를 직접 입력하거나 내일 다시 시도해 주세요.",
+  "detail": {
+    "message": "사진 분석은 하루 20번까지입니다. 소재를 직접 입력하거나 내일 다시 시도해 주세요.",
+    "error_code": "SCAN_DAILY_LIMIT",
+    "retry_after": 30512
+  }
+}
+```
+
+서버 전체 상한은 `"message": "오늘은 사진 분석을 더 할 수 없습니다. 소재를 직접 입력해 주세요."`,
+`"error_code": "SCAN_UNAVAILABLE"` 이고 나머지 모양은 같습니다.
 
 ## POST /api/carbon/calculate
 
 소재 혼용률과 의류 무게를 기준으로 최종 탄소배출량을 계산하고, 로그인 사용자 이력에 저장합니다.
+토큰 확인 뒤 다른 기기의 탈퇴가 먼저 커밋돼 저장할 계정이 없으면 저장하지 않고 401 "로그인이 만료되었습니다."(`AUTH_REQUIRED`)입니다
+(`docs/SCAN_API_CONTRACT.md` 2-3 '탈퇴와 겹친 탄소 계산', DECISIONS 161).
 
 Header:
 
@@ -293,7 +608,7 @@ Authorization: Bearer <token>
       "ratio": 80,
       "carbon_factor": 8.3,
       "unit": "kg CO2eq/kg textile",
-      "source": "K-DPP backend material carbon factor table (development estimates)"
+      "source": "K-DPP 소재별 배출계수 표(추정값)"
     },
     {
       "input_name": "polyester",
@@ -302,14 +617,17 @@ Authorization: Bearer <token>
       "ratio": 20,
       "carbon_factor": 9.5,
       "unit": "kg CO2eq/kg textile",
-      "source": "K-DPP backend material carbon factor table (development estimates)"
+      "source": "K-DPP 소재별 배출계수 표(추정값)"
     }
   ],
-  "calculation_source": "K-DPP backend material carbon factor table (development estimates)",
-  "calculation_note": "현재 소재별 배출계수는 개발용 추정값입니다. 최종 발표 전 팀 승인 출처로 교체해야 합니다.",
+  "calculation_source": "K-DPP 소재별 배출계수 표(추정값)",
+  "calculation_note": null,
   "saved_result_id": 13
 }
 ```
+
+`calculation_source`는 앱 리포트 '계산 기준'의 출처 줄에 그대로 보입니다. `calculation_note`는 `null`입니다
+(칸은 옛 앱을 위해 남김 — 예전엔 팀 내부 메모가 들어 있어 리포트에 보였음, DECISIONS 233).
 
 ## GET /materials
 
@@ -369,6 +687,7 @@ Authorization: Bearer <token>
 ```json
 {
   "status": "success",
+  "user": {"id": 1, "email": "user@example.com", "nickname": "홍길동", "login_methods": ["password"]},
   "history": [
     {
       "id": 13,
@@ -384,19 +703,124 @@ Authorization: Bearer <token>
       "max_weight_grams": 250,
       "unit": "kg CO2eq",
       "unknown_materials": [],
-      "created_at": "2026-06-04T12:00:00"
+      "created_at": "2026-06-04T12:00:00+00:00"
     }
-  ]
+  ],
+  "has_more": false
 }
 ```
+
+- `user`: 위 '사용자 객체'. 앱 시작 때의 세션 확인·로그인 뒤 동기화가 읽습니다.
+- `history` 는 최근 200건까지, 더 있으면 `has_more: true`(`docs/SCAN_API_CONTRACT.md` 2-4). `created_at` 은 UTC 오프셋을 붙인 ISO 형식입니다.
 
 ## GET /me/history
 
 `/history`와 동일하게 로그인 사용자의 분석 결과를 반환합니다.
 
+## GET /me/closet
+
+로그인한 계정의 옷장 서버 백업을 돌려줍니다(DECISIONS 100·242). 백업이 없으면 오류가 아니라 `version` 0·빈 목록입니다
+(404 는 이 API 가 없는 옛 서버와 구분되지 않아 쓰지 않음).
+
+Header: `Authorization: Bearer <token>`
+
+```json
+{
+  "status": "success",
+  "user_id": 1,
+  "version": 3,
+  "item_count": 2,
+  "items": [{"title": "흰 셔츠", "category": "상의", "materials": {"면": 100.0}, "registeredAt": "2026-10-14T16:55:23.328586"}],
+  "updated_at": "2026-10-14T07:55:23.328586+00:00"
+}
+```
+
+- `items` 는 마지막으로 올린 배열을 **그대로** 돌려줍니다(순서·칸·`null`·숫자 표기 `15.0` 포함). 서버는 옷 내용을 해석하지 않습니다.
+- 백업이 없으면 `version: 0`, `item_count: 0`, `items: []`, `updated_at: null`.
+- 앱은 합치기 전에 `user_id` 가 지금 계정인지 대조합니다.
+- 오류는 401 `AUTH_REQUIRED` 뿐입니다(토큰 없음·형식 오류·만료·폐기).
+
+## POST /me/closet
+
+로그인한 계정의 옷장을 서버에 백업합니다. 폰 우선입니다 — 서버 백업은 '마지막으로 옷장을 바꾼 폰'의 것이고,
+서버에서 받아 기기 옷장을 바꾸는 일은 기기가 이 계정 백업과 처음 맞출 때만 합니다(아래 '앱 연동 메모').
+
+```json
+{
+  "user_id": 1,
+  "base_version": 3,
+  "items": [{"title": "흰 셔츠", "category": "상의", "materials": {"면": 100.0}}]
+}
+```
+
+- `user_id`: 앱이 아는 지금 계정 id(정수 — 문자열 `"1"` 은 422). 토큰 사용자와 다르면 403 — 로그인 전환 틈에 옛 계정 옷장이 올라가지 않게.
+- `base_version`: 앱이 마지막으로 맞춘 서버 `version`(처음이면 0, 0 이상 정수).
+- `items`: 옷 객체(`Clothes.toJson`)의 배열, 앱 순서 그대로. 원소가 객체인지만 봅니다.
+
+성공(200):
+
+```json
+{"status": "success", "version": 4, "changed": true, "item_count": 1, "updated_at": "2026-10-14T08:01:02.123456+00:00"}
+```
+
+- 서버가 저장한 글자(`json.dumps(ensure_ascii=False, separators=(',', ':'))`)와 **같은 내용이면 `base_version` 과 상관없이**
+  `changed: false` 이고 `version`·`updated_at` 은 그대로입니다(응답을 잃고 다시 보낸 경우). 백업이 없을 때 `[]` 를 보내면 행을 만들지 않고 `version` 0.
+- 내용이 다르고 `base_version` 이 지금 `version` 과 같으면 `version` +1 로 저장합니다(첫 저장은 1). 다 지운 `[]` 도 바뀐 내용입니다.
+- 내용이 다르고 `base_version` 이 다르면 409(아래).
+
+검사 순서(처음 걸린 것으로 응답): 본문 크기(413 `PAYLOAD_TOO_LARGE` — 사진이 아닌 요청 1MiB) → JSON 해석(422 `VALIDATION_ERROR`)
+→ 세션(401) → 모양(501벌 이상이면 413 `CLOSET_TOO_LARGE`, 그 밖의 모양 오류 422 `VALIDATION_ERROR`) → 주인(403) → 깊이·수·유니코드(422 `CLOSET_INVALID`)
+→ 크기(413 `CLOSET_TOO_LARGE`) → 계정 잠금(그사이 탈퇴했으면 401 "로그인이 만료되었습니다.") → 같은 내용(200 `changed: false`) → 버전(409) → 저장.
+
+| 상태 | error_code | 언제 | `detail` 추가 값 / 앱 처리 |
+| --- | --- | --- | --- |
+| 401 | `AUTH_REQUIRED` | 토큰 없음·형식·만료·폐기, 저장 직전에 계정이 탈퇴로 없어짐 | — / 조용히 멈춤(로그아웃하지 않음) |
+| 403 | `CLOSET_OWNER_MISMATCH` | 본문 `user_id` ≠ 토큰 사용자 | — / 이번 시도만 버림 |
+| 409 | `CLOSET_VERSION_CONFLICT` | 내용이 다르고 `base_version` ≠ 지금 `version` | `current_version` / 같은 목록을 `base_version = current_version` 으로 한 번 더(폰 우선) |
+| 413 | `CLOSET_TOO_LARGE` | 501벌 이상(`reason: too_many_items`, `max_items: 500`), 저장할 글자가 524,288바이트 초과(`reason: too_many_bytes`, `max_bytes: 524288`) | 위 값 / 거절 |
+| 413 | `PAYLOAD_TOO_LARGE` | 본문 1MiB 초과 | — / 거절 |
+| 422 | `VALIDATION_ERROR` | JSON·모양 오류(칸 없음·정수 아님·`base_version` 음수·`items` 가 배열 아님·원소가 객체 아님) | 오류 목록(최대 20, 입력 원문 없음) / 거절 |
+| 422 | `CLOSET_INVALID` | `reason`: `too_deep`(배열을 1단으로 세어 8단 초과 — 옷 한 벌은 3단), `invalid_number`(NaN·Infinity·`1e400`), `invalid_unicode`(짝 없는 서로게이트) | `reason` / 거절 |
+
+- 상한은 500벌·512KB·8단입니다(한 벌 약 0.55~0.7KB, 500벌 약 350KB). 바이트는 서버가 저장할 글자의 UTF-8 길이로 셉니다(한글 3바이트).
+- 서버는 충돌·거절만 로그에 한 줄 남깁니다(`[closet] conflict user=… base=… current=…`, `[closet] rejected user=… reason=… items=…`).
+  성공은 남기지 않고, 옷 내용은 로그·오류 응답 어디에도 싣지 않습니다.
+- 받아들인 한계: 서버 코드는 CHECK 를 어길 값(version 0·음수 개수)을 쓰지 않지만, 그런 버그가 생기면 PostgreSQL 오류 문장
+  ('Failing row contains')에 칸마다 앞 64바이트까지 실립니다. SQLAlchemy 가 붙이는 매개변수는 숨깁니다(`hide_parameters`).
+- 탈퇴(`POST /auth/withdraw`)는 같은 트랜잭션에서 옷장 백업도 지웁니다. 탈퇴와 저장이 겹치면 users 행 잠금 순서대로 — 탈퇴가 먼저면 저장 401,
+  저장이 먼저면 탈퇴가 그 백업까지 지웁니다.
+- 앞으로 옷 형식 번호를 더하면, 그 칸이 없는 옛 백업은 1 로 봅니다(지금은 형식 번호 없음).
+- 출시 때 할 일(DECISIONS 172 — 지금은 문서로만): 쓰기 속도 제한 · 옷 id·형식 번호·판 이력 · 백업 끄기 · 결과를 모르는 업로드 표시 ·
+  사용자 id 보안 저장소 · iOS·Android 기기 이전 표식 · 저장량 추정(1만 명 × 약 70KB × 백업 파일 최대 34벌).
+
+### 앱 연동 메모 (옷장 백업)
+
+앱 세션 몫이고, 줄 번호가 달린 전문은 백엔드 설계안(DECISIONS 242)에 있습니다. 서버를 먼저 배포합니다.
+
+- 응답 분류: 409 `CLOSET_VERSION_CONFLICT` = 충돌 · 401 = 세션 무효(백업은 조용히 멈춤) · 403 `CLOSET_OWNER_MISMATCH` = 이번 시도만 버림 ·
+  그 밖의 403·413·422·400·다른 409 코드·404 를 뺀 4xx = 거절(이번 실행 동안 이 계정 백업 멈춤) · 404·5xx·네트워크·시간 초과 = 못 닿음.
+  `runJsonApiRequest` 를 쓰고 시간 초과는 GET 10초·POST 20초.
+- 기기 상태: 계정마다 키 하나(`closet_backup_state_` + 옷장 키 꼬리)에 `{uid, api, v, h}`. `h` 는 마지막으로 서버와 맞춘 내용의 지문
+  (`saveClothesListFor` 와 같은 `jsonEncode` 문자열의 `'<UTF-8 바이트 수>:<FNV-1a 64비트 16진수>'` — `String.hashCode` 금지).
+  `uid` 가 지금 사용자 id 와 다르거나 `api` 가 지금 주소와 다르면 '맞춘 적 없음'. **계정 옷장 키가 없으면 상태도 없다**(키 없음으로 `[]` 를 만들 때·
+  탈퇴 정리 때 지움, 로그아웃은 남김). 손상된 옷장 값을 만나면(두 경로) 그 주인 상태를 먼저 지워 다음 동기화가 합치기가 되게.
+- 첫 맞춤(상태가 유효하지 않을 때, 스플래시 Valid·로그인 뒤 동기화에서 GET 까지만 기다림): GET → 응답 `user_id` 대조 → 서버 옷을 모두 읽을 수
+  있을 때만 합침 = 지금 기기 목록 + 짝 없는 서버 옷(서버 순서). 짝: `registeredAt` 이 둘 다 있으면 그 문자열과 `savedResultId` 가 모두 같을 때,
+  둘 다 없으면 `jsonEncode(toJson())` 이 같을 때, 한쪽만 있으면 짝 아님(한 벌은 한 번만). 합친 결과를 기기에 저장한 **직후, 업로드보다 먼저**
+  상태 `{uid, api, v: 서버 version, h: 서버 내용 지문}` 을 저장. 그다음 기기가 서버와 다르면 올리고, 409 이면서 합친 뒤 기기 변경이 없으면
+  GET·합치기를 한 번만 더. 새로 들어온 벌 수가 0 보다 크면 '서버 백업에서 옷 N벌을 되살렸어요.' 배너.
+- 업로드: 계정 옷장 저장 성공·첫 맞춤 뒤·ok 뒤 다시 바뀜 때 2초 모아 하나씩. 지금 목록의 지문이 `h` 와 같으면 보내지 않음(켜기만 한 폰은 덮지 않음).
+  ok 면 보낼 때 잡아 둔 주인 상태에 `{v: 응답 version, h: 보낸 지문}`. 409 면 `current_version` 으로 한 번 더, 또 409 면 다음 변경 때.
+- 세션은 있는데 옷장 주인 키가 없으면 저장을 거부(StateError — 공용 칸에 들어가 사라지던 경우).
+- 받아들인 한계: 첫 맞춤은 합집합이라 다른 폰에서(또는 첫 맞춤 전에) 지운 옷이 돌아올 수 있습니다 · 업로드 응답이 시간 초과로 끊긴 사이 다른 폰이 바꾸면
+  이 폰의 다음 업로드가 덮을 수 있습니다 · DB 를 백업으로 복구하면 폰이 다시 바꾸기 전까지 새 폰 복원은 백업 시각 판을 받습니다 ·
+  LAN 개발 서버로 쓰던 폰은 배포 백업 빌드를 깔기 전에 앱을 지우고 새로 깝니다(`user:<id>` 가 서버마다 겹침).
+- 앱 안 개인정보 안내·탈퇴 문구에 '옷장 백업(AWS 호주)'을 넣은 빌드부터 팀 밖에 줍니다(문구는 사용자 확정 뒤).
+
 ## POST /analyze
 
-기존 연동 호환용 API입니다. 소재 혼용률만 받아 탄소배출계수를 계산하고 저장합니다.
+기존 연동 호환용 API입니다. 소재 혼용률만 받아 탄소배출계수를 계산합니다. 로그인하지 않아도 부를 수 있고,
+**이력에 저장하지 않습니다**(2026-08-29 `a1deaf0` 부터 계산 전용 — `tests/test_analysis.py`).
 
 최종 의류 탄소배출량은 무게 정보가 포함된 `POST /api/carbon/calculate`를 사용합니다.
 
@@ -419,10 +843,8 @@ Authorization: Bearer <token>
   (이전에는 무게 없는 소재 계수가 실제 배출량과 같은 이력에 섞였음)
 - 스캔 업로드 상한 **10MB** — 초과 시 413 `PAYLOAD_TOO_LARGE`.
 - 이미지 파트에 **Content-Type 필수** (jpeg/png/webp 외·누락 시 415).
-- `/api/scan`은 파서가 확인한 소재 비율 합계가 정확히 100%일 때만 200을
-  반환합니다. 100%가 아니면 자동 보정하지 않고 422
-  `MATERIAL_EXTRACTION_FAILED`로 반환하며, 200 응답의 `ai_success`는 항상
-  `true`, `analysis_failure_reason`은 `null`입니다.
+- `/api/scan` 응답: 인식된 비율 합이 99.5~100.5를 벗어나면
+  `ai_success=false`, `analysis_failure_reason="RATIO_INCOMPLETE"` (200 유지).
 - 이력 `created_at`은 UTC 오프셋 포함 ISO 형식(`...+00:00`)으로 직렬화.
 - 무게 입력 범위: 1g ~ 100,000g. NaN/Infinity는 비율·무게 모두 400으로 거부.
 - 비밀번호 앞뒤 공백은 가입 시 400으로 거부(저장·검증 모두 입력 원문 사용).
@@ -451,3 +873,154 @@ Authorization: Bearer <token>
   요청도 상한(11MB) 초과 시 413. (buffer-and-replay ASGI 미들웨어)
 - 로그인 실패 기록에 TTL(15분)과 항목 상한(1만 건) 청소 도입 — 저횟수
   기록의 무한 잔류로 인한 메모리 증가 차단.
+
+## 변경 이력 — 2026-10-04 보안 손질 (DECISIONS 139)
+
+- **비밀번호 해시 반복 수 12만 → 60만**(PBKDF2-HMAC-SHA256, OWASP 권장값,
+  `main.PASSWORD_HASH_ITERATIONS`). 저장 형식 `pbkdf2_sha256$<반복>$<salt>$<digest>`
+  는 그대로라 옛 해시도 검증되고, **로그인에 성공하면 지금 반복 수로 다시 저장**
+  (같은 순간 비밀번호 변경이 먼저 커밋됐으면 덮지 않음). 요청·응답 형식은 같음.
+- **CORS 기본값을 '허용 출처 없음'으로**(이전 `*`). 브라우저에서 부를 때만 환경변수
+  `K_DPP_CORS_ORIGINS`(쉼표 구분)에 출처를 적는다. 허용 메서드 GET·POST, 허용 헤더
+  Authorization·Content-Type. 모바일 앱은 CORS 와 무관해 바뀌는 것이 없다.
+- **로그인 IP 기준 추가**: 같은 IP 에서 15분에 30회 로그인 실패(이메일 무관)면 그 창이
+  끝날 때까지 `429 TOO_MANY_ATTEMPTS`("로그인 시도가 너무 많습니다. N분 후 다시 시도해
+  주세요."). 해시 전에 한 번을 미리 세고 성공하면 되돌려 정상 로그인은 세지 않고, 동시에
+  몰아친 요청도 한도만큼만 해시까지 간다. IPv6 는 /64 단위, 공인 주소가 아니면(개발 서버·
+  프록시가 주소를 가린 경우) 적용하지 않는다. 이메일별 5회·60초 잠금은 그대로.
+  두 기록 모두 프로세스 메모리 — 서버 1대·uvicorn 워커 1개 전제.
+- **가입 IP 기준 추가**(DECISIONS 142): `POST /auth/signup` 도 같은 IP 에서 1시간에
+  20회면 첫 시도부터 1시간이 지날 때까지 `429 TOO_MANY_ATTEMPTS`("가입 시도가 너무
+  많습니다. N분 후 다시 시도해 주세요."). 형식 검사(400)를 통과한 시도를 DB 조회·해시
+  전에 세고 성공·이미 가입(409)도 되돌리지 않는다 — 409 가 그 이메일의 가입 여부를
+  알려 주므로. 로그인 IP 기록과 따로 세고, IPv6·공인 주소 처리는 로그인과 같다.
+- **API 문서를 환경변수로 끌 수 있게**(DECISIONS 142): `K_DPP_API_DOCS=off` 면
+  `/docs`·`/redoc`·`/openapi.json` 이 404. 값이 없으면 켬(로컬 기본), on·off·true·false·1·0
+  밖의 값이면 서버가 시작하지 않는다. 배포 서버(`deploy/compose.yaml`)는 끈다.
+
+## 변경 이력 — 2026-10-05 인증 입력 길이 상한
+
+- **가입·로그인·비밀번호 변경·탈퇴 입력에 길이 상한**: 이메일 254자, 비밀번호 128자
+  (변경의 현재·새 비밀번호, 탈퇴 비밀번호 포함), 닉네임 50자. 넘으면 `422 VALIDATION_ERROR`
+  ("요청 형식이 올바르지 않습니다.", 입력 원문은 돌려주지 않음). 앞뒤 공백을 지우기 전
+  글자 수로 센다. 이전에는 본문 상한(11MB)까지 받아 가입 때 그대로 저장·응답했고,
+  로그인에 실패한 이메일은 실패 기록(최대 1만 건)의 키로 메모리에 남았다.
+  422 는 핸들러 전에 나므로 해시·로그인 잠금·IP 한도에 닿지 않는다.
+- **`POST /api/scan` 의 `raw_ocr_text` 폼 필드에도 4000자 상한**: JSON 요청
+  (`/analyze`·`/api/carbon/calculate`)에만 걸려 있던 상한을 폼에도 건다. 넘으면 422
+  `VALIDATION_ERROR`. 앱은 이 필드를 보내지 않는다.
+
+## 변경 이력 — 2026-10-07 사진 분석 하루 상한 (DECISIONS 164)
+
+- **`POST /api/scan` 에 하루 상한**: Google Vision 을 부르는 스캔만 세어 한 계정 하루 20번이면
+  `429 SCAN_DAILY_LIMIT`, 서버 전체 하루 `K_DPP_SCAN_DAILY_MAX` 번이면 `503 SCAN_UNAVAILABLE`.
+  둘 다 다음 한국 자정까지 `detail.retry_after`(초). Vision 을 부르기 직전에 세고 되돌리지 않으며,
+  `raw_ocr_text` 요청·업로드 검사 실패·OCR 또는 라벨 파서 모듈 없음은 세지 않는다. 기록은 프로세스
+  메모리 — 서버 1대·uvicorn 워커 1개 전제, 재시작하면 그날 수가 0 부터.
+- **환경변수 `K_DPP_SCAN_DAILY_MAX`**: 비우면 서버 전체 상한 없음(로컬 기본), 1 이상의 정수가 아니면
+  (공백만 있는 값 포함) 서버가 시작하지 않는다. `deploy/compose.yaml` 은 필수(`deploy/.env.example` 기본 100).
+- 라벨 파서 모듈이 없으면 Vision 을 부르기 **전에** 503 `AI_MODULE_FAILED`(이전에는 Vision 을 부른 뒤).
+- 업로드 파일 이름이 아주 길어도 500 이 나지 않는다 — 임시 파일 확장자를 이름이 아니라 확인한 형식
+  (JPEG·PNG·WEBP)에서 정한다.
+- 앱 변경 없음: 429 는 '사진을 분석하지 못했어요. 직접 입력해 주세요.', 503 은 일시적 문제 문구로
+  직접 입력 시트에 넘어간다(`scan_api_service.dart` 의 상태 코드 분기).
+
+## 변경 이력 — 이메일 인증·비밀번호 찾기 (DECISIONS 144·147·148)
+
+- 새 `POST /auth/email-code`·`POST /auth/password-reset`, `POST /auth/signup` 에 `code` 필수.
+- 번호 6자리·10분·번호당 5번 틀리면 버림 · 같은 이메일 60초 뒤 재요청 · 이메일당 1시간 5회·24시간 10회, IP당 1시간 20회(두 용도 합산) · 서버 전체 하루 발송 상한.
+- 번호는 HMAC-SHA256 값으로만, 프로세스 메모리에 둡니다(키도 서버가 켜질 때 만듦). 서버가 다시 켜지면 받아 둔 번호는 쓸 수 없습니다(다시 받기).
+  서버 1대·uvicorn 워커 1개 전제(DECISIONS 139 와 같음) — 워커를 늘리면 맞는 번호도 틀렸다고 나옵니다.
+- 가입 여부 숨기기: 번호 요청은 늘 같은 응답, 번호 기록은 똑같이 만들고 메일 내용만 다름, 메일은 응답 뒤 발송. 그래서 가입 `409` 는 맞는 번호를 가진 사람만 볼 수 있습니다.
+- 환경변수: `K_DPP_EMAIL_DELIVERY`(비움·`log` = 서버 로그, `smtp` = SMTP 로 발송, 그 밖의 값 = 서버가 시작하지 않음) · `K_DPP_EMAIL_DAILY_MAX` · `smtp` 일 때 필수인 `K_DPP_SMTP_HOST`·`K_DPP_SMTP_PORT`·`K_DPP_SMTP_USERNAME`·`K_DPP_SMTP_PASSWORD_FILE`(배포는 compose secret `smtp_password`)·`K_DPP_EMAIL_FROM`(그때 `K_DPP_EMAIL_DAILY_MAX` 도 필수). 인증 자체를 끄는 설정은 없습니다.
+  배포 서버는 Resend 를 SMTP(587, STARTTLS)로 씁니다(DECISIONS 171). 발송 실패는 응답에 드러나지 않습니다 — 메일은 응답 뒤에 보내고 실패는 서버 로그에만 남습니다.
+- 서버 하루 상한은 UTC 날짜(한국 시각 오전 9시에 바뀜)로, 메일이 실제로 가지 않는 요청(가입 안 된 이메일의 비밀번호 찾기)까지 받아들인 요청을 모두 셉니다 — 실제 발송만 세면 상한 근처에서 가입 여부가 드러나서. 막힌 요청(429·503)은 어떤 한도에도 세지 않습니다.
+- 이메일은 요청 원문 254자까지(넘으면 422 `VALIDATION_ERROR` — 위 '인증 입력 길이 상한'과 같음, 가입·번호 요청·비밀번호 찾기 모두),
+  공백을 지우고 소문자로 바꾼 값도 254자까지(`İ` 처럼 소문자가 더 긴 글자), 제어 문자가 없어야 합니다(아니면 400 `BAD_REQUEST`).
+  ASCII 밖 글자와 `"<>(),;:\[]` 도 400 입니다(아래 '변경 이력 — 인증 메일 SMTP 발송').
+  가입 닉네임과 새 비밀번호(가입·변경·찾기)도 제어 문자면 400. 짝 없는 서로게이트는 길이 상한이 붙은 칸이라 핸들러 전에 422 입니다.
+  번호는 앞뒤 공백을 지우고 봅니다.
+- 비밀번호 찾기 번호는 맞는 순간 사라집니다(같은 번호로 동시에 두 번 재설정할 수 없음 — 그 뒤 서버 오류가 나면 다시 받기).
+- 비밀번호 찾기·변경과 겹친 요청: 옛 비밀번호를 확인하는 동안 다른 요청이 비밀번호를 바꾸면, 그 확인으로는 로그인 토큰을 받지 못하고
+  (`POST /auth/login` 401 — 틀린 비밀번호와 같은 응답) 비밀번호 변경·탈퇴도 하지 못합니다(`POST /auth/password`·`/auth/withdraw` 401
+  "로그인이 만료되었습니다." — 그 세션의 토큰은 이미 지워짐). 그래서 비밀번호 찾기 뒤엔 옛 비밀번호로 만든 토큰이 남지 않습니다.
+- 로컬 서버 로그 예: `[email] #3f9a1c2b | [K-DPP] 가입 인증번호 | 인증번호 123456`(이미 가입된 이메일의 가입 요청은 `인증번호 없음`).
+  서버 로그엔 주소를 남기지 않습니다(DECISIONS 253) — log 모드는 주소 대신 서버를 켤 때마다 바뀌는 지문, 발송 실패 줄은 주소를 `<주소>` 로 가립니다.
+  배포(`smtp`)는 요청마다 보냄(`메일을 보냈습니다(…)`)·실패(`인증 메일 처리 실패(…)`)·안 보냄(`가입되지 않은 이메일이라 메일을 보내지 않았습니다(password_reset)`) 중 한 줄을 남깁니다(DECISIONS 259).
+- 알려진 한계: 남이 내 이메일로 번호를 하루 한도까지 요청하면 그날은 내가 번호를 못 받습니다(이메일 기준 한도의 본래 한계 — 로그인 이메일 잠금과 같은 성격).
+
+## 변경 이력 — 카카오 로그인 (DECISIONS 140·143·152)
+
+- 새 `POST /auth/kakao`(첫 로그인이 곧 가입). 모든 `user` 응답에 `login_methods`, 카카오 계정은 `email: null`.
+- `POST /auth/withdraw`: 카카오 계정은 `password` 대신 `kakao_access_token`, 성공하면 서버가 카카오 연결을 끊음. `POST /auth/password`: 카카오 계정은 400 `PASSWORD_NOT_SET`
+  (둘 다 `docs/SCAN_API_CONTRACT.md` 2-3). 이메일 계정의 요청·응답은 그대로입니다(`user` 칸 하나 추가) — 하나만 바뀝니다:
+  탈퇴 본문에 `password` 가 없거나 `null` 이면 422 대신 400 `BAD_REQUEST`("비밀번호를 입력해 주세요."). 지금 앱은 늘 보내므로 영향이 없습니다.
+- 새 `error_code`: `SOCIAL_TOKEN_INVALID`·`SOCIAL_NICKNAME_REQUIRED`·`SOCIAL_ACCOUNT_MISMATCH`·`SOCIAL_PROVIDER_UNAVAILABLE`·`SOCIAL_LOGIN_UNAVAILABLE`·`PASSWORD_NOT_SET`.
+- 환경변수 `K_DPP_KAKAO_APP_ID`(카카오 앱 ID, 숫자 — 비우면 카카오 로그인이 꺼져 503, 숫자가 아니면 서버가 시작하지 않음). 서버에 두는 카카오 비밀값은 없습니다(어드민 키를 쓰지 않음).
+- DB: `users.email`·`password_hash` 를 비울 수 있게 하되 **둘은 같이 있거나 같이 없습니다**(이메일 계정은 둘 다, 카카오 계정은 둘 다 없음 — 이메일 로그인·비밀번호 찾기가
+  비밀번호 없는 행을 만나지 않게. 나중에 구글 계정에 이메일을 두기로 하면 그때 리비전으로 풂). 소셜 계정 연결 표(제공자·회원번호 → 사용자, 처음부터 구글도 받게)를 Alembic 리비전(`19b7eee3b75c`)으로 더합니다.
+  이 리비전의 downgrade 는 이메일이 없는 사용자(카카오 계정)가 있으면 멈춥니다 — 그 계정을 지울지는 사람이 정합니다.
+- 알려진 한계: 사용자가 카카오 설정에서 우리 앱과의 연결을 끊어도 서버 계정은 남습니다(카카오의 연결 끊기 알림을 받지 않음) — 지우려면 앱에서 탈퇴.
+  탈퇴 확인은 앱이 재인증 로그인(`Prompt.login`)으로 받은 토큰을 보내기로 했지만, 서버는 토큰이 방금 받은 것인지 알 수 없어 그 계정의 유효한 카카오 토큰이면 받습니다
+  — 우리 서버 토큰만 가진 사람은 막지만, 기기에 저장된 카카오 토큰까지 가진 사람은 못 막습니다.
+  카카오 계정에는 '모든 기기 로그아웃'이 없습니다 — 비밀번호 계정은 비밀번호 변경이 다른 기기 토큰을 모두 끊지만, 카카오 계정은 비밀번호 변경이 없고
+  카카오 설정에서 연결을 끊어도 우리 서버 토큰(30일)은 남습니다. 지금은 탈퇴만 모든 토큰을 지웁니다(따로 필요해지면 그때 API 를 더함).
+- 확인하지 못한 것: 연결을 끊었다 다시 이었을 때 카카오 회원번호가 같은지(같으면 예전 계정으로, 다르면 새 계정으로 로그인됨) · 닉네임 동의 항목을 비즈 앱 없이 쓸 수 있는지(카카오 앱 등록 때 확인).
+
+## 변경 이력 — 로그인 토큰 상한 (DECISIONS 160)
+
+- **한 계정의 로그인 토큰은 최근 10개까지**: 이전에는 성공한 로그인이 어떤 한도에도 세지 않아, 비밀번호를 아는 사람(카카오는 유효한 카카오 토큰 하나)이
+  로그인을 되풀이하면 토큰 행이 30일 동안 끝없이 늘었다. 이제 새 토큰을 줄 때(`POST /auth/login`·`/auth/kakao`·`/auth/password`) 그 계정의 만료 토큰을
+  지우고, 최근 9개만 남긴 뒤 새 토큰을 넣는다. 밀려난 기기는 다음 요청에서 401(세션 만료와 같은 처리 — 앱 변경 없음).
+  같은 계정의 동시 로그인은 users 행 잠금으로 차례로 정리돼 10개를 넘지 않는다. 비밀번호 변경은 전처럼 다른 토큰을 모두 지운다.
+- 만료 토큰은 그 계정이 다시 로그인할 때 지운다 — 다시 오지 않는 계정의 만료 토큰(최대 10개)은 남는다.
+
+## 변경 이력 — 탈퇴와 겹친 탄소 계산 (DECISIONS 161)
+
+- **`POST /api/carbon/calculate` 가 이력을 저장하려는 순간 계정이 탈퇴로 없어졌으면 500 대신 401** "로그인이 만료되었습니다."(`AUTH_REQUIRED`):
+  토큰 확인을 통과한 뒤 다른 기기의 탈퇴가 먼저 커밋되면(탈퇴가 users 행을 쥔 동안이면 이력 INSERT 가 기다렸다가) 이력의 외래 키
+  (`fk_analysis_results_user_id_users`)에 걸린다. 이전에는 500 이라 앱이 계정 없는 세션을 그대로 들고 있었다. 저장하지 않는 것은 같다.
+  다른 무결성 오류는 그대로 500. 반대로 계산이 먼저 저장했으면 탈퇴가 기다렸다가 그 이력까지 지운다(계산은 200).
+
+## 변경 이력 — 인증 메일 SMTP 발송 (DECISIONS 171·175)
+
+- 서버가 인증번호 메일을 SMTP 로 실제로 보낼 수 있게 됐다(`K_DPP_EMAIL_DELIVERY=smtp`, 배포는 Resend). 응답·오류 코드·`resend_after`
+  는 그대로이고, 메일은 전처럼 응답을 보낸 뒤에 보낸다(발송 실패는 응답에 드러나지 않고 서버 로그에만 남는다).
+- **이메일 형식을 좁힘**: `POST /auth/email-code`·`/auth/signup`·`/auth/password-reset` 의 이메일에 ASCII 밖 글자(한글 주소 등)나
+  주소 문법 글자 `"<>(),;:\[]` 가 있으면 400 `BAD_REQUEST` "올바른 이메일을 입력해 주세요."(앱은 서버 문구를 그대로 보여 주면 됨 —
+  앱 변경 없음). `"v@x.com"`·`v@x.com(1)` 같은 표기는 전에는 통과했는데, 메일 서버로 보낼 때는 모두 같은 `v@x.com` 으로 읽혀
+  이메일당 발송 한도(1시간 5회·24시간 10회)를 표기 수만큼 넘겨 한 메일함에 몰아 보낼 수 있었다. 한글 주소는 메일 서버가
+  SMTPUTF8 을 지원해야만 보내져 200 인데 메일이 오지 않을 수 있었다. 로그인은 바뀌지 않는다(형식 검사를 하지 않음).
+
+## 변경 이력 — AI 통합 (DECISIONS 199·200·210~212)
+
+- 사진 스캔이 AI 담당 기준 커밋(`ai-integration` 1648c38)의 `run_ocr_with_metadata` → `analyze_ocr_result` 를 거친다.
+  OCR 후보끼리 조성이 다르거나 짝 없는 비율 줄이 있으면 AI 가 소재를 확정하지 않는다.
+- **부분 인식은 200 이 아니라 422 `MATERIAL_EXTRACTION_FAILED`**: 이전에는 합계가 100 이 아니면 200 +
+  `ai_success=false`·`analysis_failure_reason="RATIO_INCOMPLETE"` 였는데, 앱이 `ai_success` 를 읽지 않아 성공처럼 보였다.
+  422 `detail.materials` 는 늘 `{}`, `parser_error_code`·`warnings` 를 더했다. 앱은 422 를 전처럼 소재 직접 입력으로 보낸다.
+- 200 응답에 `warnings`(`list[str]`)를 더했다. AI 의 `confidence`·`parse_evidence`·`ocr` 는 넣지 않는다.
+- **Vision 시간 초과는 504 `OCR_TIMEOUT`**(앱에 시간 초과 안내가 이미 있음). 나머지 Vision 실패는 전처럼 502.
+- 분석 함수(`analyze_ocr_result`)를 불러오지 못하면 OCR·파서 모듈 없음과 같이 Vision 전에 503 `AI_MODULE_FAILED`(세지 않음).
+- `raw_ocr_text` 요청은 전처럼 AI 파서(`parse_label`)로 바로 파싱한다 — 같은 422·`warnings` 규칙.
+
+## 변경 이력 — 사진 업로드가 아닌 요청의 본문 상한 (DECISIONS 244)
+
+- **사진 업로드(multipart/form-data)가 아닌 요청은 본문 1MiB 까지**: JSON 이거나 Content-Type 이 없는 요청이 1MiB 를 넘으면
+  413 `PAYLOAD_TOO_LARGE` "요청이 너무 큽니다. 사진 업로드가 아닌 요청은 1MB 이하여야 합니다."(길이를 밝히지 않은 chunked 요청도
+  받은 바이트로 셈). 이전에는 사진과 같은 11MB 까지 받아, 로그인 없는 `POST /analyze` 에 숫자가 아닌 소재 값 수십만 칸을 넣은
+  요청 한 건이 칸마다 검증 오류를 만들어 서버 메모리를 1GB 넘게 올렸다. 사진 업로드(`POST /api/scan`)의 11MB·문구는 그대로이고,
+  앱의 JSON 요청은 몇 KB 라 앱 변경 없음.
+- **`materials` 20개 상한을 칸마다 검증하기 전에 먼저 본다**(`/analyze`·`/api/carbon/calculate`): 422 `VALIDATION_ERROR` 와
+  `detail` 모양(`too_long`, `loc` `["body", "materials"]`)은 같다. 이전에는 칸마다 키·값을 다 검증한 뒤에야 개수를 봐서, 값이 틀린 칸이
+  21개 이상이면 칸별 오류(앞 20개)가 나왔는데 이제는 개수 오류 하나만 나온다.
+
+## 변경 이력 — 옷장 서버 백업 (DECISIONS 100·242)
+
+- **`GET /me/closet`·`POST /me/closet` 을 더했다**: 로그인한 계정의 옷장을 사용자당 한 행(`closet_snapshots`)에 그대로 보관한다. 정수 `version`
+  으로 충돌을 가리고(내용이 같으면 200 `changed: false`, 다르고 `base_version` 이 옛것이면 409), 상한은 500벌·512KB·8단. 기존 API 는 바뀌지 않는다.
+- 새 `error_code` 넷: `CLOSET_VERSION_CONFLICT`(409)·`CLOSET_OWNER_MISMATCH`(403)·`CLOSET_TOO_LARGE`(413)·`CLOSET_INVALID`(422).
+- **탈퇴가 옷장 백업도 지운다**(같은 트랜잭션). 탈퇴 응답은 그대로.
+- Alembic 리비전 `a28c2a50b363`(표 하나 추가 — `19b7eee3b75c` 위). 백업 행이 있으면 downgrade 를 거부한다.
+- DB 오류 문장에 SQL 매개변수를 싣지 않는다(`hide_parameters` — 모든 경로, 동작은 같음).
+- 문서: `GET /history` 예시에 `user`·`has_more`·`+00:00` 을 채우고, 카카오 절의 옛 옷장 주인 메모를 '해결됨'으로 표시했다.

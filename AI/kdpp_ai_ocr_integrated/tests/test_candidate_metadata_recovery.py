@@ -50,7 +50,8 @@ def test_percent_boxes_from_next_numeric_row_are_not_reused():
 def test_two_percent_boxes_on_same_row_remain_evidence():
     candidates = payload_candidates()
     boxes = candidates[0].image_words + (OcrWord('%', 65, 12, 75, 48),)
-    assert sum(word.text == '%' for word in _row_words('95% Polyester', boxes)) == 2
+    # Ambiguous duplicate annotations cannot provide a proven row.
+    assert _row_words('95% Polyester', boxes) == ()
     assert _assess_candidates([replace(c, image_words=boxes) for c in candidates]).status == 'failed'
 
 
@@ -117,3 +118,49 @@ def test_bare_temperature_without_care_context_is_not_dismissed(temperature):
 @pytest.mark.parametrize('temperature', ['10', '30%', '-30', '300%', '30/40%'])
 def test_non_wash_numbers_and_explicit_ratios_remain_rejected(temperature):
     assert _assess_candidates(payload_candidates(temperature=temperature)).status == 'failed'
+
+
+def fenced_caption_candidates(caption_y=30, extra='CAPTION'):
+    raw, layout = payload_candidates()
+    words = tuple(replace(word, top=word.top + 100, bottom=word.bottom + 100)
+                  for word in raw.image_words)
+    words += (OcrWord('MADE', 10, 0, 65, 15), OcrWord('IN', 70, 0, 90, 15),
+              OcrWord('ITALY', 95, 0, 160, 15), OcrWord(extra, 10, caption_y, 90, caption_y + 15),
+              OcrWord('COMPOSITION', 10, 60, 150, 80),
+              OcrWord('MACHINE', 10, 360, 85, 380), OcrWord('WASH', 90, 360, 140, 380))
+    words = tuple(replace(word, vertices=((word.left, word.top), (word.right, word.top),
+                                         (word.right, word.bottom), (word.left, word.bottom)))
+                  for word in words)
+    return _build_payload_candidates('original', OcrPayload(
+        'MADE IN ITALY\nCOMPOSITION\n' + extra + '\n' + raw.text + '\nMACHINE WASH',
+        layout_text='MADE IN ITALY\n' + extra + '\nCOMPOSITION\n' + layout.text + '\nMACHINE WASH',
+        layout_words=words), image_key='same-image', image_variant_key='same-response',
+        image_transform=(1, 0, 0, 0, 1, 0), image_region=(0, 0, 400, 400))
+
+
+def test_shuffled_caption_beyond_literal_fence_and_physical_table_is_metadata():
+    candidates = fenced_caption_candidates()
+    assert candidates[0].parser_status == 'failed'
+    assert _assess_candidates(candidates).status == 'success'
+
+
+def test_large_tilted_care_glyph_cannot_enlarge_the_composition_band():
+    raw, layout = fenced_caption_candidates()
+    boxes = tuple(replace(word, left=4, top=270, right=60, bottom=313,
+                          vertices=((10, 270), (60, 279), (54, 313), (4, 304)))
+                  if word.text == '30' else
+                  replace(word, left=74, top=282, right=300, bottom=355,
+                          vertices=((80, 282), (300, 321), (294, 355), (74, 316)))
+                  if word.text == 'AO' else word for word in raw.image_words)
+    assert _assess_candidates([replace(raw, image_words=boxes),
+                               replace(layout, image_words=boxes)]).status == 'success'
+
+
+@pytest.mark.parametrize('caption_y', [115, 145, 180, 275])
+def test_caption_moved_beyond_fence_in_text_cannot_hide_inside_table(caption_y):
+    assert _assess_candidates(fenced_caption_candidates(caption_y)).status == 'failed'
+
+
+@pytest.mark.parametrize('extra', ['UNKNOWN', 'OLEFIN', 'FAUX', '인조', '未知繊維', '10%'])
+def test_fenced_caption_cannot_hide_unknown_fiber_modifier_or_extra_ratio(extra):
+    assert _assess_candidates(fenced_caption_candidates(extra=extra)).status == 'failed'

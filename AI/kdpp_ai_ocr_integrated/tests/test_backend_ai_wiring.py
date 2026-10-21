@@ -14,11 +14,15 @@ import pytest
 from starlette.datastructures import Headers
 
 from apps.text import ocr_text
+from apps.text.ocr_layout import OcrWord
 from apps.text.parse_label import parse_label
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_ROOT = REPOSITORY_ROOT / "BACKEND"
+# The scan API exposes only `warnings` from the AI metadata (DECISIONS 210): confidence and
+# parse_evidence wait for an agreed scope, and ocr diagnostics stay in server logs.
+INTERNAL_KEYS = {"ocr", "confidence", "parse_evidence"}
 
 
 @pytest.fixture(scope="module")
@@ -129,6 +133,20 @@ def test_scan_label_uses_ai_parser_and_returns_analysis_response(backend_main, s
     assert scan_db.saved == []
 
 
+def test_scan_rejects_unconfirmed_outer_without_using_lining(backend_main, scan_db) -> None:
+    with pytest.raises(HTTPException) as raised:
+        backend_main.scan_label(
+            image=make_upload(), raw_ocr_text="OUTER COTTON 95%\nLINING COTTON 100%",
+            db=scan_db, current_user=SimpleNamespace(id=1),
+        )
+    assert raised.value.status_code == 422
+    assert raised.value.detail["error_code"] == "MATERIAL_EXTRACTION_FAILED"
+    assert not raised.value.detail.get("partial_materials")
+    assert not raised.value.detail.get("materials")
+    assert scan_db.saved == []
+    assert scan_db.committed is False
+
+
 def test_scan_label_runs_ocr_then_ai_parser(backend_main, scan_db, monkeypatch) -> None:
     image = make_upload()
     expected_bytes = image.file.getvalue()
@@ -171,13 +189,13 @@ def test_scan_rejects_conflicting_ocr_candidates_without_saving(
 
     assert raised.value.status_code == 422
     assert raised.value.detail["error_code"] == "MATERIAL_EXTRACTION_FAILED"
-    assert raised.value.detail["ocr"]["conflicting_parts"] == ["generic"]
-    assert raised.value.detail["confidence"]["ocr"] == "low"
+    assert "generic:ambiguous_composition_candidates" in raised.value.detail["warnings"]
+    assert not INTERNAL_KEYS & raised.value.detail.keys()
     assert scan_db.saved == []
     assert scan_db.committed is False
 
 
-def test_scan_preserves_successful_ocr_metadata_without_saving(
+def test_scan_returns_successful_ocr_materials_without_internal_metadata(
     backend_main, scan_db, monkeypatch,
 ) -> None:
     monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_args: object())
@@ -193,20 +211,75 @@ def test_scan_preserves_successful_ocr_metadata_without_saving(
     )
 
     assert response["materials"] == {"cotton": 80, "polyester": 20}
-    assert response["parse_evidence"]["composition_status"] == "confirmed"
-    assert response["confidence"]["ocr"] == "high"
-    assert response["ocr"]["source"] == "original"
-    assert response["ocr"]["candidate_count"] == 1
-    assert response["ocr"]["attempt_count"] == 1
-    assert response["ocr"]["conflicting_parts"] == []
-    assert response["ocr"]["unpaired_ratio_parts"] == []
-    assert response["ocr"]["width"] == response["ocr"]["height"] == 4
+    assert response["ai_success"] is True
+    assert response["warnings"] == ["composition_part:unidentified"]
+    assert not INTERNAL_KEYS & response.keys()
     assert scan_db.saved == []
     assert scan_db.committed is False
 
 
+@pytest.mark.parametrize("text,code,status_code", [
+    ("OUTER COTTON 100%", "composition_part:outer", 200),
+    ("겉감2 면 100%", "composition_part:outer_2", 200),
+    ("LINING POLYESTER 100%", "composition_part:lining", 200),
+    ("COTTON 100%", "composition_part:unidentified", 200),
+    ("OUTER COTTON 95%\nLINING POLYESTER 100%",
+     "composition_action:retake_composition_region", 422),
+])
+def test_scan_passes_public_guidance_without_internal_metadata_or_saving(
+    backend_main, scan_db, monkeypatch, text, code, status_code,
+) -> None:
+    reading = ocr_text.OcrResult(text, ocr_text.OcrMetadata(
+        source="original", confidence="medium", candidate_count=1,
+        image_format="JPEG", width=4, height=4,
+        attempts=(ocr_text.OcrAttempt("original", "success", 0, False),), attempt_count=1,
+    ))
+    monkeypatch.setattr(backend_main, "run_ocr", lambda *_args, **_kwargs: reading)
+    arguments = dict(
+        image=make_upload(), raw_ocr_text=None, db=scan_db,
+        current_user=SimpleNamespace(id=1),
+    )
+    if status_code == 422:
+        with pytest.raises(HTTPException) as raised:
+            backend_main.scan_label(**arguments)
+        assert raised.value.status_code == 422
+        payload = raised.value.detail
+        assert payload["materials"] == {}
+        assert not any(warning.startswith("composition_part:") for warning in payload["warnings"])
+    else:
+        payload = backend_main.scan_label(**arguments)
+        assert payload["materials"]
+    assert code in payload["warnings"]
+    assert not INTERNAL_KEYS & payload.keys()
+    assert scan_db.saved == []
+    assert scan_db.committed is False
+
+
+def test_scan_reports_available_review_without_exposing_options_or_saving(
+    backend_main, scan_db, monkeypatch,
+) -> None:
+    monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_args: object())
+    monkeypatch.setattr(
+        ocr_text, "_run_google_ocr",
+        lambda *_args, **_kwargs: ocr_text.OcrPayload(
+            "MATERIAL\nCOTTON 80%\nPOLYESTER 20%\nCUSTOMFIBER 60%\nPOLYESTER 40%",
+            layout_words=(OcrWord("MATERIAL", 0, 0, 4, 1),),
+        ),
+    )
+    with pytest.raises(HTTPException) as raised:
+        backend_main.scan_label(
+            image=make_upload(), raw_ocr_text=None, db=scan_db,
+            current_user=SimpleNamespace(id=1),
+        )
+    detail = raised.value.detail
+    assert raised.value.status_code == 422 and detail["materials"] == {}
+    assert "manual_composition_review_required:first_generic" in detail["warnings"]
+    assert not INTERNAL_KEYS & detail.keys()
+    assert scan_db.saved == [] and scan_db.committed is False
+
+
 @pytest.mark.parametrize("ratio_row", ["100%", "100", "50"])
-def test_scan_keeps_unpaired_ratio_evidence_on_material_failure(
+def test_scan_keeps_unpaired_ratio_warning_on_material_failure(
     backend_main, scan_db, monkeypatch, ratio_row,
 ) -> None:
     monkeypatch.setattr(ocr_text, "_get_vision_client", lambda *_args: object())
@@ -226,8 +299,8 @@ def test_scan_keeps_unpaired_ratio_evidence_on_material_failure(
     detail = raised.value.detail
     assert detail["error_code"] == "MATERIAL_EXTRACTION_FAILED"
     assert detail["materials"] == detail["partial_materials"] == {}
-    assert detail["ocr"]["unpaired_ratio_parts"] == ["generic"]
-    assert detail["parse_evidence"]["unpaired_ratio_parts"] == ["generic"]
+    assert "generic:unpaired_ratio_rows" in detail["warnings"]
+    assert not INTERNAL_KEYS & detail.keys()
     assert scan_db.saved == []
     assert scan_db.committed is False
 

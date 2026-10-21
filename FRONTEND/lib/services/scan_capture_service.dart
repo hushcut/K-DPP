@@ -100,9 +100,7 @@ class ScanCaptureService {
 
       final code = e.code.toLowerCase();
       if (code.contains('permission') || code.contains('access')) {
-        return const ScanCaptureFailure(
-          '사진 접근 권한이 꺼져 있어요. 기기 설정에서 K-DPP의 사진 권한을 허용해 주세요.',
-        );
+        return const ScanCaptureFailure('사진 권한이 꺼져 있어요. 기기 설정에서 허용해 주세요.');
       }
 
       return const ScanCaptureFailure('앨범에서 사진을 불러오지 못했어요. 다시 시도해 주세요.');

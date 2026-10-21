@@ -1,7 +1,5 @@
-<<<<<<< HEAD
 # Miscellaneous
 *.class
-=======
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -215,20 +213,17 @@ __marimo__/
 # Miscellaneous
 *.class
 *.lock
->>>>>>> d9f307d730c80e624d750f14c778e03023e7ec56
 *.log
 *.pyc
 *.swp
 .DS_Store
 .atom/
-<<<<<<< HEAD
 .build/
 .buildlog/
 .history
 .svn/
 .swiftpm/
 migrate_working_dir/
-=======
 .buildlog/
 .history
 .svn/
@@ -237,7 +232,6 @@ migrate_working_dir/
 # When unpinning packages, Using lockfiles ensures that failures in PRs are
 # actually due to those PRs, not due to a package being updated.
 !/pubspec.lock
->>>>>>> d9f307d730c80e624d750f14c778e03023e7ec56
 
 # IntelliJ related
 *.iml
@@ -245,7 +239,6 @@ migrate_working_dir/
 *.iws
 .idea/
 
-<<<<<<< HEAD
 # The .vscode folder contains launch configuration and tasks you configure in
 # VS Code which you may wish to be included in version control, so this line
 # is commented out by default.
@@ -271,7 +264,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
-=======
 # Visual Studio Code related
 .classpath
 .project
@@ -411,4 +403,3 @@ app.*.symbols
 .python-version
 .gclient_previous_custom_vars
 .gclient_previous_sync_commits
->>>>>>> d9f307d730c80e624d750f14c778e03023e7ec56

@@ -13,7 +13,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from QA.run_qa_batch import (  # noqa: E402 - 저장소 경로를 먼저 설정한다.
+from QA.run_qa_batch import (
     AnswerCase,
     ApiErrorCode,
     ApiResponseTooLargeError,

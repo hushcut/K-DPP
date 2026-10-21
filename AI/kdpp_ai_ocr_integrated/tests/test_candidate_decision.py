@@ -123,15 +123,14 @@ def test_original_agreement_cannot_erase_source_rejections(monkeypatch, extra_ro
 
 
 @pytest.mark.parametrize('direction', [-90, 90])
-def test_vertical_failed_layout_cannot_poison_complete_raw(monkeypatch, direction):
+def test_rotated_glyphs_without_rotated_rows_remain_unverified(monkeypatch, direction):
     raw = 'POLYESTER 100%\nPOLYESTER 100%'
     layout = 'POLYESTER %\n100\nPOLYESTER %\n100'
     words = tuple(word(text, x, y, direction) for y in [20,80] for text, x in [('POLYESTER',20),('100',60),('%',100)])
-    analysis, result, calls = run_payloads(monkeypatch, [ocr_text.OcrPayload(raw, layout, layout_words=words)])
-    assert analysis['status'] == 'success'
-    assert analysis['materials'] == {'polyester': 100}
-    assert not analysis['ocr']['rejected_composition_parts']
-    assert len(calls) == result.metadata.candidate_count == 1
+    analysis, _result, _calls = run_payloads(monkeypatch, [ocr_text.OcrPayload(raw, layout, layout_words=words), 'SIZE M'])
+    # Turning individual glyph boxes does not turn their physical baselines.
+    assert analysis['status'] == 'failed'
+    assert analysis['materials'] == {}
 
 
 @pytest.mark.parametrize('defect', ['horizontal', 'missing_vertices', 'added_word', 'missing_word', 'changed_ratio', 'missing_numeric_box'])

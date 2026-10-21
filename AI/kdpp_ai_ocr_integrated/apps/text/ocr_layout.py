@@ -105,23 +105,95 @@ def _band_slope(words: list[OcrWord]) -> float:
     return slope if abs(slope) >= 0.015 else 0.0
 
 
-def _vertical_bands(words: list[OcrWord]) -> list[list[OcrWord]]:
+def _vertical_bands(words: list[OcrWord], slope: float = 0.0,
+                    gap_ratio: float = 0.5) -> list[list[OcrWord]]:
     """Separate distant text regions so a folded tag has local angles."""
     bands: list[list[OcrWord]] = []
-    bottoms: list[int] = []
-    heights: list[int] = []
-    for word in sorted(words, key=lambda item: (item.top, item.left)):
+    bottoms: list[float] = []
+    heights: list[float] = []
+
+    def bounds(word):
+        if not slope or len(word.vertices) != 4:
+            return float(word.top), float(word.bottom)
+        values = [y - slope * x for x, y in word.vertices]
+        return min(values), max(values)
+
+    for word in sorted(words, key=lambda item: (bounds(item)[0], item.left)):
+        top, bottom = bounds(word)
+        height = max(1.0, bottom - top)
         if bands:
-            gap = word.top - bottoms[-1]
-            if gap <= 0.5 * min(heights[-1], word.height):
+            gap = top - bottoms[-1]
+            if gap <= gap_ratio * min(heights[-1], height):
                 bands[-1].append(word)
-                bottoms[-1] = max(bottoms[-1], word.bottom)
-                heights[-1] = min(heights[-1], word.height)
+                bottoms[-1] = max(bottoms[-1], bottom)
+                heights[-1] = min(heights[-1], height)
                 continue
         bands.append([word])
-        bottoms.append(word.bottom)
-        heights.append(word.height)
+        bottoms.append(bottom)
+        heights.append(height)
     return bands
+
+
+def _aligned_with_slope(word: OcrWord, slope: float, *, allow_quantisation: bool = False) -> bool:
+    """Check both polygon edges, including boxes too short to set an angle."""
+    if len(word.vertices) != 4:
+        return False
+    (x0, y0), (x1, y1), (x2, y2), (x3, y3) = word.vertices
+    if min(x1 - x0, x2 - x3, y3 - y0, y2 - y1) <= 0:
+        return False
+    # Integer vertices can move an edge one pixel past the angular boundary,
+    # especially on a short glyph. Keep the existing angular tolerance and
+    # bound the additional displacement in pixels on BOTH polygon edges.
+    # Extra tolerance cannot establish a flat or opposite edge's direction.
+    return all(abs(dy - slope * dx) <= 0.06 * dx
+               or (allow_quantisation and dy * slope > 0 and abs(dy - slope * dx) <= 0.06 * dx + 1)
+               for dx, dy in ((x1 - x0, y1 - y0), (x2 - x3, y2 - y3)))
+
+
+def _split_tilted_band(words: list[OcrWord], *, allow_quantisation: bool = False) -> list[tuple[list[OcrWord], float]]:
+    """Split a local direction only when every other box is outside its band."""
+    slopes = sorted({value for word in words if (value := _word_slope(word))})
+    choices = {}
+    for slope in slopes:
+        compatible = [word for word in words if _aligned_with_slope(
+            word, slope, allow_quantisation=allow_quantisation)]
+        for region in _vertical_bands(compatible, slope, gap_ratio=2.0):
+            local_slope = _band_slope(region)
+            if not local_slope:
+                continue
+
+            def extent(word):
+                points = word.vertices or ((word.left, word.top), (word.right, word.top),
+                                           (word.right, word.bottom), (word.left, word.bottom))
+                values = [y - local_slope * x for x, y in points]
+                return min(values), max(values)
+
+            low = min(extent(word)[0] for word in region)
+            high = max(extent(word)[1] for word in region)
+            selected = set(region)
+            above, below = [], []
+            for word in words:
+                if word in selected:
+                    continue
+                start, end = extent(word)
+                if end < low - 1:
+                    above.append(word)
+                elif start > high + 1:
+                    below.append(word)
+                else:
+                    break
+            else:
+                choices[frozenset(region)] = (above, region, below, local_slope)
+    # Preserve an existing partition, including ambiguity. Retry at most once
+    # with pixel precision only when the strict geometry found no region.
+    if not choices and not allow_quantisation:
+        return _split_tilted_band(words, allow_quantisation=True)
+    # Competing partitions never get selected by parser success or totals.
+    if len(choices) != 1:
+        return [(words, 0.0)]
+    above, region, below, slope = next(iter(choices.values()))
+    return [(group, _band_slope(group) if group is not region else slope)
+            for group in (above, region, below) if group]
 
 
 def spatial_text_from_words(words: list[OcrWord]) -> str:
@@ -132,13 +204,28 @@ def spatial_text_from_words(words: list[OcrWord]) -> str:
         if not any(_word_slope(word) for word in page_words):
             pages.append(_horizontal_rows(page_words))
             continue
-        bands = _vertical_bands(page_words)
-        slopes = [_band_slope(band) for band in bands]
+        # Partition in the supported reading direction first: distant columns
+        # of one tilted row can occupy disjoint horizontal bands.
+        page_slope = _band_slope(page_words)
+        drift = abs(page_slope) * (max(word.right for word in page_words) - min(word.left for word in page_words))
+        if drift <= median(_projected_height(word, page_slope) for word in page_words):
+            # Small drift already fits the local row grouping. Repartitioning
+            # it could split nearby captions into artificial numeric rows.
+            page_slope = 0.0
+        bands = _vertical_bands(page_words, page_slope)
+        regions = []
+        for band in bands:
+            slope = _band_slope(band)
+            if (not slope and page_slope
+                    and all(_aligned_with_slope(word, page_slope) for word in band)):
+                slope = page_slope
+            regions.extend([(band, slope)] if slope else _split_tilted_band(band))
+        slopes = [slope for _band, slope in regions]
         if not any(slopes):
             pages.append(_horizontal_rows(page_words))
         else:
             pages.append("\n".join(
-                _horizontal_rows(band, slope) for band, slope in zip(bands, slopes)
+                _horizontal_rows(band, slope) for band, slope in regions
             ))
     return "\n".join(pages)
 

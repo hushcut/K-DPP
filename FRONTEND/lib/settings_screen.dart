@@ -7,16 +7,37 @@ import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'material_name_display_provider.dart';
 import 'services/auth_api_service.dart';
+import 'services/kakao_login_service.dart';
 import 'theme/app_palette.dart';
 import 'theme_provider.dart';
+import 'utils/accessibility_announcer.dart';
 import 'utils/session_expiry_handler.dart';
 import 'widgets/app_back_button.dart';
+import 'widgets/app_glass_button.dart';
+import 'widgets/app_banner.dart';
+import 'widgets/kakao_login_button.dart';
 
 /// 사용자·테마 상태를 읽어 설정 메뉴를 구성하고 각 설정 동작을 실행합니다.
 class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({super.key, this.authApiService});
+  const SettingsScreen({
+    super.key,
+    this.authApiService,
+    this.kakaoLoginService,
+  });
 
   final AuthApiService? authApiService;
+
+  /// 카카오 계정의 탈퇴 확인(재로그인)과 로그아웃·탈퇴 뒤 기기의 카카오 토큰 지우기에 씁니다.
+  final KakaoLoginService? kakaoLoginService;
+
+  /// 카카오 계정이면 기기에 저장된 카카오 SDK 토큰을 지웁니다(DECISIONS 183 ⑤).
+  ///
+  /// 기다리지 않습니다 — 카카오가 늦어도 로그아웃·탈퇴 화면이 멈추지 않게. SDK 는 요청이
+  /// 끝날 때 토큰을 지우고, [KakaoLoginService.signOut] 은 실패를 밖으로 내지 않습니다.
+  void _signOutKakaoIfNeeded(bool isKakaoAccount) {
+    if (!isKakaoAccount) return;
+    unawaited((kakaoLoginService ?? KakaoLoginService()).signOut());
+  }
 
   String _themeModeLabel(ThemeMode mode) {
     switch (mode) {
@@ -50,17 +71,19 @@ class SettingsScreen extends StatelessWidget {
       // 저장 실패 시 Provider가 이전 닉네임으로 되돌리므로 재시도만 안내합니다.
       if (!context.mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('닉네임을 저장하지 못했어요. 다시 시도해 주세요.')),
+      AppBanner.of(context).show(
+        '닉네임을 저장하지 못했어요. 다시 시도해 주세요.',
+        kind: AppBannerKind.failure,
       );
       return;
     }
 
     if (!context.mounted) return;
 
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('이 기기에 표시되는 닉네임이 변경되었습니다.')));
+    AppBanner.of(context).show(
+      '이 기기에 표시되는 닉네임이 바뀌었어요.',
+      kind: AppBannerKind.success,
+    );
   }
 
   /// 서버 로그아웃을 시도한 뒤 성공 여부와 관계없이 기기의 세션·사용자 상태를 정리합니다.
@@ -94,13 +117,14 @@ class SettingsScreen extends StatelessWidget {
 
     final provider = context.read<ClosetProvider>();
     final accessToken = provider.accessToken;
-    String? serverLogoutError;
+    final isKakaoAccount = provider.loginMethods.contains(LoginMethod.kakao);
+    bool serverLogoutFailed = false;
     bool localLogoutStorageFailed = false;
 
     // 서버 로그아웃은 최대 15초까지 걸립니다. 그동안 설정 화면이 그대로 눌리면
     // 사용자가 로그아웃을 다시 누르거나, 곧 폐기될 토큰으로 회원 탈퇴를 시작할 수
-    // 있습니다. 그 탈퇴 요청은 401을 받는데 탈퇴 흐름은 401을 '이미 삭제됨'으로
-    // 해석하므로, 계정이 남아 있는데 탈퇴됐다고 안내하게 됩니다.
+    // 있습니다. 그 탈퇴 요청은 401을 받아 탈퇴되지 않은 채 로그인 화면으로 넘어가므로,
+    // 사용자는 비밀번호까지 입력한 탈퇴를 처음부터 다시 해야 합니다.
     final navigator = Navigator.of(context);
     var isProgressVisible = true;
 
@@ -126,10 +150,12 @@ class SettingsScreen extends StatelessWidget {
         await (authApiService ?? AuthApiService()).logout(
           accessToken: accessToken,
         );
-      } on AuthApiException catch (error) {
-        serverLogoutError = error.userMessage;
+      } on AuthApiException {
+        serverLogoutFailed = true;
       }
     }
+
+    _signOutKakaoIfNeeded(isKakaoAccount);
 
     try {
       await provider.logout();
@@ -145,14 +171,14 @@ class SettingsScreen extends StatelessWidget {
 
     Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
 
-    if (serverLogoutError != null || localLogoutStorageFailed) {
+    if (serverLogoutFailed || localLogoutStorageFailed) {
+      // 서버 오류 안내를 이어 붙이면 세 문장까지 길어져 붙이지 않는다(DECISIONS 98).
       final message = localLogoutStorageFailed
-          ? '기기에서는 로그아웃되었지만 저장된 로그인 정보 정리를 완료하지 못했습니다.'
-          : '기기에서는 로그아웃되었지만 서버 연결에 실패했습니다. $serverLogoutError';
+          ? '로그아웃했어요. 일부 정보는 정리하지 못했어요.'
+          : '로그아웃했어요. 서버에는 연결하지 못했어요.';
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      // 로그아웃은 됐지만 일부가 안 됐으므로 실패로 알린다.
+      AppBanner.of(context).show(message, kind: AppBannerKind.failure);
     }
   }
 
@@ -187,7 +213,7 @@ class SettingsScreen extends StatelessWidget {
       return;
     }
 
-    final messenger = ScaffoldMessenger.of(context);
+    final banner = AppBanner.of(context);
     final result = outcome.authResult;
     final newAccessToken = result?.accessToken;
     final expiresInSeconds = result?.expiresInSeconds;
@@ -196,7 +222,7 @@ class SettingsScreen extends StatelessWidget {
       // 서버가 기존 토큰을 이미 폐기했으므로 이 기기 세션도 더는 쓸 수 없습니다.
       await SessionExpiryHandler.handle(
         context,
-        message: '비밀번호는 변경됐지만 새 로그인 정보를 받지 못했습니다. 다시 로그인해 주세요.',
+        message: '비밀번호는 바뀌었어요. 다시 로그인해 주세요.',
       );
       return;
     }
@@ -205,6 +231,8 @@ class SettingsScreen extends StatelessWidget {
       await provider.setAuthenticatedUser(
         nickname: result.user.nickname,
         email: result.user.email,
+        userId: result.user.id,
+        loginMethods: result.user.loginMethods,
         accessToken: newAccessToken,
         expiresInSeconds: expiresInSeconds,
       );
@@ -215,15 +243,16 @@ class SettingsScreen extends StatelessWidget {
       if (!context.mounted) return;
       await SessionExpiryHandler.handle(
         context,
-        message: '비밀번호는 변경됐지만 로그인 정보를 저장하지 못했습니다. 다시 로그인해 주세요.',
+        message: '비밀번호는 바뀌었어요. 다시 로그인해 주세요.',
       );
       return;
     }
 
     if (!context.mounted) return;
 
-    messenger.showSnackBar(
-      const SnackBar(content: Text('비밀번호가 변경되었습니다. 다른 기기에서는 다시 로그인해야 합니다.')),
+    banner.show(
+      '비밀번호가 바뀌었어요. 다른 기기에서는 다시 로그인해야 해요.',
+      kind: AppBannerKind.success,
     );
   }
 
@@ -237,12 +266,18 @@ class SettingsScreen extends StatelessWidget {
       return;
     }
 
+    final isKakaoAccount = provider.loginMethods.contains(LoginMethod.kakao);
+
     final outcome = await showDialog<_AccountActionResult>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => _WithdrawDialog(
         service: authApiService ?? AuthApiService(),
         accessToken: accessToken,
+        // 비밀번호가 없는 계정(카카오)은 비밀번호 대신 카카오 재로그인으로 확인합니다.
+        kakaoLoginService: provider.hasPasswordLogin
+            ? null
+            : kakaoLoginService ?? KakaoLoginService(),
       ),
     );
 
@@ -250,12 +285,21 @@ class SettingsScreen extends StatelessWidget {
 
     if (!context.mounted) return;
 
-    // 탈퇴 흐름에서 401은 계정·토큰이 이미 서버에서 사라졌다는 뜻입니다.
-    // (예: 삭제는 됐는데 응답만 유실돼 재시도한 경우) 세션만 지우면 계정 전용
-    // 옷장이 기기에 남으므로, 성공 흐름과 똑같이 정리합니다.
-    final expiredMessage = outcome.sessionExpiredMessage;
+    // 401은 탈퇴가 끝났다는 증거가 아니므로 로그아웃만 합니다. 앞선 시도의 결과를
+    // 아는 대화상자가 문구를 정하고, 계정이 남아 있을 수 있어 옷장은 지우지 않습니다.
+    if (outcome.sessionExpiredMessage case final message?) {
+      await SessionExpiryHandler.handle(
+        context,
+        message: message,
+        kind: AppBannerKind.failure,
+      );
+      return;
+    }
 
     bool localPurgeFailed = false;
+
+    // 서버가 카카오 연결을 이미 끊었으니 기기에 남은 카카오 토큰도 쓸모가 없습니다.
+    _signOutKakaoIfNeeded(isKakaoAccount);
 
     try {
       await provider.purgeAccountData();
@@ -269,35 +313,31 @@ class SettingsScreen extends StatelessWidget {
 
     Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
 
-    final String message;
+    final message = localPurgeFailed
+        ? '회원 탈퇴가 완료됐어요. 이 기기의 일부 정보는 정리하지 못했어요.'
+        : '회원 탈퇴가 완료됐어요.';
 
-    if (localPurgeFailed) {
-      message = '회원 탈퇴가 완료되었지만 이 기기에 남은 데이터 정리를 마치지 못했습니다.';
-    } else if (expiredMessage != null) {
-      message = '회원 탈퇴가 완료되었습니다. 다시 로그인해 주세요.';
-    } else {
-      message = '회원 탈퇴가 완료되었습니다.';
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    AppBanner.of(context).show(
+      message,
+      kind: localPurgeFailed ? AppBannerKind.failure : AppBannerKind.success,
+    );
   }
 
   // 카메라·앨범 사진과 임시 파일이 어떻게 사용되는지 하단 시트로 안내합니다.
   void _showPrivacyGuide(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final palette = AppPalette.of(context);
-    final backgroundColor = isDark ? const Color(0xFF121212) : Colors.white;
-    final primaryText = palette.textPrimary;
-    final secondaryText = palette.textSecondary;
-
+    // 배경색은 테마(AppTheme.bottomSheetTheme)에 맡기고 글자색은 builder 안에서 읽습니다.
+    // 여는 순간에 정하면 시트가 열린 채 시스템 밝기가 바뀔 때 따라오지 않습니다.
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      backgroundColor: backgroundColor,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (sheetContext) {
+        final palette = AppPalette.of(sheetContext);
+        final primaryText = palette.textPrimary;
+        final secondaryText = palette.textSecondary;
+
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
@@ -442,14 +482,21 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
+  // 카드 색을 Container 로 칠하면 안의 ListTile 누름 효과가 그 아래에 그려져 보이지 않으므로,
+  // 카드 전용 Material 위에 Ink 로 칠해 효과가 위에 보이게 하고 둥근 모서리 밖은 잘라 냅니다.
   Widget _buildCard(List<Widget> children, Color background, Color border) {
-    return Container(
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: border),
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(24),
+      clipBehavior: Clip.antiAlias,
+      child: Ink(
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: border),
+        ),
+        child: Column(children: children),
       ),
-      child: Column(children: children),
     );
   }
 
@@ -457,7 +504,11 @@ class SettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     // 사용자와 테마 Provider를 구독해 변경된 닉네임·화면 모드를 즉시 표시합니다.
     final userName = context.watch<ClosetProvider>().userName;
-    final userEmail = context.watch<ClosetProvider>().userEmail;
+    // 이메일이 없는 계정(카카오)은 기본 이메일 대신 로그인 방법을 보여 줍니다.
+    final accountEmail = context.watch<ClosetProvider>().accountEmail;
+    final accountLabel = accountEmail ?? '카카오 계정';
+    // 비밀번호가 없는 계정(카카오)은 바꿀 비밀번호가 없습니다(서버도 400 PASSWORD_NOT_SET).
+    final hasPasswordLogin = context.watch<ClosetProvider>().hasPasswordLogin;
     final themeMode = context.watch<ThemeProvider>().themeMode;
     final materialNameDisplay = context
         .watch<MaterialNameDisplayProvider>()
@@ -474,7 +525,7 @@ class SettingsScreen extends StatelessWidget {
     final secondaryText = palette.textSecondary;
     final sectionText = isDark
         ? const Color(0xFF9A9A9A)
-        : const Color(0xFF8E8E93);
+        : palette.textSecondary;
     final profileBoxColor = isDark
         ? const Color(0xFF2A2A2E)
         : const Color(0xFFEEF1FF);
@@ -487,7 +538,9 @@ class SettingsScreen extends StatelessWidget {
         scrolledUnderElevation: 0,
         centerTitle: true,
         automaticallyImplyLeading: false,
-        leadingWidth: 52,
+        leadingWidth: AppGlassStyle.leadingWidth,
+        // 누르면 부푸는 유리 버튼이 앱바 아래 경계에서 잘리지 않게 합니다(앱바 기본은 잘라 냄).
+        clipBehavior: Clip.none,
         leading: const Padding(
           padding: EdgeInsets.only(left: 8),
           child: AppBackButton(),
@@ -539,16 +592,27 @@ class SettingsScreen extends StatelessWidget {
                           color: primaryText,
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        userEmail,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: secondaryText,
-                          height: 1.4,
-                        ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          // 이메일이 없는 계정은 카카오 계정이므로 로그인 버튼과 같은 표식을 붙입니다.
+                          if (accountEmail == null) ...[
+                            const KakaoSymbolBadge(),
+                            const SizedBox(width: 6),
+                          ],
+                          Flexible(
+                            child: Text(
+                              accountLabel,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: secondaryText,
+                                height: 1.4,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -571,9 +635,11 @@ class SettingsScreen extends StatelessWidget {
               ),
               Divider(height: 1, color: borderColor),
               _buildMenuTile(
-                icon: Icons.mail_outline,
-                title: '이메일',
-                subtitle: userEmail,
+                icon: accountEmail == null
+                    ? Icons.login_outlined
+                    : Icons.mail_outline,
+                title: accountEmail == null ? '로그인' : '이메일',
+                subtitle: accountLabel,
                 textColor: primaryText,
                 subtitleColor: secondaryText,
                 showChevron: false,
@@ -624,15 +690,17 @@ class SettingsScreen extends StatelessWidget {
           _buildSectionTitle('계정 관리', sectionText),
           _buildCard(
             [
-              _buildMenuTile(
-                icon: Icons.lock_outline,
-                title: '비밀번호 변경',
-                subtitle: '비밀번호를 다시 설정합니다.',
-                textColor: primaryText,
-                subtitleColor: secondaryText,
-                onTap: () => _changePassword(context),
-              ),
-              Divider(height: 1, color: borderColor),
+              if (hasPasswordLogin) ...[
+                _buildMenuTile(
+                  icon: Icons.lock_outline,
+                  title: '비밀번호 변경',
+                  subtitle: '비밀번호를 다시 설정합니다.',
+                  textColor: primaryText,
+                  subtitleColor: secondaryText,
+                  onTap: () => _changePassword(context),
+                ),
+                Divider(height: 1, color: borderColor),
+              ],
               _buildMenuTile(
                 icon: Icons.logout,
                 title: '로그아웃',
@@ -647,7 +715,7 @@ class SettingsScreen extends StatelessWidget {
                 title: '회원 탈퇴',
                 subtitle: '계정을 삭제합니다.',
                 iconColor: Colors.redAccent,
-                textColor: Colors.redAccent,
+                textColor: palette.dangerText,
                 subtitleColor: secondaryText,
                 onTap: () => _confirmWithdraw(context),
               ),
@@ -782,9 +850,11 @@ mixin _AccountActionRunner<T extends StatefulWidget> on State<T> {
   /// 요청을 한 번만 실행하고, 실패 메시지를 대화상자에 표시하도록 돌려줍니다.
   ///
   /// 401만 상위 화면으로 올려 세션 만료로 처리하고 나머지 오류는 여기서 보여 줍니다.
+  /// [describeFailure] 를 주면 서버 오류의 문구를 그 대화상자에 맞게 고릅니다.
   Future<void> runAccountAction({
     required Future<_AccountActionResult> Function() action,
     required void Function(String message) onFailure,
+    String Function(AuthApiException error)? describeFailure,
   }) async {
     if (_isSubmitting) return;
 
@@ -810,7 +880,7 @@ mixin _AccountActionRunner<T extends StatefulWidget> on State<T> {
       setState(() {
         _isSubmitting = false;
       });
-      onFailure(error.userMessage);
+      onFailure(describeFailure?.call(error) ?? error.userMessage);
     } catch (error) {
       if (!mounted) return;
 
@@ -981,10 +1051,17 @@ class _PasswordChangeDialogState extends State<_PasswordChangeDialog>
 
 /// 되돌릴 수 없는 작업임을 알리고 비밀번호를 확인받아 탈퇴를 수행하는 대화상자입니다.
 class _WithdrawDialog extends StatefulWidget {
-  const _WithdrawDialog({required this.service, required this.accessToken});
+  const _WithdrawDialog({
+    required this.service,
+    required this.accessToken,
+    this.kakaoLoginService,
+  });
 
   final AuthApiService service;
   final String accessToken;
+
+  /// 있으면 비밀번호 대신 카카오계정 재로그인으로 확인합니다(비밀번호가 없는 카카오 계정).
+  final KakaoLoginService? kakaoLoginService;
 
   @override
   State<_WithdrawDialog> createState() => _WithdrawDialogState();
@@ -995,6 +1072,20 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
   final TextEditingController _passwordController = TextEditingController();
   String? _errorText;
 
+  /// 앞선 탈퇴 요청이 서버에서 처리됐는지 모르는 채 끝난 적이 있는지 여부입니다.
+  ///
+  /// 400 계열(비밀번호 불일치·잠금·카카오 확인 실패)과 카카오의 502·503 은 서버가 삭제 전에
+  /// 거절한 것이지만, 네트워크·시간 초과·그 밖의 서버 오류는 삭제를 마친 뒤 응답만 잃었을
+  /// 수도 있습니다.
+  bool _earlierAttemptUnresolved = false;
+
+  /// 카카오계정 재로그인 화면이 떠 있는지입니다. 그동안도 대화상자를 닫거나 다시 누를 수 없습니다.
+  bool _isKakaoSigningIn = false;
+
+  bool get _isBusy => isSubmitting || _isKakaoSigningIn;
+
+  bool get _usesKakao => widget.kakaoLoginService != null;
+
   @override
   void dispose() {
     _passwordController.dispose();
@@ -1002,7 +1093,7 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
   }
 
   Future<void> _submit() async {
-    if (isSubmitting) return;
+    if (_isBusy) return;
 
     final password = _passwordController.text;
 
@@ -1011,22 +1102,118 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
       return;
     }
 
+    await _withdraw(
+      () => widget.service.withdraw(
+        accessToken: widget.accessToken,
+        password: password,
+      ),
+    );
+  }
+
+  /// 카카오계정 로그인을 다시 해 받은 새 토큰으로 탈퇴를 확인합니다. 로그인 때 받아 SDK 에
+  /// 저장된 토큰을 쓰면 사용자 입력 없이 탈퇴되므로 늘 새로 받습니다(SCAN_API_CONTRACT 2-3).
+  Future<void> _submitWithKakao() async {
+    if (_isBusy) return;
+
+    setState(() {
+      _isKakaoSigningIn = true;
+      _errorText = null;
+    });
+
+    final String? kakaoAccessToken;
+
+    try {
+      kakaoAccessToken = await widget.kakaoLoginService!.reauthenticate();
+    } on KakaoLoginException catch (error) {
+      debugPrint('탈퇴 확인용 카카오 로그인을 마치지 못했습니다: ${error.cause}');
+
+      if (!mounted) return;
+
+      setState(() => _isKakaoSigningIn = false);
+      _showKakaoError(error.userMessage);
+      return;
+    }
+
+    if (!mounted) return;
+
+    setState(() => _isKakaoSigningIn = false);
+
+    // 카카오 화면에서 취소하면 대화상자를 그대로 둡니다.
+    if (kakaoAccessToken == null) return;
+
+    await _withdraw(
+      () => widget.service.withdrawWithKakao(
+        accessToken: widget.accessToken,
+        kakaoAccessToken: kakaoAccessToken!,
+      ),
+    );
+  }
+
+  /// 카카오 확인에는 입력란이 없어 오류 문장을 따로 읽어 줍니다(입력란 오류처럼).
+  void _showKakaoError(String message) {
+    setState(() => _errorText = message);
+    announceFieldError(context, message);
+  }
+
+  /// 삭제 전에 서버가 거절한 오류인지 — 그러면 다음 401 은 '진행되지 않음'입니다.
+  static bool _rejectedBeforeDeletion(AuthApiException error) {
+    // 카카오 502·503 은 상태 코드가 아니라 error_code 로 봅니다. 본문 없는 프록시 502 는
+    // 결과를 모르는 서버 오류입니다.
+    return error.type == AuthApiErrorType.badRequest ||
+        error.errorCode == AuthErrorCode.socialProviderUnavailable ||
+        error.errorCode == AuthErrorCode.socialLoginUnavailable;
+  }
+
+  static String _describeFailure(AuthApiException error) {
+    return switch (error.errorCode) {
+      AuthErrorCode.socialProviderUnavailable =>
+        '카카오가 응답하지 않아 탈퇴되지 않았어요. 잠시 후 다시 시도해 주세요.',
+      AuthErrorCode.socialLoginUnavailable => '지금은 카카오로 확인할 수 없어 탈퇴되지 않았어요.',
+      _ => error.userMessage,
+    };
+  }
+
+  Future<void> _withdraw(Future<void> Function() request) async {
     await runAccountAction(
       action: () async {
-        await widget.service.withdraw(
-          accessToken: widget.accessToken,
-          password: password,
-        );
+        try {
+          await request();
+        } on AuthApiException catch (error) {
+          // 401은 이 토큰이 서버에 없다는 것만 알려 줍니다. 다른 기기의 비밀번호
+          // 변경·만료로 폐기된 토큰도, 탈퇴로 토큰까지 지워진 계정도 같은 응답을
+          // 받으므로(main.py `get_current_access_token`) 탈퇴됐다고 단정하지 않습니다.
+          if (error.type == AuthApiErrorType.unauthorized) {
+            return _AccountActionResult(
+              sessionExpiredMessage: _earlierAttemptUnresolved
+                  ? '로그인이 만료돼 탈퇴됐는지 확인하지 못했어요. '
+                        '다시 로그인되면 탈퇴를 다시 해 주세요.'
+                  : '로그인이 만료돼 탈퇴되지 않았어요. '
+                        '다시 로그인한 뒤 탈퇴해 주세요.',
+            );
+          }
+
+          if (!_rejectedBeforeDeletion(error)) {
+            _earlierAttemptUnresolved = true;
+          }
+          rethrow;
+        }
         return const _AccountActionResult();
       },
-      onFailure: (message) => setState(() => _errorText = message),
+      describeFailure: _describeFailure,
+      onFailure: (message) {
+        if (_usesKakao) {
+          _showKakaoError(message);
+        } else {
+          setState(() => _errorText = message);
+        }
+      },
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: !isSubmitting,
+      canPop: !_isBusy,
       child: AlertDialog(
         title: const Text('회원 탈퇴'),
         content: SingleChildScrollView(
@@ -1040,38 +1227,73 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
                 style: TextStyle(height: 1.5),
               ),
               const SizedBox(height: 16),
-              _PasswordField(
-                controller: _passwordController,
-                label: '비밀번호 확인',
-                errorText: _errorText,
-                autofocus: true,
-                enabled: !isSubmitting,
-                autofillHints: const [AutofillHints.password],
-                textInputAction: TextInputAction.done,
-                onSubmitted: _submit,
-                onChanged: () {
-                  if (_errorText == null) return;
-                  setState(() => _errorText = null);
-                },
-              ),
+              if (_usesKakao)
+                ..._buildKakaoConfirmation(context)
+              else
+                _PasswordField(
+                  controller: _passwordController,
+                  label: '비밀번호 확인',
+                  errorText: _errorText,
+                  autofocus: true,
+                  enabled: !isSubmitting,
+                  autofillHints: const [AutofillHints.password],
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: _submit,
+                  onChanged: () {
+                    if (_errorText == null) return;
+                    setState(() => _errorText = null);
+                  },
+                ),
             ],
           ),
         ),
         actions: [
           TextButton(
-            onPressed: isSubmitting ? null : () => Navigator.pop(context),
+            onPressed: _isBusy ? null : () => Navigator.pop(context),
             child: const Text('취소'),
           ),
           ElevatedButton(
-            onPressed: isSubmitting ? null : _submit,
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-            child: isSubmitting
+            onPressed: _isBusy
+                ? null
+                : _usesKakao
+                ? _submitWithKakao
+                : _submit,
+            style: ElevatedButton.styleFrom(backgroundColor: AppPalette.danger),
+            child: _isBusy
                 ? const _SubmitProgress()
-                : const Text('탈퇴', style: TextStyle(color: Colors.white)),
+                // 카카오 계정도 화면엔 '탈퇴' 한 단어만 둡니다. 긴 문구는 보통 폭·글자 크기에서도
+                // [취소]와 한 줄에 안 들어가 세로로 쌓였습니다. 카카오 확인은 바로 위 안내문이
+                // 알리고, 낭독기에는 버튼만 골라 들어도 알 수 있게 긴 이름을 남깁니다(DECISIONS 214).
+                : Text(
+                    '탈퇴',
+                    semanticsLabel: _usesKakao ? '카카오로 확인하고 탈퇴' : null,
+                    style: const TextStyle(color: Colors.white),
+                  ),
           ),
         ],
       ),
     );
+  }
+
+  /// 비밀번호 칸 대신 보이는 카카오 확인 안내와, 확인이 실패했을 때의 이유입니다.
+  List<Widget> _buildKakaoConfirmation(BuildContext context) {
+    return [
+      const Text('카카오계정으로 한 번 더 로그인하면 탈퇴돼요.', style: TextStyle(height: 1.5)),
+      if (_errorText case final message?) ...[
+        const SizedBox(height: 12),
+        // Android 는 live region 이라 스스로 읽고, iOS 는 [announceFieldError] 로 읽습니다.
+        Semantics(
+          liveRegion: true,
+          child: Text(
+            message,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.error,
+              height: 1.5,
+            ),
+          ),
+        ),
+      ],
+    ];
   }
 }
 

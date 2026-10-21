@@ -45,9 +45,14 @@ MATERIAL_ALIASES = {
         "全棉",
         "綿",
         "コットン",
+        "bombaž",
+        "قطن",
+        "القطن",
     ],
     "polyester": [
         "polyester",
+        # Project policy (2026-10-12): a complete POLY token means polyester.
+        "poly",
         "poliester",
         "poliéster",
         "polyestere",
@@ -74,6 +79,8 @@ MATERIAL_ALIASES = {
         "滌綸",
         "ポリエステル",
         "ポリエステル繊維",
+        "بوليستر",
+        "البوليستر",
     ],
     "rayon": [
         "rayon",

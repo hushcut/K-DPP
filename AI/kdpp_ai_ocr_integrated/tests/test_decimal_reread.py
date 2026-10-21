@@ -9,7 +9,7 @@ from apps.text.ocr_layout import OcrWord
 from apps.text.ocr_text import OcrPayload, _assess_candidates, _build_payload_candidates
 
 
-def readings(source_text='Polyester 95%\nPolyurethane.5%'):
+def readings(source_text='Polyester 95%\nPolyurethane.5%', *, polygons=False):
     first = (OcrWord('Polyester', 10, 10, 110, 32),
              OcrWord('95', 140, 10, 160, 32), OcrWord('%', 160, 10, 175, 32))
     second = (OcrWord('Polyurethane', 10, 50, 220, 72),
@@ -27,6 +27,13 @@ def readings(source_text='Polyester 95%\nPolyurethane.5%'):
         targets.extend(_build_payload_candidates(name, OcrPayload(
             text, layout_text=text.replace('%', ' %'), layout_words=(first if percent else first[:2]) + second),
             image_variant_key=variant, **common))
+    if polygons:
+        def polygon(candidate):
+            return replace(candidate, image_words=tuple(replace(word, vertices=(
+                (word.left, word.top), (word.right, word.top),
+                (word.right, word.bottom), (word.left, word.bottom),
+            )) for word in candidate.image_words))
+        source, targets = [polygon(c) for c in source], [polygon(c) for c in targets]
     return source, targets
 
 
@@ -49,8 +56,9 @@ def rebuild(candidate):
         image_transform=(1, 0, 0, 0, 1, 0), image_region=candidate.image_region)[0]
 
 
-def test_fused_leading_decimal_requires_independent_explicit_rereads():
-    source, targets = readings()
+@pytest.mark.parametrize('polygons', [False, True])
+def test_fused_leading_decimal_requires_independent_explicit_rereads(polygons):
+    source, targets = readings(polygons=polygons)
     assert all(c.parser_status == 'failed' for c in source)
     assert all(c.parser_status == 'success' for c in targets)
     for c in source:
@@ -67,8 +75,9 @@ def test_fused_leading_decimal_requires_independent_explicit_rereads():
     'moved_confirmation_percent', 'confirmation_ratio_disagrees', 'extra_source_ratio',
     'unknown_material', 'explicit_zero', 'other_decimal', 'second_changed_number',
 ])
-def test_decimal_recovery_keeps_uncertain_evidence(failure):
-    source, targets = readings()
+@pytest.mark.parametrize('polygons', [False, True])
+def test_decimal_recovery_keeps_uncertain_evidence(failure, polygons):
+    source, targets = readings(polygons=polygons)
     if failure == 'single_response':
         targets = [targets[-1]]
     elif failure == 'raw_layout_same_response':
@@ -174,3 +183,83 @@ def test_two_period_artifacts_can_be_resolved_without_changing_two_ratios():
     fused, targets = readings()
     detached, _ = period_readings()
     assert _assess_candidates(fused + detached + targets).status == 'success'
+
+
+@pytest.mark.parametrize('defect', ['displaced_number', 'reversed_name', 'unlocated_percent'])
+def test_missing_unchanged_percent_still_requires_complete_physical_evidence(defect):
+    source, targets = readings(polygons=True)
+    weak = targets[0]
+    if defect == 'displaced_number':
+        words = tuple(replace(w, top=80, bottom=99,
+                              vertices=((w.left, 80), (w.right, 80), (w.right, 99), (w.left, 99)))
+                      if w.text == '95' else w for w in weak.image_words)
+    elif defect == 'reversed_name':
+        words = tuple(replace(w, vertices=((w.right, w.top), (w.left, w.top),
+                                          (w.left, w.bottom), (w.right, w.bottom)))
+                      if w.text == 'Polyester' else w for w in weak.image_words)
+    else:
+        words = tuple(replace(w, text='95%') if w.text == '95' else w for w in weak.image_words)
+    weak = replace(weak, image_words=words)
+    candidates = source + [weak, targets[-1]]
+    assert not same_region_recovery(source[0], targets[-1], 'generic', candidates)
+    assert _assess_candidates(candidates).status == 'failed'
+
+
+def test_missing_unchanged_percent_can_corroborate_but_cannot_be_selected_for_recovery():
+    source, targets = readings(polygons=True)
+    candidates = source + targets
+    assert not same_region_recovery(source[0], targets[0], 'generic', candidates)
+    assert same_region_recovery(source[0], targets[-1], 'generic', candidates)
+    assert _assess_candidates(candidates).best.source == 'material_crop'
+
+
+def test_unchanged_joined_number_percent_also_needs_independent_repaired_row_percent():
+    source, targets = readings(polygons=True)
+    source = [replace(c, image_words=tuple(
+        replace(w, text='95%', right=175, vertices=((140, 10), (175, 10), (175, 32), (140, 32)))
+        if w.text == '95' else w for w in c.image_words if not (w.text == '%' and w.top == 10)
+    )) for c in source]
+    assert same_region_recovery(source[0], targets[-1], 'generic', source + targets)
+    assert _assess_candidates(source + targets).status == 'success'
+
+
+def care_supporter(defect=''):
+    source, targets = readings(polygons=True)
+    weak = targets[0]
+    extras = [('HOW TO WASH', 90), ('주의문구가깨져서읽혔습니다', 130)]
+    if defect == 'no_fence':
+        extras = extras[1:]
+    elif defect == 'before_fence':
+        extras.reverse()
+    elif defect == 'unknown_fiber':
+        extras.append(('OLEFIN', 160))
+    elif defect == 'extra_ratio':
+        extras.append(('10%', 160))
+    words = tuple(OcrWord(text, 10, y, 280, y + 15,
+                          ((10, y), (280, y), (280, y + 15), (10, y + 15))) for text, y in extras)
+    text = weak.text + ''.join('\n' + value for value, _y in extras)
+    weak = rebuild(replace(weak, text=text, image_words=weak.image_words + words,
+                           image_region=(0, 0, 300, 200)))
+    if defect == 'missing_annotation':
+        weak = replace(weak, image_words=tuple(w for w in weak.image_words if w.text != 'HOW TO WASH'))
+    elif defect == 'outside_region':
+        weak = replace(weak, image_region=(0, 0, 300, 100))
+    return source, [weak, targets[-1]]
+
+
+def test_care_fence_allows_only_a_bounded_supporter_with_explicit_repaired_ratio():
+    source, targets = care_supporter()
+    assert targets[0].parser_status == 'success'
+    assert same_region_recovery(source[0], targets[-1], 'generic', source + targets)
+    decision = _assess_candidates(source + targets)
+    assert decision.status == 'success'
+    assert decision.best.source == 'material_crop'
+
+
+@pytest.mark.parametrize('defect', [
+    'no_fence', 'before_fence', 'unknown_fiber', 'extra_ratio', 'missing_annotation', 'outside_region',
+])
+def test_supporter_care_fence_cannot_hide_composition_or_missing_evidence(defect):
+    source, targets = care_supporter(defect)
+    assert not same_region_recovery(source[0], targets[-1], 'generic', source + targets)
+    assert _assess_candidates(source + targets).status == 'failed'

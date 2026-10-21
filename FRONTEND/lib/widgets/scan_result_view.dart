@@ -1,15 +1,17 @@
 import 'package:flutter/material.dart';
 
 import '../models/clothing_type_option.dart';
-import '../services/material_catalog_api_service.dart';
 import '../services/material_catalog_controller.dart';
 import '../theme/app_palette.dart';
 import '../utils/clothing_estimator.dart';
 import '../utils/leading_zero_trimmer.dart';
+import '../utils/percent_limit_formatter.dart';
 import '../utils/scan_calculation_resolver.dart';
+import '../utils/scan_form_validator.dart';
 import 'material_edit_controller.dart';
 import 'material_input_collection.dart';
 import 'material_picker_sheet.dart';
+import 'number_keyboard_toolbar.dart';
 
 /// 스캔한 의류 정보를 검토·수정하고 옷장 저장을 요청하는 결과 폼입니다.
 ///
@@ -58,8 +60,8 @@ class ScanResultView extends StatelessWidget {
   final TextEditingController titleController;
   final ClothingTypeOption selectedClothingType;
   final MaterialInputCollection materialInputs;
-  /// 소재명 추천 목록과 소재 선택창이 함께 쓰는 서버 소재 카탈로그입니다.
-  /// 없으면 추천 목록이 뜨지 않고 선택창 아이콘도 보이지 않습니다.
+  /// 소재 선택창이 쓰는 서버 소재 카탈로그입니다.
+  /// 없으면 선택창 아이콘이 보이지 않습니다.
   final MaterialCatalogController? materialCatalog;
 
   // 원본 스캔의 관리 지침과 소재 구성입니다.
@@ -110,11 +112,13 @@ class ScanResultView extends StatelessWidget {
     final statusColor = isScanFailed ? Colors.orangeAccent : Colors.green;
     final statusIcon = isScanFailed ? Icons.error_outline : Icons.check_circle;
     final statusTitle = isScanFailed ? '스캔 실패' : '스캔 완료!';
+    // 실패 원인은 아래 '직접 입력 모드' 카드만 말합니다. 여기서 원인을 정해 말하면
+    // 인터넷·서버 오류 때 카드와 다른 원인이 됩니다(DECISIONS 207).
     final statusSubtitle = isScanFailed
-        ? 'AI가 라벨을 정확히 인식하지 못했어요. 소재와 혼용률을 직접 입력해 주세요.'
+        ? '소재와 혼용률을 직접 입력해 주세요.'
         : '의류 무게 기준과 분석 결과를 확인해 주세요.';
 
-    return Container(
+    final form = Container(
       color: backgroundColor,
       child: Form(
         key: formKey,
@@ -171,6 +175,7 @@ class ScanResultView extends StatelessWidget {
                       controller: titleController,
                       validator: validateTitle,
                       enabled: !isSaving,
+                      onTapOutside: dismissKeyboardOnTapOutside,
                       style: TextStyle(color: primaryText),
                       decoration: InputDecoration(
                         filled: true,
@@ -190,36 +195,46 @@ class ScanResultView extends StatelessWidget {
                       label:
                           '무게 기준, ${selectedClothingType.label}, ${selectedClothingType.weightDisplayText}',
                       button: true,
-                      child: InkWell(
-                        onTap: isSaving ? null : onSelectClothingType,
-                        borderRadius: BorderRadius.circular(10),
-                        child: InputDecorator(
-                          decoration: InputDecoration(
-                            filled: true,
-                            fillColor: inputFillColor,
-                            labelText: '무게 기준',
-                            labelStyle: TextStyle(color: secondaryText),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(10),
+                      // 입력칸 채움색이 누름 효과를 덮으므로 효과는 칸 위에 겹쳐 그립니다.
+                      child: Stack(
+                        children: [
+                          InputDecorator(
+                            decoration: InputDecoration(
+                              filled: true,
+                              fillColor: inputFillColor,
+                              labelText: '무게 기준',
+                              labelStyle: TextStyle(color: secondaryText),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              prefixIcon: const Icon(Icons.scale_outlined),
+                              suffixIcon: Icon(
+                                Icons.keyboard_arrow_down,
+                                color: secondaryText,
+                              ),
                             ),
-                            prefixIcon: const Icon(Icons.scale_outlined),
-                            suffixIcon: Icon(
-                              Icons.keyboard_arrow_down,
-                              color: secondaryText,
-                            ),
-                          ),
-                          child: ExcludeSemantics(
-                            child: Text(
-                              '${selectedClothingType.label} · ${selectedClothingType.weightDisplayText}',
-                              softWrap: true,
-                              style: TextStyle(
-                                color: primaryText,
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
+                            child: ExcludeSemantics(
+                              child: Text(
+                                '${selectedClothingType.label} · ${selectedClothingType.weightDisplayText}',
+                                softWrap: true,
+                                style: TextStyle(
+                                  color: primaryText,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
                           ),
-                        ),
+                          Positioned.fill(
+                            child: Material(
+                              type: MaterialType.transparency,
+                              child: InkWell(
+                                onTap: isSaving ? null : onSelectClothingType,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -328,8 +343,8 @@ class ScanResultView extends StatelessWidget {
                             color: materialInputs.isEmpty
                                 ? secondaryText
                                 : isTotalValid
-                                ? Colors.green
-                                : Colors.redAccent,
+                                ? palette.successText
+                                : palette.dangerText,
                             fontWeight: FontWeight.w600,
                             fontSize: 13,
                           ),
@@ -368,6 +383,7 @@ class ScanResultView extends StatelessWidget {
                             bottom: index == materialInputs.length - 1 ? 0 : 12,
                           ),
                           child: _buildMaterialRow(
+                            context,
                             index,
                             primaryText: primaryText,
                             secondaryText: secondaryText,
@@ -376,13 +392,27 @@ class ScanResultView extends StatelessWidget {
                         ),
                       ),
                     const SizedBox(height: 14),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: isSaving ? null : onAddMaterial,
-                        icon: const Icon(Icons.add),
-                        label: const Text('소재 추가'),
-                      ),
+                    // 합계가 허용 범위(100.5%)를 넘으면 소재를 더 넣어도 맞출 수 없어 추가를 막습니다.
+                    // 이때는 항상 위의 빨간 안내가 떠 있어 버튼이 꺼진 이유를 보여 줍니다.
+                    ListenableBuilder(
+                      listenable: materialInputs,
+                      builder: (context, _) {
+                        final isTotalOver =
+                            ClothingEstimator.isMaterialsTotalOver(
+                              materialInputs.collectEditedMaterials(),
+                            );
+
+                        return SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: isSaving || isTotalOver
+                                ? null
+                                : onAddMaterial,
+                            icon: const Icon(Icons.add),
+                            label: const Text('소재 추가'),
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ),
@@ -459,6 +489,14 @@ class ScanResultView extends StatelessWidget {
           ),
         ),
       ),
+    );
+
+    // 이 화면은 키보드만큼 줄어든 본문을 채우므로, 맨 아래에 둔 막대가 키보드 바로 위에 놓입니다.
+    return Column(
+      children: [
+        Expanded(child: form),
+        _buildNumberKeyboardToolbar(context),
+      ],
     );
   }
 
@@ -611,10 +649,11 @@ class ScanResultView extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Expanded(
+            // 문장마다 줄을 나눠 한 줄씩 읽히게 합니다. 둘째 줄은 좁은 폰에서도 한 줄에 들도록 짧게 둡니다.
             child: Text(
               isShort
-                  ? '100%까지 ${_formatMaterialGap(amount)}% 부족해요. 저장 전 소재 비율을 조정해 주세요.'
-                  : '100%보다 ${_formatMaterialGap(amount)}% 많아요. 저장 전 소재 비율을 조정해 주세요.',
+                  ? '100%까지 ${_formatMaterialGap(amount)}% 부족해요.\n저장 전 소재 비율을 조정해 주세요.'
+                  : '100%보다 ${_formatMaterialGap(amount)}% 많아요.\n줄여야 저장하거나 소재를 더 추가할 수 있어요.',
               style: TextStyle(color: primaryText, fontSize: 12, height: 1.45),
             ),
           ),
@@ -640,13 +679,15 @@ class ScanResultView extends StatelessWidget {
     if (catalog == null) return;
 
     // 열기 전에 키보드를 내립니다. 그대로 두면 선택창이 닫힐 때 포커스가
-    // 입력란으로 돌아와 키보드와 추천 목록이 다시 뜹니다.
+    // 입력란으로 돌아와 키보드가 다시 뜹니다.
     FocusManager.instance.primaryFocus?.unfocus();
 
+    // 다른 줄에 이미 넣은 소재는 목록에서 뺍니다. 이 줄의 소재는 그대로 보입니다.
     final picked = await showMaterialPickerSheet(
       context: context,
       catalog: catalog,
       initialQuery: item.nameController.text,
+      excludedNames: _materialNamesOfOtherRows(item),
     );
 
     // 선택창이 열린 동안 이 행이 지워졌다면 컨트롤러가 이미 해제됐으므로 쓰지 않습니다.
@@ -658,131 +699,132 @@ class ScanResultView extends StatelessWidget {
     item.nameController.text = picked.nameKo;
   }
 
-  // 소재명 입력(추천 목록·선택창 아이콘)과 함유율 입력, 항목 삭제 버튼으로 한 편집 행을 만듭니다.
+  // 이 줄을 뺀 나머지 줄의 소재명입니다. 줄이 지워져 위치가 바뀌어도 맞게, 번호가 아니라
+  // 컨트롤러 자체로 이 줄을 가립니다.
+  List<String> _materialNamesOfOtherRows(MaterialEditController item) {
+    return [
+      for (var i = 0; i < materialInputs.length; i++)
+        if (!identical(materialInputs[i], item))
+          materialInputs[i].nameController.text,
+    ];
+  }
+
+  // 이 줄보다 앞에 있는 줄들의 소재명입니다. 같은 소재 오류를 뒤 줄에만 보이기 위한 비교 대상이며,
+  // 검증 시점의 글자를 읽도록 매번 새로 모읍니다(앞 줄을 고치면 뒤 줄 오류가 바로 사라집니다).
+  List<String> _materialNamesBeforeRow(MaterialEditController item) {
+    final names = <String>[];
+    for (var i = 0; i < materialInputs.length; i++) {
+      final row = materialInputs[i];
+      if (identical(row, item)) break;
+      names.add(row.nameController.text);
+    }
+    return names;
+  }
+
+  // 함유율 칸에 포커스가 있는 동안 키보드 위에 ∧·∨·[완료] 막대를 그립니다(DECISIONS 177).
+  // 포커스가 바뀔 때마다 FocusManager가 알려 주므로 이 부분만 다시 그립니다.
+  Widget _buildNumberKeyboardToolbar(BuildContext context) {
+    if (!NumberKeyboardToolbar.isNeeded(context)) return const SizedBox.shrink();
+
+    return ListenableBuilder(
+      listenable: FocusManager.instance,
+      builder: (context, _) {
+        final index = _indexOfFocusedPercent();
+        if (index == null) return const SizedBox.shrink();
+
+        return NumberKeyboardToolbar(
+          onPrevious: _focusRowName(materialInputs[index]),
+          onNext: _focusNextRowName(index),
+          onDone: () => FocusManager.instance.primaryFocus?.unfocus(),
+        );
+      },
+    );
+  }
+
+  int? _indexOfFocusedPercent() {
+    for (var i = 0; i < materialInputs.length; i++) {
+      if (materialInputs[i].percentFocusNode.hasFocus) return i;
+    }
+    return null;
+  }
+
+  // 함유율 다음 차례인 다음 행의 소재명으로 포커스를 옮깁니다. 마지막 행이면 null입니다.
+  VoidCallback? _focusNextRowName(int index) {
+    if (index >= materialInputs.length - 1) return null;
+
+    return _focusRowName(materialInputs[index + 1]);
+  }
+
+  // [row] 의 소재명으로 포커스를 옮깁니다. 함유율의 앞 차례는 같은 행 소재명입니다(DECISIONS 23).
+  VoidCallback _focusRowName(MaterialEditController row) {
+    return () {
+      // 그사이 그 행이 지워졌다면 포커스 노드가 이미 해제됐으므로 건드리지 않습니다.
+      if (materialInputs.contains(row)) row.nameFocusNode.requestFocus();
+    };
+  }
+
+  // 소재명 입력(선택창 아이콘)과 함유율 입력, 항목 삭제 버튼으로 한 편집 행을 만듭니다.
   Widget _buildMaterialRow(
+    BuildContext context,
     int index, {
     required Color primaryText,
     required Color secondaryText,
     required Color inputFillColor,
   }) {
     final item = materialInputs[index];
+    final focusNextRowName = _focusNextRowName(index);
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
-          child: RawAutocomplete<MaterialCatalogItem>(
-            textEditingController: item.nameController,
+          child: TextFormField(
+            controller: item.nameController,
             focusNode: item.nameFocusNode,
-            displayStringForOption: (option) => option.nameKo,
-            optionsBuilder: (textEditingValue) {
-              final catalogItems = materialCatalog?.items ?? const [];
-
-              if (catalogItems.isEmpty) {
-                return const Iterable<MaterialCatalogItem>.empty();
-              }
-
-              return catalogItems
-                  .where((option) => option.matches(textEditingValue.text))
-                  .take(8);
-            },
-            onSelected: (option) {
-              // 선택창과 같이 한글 표시명으로 넣습니다.
-              // 텍스트 변경은 materialInputs 리스너가 감지하므로 별도 알림이 필요 없습니다.
-              item.nameController.text = option.nameKo;
-            },
-            fieldViewBuilder:
-                (context, controller, focusNode, onFieldSubmitted) {
-                  return TextFormField(
-                    controller: controller,
-                    focusNode: focusNode,
-                    validator: validateMaterialName,
-                    enabled: !isSaving,
-                    style: TextStyle(color: primaryText, fontSize: 14),
-                    decoration: InputDecoration(
-                      filled: true,
-                      fillColor: inputFillColor,
-                      labelText: '소재명',
-                      hintText: '예: 면',
-                      labelStyle: TextStyle(color: secondaryText),
-                      hintStyle: TextStyle(color: secondaryText),
-                      isDense: true,
-                      contentPadding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-                      // 좁은 화면에서 오류 문구가 한 줄로 잘리지 않게 합니다.
-                      errorMaxLines: 2,
-                      suffixIcon: materialCatalog == null
-                          ? null
-                          : IconButton(
-                              onPressed: isSaving
-                                  ? null
-                                  : () => _pickMaterialFromCatalog(
-                                      context,
-                                      item,
-                                    ),
-                              tooltip: '목록에서 소재 고르기',
-                              icon: Icon(
-                                Icons.format_list_bulleted_rounded,
-                                color: secondaryText,
-                                size: 20,
-                              ),
-                            ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    onFieldSubmitted: (_) => onFieldSubmitted(),
-                  );
-                },
-            optionsViewBuilder: (context, onSelected, options) {
-              final optionList = options.toList(growable: false);
-
-              return Align(
-                alignment: Alignment.topLeft,
-                child: Material(
-                  elevation: 8,
-                  color: inputFillColor,
-                  borderRadius: BorderRadius.circular(10),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      minWidth: 190,
-                      maxWidth: 260,
-                      maxHeight: 260,
-                    ),
-                    child: ListView.separated(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      shrinkWrap: true,
-                      itemCount: optionList.length,
-                      separatorBuilder: (context, index) => Divider(
-                        height: 1,
-                        color: secondaryText.withValues(alpha: 0.16),
-                      ),
-                      itemBuilder: (context, optionIndex) {
-                        final option = optionList[optionIndex];
-
-                        return InkWell(
-                          onTap: () => onSelected(option),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
-                            ),
-                            child: Text(
-                              option.label,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: primaryText,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
+            // 상위 검증(빈 값)을 통과하면 앞 줄과 같은 소재인지 봅니다(면 = 코튼 = cotton).
+            validator: (value) =>
+                validateMaterialName(value) ??
+                ScanFormValidator.validateMaterialNameUnique(
+                  value,
+                  _materialNamesBeforeRow(item),
                 ),
-              );
-            },
+            enabled: !isSaving,
+            // 키보드의 '다음'은 같은 행의 함유율로 옮깁니다. 기본 동작(다음 포커스 대상)은
+            // 목록 아이콘 같은 버튼으로 갈 수 있어 직접 지정합니다.
+            textInputAction: TextInputAction.next,
+            onEditingComplete: item.percentFocusNode.requestFocus,
+            onTapOutside: dismissKeyboardOnTapOutside,
+            style: TextStyle(color: primaryText, fontSize: 14),
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: inputFillColor,
+              labelText: '소재명',
+              hintText: '예: 면',
+              labelStyle: TextStyle(color: secondaryText),
+              hintStyle: TextStyle(color: secondaryText),
+              isDense: true,
+              // 촘촘한 칸도 높이가 48 이 되게 위아래 여백을 정합니다(C59). 최소 높이 제약으로 늘리면
+              // 누를 곳만 커지고 테두리는 43 으로 그려져, ☰ 아이콘 때문에 48 인 칸과 높이가 어긋났습니다.
+              contentPadding: const EdgeInsets.fromLTRB(12, 14.5, 12, 12.5),
+              // 좁은 화면에서 오류 문구가 한 줄로 잘리지 않게 합니다.
+              errorMaxLines: 2,
+              suffixIcon: materialCatalog == null
+                  ? null
+                  : IconButton(
+                      onPressed: isSaving
+                          ? null
+                          : () => _pickMaterialFromCatalog(context, item),
+                      tooltip: '목록에서 소재 고르기',
+                      icon: Icon(
+                        Icons.format_list_bulleted_rounded,
+                        color: secondaryText,
+                        size: 20,
+                      ),
+                    ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
           ),
         ),
         const SizedBox(width: 8),
@@ -790,19 +832,30 @@ class ScanResultView extends StatelessWidget {
           width: 86,
           child: TextFormField(
             controller: item.percentController,
+            focusNode: item.percentFocusNode,
             validator: validateMaterialValue,
             enabled: !isSaving,
+            // Android 키보드의 동작 키도 iOS 막대와 같은 순서로 옮깁니다.
+            // 마지막 행은 '완료'라 기본 동작대로 키보드를 닫습니다.
+            textInputAction: focusNextRowName == null
+                ? TextInputAction.done
+                : TextInputAction.next,
+            onEditingComplete: focusNextRowName,
+            onTapOutside: dismissKeyboardOnTapOutside,
             style: TextStyle(color: primaryText, fontSize: 14),
             textAlign: TextAlign.right,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            inputFormatters: const [LeadingZeroTrimmer()],
+            inputFormatters: const [
+              LeadingZeroTrimmer(),
+              PercentLimitFormatter(),
+            ],
             decoration: InputDecoration(
               filled: true,
               fillColor: inputFillColor,
               suffixText: '%',
               suffixStyle: TextStyle(color: secondaryText),
               isDense: true,
-              contentPadding: const EdgeInsets.fromLTRB(8, 12, 8, 10),
+              contentPadding: const EdgeInsets.fromLTRB(8, 14.5, 8, 12.5),
               errorMaxLines: 2,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),

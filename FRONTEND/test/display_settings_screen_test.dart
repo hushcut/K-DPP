@@ -1,16 +1,21 @@
+import 'dart:ui' show Tristate;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
 import 'package:k_dpp/display_settings_screen.dart';
 import 'package:k_dpp/material_name_display_provider.dart';
 import 'package:k_dpp/models/material_name_display.dart';
+import 'package:k_dpp/navigation_bar_opacity_provider.dart';
 import 'package:k_dpp/settings_screen.dart';
 import 'package:k_dpp/theme_provider.dart';
+import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 
+import 'helpers/app_banner_expect.dart';
 import 'helpers/fake_auth_session_storage.dart';
 import 'helpers/fake_closet_storage.dart';
 
@@ -29,8 +34,14 @@ void main() {
         providers: [
           ChangeNotifierProvider(create: (_) => ThemeProvider()),
           ChangeNotifierProvider.value(value: materialNameDisplayProvider),
+          ChangeNotifierProvider(
+            create: (_) => NavigationBarOpacityProvider(),
+          ),
         ],
-        child: const MaterialApp(home: DisplaySettingsScreen()),
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: DisplaySettingsScreen(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -87,10 +98,115 @@ void main() {
 
     expect(provider.display, MaterialNameDisplay.korean);
     expect(selectedIconOf('한글'), findsOneWidget);
-    expect(
-      find.text('소재 이름 표시 설정을 저장하지 못했어요. 다시 시도해 주세요.'),
-      findsOneWidget,
+    expectAppBanner(
+      tester,
+      '소재 이름 표시 설정을 저장하지 못했어요. 다시 시도해 주세요.',
+      AppBannerKind.failure,
     );
+  });
+
+  // 테마·소재 이름 칸은 테두리 색과 라디오 아이콘으로만 고른 칸을 보여 준다.
+  // 낭독기에는 칸마다 '선택됨' 여부를 알려야 셋 중 무엇이 켜져 있는지 안다.
+  testWidgets('테마·소재 이름 칸은 낭독기에 고른 칸만 선택됐다고 알린다', (tester) async {
+    final semantics = tester.ensureSemantics();
+    await pumpDisplaySettings(tester, MaterialNameDisplayProvider());
+
+    Tristate selectedOf(Pattern label) => find.semantics
+        .byLabel(label)
+        .evaluate()
+        .single
+        .getSemanticsData()
+        .flagsCollection
+        .isSelected;
+
+    // 테마 기본값은 시스템 설정이다.
+    expect(selectedOf('시스템 설정 테마'), Tristate.isTrue);
+    expect(selectedOf('블랙 테마'), Tristate.isFalse);
+    expect(selectedOf('화이트 테마'), Tristate.isFalse);
+
+    await tester.tap(find.text('화이트'));
+    await tester.pumpAndSettle();
+
+    expect(selectedOf('화이트 테마'), Tristate.isTrue);
+    expect(selectedOf('시스템 설정 테마'), Tristate.isFalse);
+
+    await scrollTo(tester, find.text('면 (COTTON) 80%'));
+    expect(selectedOf(RegExp(r'^소재 이름 한글, ')), Tristate.isTrue);
+    expect(selectedOf(RegExp(r'^소재 이름 영문, ')), Tristate.isFalse);
+
+    await tester.tap(find.text('영문'));
+    await tester.pumpAndSettle();
+
+    expect(selectedOf(RegExp(r'^소재 이름 영문, ')), Tristate.isTrue);
+    expect(selectedOf(RegExp(r'^소재 이름 한글, ')), Tristate.isFalse);
+    semantics.dispose();
+  });
+
+  testWidgets('하단 메뉴 불투명도 슬라이더는 85%에서 시작하고, 끌면 바로 반영되며 손을 떼면 저장된다', (
+    tester,
+  ) async {
+    await pumpDisplaySettings(tester, MaterialNameDisplayProvider());
+    await scrollTo(tester, find.text('배경 불투명도'));
+
+    expect(find.text('85%'), findsOneWidget);
+    final slider = find.byType(Slider);
+    expect(tester.widget<Slider>(slider).value, 0.85);
+
+    // 오른쪽 끝까지 끌면 100%다.
+    await tester.drag(slider, const Offset(400, 0));
+    await tester.pumpAndSettle();
+
+    expect(find.text('100%'), findsOneWidget);
+    expect(tester.widget<Slider>(slider).value, 1.0);
+
+    // 새 Provider는 앱을 다시 연 상황이다. 저장소에서 100%를 읽어야 한다.
+    final reopened = NavigationBarOpacityProvider();
+    await reopened.load();
+    expect(reopened.opacity, 1.0);
+  });
+
+  testWidgets('하단 메뉴 불투명도 슬라이더는 50% 아래로 내려가지 않는다', (tester) async {
+    await pumpDisplaySettings(tester, MaterialNameDisplayProvider());
+    await scrollTo(tester, find.text('배경 불투명도'));
+
+    await tester.drag(find.byType(Slider), const Offset(-400, 0));
+    await tester.pumpAndSettle();
+
+    expect(find.text('50%'), findsOneWidget);
+    expect(tester.widget<Slider>(find.byType(Slider)).value, 0.5);
+  });
+
+  testWidgets('하단 메뉴 불투명도 저장에 실패하면 안내하고 이전 값으로 돌아간다', (tester) async {
+    final opacityProvider = NavigationBarOpacityProvider(
+      preferences: _FailingPreferences(),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider(create: (_) => ThemeProvider()),
+          ChangeNotifierProvider(create: (_) => MaterialNameDisplayProvider()),
+          ChangeNotifierProvider.value(value: opacityProvider),
+        ],
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: DisplaySettingsScreen(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await scrollTo(tester, find.text('배경 불투명도'));
+
+    await tester.drag(find.byType(Slider), const Offset(400, 0));
+    await tester.pumpAndSettle();
+
+    expectAppBanner(
+      tester,
+      '하단 메뉴 설정을 저장하지 못했어요. 다시 시도해 주세요.',
+      AppBannerKind.failure,
+    );
+    expect(opacityProvider.opacity, 0.85);
+    expect(find.text('85%'), findsOneWidget);
   });
 
   testWidgets('설정 메뉴의 화면 설정 설명에 소재 이름 표시 언어가 함께 보인다', (tester) async {
@@ -107,7 +223,10 @@ void main() {
           ChangeNotifierProvider(create: (_) => ThemeProvider()),
           ChangeNotifierProvider.value(value: displayProvider),
         ],
-        child: const MaterialApp(home: SettingsScreen()),
+        child: const MaterialApp(
+          builder: AppBannerHost.builder,
+          home: SettingsScreen(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -124,6 +243,11 @@ void main() {
 class _FailingPreferences extends Fake implements SharedPreferencesAsync {
   @override
   Future<void> setString(String key, String value) async {
+    throw StateError('저장소 오류');
+  }
+
+  @override
+  Future<void> setDouble(String key, double value) async {
     throw StateError('저장소 오류');
   }
 }

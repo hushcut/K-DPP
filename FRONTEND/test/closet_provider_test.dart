@@ -46,6 +46,34 @@ void main() {
       expect(provider.currentReportItem!.title, '테스트 셔츠');
     });
 
+    test('빈 옷장의 탄소 합계와 평균 건강도는 0이다', () {
+      final provider = ClosetProvider(storage: FakeClosetStorage());
+
+      expect(provider.totalCarbonFootprint, 0.0);
+      expect(provider.averageHealth, 0.0);
+    });
+
+    test('탄소 합계는 모든 의류의 합, 평균 건강도는 소수점까지 평균이다', () async {
+      final provider = ClosetProvider(storage: FakeClosetStorage());
+      Clothes clothes(String title, int health, double carbonFootprint) {
+        return Clothes(
+          title: title,
+          category: '상의',
+          health: health,
+          materials: {'cotton': 100},
+          careInstruction: '찬물 세탁',
+          carbonFootprint: carbonFootprint,
+        );
+      }
+
+      await provider.addClothes(clothes('집계 셔츠', 81, 2.5));
+      await provider.addClothes(clothes('집계 바지', 20, 4.5));
+
+      expect(provider.totalCarbonFootprint, 7.0);
+      // (81 + 20) / 2 — 정수 나눗셈이면 50 으로 잘린다.
+      expect(provider.averageHealth, 50.5);
+    });
+
     test('selectClothes를 호출하면 currentReportItem이 해당 의류로 바뀐다', () async {
       final provider = ClosetProvider(storage: FakeClosetStorage());
       final target = Clothes(
@@ -793,6 +821,358 @@ void main() {
     });
   });
 
+  // C26: 스캔 저장은 서버 계산을 기다린 뒤 옷장에 넣는다. 그 사이 로그아웃하면 공용 칸에 들어가
+  // 다음에 앱을 켠 이메일 계정 옷장에 합쳐졌다(2026-10-14 실행 확인, DECISIONS 2026-10-14).
+  group('계산을 기다리는 사이 계정이 바뀐 저장', () {
+    Clothes buildClothes(String title) {
+      return Clothes(
+        title: title,
+        category: '상의',
+        health: 80,
+        materials: {'cotton': 100},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: 3.0,
+      );
+    }
+
+    Future<void> logIn(ClosetProvider provider, String email) {
+      return provider.setAuthenticatedUser(
+        nickname: email,
+        email: email,
+        accessToken: 'token-$email',
+        expiresInSeconds: 3600,
+      );
+    }
+
+    Future<List<String>?> titlesFor(FakeClosetStorage storage, String owner) {
+      return storage
+          .loadClothesListOrNullFor(owner)
+          .then((items) => items?.map((item) => item.title).toList());
+    }
+
+    test('주인이 그대로면 지금 옷장에 넣고 true 를 돌려준다', () async {
+      final storage = FakeClosetStorage();
+      final provider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: FakeAuthSessionStorage(),
+      );
+      await logIn(provider, 'a@example.com');
+      final ownerKey = provider.closetOwnerKey;
+
+      final isInCurrentCloset = await provider.addClothesForOwner(
+        ownerKey,
+        buildClothes('A 셔츠'),
+      );
+
+      expect(isInCurrentCloset, isTrue);
+      expect(provider.items.map((item) => item.title), ['A 셔츠']);
+      expect(provider.selectedClothes?.title, 'A 셔츠');
+      expect(await titlesFor(storage, 'a@example.com'), ['A 셔츠']);
+    });
+
+    test('로그아웃했으면 공용 칸이 아니라 원래 계정 옷장에 더하고, 다시 로그인하면 보인다', () async {
+      final storage = FakeClosetStorage();
+      final provider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: FakeAuthSessionStorage(),
+      );
+      await logIn(provider, 'a@example.com');
+      await provider.addClothes(buildClothes('A 원래 옷'));
+      final ownerKey = provider.closetOwnerKey;
+
+      await provider.logout();
+      final isInCurrentCloset = await provider.addClothesForOwner(
+        ownerKey,
+        buildClothes('A 늦은 저장'),
+      );
+
+      expect(isInCurrentCloset, isFalse);
+      expect(provider.items, isEmpty);
+      expect(provider.selectedClothes, isNull);
+      expect(await storage.loadClothesListOrNull(), isNull);
+      expect(await titlesFor(storage, 'a@example.com'), ['A 원래 옷', 'A 늦은 저장']);
+
+      await logIn(provider, 'a@example.com');
+      expect(provider.items.map((item) => item.title), ['A 원래 옷', 'A 늦은 저장']);
+    });
+
+    test('다른 계정이 로그인했으면 그 계정 옷장은 그대로 두고, 앱을 다시 켜도 섞이지 않는다', () async {
+      final storage = FakeClosetStorage();
+      final authStorage = FakeAuthSessionStorage();
+      final provider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: authStorage,
+      );
+      await logIn(provider, 'a@example.com');
+      final ownerKey = provider.closetOwnerKey;
+      await provider.logout();
+      await logIn(provider, 'b@example.com');
+      await provider.addClothes(buildClothes('B 옷'));
+
+      final isInCurrentCloset = await provider.addClothesForOwner(
+        ownerKey,
+        buildClothes('A 늦은 저장'),
+      );
+
+      expect(isInCurrentCloset, isFalse);
+      expect(provider.items.map((item) => item.title), ['B 옷']);
+      expect(provider.selectedClothes?.title, 'B 옷');
+      expect(await titlesFor(storage, 'b@example.com'), ['B 옷']);
+      expect(await titlesFor(storage, 'a@example.com'), ['A 늦은 저장']);
+
+      // 전에는 공용 칸에 들어가 다음 실행에서 B 옷장에 합쳐졌다.
+      final restarted = ClosetProvider(
+        storage: storage,
+        authSessionStorage: authStorage,
+      );
+      await restarted.loadFromStorage();
+      expect(restarted.items.map((item) => item.title), ['B 옷']);
+    });
+
+    test('탈퇴로 지운 계정 옷장은 되살리지 않는다', () async {
+      final storage = FakeClosetStorage();
+      final provider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: FakeAuthSessionStorage(),
+      );
+      await logIn(provider, 'a@example.com');
+      await provider.addClothes(buildClothes('A 원래 옷'));
+      final ownerKey = provider.closetOwnerKey;
+
+      await provider.purgeAccountData();
+      final isInCurrentCloset = await provider.addClothesForOwner(
+        ownerKey,
+        buildClothes('A 늦은 저장'),
+      );
+
+      expect(isInCurrentCloset, isFalse);
+      expect(provider.items, isEmpty);
+      expect(await storage.hasSavedClothesListFor('a@example.com'), isFalse);
+      expect(await storage.loadClothesListOrNull(), isNull);
+    });
+
+    test('로그아웃한 뒤 addClothes 는 공용 칸에 쓰지 않고 실패해 목록을 되돌린다', () async {
+      final storage = FakeClosetStorage();
+      final provider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: FakeAuthSessionStorage(),
+      );
+      await logIn(provider, 'a@example.com');
+      await provider.logout();
+
+      await expectLater(
+        provider.addClothes(buildClothes('늦은 저장')),
+        throwsStateError,
+      );
+
+      expect(provider.items, isEmpty);
+      expect(provider.selectedClothes, isNull);
+      expect(await storage.loadClothesListOrNull(), isNull);
+    });
+
+    test('로그인한 적 없는 옷장은 전처럼 공용 칸에 저장한다', () async {
+      final storage = FakeClosetStorage();
+      final provider = ClosetProvider(storage: storage);
+
+      await provider.addClothes(buildClothes('공용 옷'));
+
+      expect(
+        (await storage.loadClothesListOrNull())?.map((item) => item.title),
+        ['공용 옷'],
+      );
+    });
+  });
+
+  group('이메일이 없는 계정(카카오)', () {
+    Clothes buildClothes(String title) {
+      return Clothes(
+        title: title,
+        category: '상의',
+        health: 80,
+        materials: {'cotton': 100},
+        careInstruction: '찬물 세탁',
+        carbonFootprint: 3.0,
+      );
+    }
+
+    Future<void> signInKakao(ClosetProvider provider, {int userId = 7}) {
+      return provider.setAuthenticatedUser(
+        nickname: '카카오 사용자',
+        email: null,
+        userId: userId,
+        loginMethods: const ['kakao'],
+        accessToken: 'kakao-session-$userId',
+        expiresInSeconds: 3600,
+      );
+    }
+
+    test('사용자 id 로 옷장을 따로 저장해 같은 기기의 다음 이메일 사용자에게 넘기지 않는다', () async {
+      final storage = FakeClosetStorage();
+      final authStorage = FakeAuthSessionStorage();
+      final provider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: authStorage,
+      );
+      final kakaoClothes = buildClothes('카카오 사용자 셔츠');
+
+      await signInKakao(provider);
+      await provider.addClothes(kakaoClothes);
+
+      // 공용 옷장에 저장하면 다음 이메일 세션 복원 때 그 계정 옷장에 합쳐집니다.
+      expect(await storage.hasSavedClothesList(), isFalse);
+
+      await provider.logout();
+      await provider.setAuthenticatedUser(
+        nickname: '홍길동',
+        email: 'honggildong@example.com',
+        userId: 1,
+        loginMethods: const ['password'],
+        accessToken: 'email-session',
+        expiresInSeconds: 3600,
+      );
+      expect(provider.items, isEmpty);
+
+      final restoredEmailProvider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: authStorage,
+      );
+      await restoredEmailProvider.loadFromStorage();
+      expect(restoredEmailProvider.items, isEmpty);
+
+      await provider.logout();
+      await signInKakao(provider);
+      expect(provider.items, [kakaoClothes]);
+
+      // 다른 카카오 계정의 옷장과도 섞이지 않습니다.
+      await provider.logout();
+      await signInKakao(provider, userId: 8);
+      expect(provider.items, isEmpty);
+    });
+
+    test('세션을 복원하면 사용자 id 옷장과 로그인 방법을 다시 불러온다', () async {
+      final storage = FakeClosetStorage();
+      final authStorage = FakeAuthSessionStorage();
+      final provider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: authStorage,
+      );
+      final kakaoClothes = buildClothes('카카오 사용자 니트');
+
+      await signInKakao(provider);
+      await provider.addClothes(kakaoClothes);
+
+      final restoredProvider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: authStorage,
+      );
+      await restoredProvider.loadFromStorage();
+
+      expect(restoredProvider.isAuthenticated, isTrue);
+      expect(restoredProvider.items, [kakaoClothes]);
+      expect(restoredProvider.accountEmail, isNull);
+      expect(restoredProvider.loginMethods, ['kakao']);
+      expect(restoredProvider.hasPasswordLogin, isFalse);
+
+      // 서버 검증 뒤 같은 사용자로 프로필을 다시 맞춰도 옷장은 그대로입니다.
+      await restoredProvider.setUserProfile(
+        nickname: '카카오 사용자',
+        email: null,
+        userId: 7,
+        loginMethods: const ['kakao'],
+      );
+      expect(restoredProvider.items, [kakaoClothes]);
+    });
+
+    test('예전 공용 옷장은 합치지 않고 이메일 계정 몫으로 남긴다', () async {
+      final storage = FakeClosetStorage();
+      final authStorage = FakeAuthSessionStorage();
+      final legacyClothes = buildClothes('계정 도입 전 셔츠');
+      await storage.saveClothesList([legacyClothes]);
+
+      final provider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: authStorage,
+      );
+      await signInKakao(provider);
+      expect(provider.items, isEmpty);
+
+      final restoredProvider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: authStorage,
+      );
+      await restoredProvider.loadFromStorage();
+
+      expect(restoredProvider.items, isEmpty);
+      expect(await storage.loadClothesList(), [legacyClothes]);
+    });
+
+    test('탈퇴하면 사용자 id 옷장을 지운다', () async {
+      final storage = FakeClosetStorage();
+      final provider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: FakeAuthSessionStorage(),
+      );
+
+      await signInKakao(provider);
+      await provider.addClothes(buildClothes('탈퇴 전 셔츠'));
+      expect(storage.savedAccountKeys, hasLength(1));
+
+      await provider.purgeAccountData();
+
+      expect(provider.isAuthenticated, isFalse);
+      expect(storage.savedAccountKeys, isEmpty);
+      expect(await storage.hasSavedClothesList(), isFalse);
+
+      // 같은 카카오 계정으로 다시 로그인하면 서버는 새 계정을 만들지만,
+      // 기기에도 지난 옷장이 남아 있으면 안 됩니다.
+      await signInKakao(provider);
+      expect(provider.items, isEmpty);
+    });
+
+    test('이메일도 사용자 id 도 없는 프로필로는 로그인 상태를 남기지 않는다', () async {
+      final storage = FakeClosetStorage();
+      final authStorage = FakeAuthSessionStorage();
+      final provider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: authStorage,
+      );
+
+      await expectLater(
+        provider.setAuthenticatedUser(
+          nickname: '알 수 없는 사용자',
+          email: null,
+          accessToken: 'unknown-owner-session',
+          expiresInSeconds: 3600,
+        ),
+        throwsStateError,
+      );
+
+      expect(provider.isAuthenticated, isFalse);
+      expect(authStorage.savedSession, isNull);
+    });
+
+    test('로그인 방법이 저장되지 않은 이전 판 세션은 비밀번호 계정으로 본다', () async {
+      final storage = FakeClosetStorage();
+      await storage.saveUserName('홍길동');
+      await storage.saveUserEmail('honggildong@example.com');
+      final authStorage = FakeAuthSessionStorage()
+        ..savedSession = AuthSession(
+          accessToken: 'previous-version-token',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        );
+      final provider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: authStorage,
+      );
+
+      await provider.loadFromStorage();
+
+      expect(provider.isAuthenticated, isTrue);
+      expect(provider.loginMethods, ['password']);
+      expect(provider.hasPasswordLogin, isTrue);
+    });
+  });
+
   group('정렬 기준 저장', () {
     test('기본값은 친환경 순이고 선택하면 저장소에 기록한다', () async {
       final storage = FakeClosetStorage();
@@ -810,7 +1190,10 @@ void main() {
       final storage = FakeClosetStorage();
       await storage.saveClosetSortOption(ClosetSortOption.latest);
 
-      final provider = ClosetProvider(storage: storage);
+      final provider = ClosetProvider(
+        storage: storage,
+        authSessionStorage: FakeAuthSessionStorage(),
+      );
       await provider.loadFromStorage();
 
       expect(provider.closetSortOption, ClosetSortOption.latest);

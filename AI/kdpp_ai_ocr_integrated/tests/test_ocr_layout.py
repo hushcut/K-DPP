@@ -50,6 +50,52 @@ def test_tilted_columns_preserve_each_material_ratio(tilt, scale, offset):
     assert Counter(layout.split()) == Counter(token for w in words for token in w.text.split())
 
 
+@pytest.mark.parametrize("names", [
+    ("COTTON", "POLYESTER", "POLYURETHANE"),
+    ("綿", "ポリエステル", "ポリウレタン"),
+])
+@pytest.mark.parametrize("tilt", [-0.2, -0.12, 0.12, 0.2])
+@pytest.mark.parametrize("scale", [1, 3])
+@pytest.mark.parametrize("offset", [(0, 0), (137, 91)])
+def test_wide_columns_are_partitioned_in_the_supported_reading_direction(names, tilt, scale, offset):
+    words = [value
+             for index, (name, ratio) in enumerate(zip(names, (57, 31, 12)))
+             for value in (
+                 word(name, 20, 300 + index * 40, 30 if len(name) == 1 else 150,
+                      tilt=tilt, scale=scale, offset=offset),
+                 word(str(ratio), 900, 300 + index * 40, 30,
+                      tilt=tilt, scale=scale, offset=offset),
+                 word("%", 935, 300 + index * 40, 15,
+                      tilt=tilt, scale=scale, offset=offset),
+             )]
+    expected = "\n".join(f"{name} {ratio} %" for name, ratio in zip(names, (57, 31, 12)))
+    layout = spatial_text_from_words(words)
+    assert layout == expected
+    assert spatial_text_from_words(list(reversed(words))) == expected
+    assert Counter(layout.split()) == Counter(token for value in words for token in value.text.split())
+    assert parse_label(layout)["materials"] == {"cotton": 57, "polyester": 31, "polyurethane": 12}
+
+
+@pytest.mark.parametrize("defect", ["missing_polygon", "opposite_direction", "flat_box", "degenerate_box"])
+def test_wide_columns_do_not_inherit_an_angle_for_an_unproved_short_box(defect):
+    words = [value
+             for index, (name, ratio) in enumerate(zip(("綿", "ポリエステル", "ポリウレタン"), (57, 31, 12)))
+             for value in (
+                 word(name, 20, 300 + index * 40, 30 if len(name) == 1 else 150),
+                 word(str(ratio), 900, 300 + index * 40, 30),
+                 word("%", 935, 300 + index * 40, 15),
+             )]
+    if defect == "missing_polygon":
+        words[0] = replace(words[0], vertices=())
+    elif defect == "degenerate_box":
+        words[0] = replace(words[0], vertices=((0, 0),) * 4)
+    else:
+        words[0] = word("綿", 20, 300, 30, tilt=0.12 if defect == "opposite_direction" else 0)
+    layout = spatial_text_from_words(words)
+    assert "綿 57 %" not in layout
+    assert Counter(layout.split()) == Counter(token for value in words for token in value.text.split())
+
+
 @pytest.mark.parametrize("seed", range(5))
 def test_layout_is_independent_of_provider_word_order(seed):
     words = composition_words()
@@ -244,3 +290,70 @@ def test_provider_polygon_is_retained_without_reordering_vertices():
     response = SimpleNamespace(full_text_annotation=SimpleNamespace(
         pages=[SimpleNamespace(blocks=[SimpleNamespace(paragraphs=[paragraph])])]))
     assert extract_response_words(response) == (original,)
+
+
+
+def table_with_flat_footer(tilt=-0.2, **kwargs):
+    replacements = {"COTTON": "RAYON", "POLYESTER": "NYLON", "POLYURETHANE": "ACRYLIC",
+                    "51": "62", "46": "23", "3": "15"}
+    words = [replace(value, text=replacements.get(value.text, value.text))
+             for value in composition_words(tilt=tilt, **kwargs)]
+    footer_y = 402 + max(0, tilt) * 370
+    return words + [word("CAPTION", 20, footer_y, tilt=0, **kwargs),
+                    word("DETAILS", 140, footer_y, tilt=0, **kwargs)]
+
+
+@pytest.mark.parametrize("tilt", [-0.2, -0.12, 0.12, 0.2])
+@pytest.mark.parametrize("scale", [1, 2])
+@pytest.mark.parametrize("offset", [(0, 0), (137, 91)])
+def test_local_table_angle_survives_a_differently_oriented_footer(tilt, scale, offset):
+    words = table_with_flat_footer(tilt, scale=scale, offset=offset)
+    layout = spatial_text_from_words(words)
+    assert layout == "OUTER\nRAYON 62 %\nNYLON 23 %\nACRYLIC 15 %\nCAPTION DETAILS"
+    assert Counter(layout.split()) == Counter(token for value in words for token in value.text.split())
+    assert parse_label(layout)["materials"] == {"rayon": 62, "nylon": 23, "acrylic": 15}
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_local_table_partition_does_not_depend_on_annotation_order(seed):
+    words = table_with_flat_footer()
+    expected = spatial_text_from_words(words)
+    Random(seed).shuffle(words)
+    assert spatial_text_from_words(words) == expected
+
+
+@pytest.mark.parametrize("defect", ["unknown", "missing_polygon", "opposing_direction"])
+def test_local_angle_cannot_move_unproved_evidence_out_of_the_table(defect):
+    words = table_with_flat_footer()
+    if defect == "unknown":
+        words.append(word("OLEFIN 10%", 20, 330, tilt=0))
+    elif defect == "missing_polygon":
+        words[2] = replace(words[2], vertices=())
+    else:
+        words[2] = word("62", 320, 300, 30, tilt=0.2)
+    layout = spatial_text_from_words(words)
+    assert Counter(layout.split()) == Counter(token for value in words for token in value.text.split())
+    assert "RAYON 62 %" not in layout
+
+
+def test_rebuilt_local_table_still_rejects_unknown_materials(monkeypatch, tmp_path):
+    words = table_with_flat_footer()
+    words = [replace(value, text="OLEFIN") if value.text == "NYLON" else value for value in words]
+    raw = "OUTER\nRAYON 62%\nOLEFIN 23%\nACRYLIC 15%\nCAPTION DETAILS"
+    result = offline_analysis(monkeypatch, tmp_path, raw, words)
+    assert result["status"] == "failed" and result["materials"] == {}
+
+
+def test_rebuilt_local_table_cannot_override_conflicting_raw_pairs(monkeypatch, tmp_path):
+    raw = "OUTER\nRAYON 23%\nNYLON 62%\nACRYLIC 15%\nCAPTION DETAILS"
+    result = offline_analysis(monkeypatch, tmp_path, raw, table_with_flat_footer())
+    assert result["status"] == "failed" and result["materials"] == {}
+
+
+
+def test_offline_local_table_reconnects_literal_columns(monkeypatch, tmp_path):
+    raw = "OUTER\nRAYON\nNYLON\nACRYLIC\n62%\n23%\n15%\nCAPTION DETAILS"
+    result = offline_analysis(monkeypatch, tmp_path, raw, table_with_flat_footer())
+    assert result["status"] == "success"
+    assert result["materials"] == {"rayon": 62, "nylon": 23, "acrylic": 15}
+    assert result["selected_part"] == "outer"

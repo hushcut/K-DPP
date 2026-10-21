@@ -91,7 +91,7 @@ def test_generic_errors_are_preserved_on_the_independently_located_outer():
     assert 'generic' in source[0].rejected_composition_parts
     assert located_generic_rejection_parts(source[0], source + target) == ('outer',)
     decision = _assess_candidates(source + target)
-    assert decision.status == 'success'
+    assert decision.status == 'failed'
     assert decision.best.selected_part == 'lining'
     assert decision.best.materials == {'polyester': 100}
     assert 'generic' not in decision.rejected_composition_parts
@@ -172,7 +172,7 @@ def test_damaged_upper_heading_ratios_need_independent_part_coordinates():
     source, reread = damaged_upper_headings()
     assert same_region_recovery(source[0], source[1], 'lining', source + reread)
     result = _assess_candidates(source + reread)
-    assert result.status == 'success'
+    assert result.status == 'failed'
     assert result.best.parts['lining'] == {'polyester': 100}
     assert 'lining' not in result.unpaired_ratio_parts
     assert 'outer' in result.rejected_composition_parts

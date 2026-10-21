@@ -141,14 +141,9 @@ def test_irreversible_rejections_do_not_request_extra_calls(monkeypatch, origina
 
     assert calls == [b"original"]
     analysis = analyze_ocr_result(result)
-    if "outer" in result.metadata.conflicting_parts:
-        assert analysis["status"] == "success"
-        assert analysis["selected_part"] == "lining"
-        assert analysis["materials"] == {"polyester": 100}
-        assert "outer" not in analysis["parts"]
-    else:
-        assert analysis["status"] == "failed"
-        assert result.metadata.confidence == "low"
+    assert analysis["status"] == "failed"
+    assert analysis["materials"] == {}
+    assert result.metadata.confidence == "low"
 
 
 def test_recovery_does_not_start_after_total_deadline(monkeypatch):

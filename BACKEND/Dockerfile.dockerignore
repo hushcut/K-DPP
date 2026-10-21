@@ -1,0 +1,20 @@
+# BACKEND/Dockerfile 전용 제외 목록(빌드 문맥 = 저장소 루트).
+# 허용 목록 방식입니다: 모두 뺀 뒤 이미지에 필요한 두 폴더만 다시 넣습니다.
+*
+!BACKEND
+!AI/kdpp_ai_ocr_integrated/apps
+
+# 다시 넣은 폴더 안에서도 비밀값·로컬 DB·가상환경·캐시·테스트는 뺍니다.
+**/.env
+**/.env.*
+**/key.json
+**/*.db
+**/*.db-*
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+BACKEND/tests
+BACKEND/docker
+BACKEND/compose.yaml
+BACKEND/Dockerfile*

@@ -1,7 +1,10 @@
-import json
+"""소재 표의 기대값(서버 소재 표의 원본 목록).
 
-import database
-
+DB 에는 이 모듈이 아니라 migrations/ 의 소재 시드 리비전이 넣는다. 이 목록은
+- tests/test_migrations.py: 마이그레이션이 넣은 소재와 같은지
+- tests/test_material_name_contract.py: 프런트 사본 두 파일과 같은지
+를 대조하는 기준이다. 소재·계수를 바꿀 때는 이 목록과 새 리비전(UPDATE·INSERT)을 함께 고친다.
+"""
 
 TEXTILE_UNIT = "kg CO2eq/kg textile"
 
@@ -141,37 +144,3 @@ MATERIAL_SEEDS = [
         "carbon_factor": 6.0,
     },
 ]
-
-
-def seed_materials():
-    database.ensure_schema()
-    db = database.SessionLocal()
-
-    try:
-        for item in MATERIAL_SEEDS:
-            material = (
-                db.query(database.Material)
-                .filter(database.Material.name_en == item["name_en"])
-                .first()
-            )
-
-            if material is None:
-                material = database.Material(name_en=item["name_en"], name_ko=item["name_ko"])
-                db.add(material)
-
-            material.name_ko = item["name_ko"]
-            material.aliases = json.dumps(item["aliases"], ensure_ascii=False)
-            material.carbon_factor = item["carbon_factor"]
-            material.unit = TEXTILE_UNIT
-
-        db.commit()
-        print("Material seed data is ready.")
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
-
-
-if __name__ == "__main__":
-    seed_materials()

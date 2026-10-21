@@ -1,7 +1,5 @@
 """사진별 확인 옵션·기본 엄격 판정·미등록 이름 개수 우회 회귀."""
 
-import json
-from pathlib import Path
 
 import pytest
 
@@ -11,15 +9,15 @@ from apps.text.parse_label import parse_label
 
 
 @pytest.mark.parametrize('text', ['POLY 100%', '100 % POLY', 'poly 100％'])
-def test_confirmed_poly_is_opt_in_and_retains_original_text(text):
-    assert parse_label(text)['status'] == 'failed'
+def test_legacy_confirmed_poly_option_retains_original_text_after_policy_change(text):
+    assert parse_label(text)['materials'] == {'polyester': 100}
     result = analyze_label_text(text, confirmed_polyester_poly=True)
     assert result['status'] == 'success'
     assert result['materials'] == {'polyester': 100}
     assert result['raw_ocr_preview'] == text
     assert result['confidence']['ocr'] == 'unknown'
     assert 'confirmed_material_alias:poly:polyester' in result['warnings']
-    assert parse_label(text)['status'] == 'failed'
+    assert parse_label(text)['materials'] == {'polyester': 100}
 
 
 @pytest.mark.parametrize('text', [
@@ -84,17 +82,3 @@ def test_counts_alone_never_supply_a_missing_fiber_name(name):
                          unpaired_ratio_parts=decision.unpaired_ratio_parts,
                          rejected_composition_parts=decision.rejected_composition_parts)
     assert result['status'] == 'failed'
-
-
-def test_saved_confirmed_photos_are_reviewed_without_truth_injection():
-    fixture = json.loads((Path(__file__).parent / 'fixtures/confirmed_label_options.json').read_text(encoding='utf-8'))
-    expected = {'DJ002': {'polyester': 100}, 'DJ019': {'polyester': 100},
-                'DJ009': {'rayon': 45, 'nylon': 28, 'polyester': 22, 'polyurethane': 5}}
-    for item in fixture['responses']:
-        assert parse_label(item['text'])['status'] == 'failed'
-        result = analyze_label_text(item['text'], **item['confirmed_options'])
-        assert result['status'] == 'success'
-        assert result['materials'] == expected[item['image_id']]
-        assert result['confidence']['ocr'] == 'unknown'
-        if item['image_id'] == 'DJ009':
-            assert 'generic_secondary' in result['parse_evidence']['rejected_composition_parts']

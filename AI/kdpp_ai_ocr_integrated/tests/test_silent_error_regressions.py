@@ -5,6 +5,7 @@ import pytest
 
 from apps.text import ocr_text
 from apps.text.parse_label import build_line_infos, parse_label
+from part_policy_assertions import assert_selected_part
 
 
 def test_cached_silent_error_cases_fail_safely() -> None:
@@ -155,14 +156,10 @@ def test_orphan_ratio_cannot_be_hidden_by_another_complete_block(text: str) -> N
     result = parse_label(text)
 
     if "LINING" in text:
-        assert result["status"] == "success"
-        assert result["selected_part"] == "lining"
-        assert result["materials"] == {"polyester": 100}
-        assert "generic:unpaired_ratio_rows" in result["warnings"]
-        assert result["parse_evidence"]["observed_ratios"]["generic"] == [100.0]
-    else:
-        assert result["status"] == "failed"
-        assert result["materials"] == {}
+        assert_selected_part(result, 'lining', {'polyester': 100}, unconfirmed='generic')
+        return
+    assert result["status"] == "failed"
+    assert result["materials"] == {}
 
 
 @pytest.mark.parametrize(

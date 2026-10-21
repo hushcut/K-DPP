@@ -28,7 +28,7 @@ extension _ScanCaptureActions on _ScanScreenState {
 
     if (!mounted) return;
 
-    // 분석 중 다른 탭·화면으로 이동했다면 결과를 조용히 정리해,
+    // 분석 중 다른 화면(설정 등)이 위에 쌓였다면 결과를 조용히 정리해,
     // 닫을 수 없는 유형 선택창이 엉뚱한 화면 위에 뜨지 않게 합니다.
     if (!widget.isActive) {
       _returnToScanView();
@@ -69,12 +69,17 @@ extension _ScanCaptureActions on _ScanScreenState {
     if (outcome is ScanAnalysisFailure) {
       // 인증 만료는 수동 입력 대신 세션 정리 후 로그인으로 보내
       // 탄소 계산 경로의 401 처리와 정책을 맞춥니다.
+      // 누른 스캔이 이뤄지지 않았으므로 안내가 아니라 실패로 알립니다(탈퇴 401 과 같음).
       if (outcome.exception.type == ScanApiErrorType.unauthorized &&
           accessToken != null) {
         _updateState(() {
           _isScanning = false;
         });
-        await SessionExpiryHandler.handle(context, message: outcome.userMessage);
+        await SessionExpiryHandler.handle(
+          context,
+          message: outcome.userMessage,
+          kind: AppBannerKind.failure,
+        );
         return;
       }
 
@@ -85,6 +90,9 @@ extension _ScanCaptureActions on _ScanScreenState {
   /// 자동 분석에 실패해도 유형과 소재를 직접 입력할 수 있는 초안을 만듭니다.
   /// 서버가 오류 본문에 부분 인식 결과를 실어 보냈다면 초기값으로 채웁니다.
   /// _isScanning은 유형 선택이 끝날 때까지 유지해 카메라 재초기화를 막습니다.
+  ///
+  /// 실패 이유는 유형 선택 시트 맨 위에 보입니다. 고른 뒤 배너로 띄우면 시트가 먼저 떠
+  /// 실패했다는 말이 없고 '다시 촬영'으로 나가면 끝내 알리지 못했다(DECISIONS 96).
   Future<void> _showManualFallback(ScanApiException exception) async {
     if (!mounted) return;
 
@@ -93,6 +101,7 @@ extension _ScanCaptureActions on _ScanScreenState {
     final selectedType = await _showClothingTypePicker(
       initialSelection: _selectedClothingType,
       discardPrompt: ClothingTypePickerDiscardPrompt.manualAfterFailure,
+      failureMessage: message,
     );
 
     if (!mounted) return;
@@ -112,10 +121,6 @@ extension _ScanCaptureActions on _ScanScreenState {
       isScanFailed: true,
       failureMessage: message,
     );
-
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   /// 유형 선택 취소 시 분석 상태를 지우고 카메라 화면으로 돌아갑니다.
@@ -164,9 +169,8 @@ extension _ScanCaptureActions on _ScanScreenState {
 
     switch (captureResult) {
       case ScanCaptureBlocked(:final message):
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(message)));
+        // '카메라를 준비하고 있어요' — 실패가 아니라 잠시 기다리라는 안내다.
+        AppBanner.of(context).show(message, kind: AppBannerKind.info);
 
         await _cameraLifecycle.initialize();
         return;
@@ -178,9 +182,7 @@ extension _ScanCaptureActions on _ScanScreenState {
         return;
 
       case ScanCaptureFailure(:final message):
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(message)));
+        AppBanner.of(context).show(message, kind: AppBannerKind.failure);
         return;
 
       case ScanCaptureSelected(
@@ -238,9 +240,7 @@ extension _ScanCaptureActions on _ScanScreenState {
         return;
 
       case ScanCaptureFailure(:final message):
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(message)));
+        AppBanner.of(context).show(message, kind: AppBannerKind.failure);
         _cameraLifecycle.startIfNeeded();
         return;
 

@@ -1,15 +1,6 @@
-# K-DPP 공통 스캔 API 계약
-
-> 적용 범위: 이 문서는 IN 및 `kyh/ai`의 기존 스캔 구현을 기록합니다.
-> 최신 `develop`의 확정 계약으로 사용하기 전에는 담당자의
-> [BACKEND/API_CONTRACT.md](../BACKEND/API_CONTRACT.md)와 대조해야 합니다.
-> `develop`과의 메타데이터·오류 응답 차이는 [연동 협의안](AI_DEVELOP_INTEGRATION_PLAN.md)을 참고하세요.
+# K-DPP Frontend Scan API Contract
 
 이 문서는 Flutter 프론트엔드가 FastAPI 백엔드와 스캔/탄소 계산을 연동할 때 기준으로 삼는 계약입니다.
-
-스캔 계약 확인 기준: 2026-10-02, `ai-integration`의 `50b85c1` 및 잔여 숫자 검증 보완.
-실제 응답은 `BACKEND/main.py`의 `scan_label`, `parse_label_materials`,
-`extract_label_input`과 공통 예외 처리기를 기준으로 확인합니다.
 
 ## 실행 주소
 
@@ -50,20 +41,10 @@ Authorization: Bearer <token>
 
 | 필드 | 형식 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `image` | 이미지 파일 | O | JPEG/PNG/WebP 의류 케어 라벨 사진, 최대 10MB |
-| `raw_ocr_text` | 문자열 | X | OCR 테스트용 원문, 최대 4000자 |
+| `image` | image file | O | 의류 케어 라벨 사진 |
+| `raw_ocr_text` | string | X | OCR 테스트용 원문 |
 
-`raw_ocr_text`를 보내도 인증·이미지 첨부·Content-Type·용량 검사는 적용됩니다.
-
-### 성공 응답
-
-HTTP 200은 파서가 성공하고 `parse_evidence.composition_status`가 `confirmed`이며,
-각 소재 비율이 유한한 숫자이고 `0 초과 100 이하`, 합계가 정확히 `100%`일 때만 반환합니다.
-숫자 문자열·불리언·NaN·무한대는 허용하지 않으며, 부족하거나 초과한 합계를 보정하지 않습니다.
-성공 시 `ai_success`는 `true`, `analysis_failure_reason`은 `null`입니다.
-
-아래는 `raw_ocr_text`에 `COTTON 80% POLYESTER 20%`를 보낸 예시입니다.
-사진 OCR 경로에서는 `ocr`에 후보 출처·충돌·미연결 비율·호출 횟수 등의 메타데이터가 추가됩니다.
+### Success Response
 
 ```json
 {
@@ -82,31 +63,11 @@ HTTP 200은 파서가 성공하고 `parse_evidence.composition_status`가 `confi
       "display_name": "면",
       "ratio": 80,
       "is_supported": true
-    },
-    {
-      "original_name": "polyester",
-      "standard_name": "polyester",
-      "display_name": "폴리에스터",
-      "ratio": 20,
-      "is_supported": true
     }
   ],
   "care_instruction": "라벨 표기법에 맞춰 관리하세요.",
   "raw_ocr_preview": "COTTON 80% POLYESTER 20%",
   "warnings": [],
-  "confidence": {
-    "ocr": "unknown",
-    "parser": "high"
-  },
-  "parse_evidence": {
-    "observed_ratios": {"generic": [80.0, 20.0]},
-    "unpaired_ratio_parts": [],
-    "composition_status": "confirmed",
-    "source": "same_line",
-    "ratio_total_before_normalization": 100,
-    "explicit_percent": true
-  },
-  "ocr": {},
   "clothing": {
     "name": "스캔한 의류",
     "category": "상의"
@@ -117,6 +78,14 @@ HTTP 200은 파서가 성공하고 `parse_evidence.composition_status`가 `confi
 ```
 
 스캔 API는 탄소배출량을 계산하거나 저장하지 않습니다. 최종 계산은 사용자가 의류 종류 또는 직접 무게를 선택한 뒤 `/api/carbon/calculate`에서 수행합니다.
+
+200 은 AI 가 소재를 확정했을 때만 나갑니다(2026-10-11부터 — 부분 인식은 422, 2절). `ai_success`·`analysis_failure_reason`
+은 이제 늘 `true`·`null` 입니다.
+
+`warnings`(2026-10-11 추가, 422 `detail` 에도 있음)는 AI 가 붙인 주의 메모 목록입니다. `generic:unpaired_ratio_rows` 같은
+`<부위>:<코드>` 모양의 소재 판정 경고와 "OCR 좌표를 바탕으로 재구성한 줄 순서를 사용했습니다." 같은 한국어 처리 안내가
+섞여 있어, 화면에 보이려면 아는 코드만 문구로 바꾸고 나머지는 무시해야 합니다. **지금 앱은 읽지 않습니다**(표시 여부는 앱 몫 —
+DECISIONS 211). AI 의 `confidence`·`parse_evidence`·`ocr` 는 응답에 없습니다(DECISIONS 210).
 
 ### `material_details`의 프론트 사용 (2026-09-08 추가)
 
@@ -148,9 +117,6 @@ HTTP 200은 파서가 성공하고 `parse_evidence.composition_status`가 `confi
 
 ## 2. 스캔 오류
 
-소재 미인식·조성 충돌·미연결 비율·유효하지 않은 혼용률 합계는 HTTP 422로 반환합니다.
-다음은 `raw_ocr_text`가 `CARE LABEL TEXT`일 때의 소재 추출 실패 예시입니다.
-
 ```json
 {
   "status": "error",
@@ -165,81 +131,84 @@ HTTP 200은 파서가 성공하고 `parse_evidence.composition_status`가 `confi
     "raw_ocr_preview": "CARE LABEL TEXT",
     "ai_success": false,
     "parser_error_code": "composition_not_found",
-    "warnings": [],
-    "confidence": {"ocr": "unknown", "parser": "low"},
-    "parse_evidence": {
-      "observed_ratios": {},
-      "unpaired_ratio_parts": []
-    },
-    "ocr": {}
+    "warnings": []
   }
 }
 ```
 
-### 오류 코드와 프론트 처리
+프론트 주요 분기:
 
-이 표는 현재 통합 브랜치의 스캔 오류 계약입니다.
-`BACKEND/API_CONTRACT.md`와 설명이 다르면 실제 구현을 확인해 두 문서를 함께 맞춥니다.
-프론트는 `error_code`가 아니라 HTTP 상태코드로 오류 유형을 구분합니다.
-따라서 아래에서 같은 HTTP 상태를 쓰는 오류들은 현재 앱에서 같은 안내 흐름을 탑니다.
+> **이 표가 스캔 오류 계약의 단일 출처입니다** (2026-09-08 지정).
+> `BACKEND/API_CONTRACT.md`의 error_code 목록은 백엔드 내부 참고용이며, 두 문서가
+> 어긋나면 이 표가 우선합니다.
+>
+> **`error_code` 열은 백엔드 내부 규약이고 프론트 동작의 근거가 아닙니다.**
+> `FRONTEND/lib`·`test` 전체에서 `error_code`/`errorCode` 검색 결과가 0건입니다.
+> 프론트가 응답 본문에서 읽는 것은 `message`/`detail`/`error`/`reason`뿐이고,
+> 그마저 화면 문구로 쓰이지 않습니다(`userMessage`는 enum 고정 문자열).
+> **프론트 동작을 가르는 유일한 축은 HTTP 상태코드입니다.**
 
-| HTTP | `error_code` | 발생 조건 | 프론트 처리 |
-| --- | --- | --- | --- |
-| 400 | `BAD_REQUEST` | 그 밖의 잘못된 요청 | 다른 사진 선택 안내 |
-| 401 | `AUTH_REQUIRED` | 인증 누락·만료 | 세션 삭제 후 재로그인 유도 |
-| 403 | `AUTH_REQUIRED` | 권한 부족에 대비한 예약 코드 | 안내만 표시, 세션 유지 |
-| 413 | `PAYLOAD_TOO_LARGE` | 이미지 용량 10MB 초과 | 사진 용량 초과 안내 |
-| 415 | `UNSUPPORTED_IMAGE_FORMAT` | JPEG/PNG/WebP 이외의 Content-Type | 지원 형식 안내 |
-| 422 | `MATERIAL_EXTRACTION_FAILED` | 조성 미확정·충돌·미연결 비율·혼용률 합계 오류 | 소재 직접 입력 흐름 |
-| 422 | `IMAGE_MISSING`, `VALIDATION_ERROR` | 이미지 누락 또는 요청 형식·상한 위반 | 현재는 다른 422와 같은 직접 입력 흐름 |
-| 502 | `OCR_NOT_CONFIGURED` | Google Vision 설정·인증 구성 오류 | OCR 실패 안내, 직접 입력·재촬영 유도 |
-| 502 | `OCR_QUOTA_EXCEEDED` | Google Vision 사용량 한도 초과 | OCR 실패 안내, 직접 입력·재촬영 유도 |
-| 502 | `OCR_FAILED` | 그 밖의 OCR 처리 실패 | OCR 실패 안내, 직접 입력·재촬영 유도 |
-| 503 | `AI_MODULE_FAILED` | AI OCR·분석·파서 모듈 import 실패 | 일반 서버 오류 안내 |
-| 503 | `OCR_SERVICE_UNAVAILABLE` | Google Vision 일시 장애 | 일반 서버 오류 안내 |
-| 504 | `OCR_TIMEOUT` | Google Vision 또는 전체 OCR 처리 시간 초과 | 시간 초과 안내, 직접 입력·재촬영 유도 |
-| 500 · 그 외 5xx | `SERVER_ERROR` 등 | 그 밖의 서버 오류 | 일반 서버 오류 안내 |
+| HTTP | error_code | 프론트 처리 |
+| --- | --- | --- |
+| 400 | `BAD_REQUEST` | 사진 처리 실패 안내(다른 사진 선택 유도) |
+| 401 | `AUTH_REQUIRED` | **세션 만료로 판정** — 로그아웃 후 재로그인 유도 |
+| 403 | `AUTH_REQUIRED` | **권한 없음 안내만 표시(로그아웃하지 않음)** |
+| 413 | `PAYLOAD_TOO_LARGE` | 사진 용량 초과 안내 (상한 10MB) |
+| 415 | `UNSUPPORTED_IMAGE_FORMAT` | 지원하지 않는 이미지 안내 (JPEG/PNG/WebP만 허용) ※ |
+| 422 | `MATERIAL_EXTRACTION_FAILED` | 소재 직접 입력 흐름 (소재를 못 찾았거나 부분 인식 — 2026-10-11부터 부분 인식도 422) |
+| 429 | `SCAN_DAILY_LIMIT` | **전용 분기 없음** — '사진을 분석하지 못했어요. 직접 입력해 주세요.'(`unknown`) + 소재 직접 입력 흐름 (2-5절) |
+| 502 | `OCR_FAILED` | 소재 직접 입력 안내 + `다시 촬영` 버튼 제공 |
+| 503 | `AI_MODULE_FAILED`·`SCAN_UNAVAILABLE` | **전용 분기 없음** — 아래 '그 외 5xx'와 같게 처리됨 (`SCAN_UNAVAILABLE` 은 2-5절) |
+| 504 | `OCR_TIMEOUT` | 시간 초과 안내 + 직접 입력 유도 (2026-10-11부터 백엔드가 냄 — Vision 시간 초과) |
+| 500 · 그 외 5xx | — | 일시적 서버 문제 안내 (`statusCode >= 500` 폴백) |
 
-**503과 504는 실제로 반환하는 상태입니다.** 앱은 503 전용 분기가 없어 일반 서버 오류로
-처리하지만, 504에는 별도의 시간 초과 안내가 있습니다. AI의 전체 OCR 처리 예산은 25초,
-앱의 업로드 요청 상한은 35초입니다.
+**503에 대한 주의**: 프론트에 503 전용 case가 없어 `statusCode >= 500` 폴백을 타고
+500·504와 **똑같은 문구**가 나옵니다. 이전 판에 적혀 있던 "서버/AI 모듈 문제 안내"는
+구현되지 않은 내용이었습니다(2026-09-08 정정).
 
-### 성공·실패 응답의 판단 근거
+**503이 실제로 나는 경우**: 서버 기동 시 `from apps...` import 실패(`BACKEND/main.py` 의
+`extract_label_input`·`ensure_label_parser` — OCR·분석·라벨 파서 모듈), 그리고 2026-10-07부터 서버 전체 하루 사진 분석 상한
+(`SCAN_UNAVAILABLE`, 2-5절) 두 가지입니다. OCR 미설정·Vision 쪽 한도 초과·Vision 일시 장애는 전부 **502 `OCR_FAILED`**로
+나갑니다(`extract_label_input` 가 `run_ocr` 실행 중 예외를 잡아 시간 초과만 504, 나머지는 502 — DECISIONS 211).
+Vision 일시 장애를 503 으로 내지 않는 것은 위 두 경우와 섞이지 않게 하려는 것입니다.
 
-- `/api/scan`은 OCR 문자열뿐 아니라 `analyze_ocr_result()`가 만든 충돌·미연결 비율
-  메타데이터를 소비합니다. 문자열 전용 호출에서 발생한 `OcrCompositionError`도
-  소재 미확정으로 처리하여 최종 HTTP 422로 반환합니다.
-- `parser_error_code`는 `ambiguous_composition`, `composition_not_found` 등의 세부 실패 원인입니다.
-  `warnings`, `confidence`, `parse_evidence`, `ocr`는 성공과 소재 추출 실패 응답에 함께 전달합니다.
-- 후보가 `%` 없는 숫자 행을 빠뜨려도 이미 감지한 잔여 비율을 지우지 않습니다.
-  다른 후보가 같은 비율 값과 개수를 모두 조성에 연결해야 미연결 상태를 해소합니다.
-- 대표 부위가 충돌하거나 미확정이면 성공으로 반환하지 않습니다. 안감 등 낮은 우선순위
-  부위만 불확실하고 겉감이 확인되면, 불확실한 부위를 제외한 겉감은 성공할 수 있습니다.
-- 합계가 불완전한 조성을 `200 + ai_success: false` 또는 `RATIO_INCOMPLETE`로 반환하는
-  이전 스캔 경로는 사용하지 않습니다. 스캔 성공 자체가 합계 검증을 통과한 결과입니다.
+**504는 2026-10-11부터 백엔드가 냅니다**: AI 가 원본 사진 Vision 요청을 10초, 스캔 한 번의 OCR 전체를 25초
+(`OCR_CANDIDATE_TIMEOUT_SECONDS`·`OCR_TOTAL_TIMEOUT_SECONDS`)에서 끊으면 504 `OCR_TIMEOUT` 입니다(전처리·소재 영역
+후보는 8·5초에서 끊고 그 후보만 건너뜀). 프론트 상한은 35초라 보통은 서버의 504 가 먼저 옵니다.
 
-### 422 `detail`의 프론트 사용
+`AI_REQUESTS.md` F-4 요청에 따라 2026-09-08에 프론트에 `case 504:`를 추가했습니다
+(`scan_api_service.dart`, 브랜치 `jw/scan-partial-prefill`). 예고대로 새 enum은 만들지
+않고 기존 `ScanApiErrorType.timeout`을 재사용하므로, 통신 시간 초과와 같은 문구
+("분석이 예상보다 오래 걸렸어요. 다시 시도하거나 직접 입력해 주세요.")가 나갑니다.
+즉 502·503과 후속 흐름은 같고 문구만 시간 초과에 맞게 달라집니다.
 
-소재 추출 실패의 직접 입력 폼은 `detail`의 아래 필드를 초기값으로 사용합니다
+### 422 `detail`의 프론트 사용 (2026-09-08 추가)
+
+직접 입력 폼은 `detail`의 아래 세 필드를 초기값으로 씁니다
 (`scan_api_service.dart` → `scan_draft_service.dart` → `scan_result_view.dart`).
 
-| 필드 | 폼 반영 | 현재 반환 값 |
+| 필드 | 폼 반영 | 현재 실제로 오는 값 |
 | --- | --- | --- |
-| `partial_materials` | 소재·혼용률 입력 줄 | 항상 `{}` |
-| `care_instruction` | 관리 지침 문구 | 인식된 관리 지침, 없으면 기본 문구 |
-| `raw_ocr_preview` | 인식된 라벨 원문 카드 | 제한된 OCR 미리보기 |
+| `partial_materials` | 소재·혼용률 입력 줄 | **거의 늘 `{}`** |
+| `care_instruction` | 관리 지침 문구 | AI 가 읽은 관리 지침(예: `'표백 금지; 찬물 세탁'`), 못 읽으면 상수 `'라벨 표기법에 맞춰 관리하세요.'` |
+| `raw_ocr_preview` | '인식된 라벨 원문' 카드 | AI가 읽어낸 라벨 글자 (상한 220자) |
 
-`materials`와 `partial_materials`는 소재 추출 실패 시 항상 비웁니다.
-실패한 조성을 부분 정답처럼 채우지 않으므로 사용자가 소재·비율을 직접 입력해야 합니다.
-`care_instruction`은 파서의 `care_text` 또는 `care_instruction`을 읽으며,
-둘 다 없거나 비어 있으면 `라벨 표기법에 맞춰 관리하세요.`를 사용합니다.
-프론트는 소재 추출 실패의 근거 필드를 진단 화면에 모두 표시하지는 않습니다.
-요청 형식 오류의 422는 `detail`이 검증 오류 목록이며, 위 소재 실패 객체와 구분해야 합니다.
+**`partial_materials`는 거의 늘 비어 있습니다.** 2026-10-11 AI 통합부터 부분 인식도 422 지만, AI 는 확정하지 못한
+비율을 실패 응답에 담지 않고 `materials`·`parts` 를 `{}` 로 비웁니다(합계를 맞추거나 나머지 소재를 추측하지 않음 —
+AI 담당 10-11 전달). 서버가 값을 채우는 것은 AI 가 성공이라고 했는데 합계가 100 이 아닌 드문 경우뿐입니다.
+422 `detail.materials` 는 늘 `{}` 입니다. 프론트는 값이 오면 그대로 채우도록 배선만 해 뒀으므로 변경이 필요 없습니다.
 
-### 지원 이미지 형식
+`care_instruction` 은 백엔드가 `care_text`·`care_instruction` 두 키를 모두 읽습니다(AI 판마다 키 이름이 달랐음 —
+지금 AI 는 `care_instruction`).
 
-백엔드는 JPEG/PNG/WebP Content-Type을 허용하고, AI 이미지 검증·전처리도 WebP를 지원합니다.
-백엔드와 AI 사이에 WebP 지원을 따로 추가해야 하는 미완료 작업은 없습니다.
+**이전(~2026-10-10)에는 부분 인식이 200 이었습니다.** 소재를 찾았으나 합계가 100이 아니면 `ai_success: false` +
+`analysis_failure_reason: "RATIO_INCOMPLETE"` 로 200 이 나갔고, 프론트가 `ai_success` 를 읽지 않아 화면에는
+"스캔 완료!"로 표시됐습니다. 2026-10-11부터 이 경우가 422 라 직접 입력 흐름으로 갑니다(DECISIONS 200).
+
+※ **415의 WebP 허용은 백엔드 상수(`main.py:52`) 기준입니다.** AI 계층은 JPEG/PNG만 받습니다
+(`ksw/ai-ocr-enhancement`의 `SUPPORTED_IMAGE_FORMATS`). 현재는 백엔드가 OCR 텍스트를
+직접 다루므로 문제되지 않지만, HTTP 서비스로 전환하면 정합이 필요합니다
+(`docs/AI_REQUESTS.md` F-6).
 
 ## 2-1. 인증 오류 (401 / 403)
 
@@ -250,6 +219,9 @@ HTTP 200은 파서가 성공하고 `parse_evidence.composition_status`가 `confi
 | 401 | 인증 자체가 없거나 만료됨 | 세션을 지우고 로그인 화면으로 보냄 |
 | 403 | 인증은 유효하나 권한이 없음 | 안내만 표시하고 **세션은 유지** |
 
+한 계정의 로그인 토큰은 최근 10개(기기 10대)까지라, 10개가 살아 있을 때 또 로그인하면(카카오 포함) 가장 오래전에
+로그인한 기기가 다음 요청에서 401 을 받습니다(같은 처리 — `BACKEND/API_CONTRACT.md` 의 `POST /auth/login`, DECISIONS 160).
+
 401만 세션 만료 경로를 타는 이유는, 403을 재로그인으로 처리하면 권한이 없는 사용자가
 로그인만 반복하게 되기 때문입니다. `scan_api_service` / `carbon_api_service` /
 `auth_api_models` 세 곳 모두 이 구분을 따릅니다.
@@ -258,9 +230,9 @@ HTTP 200은 파서가 성공하고 `parse_evidence.composition_status`가 `confi
 > 예약 코드이며, 프론트에만 처리 경로가 준비돼 있습니다. 백엔드에는 오류 코드 맵
 > (`DEFAULT_ERROR_CODES`)에만 `403: "AUTH_REQUIRED"`로 등록돼 있습니다.
 
-## 2-2. 로그인 시도 제한 (429)
+## 2-2. 로그인·가입 시도 제한 (429)
 
-429는 **`POST /auth/login`에서만** 발생합니다. 스캔·탄소 계산 API는 429를 내지 않습니다.
+이 절의 429는 **`POST /auth/login`·`POST /auth/signup`·`POST /auth/email-code`(인증번호 요청)·`POST /auth/kakao`와 계정 관리의 재인증(2-3절)**에서 납니다. 스캔은 하루 상한에서만 429를 내고(2-5절) 탄소 계산 API는 429를 내지 않습니다.
 
 | 항목 | 값 |
 | --- | --- |
@@ -268,6 +240,10 @@ HTTP 200은 파서가 성공하고 `parse_evidence.composition_status`가 `confi
 | 잠금 기준 | 같은 이메일로 연속 **5회** 로그인 실패 |
 | 잠금 시간 | **60초** |
 | 실패 기록 보존 | 15분 TTL (상한 1만 건) |
+| IP 기준 (로그인만) | 같은 IP에서 **15분에 30회** 로그인 실패(이메일 무관, 성공은 세지 않음) → 첫 실패부터 15분이 지날 때까지 429. IPv6는 /64 대역 단위, 공인 주소가 아니면 적용하지 않음 |
+| IP 기준 (가입) | 같은 IP에서 **1시간에 20회** 가입 시도(형식 검사를 통과한 시도 — 성공·이미 가입(409) 모두 셈, 형식 오류 400은 세지 않음) → 첫 시도부터 1시간이 지날 때까지 429. 로그인 IP 기록과 따로 세고, IPv6·공인 주소 처리는 로그인과 같음 |
+| 인증번호 요청 | 같은 이메일로 60초 안에 다시 요청 → `EMAIL_CODE_RESEND_TOO_SOON`, 같은 이메일 1시간 5회·24시간 10회 또는 같은 IP 1시간 20회(가입·재설정 합산) → `TOO_MANY_ATTEMPTS`. 둘 다 `detail.retry_after`(초). 상세는 `BACKEND/API_CONTRACT.md` 의 `POST /auth/email-code` |
+| 카카오 로그인 | 카카오가 거부한 토큰(`SOCIAL_TOKEN_INVALID`)은 위 **로그인 IP 기록에 합산**(15분 30회, 문구도 로그인과 같음 — 카카오 계정 탈퇴 확인 포함). 새 카카오 계정은 가입 IP 기준에 세지 않음. 상세는 `BACKEND/API_CONTRACT.md` 의 `POST /auth/kakao` |
 
 ```json
 {
@@ -277,16 +253,27 @@ HTTP 200은 파서가 성공하고 `parse_evidence.composition_status`가 `confi
 }
 ```
 
-프론트는 **서버가 보내는 대기 안내 문구를 그대로 표시합니다.** 잠금 시간이 서버 설정에
+IP 기준에 걸리면 같은 문구의 대기 시간이 "N분 후"(남은 시간을 분으로 올림)로 바뀝니다.
+가입은 "가입 시도가 너무 많습니다. N분 후 다시 시도해 주세요."입니다.
+
+프론트는 **서버가 보내는 대기 안내 문구를 그대로 표시합니다**(가입 화면도 같은 매핑). 잠금 시간이 서버 설정에
 따라 달라져도 문구가 어긋나지 않게 하기 위함이며, 이 때문에 `AuthApiErrorType`에 별도
 타입을 두지 않고 서버 메시지를 그대로 통과시키는 `badRequest`로 매핑합니다
 (`auth_api_models.dart`의 `case 429`).
 
 ## 2-3. 계정 관리 (비밀번호 변경 / 회원 탈퇴)
 
-둘 다 로그인 상태에서만 호출할 수 있고, 요청 본문에 비밀번호를 한 번 더 받아 재인증합니다.
+둘 다 로그인 상태에서만 호출할 수 있고, 요청 본문에 비밀번호를 한 번 더 받아 재인증합니다
+(카카오 계정의 탈퇴는 비밀번호 대신 카카오 로그인으로 — 아래, DECISIONS 152).
 REST 관례상 탈퇴는 `DELETE`가 자연스럽지만, 프론트 공용 HTTP 헬퍼(`api_http.dart`의
 `runJsonApiRequest`)가 GET/POST만 지원하므로 **POST로 통일**했습니다.
+
+계정 종류는 로그인 응답 `user.login_methods`(`BACKEND/API_CONTRACT.md` '사용자 객체')로 나눕니다.
+
+| `login_methods` 에 | 비밀번호 변경 | 탈퇴 확인 |
+| --- | --- | --- |
+| `"password"` 있음 | 보임 | 비밀번호 입력 → `{ "password": ... }` |
+| `"password"` 없음(카카오 계정) | **숨김**(불러도 400 `PASSWORD_NOT_SET`) | '카카오로 확인' → 카카오 재인증 로그인(아이디·비밀번호 입력) → `{ "kakao_access_token": ... }` |
 
 ### POST /auth/password
 
@@ -305,6 +292,9 @@ Authorization: Bearer <token>
 
 응답은 로그인과 같은 형태입니다(`user`, `access_token`, `token_type`, `expires_in`).
 
+비밀번호가 없는 카카오 계정이면(본문 모양이 맞을 때 — 칸이 빠지거나 문자열이 아니면 계정과 무관하게 422) 비밀번호를 보지 않고 **400 `PASSWORD_NOT_SET`**("비밀번호로 가입한 계정이 아닙니다.")을
+냅니다. 로그인 잠금 카운터에도 남지 않습니다. 앱은 이 버튼을 숨기므로 평소엔 오지 않습니다.
+
 ### POST /auth/withdraw
 
 ```http
@@ -315,44 +305,91 @@ Authorization: Bearer <token>
 { "password": "..." }
 ```
 
-성공하면 `users`, 그 사용자의 `access_tokens`, `analysis_results`를 **한 트랜잭션에서
-모두 삭제**합니다. 외래키에 `ON DELETE`가 걸려 있지 않아 애플리케이션이 직접 지웁니다.
+카카오 계정은 비밀번호 대신 카카오 로그인으로 확인합니다.
+
+```http
+POST /auth/withdraw
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{ "kakao_access_token": "..." }
+```
+
+- 계정에 맞는 칸(비밀번호 계정 `password`, 카카오 계정 `kakao_access_token`)이 없거나 `null` 이면 400 `BAD_REQUEST` 이고, 맞지 않는 칸은 무시합니다
+  (두 칸 모두 문자열이나 `null` 이어야 합니다 — 다른 타입이면 계정과 무관하게 422).
+  지금 앱이 보내는 `{ "password": ... }` 는 그대로 동작합니다.
+- `kakao_access_token`: 탈퇴 확인 단계에서 앱이 **재인증을 강제한 카카오 로그인** —
+  `UserApi.instance.loginWithKakaoAccount(prompts: [Prompt.login])`(카카오 Flutter 문서: 기존 로그인 여부와 상관없이 재인증 요청) — 으로 받은
+  `OAuthToken.accessToken`. **로그인 때 받아 SDK 에 저장된 토큰을 그대로 쓰지 않습니다**(그러면 사용자 입력 없이 탈퇴됨).
+  서버는 토큰이 방금 받은 것인지 알 수 없어 이 규칙을 강제하지 못합니다 — 앱이 지킵니다. 서버가 카카오에 물어
+  우리 앱이 받은 토큰인지, 그리고 **이 계정의 카카오 회원번호인지** 확인합니다. 형식 규칙과 카카오 응답을 나누는 표는
+  `BACKEND/API_CONTRACT.md` 의 `POST /auth/kakao` 와 같습니다.
+- 카카오 계정의 검사 순서: 세션(401) → 본문 모양(422) → `kakao_access_token` 칸 없음(400) → 카카오 로그인 설정(503) → 형식(400) → 로그인 IP 한도(429)
+  → 카카오 토큰 확인(400 `SOCIAL_TOKEN_INVALID`·502) → 회원번호 대조(400 `SOCIAL_ACCOUNT_MISMATCH`) → 삭제 커밋 → 연결 끊기.
+  카카오에 묻는 사이 다른 기기에서 탈퇴가 먼저 끝났으면 대조 전에 401(비밀번호 계정과 같음). 본문이 JSON 으로 읽히지 않으면 FastAPI 가 세션보다 먼저 422 를 냅니다(모든 API 같음).
+- 횟수 제한: 비밀번호와 달리 추측할 수 없어 **이메일 로그인 잠금 카운터(5회/60초)는 쓰지 않습니다**. 카카오에 묻기 전에 로그인 IP 기록에 한 번을 세고,
+  `SOCIAL_TOKEN_INVALID` 일 때만 남기고 나머지(성공·`SOCIAL_ACCOUNT_MISMATCH`·502·서버 오류)는 되돌립니다(2-2절).
+- 카카오 계정은 확인 → 계정 삭제 커밋 → 그 토큰으로 **서버가 카카오 연결 끊기**(`POST https://kapi.kakao.com/v1/user/unlink`) 순서입니다.
+  연결 끊기가 실패해도 탈퇴는 성공으로 응답합니다(서버 로그만 — 그때 카카오 쪽에 연결이 남고, 다음 카카오 로그인은 새 계정).
+  **앱은 카카오 연결 끊기를 따로 부르지 않습니다.**
+
+성공하면 `users`, 그 사용자의 `access_tokens`, `analysis_results`, 옷장 서버 백업(`closet_snapshots`, 2026-10-14부터)
+(카카오 계정은 소셜 연결 기록도)를 **한 트랜잭션에서 모두 삭제**합니다. 외래키에 `ON DELETE`가 걸려 있지 않아 애플리케이션이 직접 지웁니다.
 프론트는 서버 삭제가 성공한 뒤에만 기기의 계정 전용 옷장(`closet_items_account_*`)을
-지웁니다. 같은 이메일로 다시 가입할 수 있습니다.
+지웁니다. 같은 이메일로 다시 가입할 수 있고, 같은 카카오 계정으로 다시 로그인하면 새 계정이 됩니다.
 
 ### 오류 코드
 
 | HTTP | 의미 | 프론트 처리 |
 | --- | --- | --- |
 | 400 | 재인증 실패(현재 비밀번호·탈퇴 비밀번호 불일치), 새 비밀번호 규칙 위반, 기존과 동일 | **대화상자를 닫지 않고 해당 필드에 표시**(입력 유지) |
-| 401 | 토큰이 없거나 만료됨 | 세션 정리 후 로그인 화면. **탈퇴 흐름의 401은 이미 삭제된 것으로 보고 기기 옷장까지 정리** |
+| 401 | 토큰이 없거나 만료됨 | 세션 정리 후 로그인 화면. **탈퇴 흐름의 401도 탈퇴되지 않은 것으로 보고 기기 옷장은 남긴다**(아래 ⚠️) |
 | 429 | 같은 계정으로 재인증 5회 실패 | 서버의 대기 안내 문구를 그대로 표시 |
 
-**재인증도 로그인과 같은 잠금 카운터를 씁니다**(2-2절, 5회/60초). 토큰만 탈취한 공격자가
+카카오 계정 탈퇴에만 있는 응답(`error_code` 로 나눕니다 — 모두 **삭제 전에** 나므로 탈퇴는 진행되지 않은 것):
+
+| HTTP | `error_code` | 의미 | 프론트 처리 |
+| --- | --- | --- | --- |
+| 400 | `SOCIAL_TOKEN_INVALID` | 카카오가 토큰을 거부했거나 다른 앱이 받은 토큰 | 대화상자 유지, 카카오 로그인부터 다시 |
+| 400 | `SOCIAL_ACCOUNT_MISMATCH` | 이 계정과 다른 카카오 계정으로 로그인함 | 대화상자 유지, 가입한 카카오 계정으로 다시 |
+| 502 | `SOCIAL_PROVIDER_UNAVAILABLE` | 카카오가 응답하지 않음 | 진행되지 않았다고 안내(결과를 모르는 서버 오류와 다름) |
+| 503 | `SOCIAL_LOGIN_UNAVAILABLE` | 서버에 카카오 설정이 없음 | 서버 문구 |
+| 429 | `TOO_MANY_ATTEMPTS` | 같은 IP 로그인 실패 한도(2-2절) | 서버 문구 그대로 |
+
+**비밀번호 재인증도 로그인과 같은 잠금 카운터를 씁니다**(2-2절, 5회/60초 — 카카오 계정의 탈퇴 확인은 위 예외). 토큰만 탈취한 공격자가
 이 경로로 비밀번호를 무제한 추측하면 로그인 잠금이 무의미해지고, 맞히는 순간
 다른 세션이 모두 끊겨 계정을 통째로 빼앗기기 때문입니다. 실패는 `record_login_failure`로
 기록되고 성공하면 `clear_login_failures`로 지워집니다.
 
 ⚠️ **재인증 실패에 401을 쓰지 않는 이유**: 이 앱은 401을 "세션 만료"로 보고
 `SessionExpiryHandler`로 강제 로그아웃합니다(2-1절). 비밀번호를 한 번 잘못 친 것만으로
-로그아웃되면 안 되므로, 재인증 실패는 400으로 내립니다. 401은 세션 유효성 판정 전용입니다.
+로그아웃되면 안 되므로, 재인증 실패는 400으로 내립니다(카카오 탈퇴 확인 실패도 400). 로그인한 요청에서 401은 세션 유효성 판정 전용입니다
+(로그인 API — `POST /auth/login`·`POST /auth/kakao` — 의 401 은 자격 거부이고 로그인 화면에서 안내합니다).
+
+⚠️ **탈퇴의 401은 '계정이 이미 없다'는 뜻이 아닙니다**: 다른 기기의 비밀번호 변경(기존 토큰 전부 폐기)이나
+만료로 토큰만 사라진 경우에도 401이 오고, 그때 계정과 분석 이력은 서버에 그대로 남습니다. 탈퇴가 그 사용자의
+토큰을 모두 지우므로, 응답이 유실돼 다시 보낸 탈퇴도 같은 `get_current_access_token` 에서 **본문까지 같은**
+401을 받아 서버 응답으로는 둘을 구분할 수 없습니다(`BACKEND/tests/test_withdraw_revoked_token.py`).
+그래서 앱은 탈퇴됐다고 안내하지 않고, 같은 대화상자에서 앞선 시도가 결과를 모른 채 끝났으면(네트워크·시간 초과·
+서버 오류) "처리됐는지 확인하지 못했다"고, 아니면 "진행되지 않았다"고 알린 뒤 다시 로그인해 탈퇴하도록 안내합니다.
 
 새 비밀번호 규칙은 회원가입과 동일합니다(8자 이상, 앞뒤 공백 금지 —
 `main.py`의 `ensure_password_rules`). 프론트도 같은 규칙으로 먼저 걸러
 불필요한 왕복을 줄입니다.
 
-### 알려진 한계 (탈퇴 동시성)
+### 탈퇴와 겹친 탄소 계산
 
-SQLite 연결에 `PRAGMA foreign_keys`가 켜져 있지 않고 `users.id`·`analysis_results.id`가
-`AUTOINCREMENT` 없는 rowid 별칭이라, 다음 경합이 이론적으로 가능합니다.
+기기 A의 `/api/carbon/calculate`가 토큰 검증을 통과한 직후 기기 B에서 탈퇴가 커밋되면,
+A의 이력 INSERT가 외래키(`fk_analysis_results_user_id_users`)에 걸립니다. 탈퇴가 아직 커밋 전이면
+A의 INSERT는 탈퇴 커밋까지 기다렸다가 같은 이유로 걸립니다. 계정이 이미 없으니 저장하지 않고
+**A는 401 "로그인이 만료되었습니다."(`AUTH_REQUIRED`)를 받습니다** — 다른 401 과 같이 세션 만료로 처리하고
+탄소량은 임시 추정값으로 둡니다(DECISIONS 161 — 그 전에는 500 이라 A 가 계정 없는 세션을 들고 있었음).
+반대로 A의 INSERT가 먼저면 탈퇴가 기다렸다가 그 이력까지 지웁니다(A는 200).
+두 요청이 거의 동시에 겹쳐야 일어납니다(`BACKEND/tests/test_withdraw_calculate_race.py`).
 
-1. 기기 A의 `/api/carbon/calculate`가 토큰 검증을 통과한 직후 기기 B에서 탈퇴가 커밋되면,
-   A의 INSERT가 이미 삭제된 `user_id`로 들어가 고아 행이 남습니다.
-2. 탈퇴자가 마지막 가입자였다면 이후 가입자가 같은 `users.id`를 배정받아,
-   `/me/history`(user_id 단일 필터)가 이전 계정의 이력을 보여 줄 수 있습니다.
-
-근본 해결은 외래키 강제 + `AUTOINCREMENT` 마이그레이션이라 이번 작업 범위에서 제외했습니다.
-개발 단계에서 실제로 재현하려면 두 기기가 1초 이내로 겹쳐야 합니다.
+SQLite 때 있던 두 경합 — 지워진 `user_id`로 고아 행이 남는 것, 마지막 가입자가 탈퇴한 뒤
+새 가입자가 같은 `users.id`를 받아 `/me/history`에 이전 계정 이력이 보이는 것 — 은 PostgreSQL에서
+생기지 않습니다. 외래키가 강제되고, `id`는 시퀀스라 지운 번호를 다시 주지 않습니다.
 
 ## 2-4. 입력 상한과 조회 상한
 
@@ -361,10 +398,22 @@ SQLite 연결에 `PRAGMA foreign_keys`가 켜져 있지 않고 `users.id`·`anal
 
 | 대상 | 상한 | 근거 |
 | --- | --- | --- |
-| `materials` 항목 수 | **20개** | 실제 케어 라벨의 소재는 몇 개를 넘지 않음 |
+| 요청 본문 — 사진 업로드(multipart)가 아닌 요청(JSON·Content-Type 없음 등) | **1MiB** | 앱의 JSON 요청은 몇 KB. 넘으면 **413 `PAYLOAD_TOO_LARGE`**(2026-10-14부터 — 이전엔 사진과 같은 11MB). 사진 업로드는 그대로 11MB(이미지 10MB) |
+| `materials` 항목 수 | **20개** | 실제 케어 라벨의 소재는 몇 개를 넘지 않음. 칸마다 검증하기 전에 개수부터 봄(2026-10-14부터) |
 | 소재 이름 길이 | **64자** | 오류 응답 크기의 상한이기도 함 |
-| `raw_ocr_text` 길이 | **4000자** | 라벨 OCR 원문이 넘을 이유가 없음 |
+| `raw_ocr_text` 길이 | **4000자** | 라벨 OCR 원문이 넘을 이유가 없음. JSON 요청과 `/api/scan` 폼 필드 모두(2026-10-05부터 폼에도) |
+| `email` 길이 (가입·로그인·`/auth/email-code`·`/auth/password-reset`) | **254자** | 주소 표준의 최대 길이. 로그인 실패 기록·인증번호 기록의 키라 메모리 상한이기도 함 |
+| 비밀번호 길이 (가입·로그인·`/auth/password` 의 현재·새·`/auth/withdraw`·`/auth/password-reset` 의 새) | **128자** | 앱 입력이 닿지 않는 안전선 |
+| `nickname` 길이 (가입·`/auth/kakao`) | **50자** | 저장·응답에 그대로 실리는 값. 카카오에서 받아 온 닉네임이 넘으면 422 대신 `SOCIAL_NICKNAME_REQUIRED` |
 | `/history`·`/me/history` 반환 건수 | **200건** | 전건 적재를 막음. 잘리면 `has_more: true` |
+| 옷장 백업(`POST /me/closet`) | **500벌·512KB·8단** | 한 벌 약 0.55~0.7KB. 넘으면 413 `CLOSET_TOO_LARGE`(벌 수·바이트) 또는 422 `CLOSET_INVALID`(깊이) — `BACKEND/API_CONTRACT.md` 의 `POST /me/closet` |
+
+인증 입력의 길이 상한(2026-10-05)은 앞뒤 공백을 지우기 전 글자 수로 셉니다. 실제 사용자가
+닿지 않는 안전선이라 가입의 형식 검사(400, 한국어 문구)와 달리 아래 422 로 거부합니다 — 앱은
+400·422 를 같은 '입력 확인'으로 보여 줍니다. 422 는 핸들러 전에 나므로 로그인 잠금·IP 한도에
+세지 않습니다(가입이 같은 상한을 쓰므로 상한을 넘는 값으로 맞출 계정이 없음). 인증번호 요청·비밀번호
+찾기도 같아서 번호·이메일 한도·IP 한도·하루 발송 상한·틀린 횟수 어디에도 남지 않습니다. 이 칸들에 온
+짝 없는 서로게이트(`\ud800` 이스케이프)도 같은 422 입니다.
 
 상한 위반은 **422 `VALIDATION_ERROR`** 입니다. 이 응답은 위치·사유만 담고
 거부된 입력 원문은 돌려주지 않습니다. 큰 요청이 큰 응답으로 되돌아오는
@@ -372,6 +421,32 @@ SQLite 연결에 `PRAGMA foreign_keys`가 켜져 있지 않고 `users.id`·`anal
 
 `/me/history` 응답에 `has_more`가 추가됐습니다. 프론트는 현재 이 값을 쓰지 않고
 전건을 받는 전제로 동작하며, 200건 상한에서는 화면 동작에 차이가 없습니다.
+
+## 2-5. 사진 분석 하루 상한 (429 / 503)
+
+스캔 한 번이 Google Vision 후보 1~4건(원본·전처리·소재 영역 두 방식 — 2026-10-11 AI 통합 판, 기본 설정)이고 월 1,000건을
+넘으면 요금이 나가므로(2026-10-07부터 — Vision 이 일시 장애(503 등)를 내면 후보 안에서 재시도 요청이 더 나갈 수 있고 횟수가
+아니라 스캔 전체 25초로만 묶임, 실패한 요청이 청구되는지는 확인 못 함),
+**Vision 을 부르는 스캔**의 하루 횟수를 셉니다.
+
+| 항목 | 값 |
+| --- | --- |
+| 한 계정 | 하루 **20번** → 넘으면 `429 SCAN_DAILY_LIMIT` |
+| 서버 전체 | 하루 `K_DPP_SCAN_DAILY_MAX` 번(배포 서버 기본 100, 로컬은 비우면 없음) → 넘으면 `503 SCAN_UNAVAILABLE` |
+| 하루 | 한국 자정(00:00 KST)에 0 부터. 두 응답 모두 `detail.retry_after` = 다음 자정까지 초 |
+| 세는 것 | Vision 을 부르기 직전에 센다. 성공·422·502·504 모두 세고 되돌리지 않음(키가 없는 로컬·리허설 서버의 502 도 세므로 한 계정 21번째부터 429) |
+| 세지 않는 것 | `raw_ocr_text` 로 OCR 을 건너뛴 요청, 413·415, OCR·분석·라벨 파서 모듈 없음(503 `AI_MODULE_FAILED` — Vision 전에 확인), 막힌 요청 |
+
+**프론트 처리(앱 변경 없음)**: 429 는 전용 case 가 없어 `ScanApiErrorType.unknown`
+('사진을 분석하지 못했어요. 직접 입력해 주세요.'), 503 은 '그 외 5xx'('분석 서비스에 일시적인
+문제가 생겼어요. 다시 시도하거나 직접 입력해 주세요.')로 종류 선택 시트 맨 위에 보이고 소재 직접
+입력으로 넘어갑니다. '오늘 횟수를 다 썼다'는 이유를 보이려면 `case 429:` 를 더하면 됩니다(선택).
+
+받아들인 한계: 한 사람이 계정을 여럿 만들어 서버 전체 상한을 다 쓰면 그날 자정까지 모든 사용자가 503
+(직접 입력)입니다. 청구 최악값은 지켜지고, 운영자가 app 을 다시 띄우면 풀립니다(`deploy/README.md` 'Vision 키').
+
+시연처럼 한 계정으로 하루 20번 넘게 찍을 날은 계정을 나눠 씁니다. 서버 전체 상한은 배포 서버의
+`deploy/.env` 에서 바꾸고 app 을 다시 띄웁니다(기록이 메모리라 다시 띄우면 그날 수가 0 부터).
 
 ## 3. 탄소 계산
 
@@ -432,3 +507,4 @@ Authorization: Bearer <token>
 - 서버 계산 성공 시 `carbon_footprint`, `carbon_footprint_min`, `carbon_footprint_max`, `saved_result_id`를 서버값으로 저장합니다.
 - 인증 만료, 네트워크 오류, 서버 오류가 발생하면 로컬 추정값으로 저장하고 사용자에게 안내합니다.
 - 스캔 단계의 임시 결과는 서버 저장값으로 취급하지 않습니다.
+

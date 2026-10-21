@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -34,6 +35,16 @@ class ScanCameraView extends StatelessWidget {
   final VoidCallback onRetryCamera;
   final VoidCallback onPickFromGallery;
   final VoidCallback onTakePicture;
+
+  static const _guideText = '케어 라벨을 프레임 안에 맞춰 촬영해 주세요';
+  static const _guideStyle = TextStyle(
+    color: Colors.white,
+    fontSize: 15,
+    height: 1.4,
+  );
+
+  /// 큰 글자에서 안내 문구가 줄바꿈될 수 있는 최대 줄 수입니다.
+  static const _guideMaxLines = 3;
 
   @override
   Widget build(BuildContext context) {
@@ -76,8 +87,17 @@ class ScanCameraView extends StatelessWidget {
                 .clamp(180.0, showsCameraError ? double.infinity : 250.0)
                 .toDouble();
             // 비율로 계산하되, 남는 공간을 넘지 않게 해 짧은 화면에서도
-            // 문구·버튼이 잘리지 않도록 합니다.
-            const fixedContentHeight = 22.0;
+            // 문구·버튼이 잘리지 않도록 합니다. 안내 문구는 큰 글자에서 여러 줄이 되므로
+            // 실제 높이를 재고, 보통 글자(한 줄)에서는 전과 같은 22 를 둡니다.
+            final guidePainter = TextPainter(
+              text: const TextSpan(text: _guideText, style: _guideStyle),
+              textAlign: TextAlign.center,
+              textDirection: Directionality.of(context),
+              textScaler: MediaQuery.textScalerOf(context),
+              maxLines: _guideMaxLines,
+            )..layout(maxWidth: constraints.maxWidth - 40);
+            final fixedContentHeight = math.max(22.0, guidePainter.height);
+            guidePainter.dispose();
             final frameSizeByLeftover =
                 availableHeight -
                 fixedContentHeight -
@@ -90,8 +110,17 @@ class ScanCameraView extends StatelessWidget {
                         : frameSizeByLeftover)
                     .clamp(150.0, frameSizeByWidth)
                     .toDouble();
+            // 아주 작은 화면(320×568)에 큰 글자면 틀을 가장 작게(150) 해도 다 들어가지 않습니다.
+            // 그때만 스크롤되게 해 촬영·앨범 버튼이 넘쳐 잘리지 않게 합니다.
+            final contentHeight =
+                fixedContentHeight +
+                guideGap +
+                frameSize +
+                buttonAreaGap +
+                buttonAreaHeight;
+            final overflows = contentHeight > availableHeight;
 
-            return Padding(
+            final content = Padding(
               padding: const EdgeInsets.fromLTRB(
                 20,
                 topContentPadding,
@@ -99,22 +128,20 @@ class ScanCameraView extends StatelessWidget {
                 bottomContentPadding,
               ),
               child: SizedBox(
-                height: availableHeight,
+                height: overflows ? contentHeight : availableHeight,
                 child: Column(
                   children: [
-                    // 남는 여백을 위쪽에 더 두어 촬영 UI가 화면 아래쪽에
-                    // 자리 잡도록 합니다.
-                    const Spacer(flex: 3),
+                    // 남는 높이를 위 2 : 아래 3으로 나눠 라벨 틀과 촬영 버튼을 화면 가운데보다
+                    // 위에 둡니다. 이전 3 : 1은 남는 높이가 큰 긴 화면(iPhone 16 Pro Max)에서
+                    // 촬영 UI가 지나치게 아래로 내려갔고, 3 : 2로는 달라진 것을 못 느꼈습니다
+                    // (2026-09-23 폰 확인 2회). 기종별 값 대신 비율로 두어 어느 화면이든 같은 인상을 줍니다.
+                    const Spacer(flex: 2),
                     const Text(
-                      '케어 라벨을 프레임 안에 맞춰 촬영해 주세요',
+                      _guideText,
                       textAlign: TextAlign.center,
-                      maxLines: 1,
+                      maxLines: _guideMaxLines,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        height: 1.4,
-                      ),
+                      style: _guideStyle,
                     ),
                     SizedBox(height: guideGap),
                     Semantics(
@@ -199,27 +226,37 @@ class ScanCameraView extends StatelessWidget {
                                   height: 74,
                                   child: Align(
                                     alignment: Alignment.bottomCenter,
+                                    // 누름 효과는 보이는 네모에 그립니다. 네모 밖 여백을
+                                    // 누르면 바깥 GestureDetector 가 받습니다.
                                     child: ExcludeSemantics(
-                                      child: Container(
-                                        width: 54,
-                                        height: 54,
-                                        decoration: BoxDecoration(
-                                          color: Colors.white.withValues(
-                                            alpha: 0.14,
-                                          ),
+                                      child: Material(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.14,
+                                        ),
+                                        shape: RoundedRectangleBorder(
                                           borderRadius: BorderRadius.circular(
                                             14,
                                           ),
-                                          border: Border.all(
+                                          side: BorderSide(
                                             color: Colors.white.withValues(
                                               alpha: 0.45,
                                             ),
                                           ),
                                         ),
-                                        child: const Icon(
-                                          Icons.photo_library_outlined,
-                                          color: Colors.white,
-                                          size: 25,
+                                        clipBehavior: Clip.antiAlias,
+                                        child: InkWell(
+                                          onTap: isScanning
+                                              ? null
+                                              : onPickFromGallery,
+                                          child: const SizedBox(
+                                            width: 54,
+                                            height: 54,
+                                            child: Icon(
+                                              Icons.photo_library_outlined,
+                                              color: Colors.white,
+                                              size: 25,
+                                            ),
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -240,19 +277,12 @@ class ScanCameraView extends StatelessWidget {
                                 child: GestureDetector(
                                   behavior: HitTestBehavior.opaque,
                                   onTap: isScanning ? null : onTakePicture,
+                                  // 누름 효과는 원에 그리고, 원 밖 모서리를 누르면
+                                  // 바깥 GestureDetector 가 받습니다.
                                   child: ExcludeSemantics(
-                                    child: Container(
-                                      width: 74,
-                                      height: 74,
+                                    child: DecoratedBox(
                                       decoration: BoxDecoration(
-                                        color: isScanning
-                                            ? const Color(0xFF6B6B6B)
-                                            : AppPalette.accent,
                                         shape: BoxShape.circle,
-                                        border: Border.all(
-                                          color: Colors.white,
-                                          width: 4,
-                                        ),
                                         boxShadow: [
                                           BoxShadow(
                                             color: AppPalette.accent
@@ -262,10 +292,39 @@ class ScanCameraView extends StatelessWidget {
                                           ),
                                         ],
                                       ),
-                                      child: const Icon(
-                                        Icons.camera_alt,
-                                        color: Colors.white,
-                                        size: 30,
+                                      child: Material(
+                                        color: isScanning
+                                            ? const Color(0xFF6B6B6B)
+                                            : AppPalette.accent,
+                                        shape: const CircleBorder(
+                                          side: BorderSide(
+                                            color: Colors.white,
+                                            width: 4,
+                                          ),
+                                        ),
+                                        clipBehavior: Clip.antiAlias,
+                                        child: InkWell(
+                                          onTap: isScanning
+                                              ? null
+                                              : onTakePicture,
+                                          // 가운데 스캔 원과 같이 누름 강조·물결을
+                                          // 모두 진한 파랑으로 칠합니다
+                                          // (이유는 main_screen.dart).
+                                          highlightColor:
+                                              AppPalette.accentPressed,
+                                          splashColor: AppPalette.accentPressed,
+                                          splashFactory:
+                                              InkRipple.splashFactory,
+                                          child: const SizedBox(
+                                            width: 74,
+                                            height: 74,
+                                            child: Icon(
+                                              Icons.camera_alt,
+                                              color: Colors.white,
+                                              size: 30,
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -276,11 +335,12 @@ class ScanCameraView extends StatelessWidget {
                         ],
                       ),
                     ),
-                    const Spacer(),
+                    const Spacer(flex: 3),
                   ],
                 ),
               ),
             );
+            return overflows ? SingleChildScrollView(child: content) : content;
           },
         ),
       ),
@@ -340,6 +400,7 @@ class ScanCameraView extends StatelessWidget {
                   const SizedBox(height: 8),
                   // 두 버튼을 한 줄에 두어 카메라 틀 안에서 스크롤 없이 보이게 합니다.
                   // 글자가 커져 한 줄에 안 들어가면 자동으로 줄을 바꿉니다(2026-09-19 폰 확인).
+                  // 보이는 버튼은 36 그대로 두고 누를 수 있는 곳만 48 로 넓힙니다(C59).
                   Wrap(
                     alignment: WrapAlignment.center,
                     spacing: 4,
@@ -349,7 +410,7 @@ class ScanCameraView extends StatelessWidget {
                         style: TextButton.styleFrom(
                           minimumSize: const Size(0, 36),
                           padding: const EdgeInsets.symmetric(horizontal: 10),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          tapTargetSize: MaterialTapTargetSize.padded,
                         ),
                         child: const Text('다시 시도'),
                       ),
@@ -359,7 +420,7 @@ class ScanCameraView extends StatelessWidget {
                           style: TextButton.styleFrom(
                             minimumSize: const Size(0, 36),
                             padding: const EdgeInsets.symmetric(horizontal: 10),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            tapTargetSize: MaterialTapTargetSize.padded,
                           ),
                           child: const Text('권한 확인 방법'),
                         ),

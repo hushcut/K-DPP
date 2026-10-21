@@ -1,9 +1,24 @@
 import re
-from collections import Counter
 from dataclasses import replace, dataclass
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 
+from apps.text.line_analysis_cache import LineAnalysis, line_analysis_scope, reuse_line_analysis
+from apps.text.part_policy import PART_PRIORITY as PART_PRIORITY
+from apps.text.part_policy import OUTER_PARTS
 from apps.text.ratio_contract import EXACT_RATIO_TOTAL, has_exact_total
+from apps.text.translation_alternatives import prepare_translation_alternatives
+from apps.text.scoped_materials import read_yarn_materials, confirmed_yarn_declaration
+from apps.text.line_context import (
+    _CARE_PHRASES,
+    COMPOSITION_HINTS,
+    _contains_only_known_phrases,
+    _EXPLICIT_PART_HEADER_CONTEXTS,
+    _MATERIAL_ONLY_LINE_CONTEXTS,
+    _mentions_care,
+    _RATIO_PAIR_DESCRIPTORS,
+    _RATIO_PREFIX_CONTEXTS,
+)
 
 from apps.text.composition_candidates import (
     CompositionCandidate,
@@ -33,19 +48,6 @@ from apps.text.rules import (
     MATERIAL_KOREAN,
 )
 
-
-PART_PRIORITY = [
-    "outer",
-    "generic",
-    "outer_2",
-    "lining",
-    "filling",
-    "pocket",
-    "rib",
-    "sleeve",
-    "color_block",
-    "embroidery_yarn",
-]
 
 NON_COMPOSITION_WORDS = {
     "제품명",
@@ -87,25 +89,6 @@ DESCRIPTIVE_MATERIAL_PHRASES = {
     "wool-like",
 }
 
-COMPOSITION_HINTS = {
-    "섬유의 조성",
-    "혼용률",
-    "혼용율",
-    "소재",
-    "composition",
-    "fabric content",
-    "material",
-    "materials",
-    "fiber content",
-    "纤维成分",
-    "纖維成分",
-    "面料成分",
-    "材质",
-    "材質",
-    "組成表示",
-    "混用率",
-    "品質表示",
-}
 
 _RATIO_ROW_LABELS = COMPOSITION_HINTS | {
     normalize_text(alias) for aliases in PART_PATTERNS.values() for alias in aliases
@@ -134,25 +117,7 @@ _TEMPERATURE_PATTERN = re.compile(
 )
 
 
-_CARE_PHRASES = tuple(
-    {alias.casefold() for aliases in CARE_RULES.values() for alias in aliases}
-)
-# Number safety needs broader context than the phrases used to display care
-# instructions. These words alone do not imply a specific care recommendation.
-_CARE_CONTEXT_PATTERN = re.compile(
-    r"(?<![a-z])(?:wash(?:ing)?|rinse|bleach(?:ing)?|iron(?:ing)?|dry(?:ing)?)(?![a-z])"
-    r"|세탁|표백|다림질|건조|드라이"
-    r"|水洗|洗涤|洗滌|漂白|熨|烘|干洗|乾洗"
-    r"|洗濯|手洗|アイロン|乾燥|ドライ"
-)
-
-
-def _mentions_care(line: str) -> bool:
-    """Whether a row also carries care text, whose numbers are not ratios."""
-
-    return bool(_CARE_CONTEXT_PATTERN.search(line)) or any(
-        phrase in line for phrase in _CARE_PHRASES
-    )
+_SPLIT_CARE_BOUNDARY_PHRASES = frozenset(_CARE_PHRASES) | {"dry cleaning only"}
 
 
 def _mask_temperatures(line: str) -> str:
@@ -175,16 +140,53 @@ def _looks_like_non_composition_number(line: str) -> bool:
 
 _NUMERIC_IDENTIFIER_ROW_PATTERN = re.compile(r"\(?\s*[0-9]+(?:\s*-\s*[0-9]+){1,3}\s*\)?")
 _WASH_SYMBOL_OCR_PATTERN = re.compile(r"1(?:30|40|50|60|70|95)\s*[/\\]")
-_PAREN_WASH_SYMBOL_OCR_PATTERN = re.compile(r"\(\s*(?:30|40|50|60|70|95)0\s*\)?")
+_OUTLINED_WASH_SYMBOL_OCR_PATTERN = re.compile(
+    r"(?:\(\s*(?:30|40|50|60|70|95)0\s*\)?\s*/?"
+    r"|\\\s*(?:30|40|50|60|70|95)\s*/?)"
+)
 _NUMBERED_OUTER_MARKER_PATTERN = re.compile(
     r"(?<![a-z0-9])(?:outshell|cutshell|shell|outer|겉\s*감)\s*[12](?![a-z0-9.,]|\s*%)"
 )
 _STORAGE_DOWN_PATTERN = re.compile(r"(?<![a-z])(?:fold|ford)\s+down(?![a-z])")
-_PRODUCT_CODE_ROW_PATTERN = re.compile(
-    r"(?:skc|sku|style|item|product|article)\s*(?:no\.?|id|code|#|:)\s*[a-z0-9-]+"
+_STORAGE_CAPTION_WORDS = {
+    "fold", "ford", "down", "for", "storage", "dry", "cleaning", "avoid",
+    "direct", "sunlight", "hanger", "washing", "wash", "water", "hand",
+    "neutral", "detergent", "separateness", "separatense",
+}
+_ORIGIN_ROW_PATTERN = re.compile(
+    r"made\s+in\s+(?:korea|china|japan|vietnam|bangladesh|india|indonesia|"
+    r"cambodia|thailand|myanmar|pakistan|sri\s+lanka|turkey|turkiye|italy|france|"
+    r"portugal|spain|germany|romania|mexico|taiwan|usa|u\.?s\.?a\.?|"
+    r"united\s+states|united\s+kingdom|uk|england)"
 )
-_PRODUCT_DATE_ROW_PATTERN = re.compile(r"(?:0?[1-9]|1[0-2])/(?:19|20)\d{2}")
-_PIPE_WASH_TEMPERATURE_PATTERN = re.compile(r"\|(?:30|40|50|60|70|95)\|?")
+
+
+def _mask_storage_caption(line: str) -> str:
+    """Ignore a complete folding caption without dropping opaque evidence."""
+    match = _STORAGE_DOWN_PATTERN.search(line)
+    if match is None:
+        return line
+    prefix, caption = line[:match.start()], line[match.start():]
+    remainder = _STORAGE_DOWN_PATTERN.sub(" ", caption, count=1)
+    prefix_materials = _material_evidence(prefix)
+    prefix_context = prefix
+    for evidence in reversed(prefix_materials):
+        prefix_context = (
+            prefix_context[:evidence.start] + " " * (evidence.end - evidence.start)
+            + prefix_context[evidence.end:]
+        )
+    if (
+        re.search(r"[0-9%]", caption)
+        or declared_part(caption)
+        or extract_materials(remainder)
+        or not _contains_only_known_phrases(caption, _STORAGE_CAPTION_WORDS)
+        or not _contains_only_known_phrases(
+            prefix_context, _RESTORED_ROW_CONTEXTS,
+        )
+        or len(_NUMBER_CANDIDATE_PATTERN.findall(prefix)) != len(prefix_materials)
+    ):
+        return line
+    return line[:match.start()] + " " * len(match.group()) + line[match.end():]
 
 
 def _has_complete_preceding_composition(infos: list[LineInfo]) -> bool:
@@ -208,8 +210,6 @@ def _is_non_composition_numeric_row(
             and not previous.materials and not previous.unresolved_materials
             and _PRODUCT_CODE_ROW_PATTERN.fullmatch(previous.normalized)
             and _PRODUCT_DATE_ROW_PATTERN.fullmatch(following)):
-        # A numeric continuation between an explicit product code and its
-        # date remains metadata even when the later translations are damaged.
         return True
     if (_PIPE_WASH_TEMPERATURE_PATTERN.fullmatch(line)
             and _mentions_care(following) and not extract_materials(following)
@@ -221,9 +221,9 @@ def _is_non_composition_numeric_row(
         groups = re.findall(r"[0-9]+", line)
         # Long hyphenated product/contact numbers cannot be percentage ranges.
         return sum(map(len, groups)) >= 7 and max(map(len, groups)) >= 4
-    # A tub outline can turn 30 degrees into '(300'. Keep explicit ratios,
-    # incomplete blocks and plain out-of-range numbers under normal validation.
-    if _PAREN_WASH_SYMBOL_OCR_PATTERN.fullmatch(line):
+    # A tub outline can turn 30 degrees into '(300/' or '\30/'. Only a
+    # complete preceding declaration can fence it off; a bare 30 stays evidence.
+    if _OUTLINED_WASH_SYMBOL_OCR_PATTERN.fullmatch(line):
         return _has_complete_preceding_composition(preceding_infos or [])
     if line in {"30", "40", "50", "60", "70", "95"} and (
         previous is not None
@@ -310,11 +310,7 @@ def _split_part_markers(text: str) -> str:
     for line in text.split("\n"):
         prepared_line = line
         for marker in sorted(markers, key=len, reverse=True):
-            suffix = re.search(
-                rf"(?i)({_part_alias_pattern(marker)})"
-                r"[\s)\]}>:;,./|\-‐‑‒–—]*$",
-                prepared_line,
-            )
+            suffix = _trailing_part_marker_pattern(marker).search(prepared_line)
             if not suffix or suffix.start() == 0:
                 continue
 
@@ -328,13 +324,28 @@ def _split_part_markers(text: str) -> str:
 
     prepared = "\n".join(prepared_lines)
     for marker in sorted(markers, key=len, reverse=True):
-        prepared = re.sub(
-            rf"(?i)(?<!^)(?<!\n)({_part_alias_pattern(marker)})"
-            r"(?=[^\n]*[0-9a-zà-ÿ가-힣一-龥ぁ-んァ-ン])",
+        prepared = _inline_part_marker_pattern(marker).sub(
             lambda match: "\n" + match.group() if is_part_marker_match(prepared, match) else match.group(),
             prepared,
         )
     return prepared
+
+
+# 부위명별 패턴을 한 번만 컴파일해 re 모듈 내부 캐시의 반복 재컴파일을 막는다.
+@lru_cache(maxsize=1024)
+def _trailing_part_marker_pattern(marker: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"(?i)({_part_alias_pattern(marker)})"
+        r"[\s)\]}>:;,./|\-‐‑‒–—]*$"
+    )
+
+
+@lru_cache(maxsize=1024)
+def _inline_part_marker_pattern(marker: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"(?i)(?<!^)(?<!\n)({_part_alias_pattern(marker)})"
+        r"(?=[^\n]*[0-9a-zà-ÿ가-힣一-龥ぁ-んァ-ン])"
+    )
 
 
 def _apply_trailing_part_markers(infos: list[LineInfo]) -> list[LineInfo]:
@@ -399,9 +410,87 @@ _LANGUAGE_RATIO_PREFIX_PATTERN = re.compile(
     r"(?<![\w])(?:en|uk|us|fr|de|es|es-mx|cat|pt|it|jp|cn|nl|cz|dk|fi|no|pl|"
     r"sk|se|si|hr|lt|lv|ee|kr|ru|tr|el)\s*:\s*(?=[0-9]+(?:[.,][0-9]+)?\s*%)"
 )
+_WRAPPED_ALIAS_WORD_PATTERN = re.compile(r"(?<!\w)[^\W\d_]+(?!\w)")
+_SINGLE_WORD_ALIASES = frozenset(
+    alias for alias in ALIAS_TO_MATERIAL if alias.isalpha() and alias != "poly"
+)
+_SINGLE_WORD_ALIAS_PREFIXES = frozenset(
+    alias[:length] for alias in _SINGLE_WORD_ALIASES for length in range(1, len(alias) + 1)
+)
 
 
-def _prepare_multilingual_rows(text: str, *, with_warnings: bool = False):
+def _restore_multiline_alias_fragments(text: str) -> str:
+    """Join at most eight literal row fragments into a complete table entry."""
+
+    words = list(_WRAPPED_ALIAS_WORD_PATTERN.finditer(text))
+    replacements: list[tuple[int, int, str]] = []
+    consumed_until = -1
+    for position, first in enumerate(words):
+        joined = first.group()
+        if (
+            first.start() < consumed_until or (joined in ALIAS_TO_MATERIAL and joined != "poly")
+            or joined not in _SINGLE_WORD_ALIAS_PREFIXES
+        ):
+            continue
+        previous = first
+        for following in words[position + 1:position + 8]:
+            # A blank row, delimiter, number, or unknown intervening word is
+            # never removed to make the spelling fit the material table.
+            if re.fullmatch(r"[ \t]*\n[ \t]*", text[previous.end():following.start()]) is None:
+                break
+            joined += following.group()
+            if joined not in _SINGLE_WORD_ALIAS_PREFIXES:
+                break
+            if joined in _SINGLE_WORD_ALIASES:
+                replacements.append((first.start(), following.end(), joined))
+                consumed_until = following.end()
+                break
+            previous = following
+    for start, end, joined in reversed(replacements):
+        text = text[:start] + joined + text[end:]
+    return text
+
+
+def _registered_translation_row_material(row: str, *, allow_percent: bool) -> str | None:
+    """Require an entire row of registered aliases and optional explicit ratio."""
+
+    normalized = normalize_text(row)
+    if declared_part(normalized) or _classify_metadata_line(normalized, None)[0]:
+        return None
+    numbers, invalid, explicit, evidence = _read_numbers(normalized, allow_plain_numbers=True)
+    if invalid or len(numbers) > 1 or (numbers and (not allow_percent or not explicit)):
+        return None
+    remainder = normalized
+    for number in reversed(evidence):
+        remainder = remainder[:number.start] + " " * (number.end - number.start) + remainder[number.end:]
+    materials: set[str] = set()
+    for alias in sorted(ALIAS_TO_MATERIAL, key=len, reverse=True):
+        pattern = rf"(?<!\w){re.escape(alias)}(?!\w)"
+        if re.search(pattern, remainder):
+            materials.add(ALIAS_TO_MATERIAL[alias])
+            remainder = re.sub(pattern, " ", remainder)
+    if len(materials) != 1 or re.fullmatch(r"[\s/]*", remainder) is None:
+        return None
+    return next(iter(materials))
+
+
+def _attach_translation_separator_rows(text: str) -> str:
+    """Keep a standalone slash inside an adjacent, exact same-fiber group."""
+
+    rows = text.split("\n")
+    attached: set[int] = set()
+    for position in range(1, len(rows) - 1):
+        if rows[position].strip() != "/":
+            continue
+        previous = _registered_translation_row_material(rows[position - 1], allow_percent=True)
+        following = _registered_translation_row_material(rows[position + 1], allow_percent=False)
+        if previous is not None and previous == following:
+            rows[position - 1] = rows[position - 1].rstrip() + " /"
+            attached.add(position)
+    return "\n".join(row for position, row in enumerate(rows) if position not in attached)
+
+
+def _prepare_multilingual_rows(text: str) -> str:
     """Restore exact wrapped aliases and separate explicit language blocks."""
 
     text = restore_registered_han_aliases(text, allow_newlines=True)
@@ -410,8 +499,8 @@ def _prepare_multilingual_rows(text: str, *, with_warnings: bool = False):
         joined = match.group(1) + match.group(2)
         # A complete table entry is required; partial or fuzzy words stay put.
         return (
-            joined if match.group(1) not in ALIAS_TO_MATERIAL
-            and joined in ALIAS_TO_MATERIAL else match.group()
+            joined if (match.group(1) not in ALIAS_TO_MATERIAL or match.group(1) == "poly")
+            and joined in ALIAS_TO_MATERIAL and joined != "poly" else match.group()
         )
 
     for _ in range(3):
@@ -419,6 +508,7 @@ def _prepare_multilingual_rows(text: str, *, with_warnings: bool = False):
         if restored == text:
             break
         text = restored
+    text = _restore_multiline_alias_fragments(text)
     # Restore only complete registered multiword names, across OCR row breaks.
     for alias in ALIAS_TO_MATERIAL:
         if " " not in alias:
@@ -429,29 +519,108 @@ def _prepare_multilingual_rows(text: str, *, with_warnings: bool = False):
     text = re.sub(r"(?m)^(.*[0-9])[ \t]*\n[ \t]*%[ \t]*$", r"\1%", text)
     # Each language's percentages remain independent; conflicting copies
     # must still produce conflicting candidates rather than being deduplicated.
-    from apps.text.multilingual_rows import prepare_translation_rows
-
-    prepared = prepare_translation_rows(text, allow_unread=True)
-    text = _LANGUAGE_RATIO_PREFIX_PATTERN.sub("\n", prepared.text)
-    return (text, prepared.warnings) if with_warnings else text
+    return _attach_translation_separator_rows(_LANGUAGE_RATIO_PREFIX_PATTERN.sub("\n", text))
 
 
-def build_line_infos(text: str) -> list[LineInfo]:
+def _multilingual_restored_row_indices(original: str, prepared: str) -> set[int] | None:
+    """Map preserved characters in order to the source rows they came from."""
+
+    # Language tags are explicitly separated by the existing preparation rule;
+    # mask the same known tags without changing their original row identities.
+    original = _LANGUAGE_RATIO_PREFIX_PATTERN.sub(
+        lambda match: re.sub(r"[^\n]", " ", match.group()), original,
+    )
+    source = [(char, row) for row, line in enumerate(original.split("\n"))
+              for char in line if not char.isspace()]
+    destination = [(char, row) for row, line in enumerate(prepared.split("\n"))
+                   for char in line if not char.isspace()]
+    if [char for char, _ in source] != [char for char, _ in destination]:
+        # An unexpected character rewrite has no proven row correspondence.
+        return None
+    source_rows: dict[int, set[int]] = {}
+    destination_rows: dict[int, set[int]] = {}
+    for (_, origin), (_, target) in zip(source, destination, strict=True):
+        source_rows.setdefault(target, set()).add(origin)
+        destination_rows.setdefault(origin, set()).add(target)
+    return {
+        row for row, origins in source_rows.items()
+        if len(origins) > 1 or any(len(destination_rows[origin]) > 1 for origin in origins)
+    }
+
+
+_ARABIC_MATERIAL_ALIASES = {
+    alias for alias in ALIAS_TO_MATERIAL
+    if re.fullmatch(r"[\u0600-\u06ff]+", alias)
+}
+
+
+def _has_registered_arabic_material(text: str) -> bool:
+    """Require a complete Arabic alias inside an actual material evidence span."""
+    if re.search(r"[\u0600-\u06ff]", text) is None:
+        return False
+    return any(
+        token.group() in _ARABIC_MATERIAL_ALIASES
+        for evidence in _material_evidence(text)
+        for token in _TOKEN_PATTERN.finditer(text, evidence.start, evidence.end)
+    )
+
+
+def build_line_infos(
+    text: str, *, restored_indices: set[int] | None = None,
+    translation_indices: set[int] | None = None,
+    translation_warnings: list[str] | None = None,
+) -> list[LineInfo]:
+    analysis = reuse_line_analysis(text, _build_line_analysis)
+    if restored_indices is not None:
+        restored_indices.update(analysis.restored_indices)
+    if translation_indices is not None:
+        translation_indices.update(analysis.translation_indices)
+    if translation_warnings is not None:
+        translation_warnings.extend(analysis.translation_warnings)
+    # Callers may filter or extend their list; cached rows and evidence stay immutable.
+    return list(analysis.infos)
+
+
+def _build_line_analysis(text: str) -> LineAnalysis:
     infos: list[LineInfo] = []
     current_part = "generic"
     pending_metadata_kind = None
     original_prepared = _split_part_markers(normalize_text(text))
     prepared = _split_part_markers(_prepare_multilingual_rows(original_prepared))
-    original_rows = Counter(normalize_text(original_prepared).splitlines())
-    prepared_rows = Counter(normalize_text(prepared).splitlines())
-    restored_rows = {row for row, count in prepared_rows.items() if count > original_rows[row]}
-    raw_lines = prepared.split("\n")
+    restored_rows = _multilingual_restored_row_indices(original_prepared, prepared)
+    unproven_rewrite = restored_rows is None
+    if unproven_rewrite:
+        restored_rows = set(range(len(prepared.split("\n"))))
+    translations = prepare_translation_alternatives(prepared)
+    # These rows keep an already complete primary name/explicit percentage;
+    # only the repeated alternatives were wrapped. They do not borrow a name
+    # or number across rows and therefore need no reconstructed-pair boundary.
+    if not unproven_rewrite:
+        restored_rows -= translations.recovered_rows
+    translation_warnings: list[str] = []
+    if translations.recovered_rows:
+        translation_warnings.extend(("registered_translation_alternatives", "multilingual_translation_rows"))
+    if translations.damaged_rows:
+        translation_warnings.extend(("damaged_translation_fragment", "unread_translation_rows"))
+    raw_lines = translations.text.split("\n")
     content_indices = [i for i, raw in enumerate(raw_lines) if normalize_text(raw)]
     last_content_index = content_indices[-1] if content_indices else -1
     following_lines = {
         current: normalize_text(raw_lines[following])
         for current, following in zip(content_indices, content_indices[1:])
     }
+    # OCR can put a single non-text glyph between a wash temperature and its
+    # written wash caption. It supplies no fiber/ratio; do not jump across
+    # letters, digits, percent signs, or uncertainty signs.
+    for position, index in enumerate(content_indices[:-2]):
+        glyph_index, care_index = content_indices[position + 1:position + 3]
+        glyph = normalize_text(raw_lines[glyph_index])
+        care = normalize_text(raw_lines[care_index])
+        if (glyph_index == index + 1 and care_index == glyph_index + 1
+                and re.fullmatch(r"[☆★○□△]", glyph)
+                and _mentions_care(care) and not extract_materials(care)
+                and not re.search(r"[0-9%]", care)):
+            following_lines[index] = care
     for position, index in enumerate(content_indices[:-1]):
         if following_lines[index] != "neutral":
             continue
@@ -481,11 +650,12 @@ def build_line_infos(text: str) -> list[LineInfo]:
         marker_part = None if is_metadata else declared_part(normalized)
         current_part = marker_part or current_part
         composition_text = "" if is_metadata else _strip_excluded_segments(normalized)
-        # FOLD DOWN describes storage, not down filling. Mask only that
-        # action phrase; all remaining fibers and percentages still count.
-        composition_text = _STORAGE_DOWN_PATTERN.sub(
-            lambda match: " " * len(match.group()), composition_text,
-        )
+        # The folding action is non-composition only when all caption words
+        # are known. A bare unknown fiber must remain in the original row.
+        storage_caption_invalid = bool(_STORAGE_DOWN_PATTERN.search(composition_text))
+        masked_caption = _mask_storage_caption(composition_text)
+        storage_caption_invalid &= masked_caption == composition_text
+        composition_text = masked_caption
         # Heading indices name separate fabrics; they are not fiber ratios.
         composition_text = normalize_text(_NUMBERED_OUTER_MARKER_PATTERN.sub(
             lambda match: re.sub(r"[12]", " ", match.group()), composition_text,
@@ -495,22 +665,35 @@ def build_line_infos(text: str) -> list[LineInfo]:
         numbers, invalid_evidence, explicit_percent, number_evidence = _read_numbers(
             composition_text, allow_plain_numbers=bool(materials) or number_only_line,
         )
+        invalid_evidence |= index in translations.rejected_rows
         invalid_evidence |= bool(_IMITATION_LEATHER_PATTERN.search(composition_text))
-        if materials and normalized in restored_rows:
-            # Joining an alias must not move an unknown continuation into an
-            # unchecked trailing suffix of a material/ratio row.
+        invalid_evidence |= storage_caption_invalid
+        has_arabic_material = bool(materials) and _has_registered_arabic_material(composition_text)
+        if materials and (index in restored_rows or has_arabic_material):
+            # Restored rows and newly supported Arabic fibers must account
+            # for every word, including negation and unknown suffixes.
             invalid_evidence |= not _contains_only_known_phrases(
                 composition_text, _MATERIAL_ONLY_LINE_CONTEXTS,
             )
+            invalid_evidence |= unproven_rewrite
+            # The general reader may ignore bare identifiers after a complete
+            # explicit ratio. These rows must account for every printed
+            # digit, percent and uncertainty sign instead of hiding one in
+            # the joined prefix or suffix.
+            numeric_remainder = composition_text
+            for number in reversed(number_evidence):
+                numeric_remainder = (
+                    numeric_remainder[:number.start]
+                    + " " * (number.end - number.start)
+                    + numeric_remainder[number.end:]
+                )
+            invalid_evidence |= re.search(r"[\d%]", numeric_remainder) is not None
+            invalid_evidence |= any(sign in numeric_remainder for sign in _INEXACT_SIGNS)
         if materials and not numbers:
             invalid_evidence |= not _contains_only_known_phrases(composition_text, _MATERIAL_ONLY_LINE_CONTEXTS)
         if materials and numbers and len(materials) == len(numbers):
             invalid_evidence |= not _same_line_pairing_is_supported(composition_text, number_evidence)
         unresolved = unresolved_material_tokens(composition_text)
-        if materials and numbers:
-            from apps.text.multilingual_rows import is_unverified_translation_row
-
-            invalid_evidence |= is_unverified_translation_row(composition_text)
         if _has_explicit_unknown_material_marker(composition_text, numbers):
             unresolved.append("unknown")
         infos.append(LineInfo(
@@ -520,7 +703,12 @@ def build_line_infos(text: str) -> list[LineInfo]:
             marker_part=marker_part, invalid_evidence=invalid_evidence,
             is_metadata=is_metadata, inferred_metadata=inferred_metadata,
         ))
-    return _mark_split_imitation_leather(_apply_trailing_part_markers(_mark_leading_garment_size(infos)))
+    return LineAnalysis(
+        infos=tuple(_mark_split_imitation_leather(_apply_trailing_part_markers(_mark_leading_garment_size(infos)))),
+        restored_indices=frozenset(restored_rows),
+        translation_indices=frozenset(translations.recovered_rows if not unproven_rewrite else ()),
+        translation_warnings=tuple(translation_warnings),
+    )
 
 
 def _mark_leading_garment_size(infos: list[LineInfo]) -> list[LineInfo]:
@@ -689,6 +877,7 @@ def _translated_alias_rows(
     )
     for candidate in anchors:
         material = next(iter(candidate.materials))
+        clear_boundaries = None
         for step in (-1, 1):
             cursor = candidate.start_index + step
             while (info := by_index.get(cursor)) is not None:
@@ -711,53 +900,176 @@ def _translated_alias_rows(
                     ]
                     if sum(alias == material for alias in aliases) < 2:
                         break
+                    if clear_boundaries is None:
+                        clear_boundaries = _restored_block_has_clear_boundaries(candidate, infos)
+                    if not clear_boundaries:
+                        break
                     covered.add(info.index)
                 cursor += step
     return covered
 
 
-def _confirmed_first_generic_rows(infos: list[LineInfo]) -> list[LineInfo]:
-    """명시 확인된 첫 조성만 대표로 삼고 이후 근거는 별도 부위에 보존한다."""
-    if any(info.marker_part is not None or info.part != "generic" for info in infos):
-        return infos
-    rows = [info for info in infos if not _is_metadata_line(info)
-            and (info.materials or info.unresolved_materials or "%" in info.normalized)]
-    if not rows:
-        return infos
-    complete = [candidate for candidate in _collect_candidates(infos)
-                if candidate.part == "generic" and candidate.start_index == rows[0].index
-                and candidate.explicit_percent and candidate.row_indices
-                and has_exact_total(candidate.materials.values())]
-    if not complete:
-        return infos
-    end = min(max(candidate.row_indices) for candidate in complete)
-    first = [candidate for candidate in complete if max(candidate.row_indices) == end]
-    if len({_equivalent_composition(candidate.materials) for candidate in first}) != 1:
-        return infos
-    if any(info.invalid_evidence or info.unresolved_materials or not info.materials
-           and info.numbers and not _is_ratio_only_composition_row(info)
-           for info in rows if info.index <= end):
-        return infos
-    remaining = [info for info in rows if info.index > end]
-    # A lone extra percentage is an error in the first composition, not a
-    # second table. Even an explicit selection must not hide that evidence.
-    later_complete = any(candidate.start_index > end and candidate.explicit_percent
-                         and has_exact_total(candidate.materials.values())
-                         for candidate in _collect_candidates(infos))
-    if not remaining or len(remaining) < 2 and not later_complete:
-        return infos
-    return [replace(info, part="generic_secondary") if info.index > end else info for info in infos]
+def _is_complete_split_care_boundary(
+    infos: list[LineInfo], position: int, step: int, part: str,
+) -> bool:
+    """Recognize two adjacent prepared care rows without discarding evidence."""
+    following = position + step
+    if not 0 <= following < len(infos):
+        return False
+    rows = sorted((infos[position], infos[following]), key=lambda info: info.index)
+    if rows[0].index + 1 != rows[1].index or any(
+        info.part != part or info.marker_part is not None or info.is_metadata
+        or info.materials or info.numbers or info.explicit_percent
+        or info.invalid_evidence or info.unresolved_materials
+        for info in rows
+    ):
+        return False
+    joined = " ".join(info.normalized for info in rows)
+    return (
+        joined in _SPLIT_CARE_BOUNDARY_PHRASES
+        and _mentions_care(joined)
+        and not re.search(r"[\d%]", joined)
+        and not any(sign in joined for sign in _INEXACT_SIGNS)
+    )
 
 
-def _confirmed_polyester_rows(text: str) -> str:
-    """확인된 POLY 약어는 독립 소재·비율 행에서만 해석한다."""
-    ratio = r"[+\-−]?\d+(?:[.,]\d+)?\s*[%％]"
-    lines = []
-    for line in text.splitlines():
-        if re.fullmatch(rf"\s*(?:poly\s*{ratio}|{ratio}\s*poly)\s*", line, re.I):
-            line = re.sub(r"(?<![a-z])poly(?![a-z])", "polyester", line, flags=re.I)
-        lines.append(line)
-    return "\n".join(lines)
+def _restored_block_has_clear_boundaries(
+    candidate: CompositionCandidate, infos: list[LineInfo],
+    *, reject_unpaired_numeric: bool = False,
+    invalid_evidence_parts: set[str] | None = None,
+) -> bool:
+    """Shared ratios must not conceal unreadable neighboring fiber rows."""
+    first, last = min(candidate.row_indices), max(candidate.row_indices)
+    by_index = {info.index: position for position, info in enumerate(infos)}
+    used_split_care_boundary = False
+    clear_boundaries = True
+    unexplained_numeric_parts: set[str] = set()
+    for index in candidate.row_indices:
+        line = _strip_excluded_segments(infos[by_index[index]].normalized)
+        line = _mask_storage_caption(line)
+        line = _ORIGIN_ROW_PATTERN.sub(" ", line)
+        line = re.sub(r"(?<![a-z])(?:rn|ca)\s*[0-9]+(?![a-z0-9])", " ", line)
+        line = normalize_text(line)
+        for evidence in reversed(_material_evidence(line)):
+            line = line[:evidence.start] + " " * (evidence.end - evidence.start) + line[evidence.end:]
+        # Also check the primary printed row. Otherwise an opaque suffix on
+        # COTTON 100% could be hidden by covering its ratio-free translations.
+        if not _contains_only_known_phrases(
+            line, _RESTORED_ROW_CONTEXTS,
+        ):
+            clear_boundaries = False
+    for origin, step in ((first, -1), (last, 1)):
+        position = by_index[origin] + step
+        while 0 <= position < len(infos):
+            info = infos[position]
+            if info.part != candidate.part:
+                break
+            if info.normalized and all(
+                char.isspace() or char in _INEXACT_SIGNS for char in info.normalized
+            ):
+                # A separate qualifier cannot be discarded as decoration
+                # when reconstructing a declaration from other rows.
+                clear_boundaries = False
+                break
+            if info.is_standalone_marker and _contains_only_known_phrases(
+                info.normalized, set(PART_PATTERNS.get(candidate.part, ())),
+            ):
+                # Repeating OUTER does not introduce a different fabric.
+                position += step
+                continue
+            if info.is_metadata:
+                header = _METADATA_HEADER_PATTERN.fullmatch(info.normalized)
+                if header and not header.group("value").strip():
+                    _, pending_kind = _classify_metadata_line(info.normalized, None)
+                    following = position + 1
+                    has_value = following < len(infos) and _METADATA_VALUE_PATTERNS[
+                        pending_kind
+                    ].fullmatch(infos[following].normalized.strip(" \t()[]")) is not None
+                    if not has_value:
+                        position += step
+                        continue
+                if (
+                    _NUMERIC_IDENTIFIER_ROW_PATTERN.fullmatch(info.normalized)
+                    or _OUTLINED_WASH_SYMBOL_OCR_PATTERN.fullmatch(info.normalized)
+                    or _WASH_SYMBOL_OCR_PATTERN.fullmatch(info.normalized)
+                    or re.fullmatch(r"[0-9]+", info.normalized)
+                ):
+                    # An identifier is safe to skip, but cannot conceal an
+                    # unreadable row next to the composition block.
+                    position += step
+                    continue
+                break
+            if _is_complete_split_care_boundary(infos, position, step, candidate.part):
+                used_split_care_boundary = True
+                break
+            if not info.materials and re.search(
+                r"[\d%]", info.normalized,
+            ):
+                # Unread Unicode digits must not fall through as punctuation
+                # or a ratio-free heading. Only an explicit temperature or
+                # complete known care sentence can explain these digits.
+                care_text = _mask_temperatures(info.normalized)
+                if _TEMPERATURE_PATTERN.fullmatch(info.normalized) or (
+                    _mentions_care(info.normalized)
+                    and not re.search(r"[\d%]", care_text)
+                    and _contains_only_known_phrases(
+                        care_text, set(_CARE_PHRASES) | _STORAGE_CAPTION_WORDS,
+                    )
+                ):
+                    break
+                unexplained_numeric_parts.add(info.part)
+                if reject_unpaired_numeric:
+                    if invalid_evidence_parts is not None:
+                        invalid_evidence_parts.add(info.part)
+                    clear_boundaries = False
+                    break
+            if info.materials or info.numbers or info.unresolved_materials or info.invalid_evidence:
+                # Existing coverage and number validation still own these.
+                position += step
+                continue
+            if not _TOKEN_PATTERN.search(info.normalized) and not re.search(r"[0-9%]", info.normalized):
+                position += step
+                continue
+            if not re.search(r"[0-9%]", info.normalized) and (
+                _contains_only_known_phrases(info.normalized, COMPOSITION_HINTS)
+                or _contains_only_known_phrases(info.normalized, PART_PATTERNS.get(candidate.part, ()))
+            ):
+                # Repeated composition headings do not end fiber evidence.
+                position += step
+                continue
+            if (
+                (
+                    _mentions_care(info.normalized)
+                    and not re.search(r"[0-9%]", _mask_temperatures(info.normalized))
+                    and _contains_only_known_phrases(
+                        _mask_temperatures(info.normalized),
+                        set(_CARE_PHRASES) | _STORAGE_CAPTION_WORDS,
+                    )
+                )
+                or _TEMPERATURE_PATTERN.fullmatch(info.normalized)
+                or _ORIGIN_ROW_PATTERN.fullmatch(info.normalized)
+                or (
+                    not re.search(r"[0-9%]", info.normalized)
+                    and _strip_excluded_segments(info.normalized) in {"", "exclusive of"}
+                )
+                or (
+                    _STORAGE_DOWN_PATTERN.search(info.normalized)
+                    and _mask_storage_caption(info.normalized) != info.normalized
+                )
+            ):
+                break
+            clear_boundaries = False
+            break
+    if used_split_care_boundary:
+        # Check both sides even if the first side or printed row is unreadable.
+        # A newly recognized care boundary must not expose extra numeric,
+        # opaque or qualified evidence that another candidate's matching
+        # material/ratio pairs could erase during aggregation.
+        if unexplained_numeric_parts:
+            clear_boundaries = False
+        if not clear_boundaries and invalid_evidence_parts is not None:
+            invalid_evidence_parts.add(candidate.part)
+    return clear_boundaries
 
 
 def _best_candidates_by_part(
@@ -774,7 +1086,13 @@ def _best_candidates_by_part(
     set[str],
     dict,
 ]:
-    infos = build_line_infos(text)
+    restored_indices: set[int] = set()
+    translation_indices: set[int] = set()
+    translation_warnings: list[str] = []
+    infos = build_line_infos(
+        text, restored_indices=restored_indices,
+        translation_indices=translation_indices, translation_warnings=translation_warnings,
+    )
     if confirmed_first_generic:
         infos = _confirmed_first_generic_rows(infos)
     candidates = []
@@ -793,6 +1111,27 @@ def _best_candidates_by_part(
             if info.materials or info.numbers:
                 body_measurement_block = False
     candidates.extend(_collect_candidates(segment))
+    restored_material_indices = {
+        info.index for info in infos if info.materials
+        and info.index in restored_indices
+    }
+    arabic_material_indices = {
+        info.index for info in infos if info.materials
+        and _has_registered_arabic_material(_strip_excluded_segments(info.normalized))
+    }
+    boundary_invalid_evidence_parts: set[str] = set()
+    candidates = [
+        candidate for candidate in candidates
+        if (candidate.row_indices and set(candidate.row_indices).issubset(translation_indices))
+        or (candidate.source not in {"translated_lines", "ratio_first_lines"}
+            and not restored_material_indices.intersection(candidate.row_indices)
+            and not arabic_material_indices.intersection(candidate.row_indices))
+        or _restored_block_has_clear_boundaries(
+            candidate, infos,
+            reject_unpaired_numeric=bool(arabic_material_indices.intersection(candidate.row_indices)),
+            invalid_evidence_parts=boundary_invalid_evidence_parts,
+        )
+    ]
     heading_indices = _composition_heading_indices(infos)
     best_by_part: dict[str, CompositionCandidate] = {}
     ambiguous_parts: set[str] = set(conflicting_parts)
@@ -893,13 +1232,9 @@ def _best_candidates_by_part(
         info.part for info in infos if info.invalid_evidence and not _is_metadata_line(info)
         and (info.materials or "%" in info.normalized
              or _has_invalid_numeric_row(info))
-    }
+    } | boundary_invalid_evidence_parts
     parts: dict[str, dict[str, float | int]] = {}
-    translation_warnings = _prepare_multilingual_rows(
-        _split_part_markers(normalize_text(text)), with_warnings=True,
-    )[1]
     warnings: list[str] = [
-        *translation_warnings,
         *(f"{part}:invalid_composition_evidence" for part in sorted(invalid_evidence_parts)),
         *(f"{part}:unresolved_material_token" for part in sorted(unresolved_parts - best_by_part.keys())),
         *(f"{part}:invalid_ratio" for part in sorted(invalid_ratio_parts)),
@@ -990,6 +1325,7 @@ def _best_candidates_by_part(
 
     if any(info.inferred_metadata for info in infos):
         warnings.append("unlabeled_garment_size_inferred")
+    warnings.extend(translation_warnings)
     return parts, best_by_part, warnings, expected_parts, ratio_evidence
 
 
@@ -1113,6 +1449,7 @@ def failed_response(
     return result
 
 
+@line_analysis_scope()
 def parse_label(
     text: str,
     *,
@@ -1122,7 +1459,7 @@ def parse_label(
     confirmed_polyester_poly: bool = False,
     confirmed_first_generic: bool = False,
 ) -> dict:
-    """OCR 근거를 검증한다. 확인 옵션은 해당 라벨의 명시 확인 후에만 쓴다."""
+    """OCR 후보의 상충 부위도 포함해 최종 대표 조성을 안전하게 판단한다."""
 
     if type(confirmed_polyester_poly) is not bool or type(confirmed_first_generic) is not bool:
         raise ValueError("라벨 확인 옵션은 불리언이어야 합니다.")
@@ -1134,21 +1471,48 @@ def parse_label(
             message="OCR에서 라벨 텍스트를 추출하지 못했습니다.",
         )
 
-    interpreted = _confirmed_polyester_rows(text) if confirmed_polyester_poly else text
+    yarn_declaration = confirmed_yarn_declaration(text)
+    composition_text = yarn_declaration[0] if yarn_declaration else text
+    interpreted = _confirmed_polyester_rows(composition_text) if confirmed_polyester_poly else composition_text
     parts, candidates, warnings, expected_parts, ratio_evidence = _best_candidates_by_part(
         interpreted, conflicting_parts=conflicting_parts, unpaired_ratio_parts=unpaired_ratio_parts,
         rejected_composition_parts=rejected_composition_parts,
         confirmed_first_generic=confirmed_first_generic,
     )
-    if interpreted != text:
-        warnings.append("confirmed_material_alias:poly:polyester")
+    if interpreted != composition_text:
+        warnings.extend(("confirmed_material_alias:poly:polyester", "poly_abbreviation_as_polyester"))
+    # Project-level interpretation is automatic, distinct from per-label
+    # human confirmation. Keep complete wrapped names such as POLY/AMIDE intact.
+    prepared = _prepare_multilingual_rows(normalize_text(composition_text))
+    if re.search(r"(?<![^\W\d_])poly(?![^\W\d_])", prepared):
+        warnings.append("project_material_alias:poly:polyester")
+        if "poly_abbreviation_as_polyester" not in warnings:
+            warnings.append("poly_abbreviation_as_polyester")
     if "generic_secondary" in expected_parts:
         warnings.append("confirmed_representative_selection:first_generic")
+    yarn_materials = yarn_declaration[1] if yarn_declaration else read_yarn_materials(text)
+    if yarn_materials is not None:
+        ratio_evidence["scoped_materials"] = yarn_materials
+        warnings.append("yarn_materials_are_not_primary_composition")
+        if yarn_declaration:
+            warnings.append("country_labelled_yarn_translations")
+            ratio_evidence["yarn_language_selection"] = {
+                "language": yarn_materials["selected_language"],
+                "basis": yarn_materials["selection_basis"],
+                "foreign_translations_unconfirmed": yarn_materials["foreign_translations_unconfirmed"],
+            }
+            if yarn_materials["foreign_translations_unconfirmed"]:
+                warnings.extend(("unconfirmed_foreign_yarn_translations", "unread_translation_rows"))
+            warnings.append("multilingual_translation_rows")
     selected_part, materials = choose_representative_materials(parts)
     if not materials:
         error_code = (
             "ambiguous_composition"
-            if any("ambiguous_composition_candidates" in item for item in warnings)
+            if any(
+                "ambiguous_composition_candidates" in item
+                or "ambiguous_outer_compositions" in item
+                for item in warnings
+            )
             else "composition_not_found"
         )
         message = (
@@ -1164,27 +1528,43 @@ def parse_label(
             parse_evidence=ratio_evidence,
         )
 
-    # A rejection from an unlabelled response cannot be assigned to another
-    # part just because the selected response lost those words or headings.
+    # Unlabelled damage in another OCR view cannot acquire a part merely
+    # because the winning crop has discarded that row or its heading.
     if "generic" in (rejected_composition_parts or {}) and not any(
         info.part == "generic" and not _is_metadata_line(info)
         and (info.materials or info.numbers or info.unresolved_materials)
         for info in build_line_infos(text)
     ):
         return failed_response(
-            text, warnings=warnings, parse_evidence=ratio_evidence,
+            text,
             message="부위가 확인되지 않은 OCR 근거가 남아 소재를 확정하지 못했습니다.",
+            warnings=warnings,
+            parse_evidence=ratio_evidence,
         )
 
-    # Select the first confirmed part. Preserve evidence for higher parts
-    # without presenting the fallback as a confirmed outer composition.
+    # A known outer must be confirmed before another part can be primary.
+    # An absent outer does not prevent using an explicitly labelled other part.
+    missing_parts = [part for part in PART_PRIORITY if part in expected_parts and part not in parts]
+    warnings.extend(f"{part}:composition_not_confirmed" for part in missing_parts)
     unconfirmed_parts = [
         part
         for part in PART_PRIORITY[: PART_PRIORITY.index(selected_part)]
         if part in expected_parts and part not in parts
     ]
+    unconfirmed_outer_parts = [part for part in unconfirmed_parts if part in OUTER_PARTS]
+    if unconfirmed_outer_parts:
+        return failed_response(
+            text,
+            error_code="incomplete_part_composition",
+            message="겉감 조성을 확정하지 못해 다른 부위로 대신 계산할 수 없습니다.",
+            warnings=warnings,
+            parse_evidence={
+                **ratio_evidence,
+                "unconfirmed_outer_parts": unconfirmed_outer_parts,
+                "confirmed_parts": parts,
+            },
+        )
     if unconfirmed_parts:
-        warnings.extend(f"{part}:composition_not_confirmed" for part in unconfirmed_parts)
         warnings.append(f"representative_part_fallback:{selected_part}")
 
     selected_candidate = candidates[selected_part]
@@ -1194,7 +1574,10 @@ def parse_label(
         and has_exact_total(selected_candidate.materials.values())
         and selected_candidate.source == "same_line"
         and "unlabeled_garment_size_inferred" not in warnings
-        and "unread_translation_rows" not in warnings
+        and "damaged_translation_fragment" not in warnings
+        and "poly_abbreviation_as_polyester" not in warnings
+        and "unconfirmed_foreign_yarn_translations" not in warnings
+        and not unconfirmed_parts
         else "medium"
     )
     care_instruction = parse_care(text)
@@ -1279,47 +1662,12 @@ _METADATA_VALUE_PATTERNS = {
 _UNLABELED_KOREAN_GARMENT_SIZE_VALUES = {
     str(value) for value in range(80, 125, 5)
 }
-_RATIO_PAIR_DESCRIPTORS = {
-    "organic",
-    "recycled",
-    "combed",
-    "certified",
-    "pure",
-    "fiber",
-    "fibre",
-    "content",
-    "blend",
-    "of",
-    "and",
-    "유기농",
-    "재생",
-    "섬유",
-    "함량",
-    "혼방",
-    "및",
-}
-_RATIO_PREFIX_CONTEXTS = {
-    *COMPOSITION_HINTS,
-    *(alias for aliases in PART_PATTERNS.values() for alias in aliases),
-    "fiber",
-    "fibre",
-    "fabric",
-    "content",
-    "body",
-    "組成",
-    "組成表示",
-    "纤维",
-    "纤维成分",
-    "成分",
-}
-_EXPLICIT_PART_HEADER_CONTEXTS = _RATIO_PREFIX_CONTEXTS | {
-    "fabric",
-    "재질",
-}
 
 
-
-_MATERIAL_ONLY_LINE_CONTEXTS = set(ALIAS_TO_MATERIAL) | _RATIO_PAIR_DESCRIPTORS | _EXPLICIT_PART_HEADER_CONTEXTS
+_RESTORED_ROW_CONTEXTS = (
+    _RATIO_PAIR_DESCRIPTORS | _EXPLICIT_PART_HEADER_CONTEXTS
+    | _STORAGE_CAPTION_WORDS | set(_CARE_PHRASES)
+)
 
 @dataclass(frozen=True)
 class NumberEvidence:
@@ -1457,25 +1805,6 @@ def _read_numbers(
     return result, invalid, explicit_percent, evidence
 
 
-def _contains_only_known_phrases(text: str, phrases: set[str]) -> bool:
-    remainder = normalize_text(text)
-    # Use the same normalized aliases and OCR corrections as extraction. This
-    # preserves multilingual names such as bombaž that normalize to bombaz.
-    if phrases is _MATERIAL_ONLY_LINE_CONTEXTS:
-        for evidence in reversed(_material_evidence(remainder)):
-            remainder = remainder[:evidence.start] + " " * (evidence.end - evidence.start) + remainder[evidence.end:]
-    for phrase in sorted(phrases, key=len, reverse=True):
-        if phrase.isascii():
-            remainder = re.sub(
-                rf"(?<![a-z]){re.escape(phrase.casefold())}(?![a-z])",
-                " ",
-                remainder,
-            )
-        else:
-            remainder = remainder.replace(phrase.casefold(), " ")
-    return _TOKEN_PATTERN.search(remainder) is None
-
-
 def _same_line_pairing_is_supported(
     line: str,
     numbers: tuple[NumberEvidence, ...],
@@ -1554,6 +1883,11 @@ def _classify_metadata_line(
     line: str, pending_kind: str | None
 ) -> tuple[bool, str | None]:
     """명시한 항목의 값만 제외하며, 헤더의 대기 상태는 바로 다음 줄에만 적용한다."""
+    # A standalone currency amount above 100 cannot be a fiber percentage.
+    # Keep signed amounts, percent signs and any attached material/text out.
+    amount = re.fullmatch(r"[$€£₩]\s*([0-9]+(?:\.[0-9]{1,2})?)", line)
+    if amount and Decimal(amount.group(1)) > 100:
+        return True, None
     header = _METADATA_HEADER_PATTERN.fullmatch(line)
     if header:
         kind = "size" if header.group("size") else "measurement" if header.group("measurement") else "shrinkage"
@@ -1593,3 +1927,61 @@ def _is_unlabeled_korean_garment_size(
         find_material_key(match.group())
         for match in re.finditer(r"[가-힣]+", previous.normalized)
     )
+
+
+_PRODUCT_CODE_ROW_PATTERN = re.compile(
+    r"(?:skc|sku|style|item|product|article)\s*(?:no\.?|id|code|#|:)\s*[a-z0-9-]+"
+)
+
+
+_PRODUCT_DATE_ROW_PATTERN = re.compile(r"(?:0?[1-9]|1[0-2])/(?:19|20)\d{2}")
+
+
+_PIPE_WASH_TEMPERATURE_PATTERN = re.compile(r"\|(?:30|40|50|60|70|95)\|?")
+
+
+def _confirmed_first_generic_rows(infos: list[LineInfo]) -> list[LineInfo]:
+    """명시 확인된 첫 조성만 대표로 삼고 이후 근거는 별도 부위에 보존한다."""
+    if any(info.marker_part is not None or info.part != "generic" for info in infos):
+        return infos
+    rows = [info for info in infos if not _is_metadata_line(info)
+            and (info.materials or info.unresolved_materials or "%" in info.normalized)]
+    if not rows:
+        return infos
+    complete = [candidate for candidate in _collect_candidates(infos)
+                if candidate.part == "generic" and candidate.start_index == rows[0].index
+                and candidate.explicit_percent and candidate.row_indices
+                and has_exact_total(candidate.materials.values())]
+    if not complete:
+        return infos
+    end = min(max(candidate.row_indices) for candidate in complete)
+    first = [candidate for candidate in complete if max(candidate.row_indices) == end]
+    if len({_equivalent_composition(candidate.materials) for candidate in first}) != 1:
+        return infos
+    if any(info.invalid_evidence or info.unresolved_materials or not info.materials
+           and info.numbers and not _is_ratio_only_composition_row(info)
+           for info in rows if info.index <= end):
+        return infos
+    remaining = [info for info in rows if info.index > end]
+    # A lone extra percentage is an error in the first composition, not a
+    # second table. Even an explicit selection must not hide that evidence.
+    later_complete = any(candidate.start_index > end and candidate.explicit_percent
+                         and has_exact_total(candidate.materials.values())
+                         for candidate in _collect_candidates(infos))
+    if not remaining or len(remaining) < 2 and not later_complete:
+        return infos
+    return [replace(info, part="generic_secondary") if info.index > end else info for info in infos]
+
+
+def _confirmed_polyester_rows(text: str) -> str:
+    """확인된 POLY 약어는 독립 소재·비율 행에서만 해석한다."""
+    ratio = r"[+\-−]?\d+(?:[.,]\d+)?\s*[%％]"
+    lines = []
+    for line in text.splitlines():
+        replaced = re.sub(r"(?<!\w)poly(?!\w)", "polyester", line, flags=re.I)
+        if (re.fullmatch(rf"\s*(?:poly\s*{ratio}|{ratio}\s*poly)\s*", line, re.I)
+                or replaced != line and "%" in line and len(extract_materials(replaced)) > 1
+                and _contains_only_known_phrases(normalize_text(replaced), _MATERIAL_ONLY_LINE_CONTEXTS)):
+            line = replaced
+        lines.append(line)
+    return "\n".join(lines)

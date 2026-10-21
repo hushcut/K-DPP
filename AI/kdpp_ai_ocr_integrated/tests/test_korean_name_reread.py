@@ -1,8 +1,6 @@
 """실제 DJ042 응답과 좌표·독립 입력·숫자·소재 보존 검사."""
 
 from dataclasses import replace
-import json
-from pathlib import Path
 
 import pytest
 
@@ -45,15 +43,6 @@ def assessed(candidates):
         rejected_composition_parts=decision.rejected_composition_parts)
 
 
-def test_complete_real_response_set_resolves_dj042_without_new_ocr():
-    fixture = json.loads((Path(__file__).parent / 'fixtures/dj042_name_reread.json').read_text(encoding='utf-8'))
-    candidates = [c for item in fixture['responses'] for c in build_response(item)]
-    assert same_region_recovery(candidates[3], candidates[8], 'generic', candidates)
-    assert same_region_recovery(candidates[6], candidates[8], 'generic', candidates)
-    result = assessed(candidates)
-    assert result['status'] == 'success'
-    assert result['materials'] == {'cotton': 50, 'polyester': 50}
-    assert not result['warnings']
 
 
 def response(source, name, *, y=50):

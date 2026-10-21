@@ -133,6 +133,32 @@ void main() {
     });
   });
 
+  group('사용자 id·로그인 방법 저장', () {
+    test('저장한 값을 그대로 복원하고 지우면 저장된 적 없는 상태로 돌아간다', () async {
+      final service = ClosetStorageService();
+
+      await service.saveUserId(7);
+      await service.saveLoginMethods(const ['kakao']);
+
+      expect(await service.loadUserId(), 7);
+      expect(await service.loadLoginMethods(), ['kakao']);
+
+      await service.clearUserId();
+      await service.clearLoginMethods();
+
+      expect(await service.loadUserId(), isNull);
+      expect(await service.loadLoginMethods(), isNull);
+    });
+
+    test('빈 로그인 방법 목록은 저장된 적 없음(null)과 구분한다', () async {
+      final service = ClosetStorageService();
+
+      await service.saveLoginMethods(const []);
+
+      expect(await service.loadLoginMethods(), isEmpty);
+    });
+  });
+
   group('정렬 기준 저장', () {
     test('enum 이름이 아니라 storageValue 문자열로 저장한다', () async {
       final service = ClosetStorageService();

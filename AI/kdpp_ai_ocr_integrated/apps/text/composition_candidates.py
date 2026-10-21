@@ -8,7 +8,8 @@ from decimal import Decimal
 import re
 
 from apps.text.rules import EQUIVALENT_MATERIALS
-from apps.text.material_extraction import _TOKEN_PATTERN, find_material_key
+from apps.text.material_extraction import ALIAS_TO_MATERIAL, _TOKEN_PATTERN, find_material_key
+from apps.text.line_context import COMPOSITION_HINTS, _CARE_PHRASES, _contains_only_known_phrases, _mentions_care
 
 from apps.text.ratio_contract import EXACT_RATIO_TOTAL, has_exact_total, sum_ratios
 
@@ -376,11 +377,6 @@ def _adjacent_line_candidates(infos: list[LineInfo]) -> list[CompositionCandidat
             neighbor = infos[next_position]
             if neighbor.part != info.part or neighbor.materials:
                 break
-            # Unknown words between a name and its ratio cannot be skipped.
-            # This also prevents a newly registered translation from hiding
-            # another material whose own name was not recognised.
-            from apps.text.parse_label import COMPOSITION_HINTS
-
             if (not neighbor.numbers and _TOKEN_PATTERN.search(neighbor.normalized)
                     and neighbor.normalized.rstrip(" :") not in COMPOSITION_HINTS):
                 break
@@ -485,52 +481,39 @@ def _has_translation_context(info: LineInfo) -> bool:
     )
 
 
-def _has_registered_translation_run(infos: list[LineInfo], position: int, primary: LineInfo) -> bool:
-    """Require a composition heading and two distinct, complete translations."""
-    from apps.text.parse_label import COMPOSITION_HINTS, _CARE_PHRASES, _contains_only_known_phrases, _mentions_care
+def _consume_registered_translation_aliases(remainder: str) -> tuple[set[str], str]:
+    materials: set[str] = set()
+    for alias in sorted(ALIAS_TO_MATERIAL, key=len, reverse=True):
+        pattern = rf"(?<!\w){re.escape(alias)}(?!\w)"
+        if re.search(pattern, remainder):
+            materials.add(ALIAS_TO_MATERIAL[alias])
+            remainder = re.sub(pattern, " ", remainder)
+    return materials, remainder
 
-    headed = primary.marker_part == primary.part
-    for preceding in reversed(infos[:position]):
-        if preceding.part != primary.part or preceding.is_metadata or preceding.invalid_evidence or preceding.unresolved_materials:
-            break
-        if preceding.marker_part is not None:
-            headed = preceding.marker_part == primary.part and preceding.is_standalone_marker
-            break
-        if (not preceding.materials and not preceding.numbers
-                and preceding.normalized.rstrip(" :") in COMPOSITION_HINTS):
-            headed = True
-            break
-    if not headed:
+
+def _ratio_free_translation_row_is_complete(info: LineInfo, material: str) -> bool:
+    """A ratio-free alias may end in one printed translation hyphen."""
+    text = info.normalized.rstrip()
+    if text.endswith("-"):
+        text = text[:-1]
+    materials, remainder = _consume_registered_translation_aliases(text)
+    return materials == {material} and re.fullmatch(r"[\s/]*", remainder) is not None
+
+
+def _inline_translation_ratio_is_complete(info: LineInfo, material: str) -> bool:
+    """Consume one literal percent and exact aliases across the entire row."""
+    percentages = list(re.finditer(r"[0-9]+(?:[.,][0-9]+)?[ \t]*%", info.normalized))
+    if len(percentages) != 1:
         return False
-    material = primary.materials[0]
-    primary_aliases = {token for token in _TOKEN_PATTERN.findall(primary.normalized)
-                       if find_material_key(token) == material}
-    aliases = set()
-    cursor = infos.index(primary) + 1
-    last_index = primary.index
-    while cursor < len(infos):
-        row = infos[cursor]
-        alias = row.normalized.strip(" /-")
-        if (row.index != last_index + 1 or row.part != primary.part
-                or row.materials != (material,) or row.numbers or "%" in row.normalized
-                or row.invalid_evidence or row.unresolved_materials or row.is_metadata
-                or row.marker_part is not None or find_material_key(alias) != material):
-            break
-        if alias not in primary_aliases:
-            aliases.add(alias)
-        last_index = row.index
-        cursor += 1
-    if cursor < len(infos):
-        following = infos[cursor]
-        if (following.part == primary.part and not following.marker_part
-                and not following.is_metadata and not following.materials and not following.numbers
-                and _TOKEN_PATTERN.search(following.normalized)):
-            # An unregistered name cannot end a translated material column.
-            # Only a fully recognized care instruction is a confirmed boundary.
-            if not (_mentions_care(following.normalized)
-                    and _contains_only_known_phrases(following.normalized, set(_CARE_PHRASES))):
-                return False
-    return len(aliases) >= 2
+    percent = percentages[0]
+    if Decimal(percent.group().rstrip("% \t").replace(",", ".")) != info.numbers[0]:
+        return False
+    remainder = (info.normalized[:percent.start()] + " " * (percent.end() - percent.start())
+                 + info.normalized[percent.end():])
+    materials, remainder = _consume_registered_translation_aliases(remainder)
+    # _read_numbers can intentionally ignore bare identifiers after an already
+    # complete percent. Such leftovers cannot belong to a shared translation.
+    return materials == {material} and re.fullmatch(r"[\s/]*", remainder) is not None
 
 
 def _translated_component(infos: list[LineInfo], position: int, part: str):
@@ -562,11 +545,13 @@ def _translated_component(infos: list[LineInfo], position: int, part: str):
             return None
         ratio = primary.numbers[0] if primary.numbers else None
     material = primary.materials[0]
+    alias_infos = [primary]
     translated = False
     context = _has_translation_context(primary) or _has_registered_translation_run(infos, position, primary)
+    separator = "/" in primary.normalized or "-" in primary.normalized
 
     def take_alias_rows():
-        nonlocal cursor, translated, context
+        nonlocal cursor, translated, context, separator
         while cursor < len(infos):
             current = infos[cursor]
             if (current.part != part or current.index != rows[-1] + 1
@@ -576,7 +561,9 @@ def _translated_component(infos: list[LineInfo], position: int, part: str):
                     or not (context or _has_translation_context(current))):
                 break
             rows.append(current.index)
+            alias_infos.append(current)
             context = True
+            separator |= "/" in current.normalized or "-" in current.normalized
             translated = True
             cursor += 1
 
@@ -586,10 +573,22 @@ def _translated_component(infos: list[LineInfo], position: int, part: str):
             return None
         ratio_row = infos[cursor]
         if (ratio_row.part != part or ratio_row.index != rows[-1] + 1
-                or ratio_row.materials or len(ratio_row.numbers) != 1
+                or len(ratio_row.numbers) != 1
                 or not ratio_row.explicit_percent or ratio_row.invalid_evidence
                 or ratio_row.unresolved_materials or ratio_row.is_metadata
-                or ratio_row.marker_part is not None or _TOKEN_PATTERN.search(ratio_row.normalized)):
+                or ratio_row.marker_part is not None):
+            return None
+        if ratio_row.materials:
+            # A printed translation separator can place the shared explicit
+            # ratio on the final same-fiber alias, rather than on its own row.
+            # A different fiber or an unmarked repeated name owns another row.
+            if (ratio_row.materials != (material,) or not separator
+                    or not all(_ratio_free_translation_row_is_complete(info, material)
+                               for info in alias_infos)
+                    or not _inline_translation_ratio_is_complete(ratio_row, material)):
+                return None
+            translated = True
+        elif _TOKEN_PATTERN.search(ratio_row.normalized):
             return None
         ratio = ratio_row.numbers[0]
         rows.append(ratio_row.index)
@@ -661,3 +660,50 @@ def _collect_candidates(infos: list[LineInfo]) -> list[CompositionCandidate]:
     ):
         candidates.extend(collector(infos))
     return candidates
+
+
+def _has_registered_translation_run(infos: list[LineInfo], position: int, primary: LineInfo) -> bool:
+    """Require a composition heading and two distinct, complete translations."""
+
+    headed = primary.marker_part == primary.part
+    for preceding in reversed(infos[:position]):
+        if preceding.part != primary.part or preceding.is_metadata or preceding.invalid_evidence or preceding.unresolved_materials:
+            break
+        if preceding.marker_part is not None:
+            headed = preceding.marker_part == primary.part and preceding.is_standalone_marker
+            break
+        if (not preceding.materials and not preceding.numbers
+                and preceding.normalized.rstrip(" :") in COMPOSITION_HINTS):
+            headed = True
+            break
+    if not headed:
+        return False
+    material = primary.materials[0]
+    primary_aliases = {token for token in _TOKEN_PATTERN.findall(primary.normalized)
+                       if find_material_key(token) == material}
+    aliases = set()
+    cursor = infos.index(primary) + 1
+    last_index = primary.index
+    while cursor < len(infos):
+        row = infos[cursor]
+        alias = row.normalized.strip(" /-")
+        if (row.index != last_index + 1 or row.part != primary.part
+                or row.materials != (material,) or row.numbers or "%" in row.normalized
+                or row.invalid_evidence or row.unresolved_materials or row.is_metadata
+                or row.marker_part is not None or find_material_key(alias) != material):
+            break
+        if alias not in primary_aliases:
+            aliases.add(alias)
+        last_index = row.index
+        cursor += 1
+    if cursor < len(infos):
+        following = infos[cursor]
+        if (following.part == primary.part and not following.marker_part
+                and not following.is_metadata and not following.materials and not following.numbers
+                and _TOKEN_PATTERN.search(following.normalized)):
+            # An unregistered name cannot end a translated material column.
+            # Only a fully recognized care instruction is a confirmed boundary.
+            if not (_mentions_care(following.normalized)
+                    and _contains_only_known_phrases(following.normalized, set(_CARE_PHRASES))):
+                return False
+    return len(aliases) >= 2
