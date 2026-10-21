@@ -296,6 +296,7 @@ class ScanResultView extends StatelessWidget {
                   secondaryText: secondaryText,
                   borderColor: borderColor,
                   cardColor: cardColor,
+                  iconColor: palette.accentForeground,
                 ),
                 if (rawOcrPreview.trim().isNotEmpty) ...[
                   const SizedBox(height: 12),
@@ -508,6 +509,7 @@ class ScanResultView extends StatelessWidget {
     required Color secondaryText,
     required Color borderColor,
     required Color cardColor,
+    required Color iconColor,
   }) {
     final normalizedMessage = failureMessage?.trim();
 
@@ -522,7 +524,7 @@ class ScanResultView extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.edit_note, color: AppPalette.accent),
+          Icon(Icons.edit_note, color: iconColor),
           const SizedBox(width: 12),
           Expanded(
             child: Column(

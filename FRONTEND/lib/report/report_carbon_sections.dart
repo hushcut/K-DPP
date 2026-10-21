@@ -69,6 +69,7 @@ Widget _buildProductionCarbonCard(
   Clothes item, {
   required Color primaryText,
   required Color secondaryText,
+  required Color accentColor,
   required Color cardColor,
   required Color borderColor,
   required bool isDark,
@@ -100,9 +101,9 @@ Widget _buildProductionCarbonCard(
                 color: AppPalette.accent.withValues(alpha: isDark ? 0.22 : 0.10),
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.factory_outlined,
-                color: AppPalette.accent,
+                color: accentColor,
               ),
             ),
             const SizedBox(width: 14),
@@ -253,6 +254,7 @@ Widget _buildCarbonComparisonCard(
   Clothes item, {
   required Color primaryText,
   required Color secondaryText,
+  required Color accentColor,
   required Color cardColor,
   required Color borderColor,
   required bool isDark,
@@ -316,6 +318,7 @@ Widget _buildCarbonComparisonCard(
                       primaryText: primaryText,
                       secondaryText: secondaryText,
                       isDark: isDark,
+                      accentColor: accentColor,
                     ),
                     if (comparison != comparisons.last)
                       const SizedBox(height: 10),
@@ -333,6 +336,7 @@ Widget _buildCarbonComparisonCard(
                       primaryText: primaryText,
                       secondaryText: secondaryText,
                       isDark: isDark,
+                      accentColor: accentColor,
                     ),
                   ),
                   if (comparison != comparisons.last)
@@ -358,6 +362,7 @@ Widget _buildCarbonComparisonCard(
 Widget _buildCarbonScopeNotice({
   required Color primaryText,
   required Color secondaryText,
+  required Color accentColor,
   required bool isDark,
 }) {
   return Container(
@@ -373,7 +378,7 @@ Widget _buildCarbonScopeNotice({
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Icon(Icons.info_outline, color: AppPalette.accent, size: 20),
+        Icon(Icons.info_outline, color: accentColor, size: 20),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
@@ -391,6 +396,7 @@ Widget _buildCalculationBasisCard(
   Clothes item, {
   required Color primaryText,
   required Color secondaryText,
+  required Color accentColor,
   required Color cardColor,
   required Color borderColor,
 }) {
@@ -407,9 +413,9 @@ Widget _buildCalculationBasisCard(
       children: [
         Row(
           children: [
-            const Icon(
+            Icon(
               Icons.fact_check_outlined,
-              color: AppPalette.accent,
+              color: accentColor,
               size: 20,
             ),
             const SizedBox(width: 8),
@@ -518,6 +524,7 @@ Widget _buildComparisonTile(
   _CarbonComparisonData data, {
   required Color primaryText,
   required Color secondaryText,
+  required Color accentColor,
   required bool isDark,
 }) {
   return Container(
@@ -528,7 +535,7 @@ Widget _buildComparisonTile(
     ),
     child: Row(
       children: [
-        Icon(data.icon, color: AppPalette.accent, size: 22),
+        Icon(data.icon, color: accentColor, size: 22),
         const SizedBox(width: 10),
         Expanded(
           child: Column(

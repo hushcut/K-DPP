@@ -707,7 +707,7 @@ class _BottomTabItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
 
-    const activeColor = AppPalette.accent;
+    final activeColor = palette.accentForeground;
     final inactiveColor = palette.textSecondary;
     final color = selected ? activeColor : inactiveColor;
 
