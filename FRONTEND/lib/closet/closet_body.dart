@@ -31,6 +31,9 @@ extension _ClosetBody on _ClosetScreenState {
         children: [
           DefaultTabController(
             length: 3,
+            // 탭을 누르면 본문이 옆으로 넘어가는 것은 스크롤이라 Flutter 가 줄이지 않습니다(Android 도).
+            // 그래서 동작 줄이기면 넘김 시간을 0 으로 해 바로 넘깁니다. 옷장을 다시 그릴 때 읽습니다.
+            animationDuration: reducesMotion(context) ? Duration.zero : null,
             child: Column(
               children: [
                 _buildHeader(palette, hasClothes: clothesList.isNotEmpty),
