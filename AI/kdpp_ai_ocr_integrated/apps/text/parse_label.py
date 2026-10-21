@@ -1072,6 +1072,66 @@ def _restored_block_has_clear_boundaries(
     return clear_boundaries
 
 
+_LEATHER_NOUN = re.compile(
+    r"(?:천연|리얼)?(?:양|소|송아지|돼지|염소|산양|사슴|말)?(?:가죽|피혁)"
+    r"|(?:genuine|real|natural)?(?:leather|cuir|leder|piel|皮革)"
+    r"|(?:cow|calf|lamb|sheep|goat|pig|deer)(?:skin|hide)|cowhide"
+)
+_LEATHER_DESCRIPTOR = re.compile(r"천연|리얼|genuine|real|natural|cow|calf|lamb|sheep|goat|pig|deer|양|소|돼지|염소")
+
+
+def _is_leather_declaration(info: LineInfo, part: str) -> bool:
+    """부위 제목과 가죽 종류 표기만 있는 행인지 확인한다. 숫자·비율·다른 단어가 있으면 거짓이다."""
+
+    if info.marker_part != part or info.numbers or info.explicit_percent or "%" in info.normalized:
+        return False
+    if set(info.materials) - {"leather"}:
+        return False
+    text = info.normalized
+    for alias in sorted(PART_PATTERNS.get(part, []), key=len, reverse=True):
+        heading = normalize_text(alias)
+        if text.startswith(heading):
+            text = text[len(heading):]
+            break
+    else:
+        return False
+    tokens = [token for token in re.split(r"[\s()\[\]{}:;,./·\-]+", text) if token]
+    return (bool(tokens) and any(_LEATHER_NOUN.fullmatch(token) for token in tokens)
+            and all(_LEATHER_NOUN.fullmatch(token) or _LEATHER_DESCRIPTOR.fullmatch(token)
+                    for token in tokens))
+
+
+def _implicit_leather_candidates(
+    infos: list[LineInfo], candidates: list[CompositionCandidate],
+) -> list[CompositionCandidate]:
+    """가죽 부위는 혼용률 없이 종류만 표시하는 관행을 따른다(2026-10-21 정책).
+
+    부위 제목이 붙은 한 행이 가죽 하나만 말하고, 그 부위에 다른 소재·숫자·비율 기호·
+    해석 불가 근거가 전혀 없을 때만 그 부위를 가죽 100%로 본다. 부위 표기가 없는
+    행과 이미 조성 후보가 있는 부위에는 적용하지 않는다. 인조·합성 같은 부정 표현은
+    소재 추출 단계에서 가죽으로 인정되지 않는다.
+    """
+    covered_parts = {candidate.part for candidate in candidates}
+    implicit = []
+    for part in sorted({info.part for info in infos} - covered_parts - {"generic"}):
+        evidence = [
+            info for info in infos
+            if info.part == part and not _is_metadata_line(info)
+            and (info.materials or info.numbers or info.unresolved_materials
+                 or info.invalid_evidence or info.explicit_percent or "%" in info.normalized
+                 or _is_leather_declaration(info, part))
+        ]
+        if len(evidence) != 1:
+            continue
+        row = evidence[0]
+        if not row.unresolved_materials and _is_leather_declaration(row, part):
+            implicit.append(CompositionCandidate(
+                part=part, materials={"leather": Decimal(100)}, source="implicit_leather",
+                explicit_percent=False, start_index=row.index, row_indices=(row.index,),
+            ))
+    return implicit
+
+
 def _best_candidates_by_part(
     text: str,
     *,
@@ -1132,6 +1192,10 @@ def _best_candidates_by_part(
             invalid_evidence_parts=boundary_invalid_evidence_parts,
         )
     ]
+    implicit_leather = _implicit_leather_candidates(infos, candidates)
+    candidates.extend(implicit_leather)
+    # 가죽 종류 수식어(천연·양가죽 등)는 미등록 단어로 표시되지만 위 검사로 확인한 행이다.
+    implicit_leather_rows = {index for candidate in implicit_leather for index in candidate.row_indices}
     heading_indices = _composition_heading_indices(infos)
     best_by_part: dict[str, CompositionCandidate] = {}
     ambiguous_parts: set[str] = set(conflicting_parts)
@@ -1230,6 +1294,7 @@ def _best_candidates_by_part(
 
     invalid_evidence_parts = {
         info.part for info in infos if info.invalid_evidence and not _is_metadata_line(info)
+        and info.index not in implicit_leather_rows
         and (info.materials or "%" in info.normalized
              or _has_invalid_numeric_row(info))
     } | boundary_invalid_evidence_parts
@@ -1568,6 +1633,8 @@ def parse_label(
         warnings.append(f"representative_part_fallback:{selected_part}")
 
     selected_candidate = candidates[selected_part]
+    if selected_candidate.source == "implicit_leather":
+        warnings.append(f"implicit_leather_composition:{selected_part}")
     parser_confidence = (
         "high"
         if selected_candidate.explicit_percent

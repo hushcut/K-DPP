@@ -36,7 +36,6 @@ def test_registered_yarn_headings_use_the_last_part(heading):
 
 @pytest.mark.parametrize('text', [
     '자수\nYARN\n실\n100% POLYESTER',
-    '겉감 천연가죽(양가죽)\n안감 폴리에스터 100%\n배색 면 90% 폴리에스터 9% 폴리우레탄 1%',
     'OUTER UNKNOWN 100%\nLINING POLYESTER 100%',
     'OUTER COTTON 95%\nLINING POLYESTER 100%',
     'OUTER COTTON 100%\nPOLYESTER 100%\nLINING POLYESTER 100%',
@@ -55,6 +54,16 @@ def test_real_layouts_and_unconfirmed_higher_parts_select_only_verified_ratios(t
     assert result['selected_part'] == part
     assert result['materials'] == {'polyester': 100}
     assert 'outer' not in result['parts']
+
+
+def test_leather_outer_without_ratio_is_the_representative_part():
+    """2026-10-21 정책: 가죽만 표시된 겉감은 가죽 100%로 본다(이전에는 겉감 미확정 실패)."""
+    result = parse_label('겉감 천연가죽(양가죽)\n안감 폴리에스터 100%\n배색 면 90% 폴리에스터 9% 폴리우레탄 1%')
+    assert result['status'] == 'success'
+    assert result['selected_part'] == 'outer'
+    assert result['materials'] == {'leather': 100}
+    assert result['parts']['lining'] == {'polyester': 100}
+    assert result['parts']['color_block'] == {'cotton': 90, 'polyester': 9, 'polyurethane': 1}
 
 
 @pytest.mark.parametrize('text', [

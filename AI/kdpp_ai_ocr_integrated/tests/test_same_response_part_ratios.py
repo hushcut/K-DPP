@@ -31,13 +31,15 @@ def readings():
     return cs
 
 
-def test_layout_pairs_repeated_percentages_and_keeps_unconfirmed_outer():
+def test_layout_pairs_repeated_percentages_with_leather_outer():
+    # 2026-10-21 정책: 비율 없는 "OUTER LEATHER"는 가죽 100%다(이전에는 겉감 미확정 실패).
     raw, layout = readings()
     assert _same_response_ratio_order_recovery(raw, layout, "lining", [raw, layout])
     result = _assess_candidates([raw, layout])
-    assert result.status == "failed"
+    assert result.status == "success"
     assert result.best.parts["lining"] == {"polyester": 100}
-    assert "outer" in result.rejected_composition_parts
+    assert result.best.parts["outer"] == {"leather": 100}
+    assert "outer" not in result.rejected_composition_parts
     assert "lining" not in result.rejected_composition_parts
     assert "lining" not in result.unpaired_ratio_parts
 
