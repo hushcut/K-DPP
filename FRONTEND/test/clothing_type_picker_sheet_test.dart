@@ -330,6 +330,61 @@ void main() {
       variant: TargetPlatformVariant.only(TargetPlatform.iOS),
     );
 
+    // AI 연동 협의안 R4: 422 의 재촬영 권고는 실패 이유를 풀어 주는 말이라 이유 바로 다음에 두고,
+    // 시트가 열리면 처음 읽히는 칸에서 이유에 이어 읽힌다.
+    testWidgets(
+      '실패 이유 아래 안내(재촬영 권고)를 주면 이유 바로 다음 줄에 보이고 첫 칸에서 이유에 이어 읽힌다',
+      (tester) async {
+        const notice = '소재·혼용률 부분을 다시 찍어 주세요.';
+        final semantics = tester.ensureSemantics();
+        _usePhoneView(tester);
+        await _openSheet(
+          tester,
+          discardPrompt: ClothingTypePickerDiscardPrompt.manualAfterFailure,
+          failureMessage: failureMessage,
+          failureNotices: const [notice],
+        );
+
+        Rect rectOf(String text) => tester.getRect(
+          find.descendant(
+            of: find.byType(BottomSheet),
+            matching: find.text(text),
+          ),
+        );
+        expect(
+          rectOf(notice).top,
+          greaterThanOrEqualTo(rectOf(failureMessage).bottom),
+        );
+        expect(rectOf(notice).top, lessThan(rectOf('의류 종류 선택').top));
+        // 느낌표는 이유 줄의 하나뿐이다.
+        expect(
+          find.descendant(
+            of: find.byType(BottomSheet),
+            matching: find.byIcon(Icons.error_outline),
+          ),
+          findsOneWidget,
+        );
+
+        expect(_traversalLabels(tester).take(2), [
+          '$failureMessage\n$notice',
+          '의류 종류 선택',
+        ]);
+        semantics.dispose();
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+
+    testWidgets('실패 이유가 없으면 안내만 따로 보이지 않는다', (tester) async {
+      _usePhoneView(tester);
+      await _openSheet(
+        tester,
+        discardPrompt: ClothingTypePickerDiscardPrompt.analysisResult,
+        failureNotices: const ['소재·혼용률 부분을 다시 찍어 주세요.'],
+      );
+
+      expect(find.text('소재·혼용률 부분을 다시 찍어 주세요.'), findsNothing);
+    });
+
     testWidgets(
       '실패 이유가 없으면(분석 성공·결과 화면의 유형 변경) 이유 줄 없이 제목부터 읽힌다',
       (tester) async {
@@ -523,6 +578,7 @@ Future<_SheetResult> _openSheet(
   WidgetTester tester, {
   ClothingTypePickerDiscardPrompt? discardPrompt,
   String? failureMessage,
+  List<String> failureNotices = const [],
 }) async {
   final sheet = _SheetResult();
 
@@ -539,6 +595,7 @@ Future<_SheetResult> _openSheet(
                   initialSelection: ClothingTypeCatalog.defaultOption,
                   discardPrompt: discardPrompt,
                   failureMessage: failureMessage,
+                  failureNotices: failureNotices,
                 ).then((value) {
                   sheet
                     ..completed = true

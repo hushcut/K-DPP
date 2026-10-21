@@ -801,6 +801,259 @@ void main() {
     });
   });
 
+  // AI 연동 협의안 R4: 스캔 응답 warnings 의 공개 코드만 안내 문구로 보인다. 성공 안내는 소재를
+  // 확인하는 동안 결과 화면에 남고, 422 재촬영 권고는 실패 이유를 보이는 종류 선택 시트에 붙는다.
+  // 요청서(준원_R3_R4_앱경고_요청_20261021) §2 확인 기준 넷과 §4 가죽 추정 경고를 본다.
+  group('AI 안내(warnings) — AI 연동 협의안 R4', () {
+    const outerNotice = '겉감 기준으로 읽었어요.';
+    const unidentifiedNotice =
+        '부위 표기를 찾지 못해 라벨의 소재를 그대로 읽었어요. 소재와 비율을 확인해 주세요.';
+    const leatherNotice = '라벨에 비율이 없어 가죽 100%로 보았어요. 확인해 주세요.';
+    const retakeNotice = '소재·혼용률 부분을 다시 찍어 주세요.';
+    const allNotices = [
+      outerNotice,
+      unidentifiedNotice,
+      leatherNotice,
+      retakeNotice,
+    ];
+    // 지금 AI·백엔드가 실제로 보내는 진단 경고와 공개 표에 없는 코드다.
+    const diagnostics = [
+      'generic:unpaired_ratio_rows',
+      'OCR 좌표를 바탕으로 재구성한 줄 순서를 사용했습니다.',
+      'composition_part:shell',
+      'manual_composition_review_required:outer',
+    ];
+
+    ScanResult knitWith(List<String> warnings) => ScanResult(
+      materials: const {'면': 80, '폴리에스터': 20},
+      careInstruction: '찬물 손세탁',
+      title: '분석한 니트',
+      category: 'knit',
+      health: 72,
+      warnings: warnings,
+    );
+
+    // 백엔드(main.py)가 보내는 422 본문 모양 그대로를 실제 변환으로 예외로 바꾼다.
+    ScanApiException recognitionFailure(List<String> warnings) =>
+        ScanApiException.fromStatusCode(
+          statusCode: 422,
+          responseBody: jsonEncode({
+            'status': 'error',
+            'error_code': 'MATERIAL_EXTRACTION_FAILED',
+            'message': '라벨에서 소재 혼용률을 찾지 못했습니다.',
+            'detail': {
+              'message': '라벨에서 소재 혼용률을 찾지 못했습니다.',
+              'error_code': 'MATERIAL_EXTRACTION_FAILED',
+              'materials': const {},
+              'partial_materials': {'면': 60},
+              'care_instruction': '라벨 표기법에 맞춰 관리하세요.',
+              'raw_ocr_preview': 'COTTON 60%',
+              'ai_success': false,
+              'parser_error_code': 'composition_not_found',
+              'warnings': warnings,
+            },
+          }),
+        );
+
+    Future<void> openResult(WidgetTester tester, ScanResult result) async {
+      await tapAlbum(tester);
+      await finishAnalysis(tester, ScanAnalysisSuccess(result));
+      await chooseType(tester, '니트');
+      expect(find.byType(ScanResultView), findsOneWidget);
+    }
+
+    Finder inSheet(String text) =>
+        find.descendant(of: find.byType(BottomSheet), matching: find.text(text));
+
+    void expectNoRawText(List<String> raw) {
+      for (final text in raw) {
+        expect(find.textContaining(text), findsNothing, reason: text);
+      }
+    }
+
+    void expectOnlyNotices(List<String> shown) {
+      for (final notice in allNotices) {
+        expect(
+          find.text(notice),
+          shown.contains(notice) ? findsOneWidget : findsNothing,
+          reason: notice,
+        );
+      }
+    }
+
+    testWidgets('성공 + 부위 코드면 그 부위 안내 한 줄이 소재 입력 바로 위에 남고, 소재 화면은 그대로다', (
+      tester,
+    ) async {
+      await pumpScanScreen(tester);
+      await openResult(
+        tester,
+        knitWith(['composition_part:outer', ...diagnostics]),
+      );
+
+      expectOnlyNotices([outerNotice]);
+      expectNoRawText(['composition_part', ...diagnostics]);
+      expect(find.text('스캔 완료!'), findsOneWidget);
+      expect(materialField('면'), findsOneWidget);
+      expect(materialField('80'), findsOneWidget);
+      expect(materialField('폴리에스터'), findsOneWidget);
+      expect(materialField('20'), findsOneWidget);
+      final noticeTop = tester.getRect(find.text(outerNotice)).top;
+      expect(
+        noticeTop,
+        greaterThan(tester.getRect(find.text('소재 및 혼용률')).top),
+      );
+      expect(noticeTop, lessThan(tester.getRect(materialField('면')).top));
+
+      // 사라지는 배너가 아니다 — 소재를 고치고 시간이 지나도 그 자리에 남는다.
+      expect(shownBanner(tester), isNull);
+      await tester.enterText(materialField('20'), '10');
+      await tester.pump(const Duration(seconds: 10));
+      expect(find.text(outerNotice), findsOneWidget);
+    });
+
+    testWidgets(
+      '성공 + 부위 미확정이면 확인 안내를 보이되 계산·저장은 그대로 하고, 저장한 옷과 다음 스캔에는 안내가 남지 않는다',
+      (tester) async {
+        final provider = await pumpScanScreen(tester, signedIn: true);
+        await openResult(tester, knitWith(['composition_part:unidentified']));
+
+        expectOnlyNotices([unidentifiedNotice]);
+        expectNoRawText(['composition_part', 'unidentified']);
+
+        await tester.ensureVisible(find.text('옷장에 저장하기'));
+        await tester.tap(find.text('옷장에 저장하기'));
+        await tester.pump();
+        await tester.pump(transition);
+
+        // 결정 A(2026-10-21): 부위 미확정이어도 계산·저장을 막지 않는다.
+        expect(carbon.calls.single.materials, {'면': 80.0, '폴리에스터': 20.0});
+        final saved = savedClothes.single;
+        expect(saved.carbonFootprintSource, CarbonFootprintSource.server);
+        expect(provider.items, hasLength(1));
+        // 부위 안내는 저장 이력·옷장에 남기지 않는다(별도 범위).
+        final savedJson = jsonEncode(saved.toJson());
+        for (final text in [unidentifiedNotice, 'composition_part']) {
+          expect(savedJson, isNot(contains(text)));
+        }
+
+        expect(find.byType(ScanCameraView), findsOneWidget);
+        await openResult(tester, knitResult());
+        expectOnlyNotices(const []);
+      },
+    );
+
+    testWidgets(
+      '422 + 재촬영 코드면 종류 선택 시트의 실패 이유 바로 아래에 다시 찍으라는 안내가 보이고, 직접 입력 화면에는 남지 않는다',
+      (tester) async {
+        await pumpScanScreen(tester);
+        await tapAlbum(tester);
+        final failure = recognitionFailure([
+          'generic:unpaired_ratio_rows',
+          'composition_action:retake_composition_region',
+        ]);
+        await finishAnalysis(tester, ScanAnalysisFailure(failure));
+
+        final reason = inSheet(failure.userMessage);
+        final retake = inSheet(retakeNotice);
+        expect(reason, findsOneWidget);
+        expect(retake, findsOneWidget);
+        expect(
+          tester.getRect(retake).top,
+          greaterThanOrEqualTo(tester.getRect(reason).bottom),
+        );
+        expect(
+          tester.getRect(retake).top,
+          lessThan(tester.getRect(inSheet('의류 종류 선택')).top),
+        );
+        expectOnlyNotices([retakeNotice]);
+        expectNoRawText(['composition_action', 'generic:unpaired_ratio_rows']);
+
+        await chooseType(tester, '반팔 티셔츠');
+
+        expect(find.text('직접 입력 모드'), findsOneWidget);
+        expect(find.text(failure.userMessage), findsOneWidget);
+        expect(materialField('면'), findsOneWidget);
+        expect(materialField('60'), findsOneWidget);
+        expectOnlyNotices(const []);
+      },
+    );
+
+    testWidgets('모르는 코드·진단 경고만 오면 성공이든 422 든 아무 안내도, 원문도 보이지 않는다', (
+      tester,
+    ) async {
+      await pumpScanScreen(tester);
+      await openResult(
+        tester,
+        knitWith([
+          ...diagnostics,
+          'composition_action:retake_composition_region',
+        ]),
+      );
+
+      expectOnlyNotices(const []);
+      expectNoRawText(['composition_', ...diagnostics]);
+      expect(materialField('면'), findsOneWidget);
+
+      // 고치지 않았으니 '다시 촬영'은 묻지 않고 촬영 화면으로 돌아간다.
+      final retakeButton = find.descendant(
+        of: find.byType(ScanResultView),
+        matching: find.text('다시 촬영'),
+      );
+      await tester.ensureVisible(retakeButton);
+      await tester.pump();
+      await tester.tap(retakeButton);
+      await tester.pump();
+      await tester.pump(transition);
+      expect(find.byType(ScanCameraView), findsOneWidget);
+
+      await tapAlbum(tester);
+      final failure = recognitionFailure([
+        ...diagnostics,
+        'composition_part:outer',
+        'implicit_leather_composition:outer',
+      ]);
+      await finishAnalysis(tester, ScanAnalysisFailure(failure));
+
+      expect(inSheet(failure.userMessage), findsOneWidget);
+      expectOnlyNotices(const []);
+      expectNoRawText(['composition_', 'implicit_leather', ...diagnostics]);
+    });
+
+    testWidgets('가죽 추정 경고는 접두어로 알아보고 부위 안내 다음 줄에 함께 남는다', (tester) async {
+      final semantics = tester.ensureSemantics();
+      await pumpScanScreen(tester);
+      await openResult(
+        tester,
+        ScanResult(
+          materials: const {'가죽': 100},
+          careInstruction: '가죽 전문 세탁',
+          title: '분석한 재킷',
+          category: 'knit',
+          warnings: const [
+            'implicit_leather_composition:outer',
+            'composition_part:outer',
+          ],
+        ),
+      );
+
+      expectOnlyNotices([outerNotice, leatherNotice]);
+      // 안내마다 따로 읽힌다(소재 제목·합계 줄과도 섞이지 않는다).
+      expect(tester.getSemantics(find.text(outerNotice)).label, outerNotice);
+      expect(
+        tester.getSemantics(find.text(leatherNotice)).label,
+        leatherNotice,
+      );
+      expect(
+        tester.getRect(find.text(leatherNotice)).top,
+        greaterThan(tester.getRect(find.text(outerNotice)).top),
+      );
+      expect(materialField('가죽'), findsOneWidget);
+      expect(materialField('100'), findsOneWidget);
+      expectNoRawText(['implicit_leather', 'composition_part']);
+      semantics.dispose();
+    });
+  });
+
   // C53·C54: 라이트 모드에서 흰 바탕 대비 4.5:1 에 못 미치던 green·redAccent 글자와 버튼 바탕.
   testWidgets('소재 합계 글자는 맞으면 좋음, 틀리면 경고 글자색이고, 고친 결과를 버리는 확인 버튼은 경고 바탕이다', (
     tester,

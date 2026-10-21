@@ -119,5 +119,36 @@ void main() {
       expect(result.displayNameFor('cotton'), 'cotton');
       expect(result.displayMaterials, {'cotton': 100.0});
     });
+
+    // AI 연동 협의안 R4: 백엔드는 AI 의 warnings 를 걸러내지 않고 그대로 넘긴다(문자열만).
+    test('warnings 의 문자열을 순서대로 보존하고 문자열이 아닌 값은 버린다', () {
+      final result = ScanResult.fromJson({
+        'materials': {'cotton': 100},
+        'warnings': [
+          'composition_part:outer',
+          123,
+          null,
+          'generic:unpaired_ratio_rows',
+          {'code': 'x'},
+        ],
+      });
+
+      expect(result.warnings, [
+        'composition_part:outer',
+        'generic:unpaired_ratio_rows',
+      ]);
+      expect(() => result.warnings.add('x'), throwsUnsupportedError);
+    });
+
+    test('warnings 가 없거나 목록이 아니면 비어 있다', () {
+      for (final warnings in [null, 'composition_part:outer', {'a': 1}]) {
+        final result = ScanResult.fromJson({
+          'materials': {'cotton': 100},
+          'warnings': ?warnings,
+        });
+
+        expect(result.warnings, isEmpty);
+      }
+    });
   });
 }

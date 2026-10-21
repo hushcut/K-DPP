@@ -25,6 +25,7 @@ class ScanResultView extends StatelessWidget {
     required this.isSaving,
     required this.isScanFailed,
     this.scanFailureMessage,
+    this.scanNotices = const [],
     required this.titleController,
     required this.selectedClothingType,
     required this.materialInputs,
@@ -55,6 +56,10 @@ class ScanResultView extends StatelessWidget {
   final bool isScanFailed;
   /// 스캔 실패 시 사용자에게 보여 줄 선택적 상세 메시지입니다.
   final String? scanFailureMessage;
+
+  /// AI 가 어느 부위를 읽었는지·가죽 100%로 보았는지 알리는 안내 문구입니다(R4).
+  /// 소재를 확인하는 동안 사라지지 않게 소재 입력 바로 위에 둡니다. 없으면 그리지 않습니다.
+  final List<String> scanNotices;
 
   // 사용자가 편집하는 의류명, 의류 종류, 소재 입력 목록입니다.
   final TextEditingController titleController;
@@ -317,6 +322,14 @@ class ScanResultView extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
+              if (scanNotices.isNotEmpty) ...[
+                _buildScanNotices(
+                  primaryText: primaryText,
+                  borderColor: borderColor,
+                  cardColor: cardColor,
+                ),
+                const SizedBox(height: 10),
+              ],
               ListenableBuilder(
                 listenable: materialInputs,
                 builder: (context, _) {
@@ -548,6 +561,54 @@ class ScanResultView extends StatelessWidget {
                     height: 1.5,
                   ),
                 ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 분석 결과를 어떻게 읽었는지(부위·가죽 추정) 알려, 아래 소재와 비율을 라벨과 맞춰 보게 합니다.
+  // 안내마다 한 줄씩 따로 읽히게 나눕니다.
+  Widget _buildScanNotices({
+    required Color primaryText,
+    required Color borderColor,
+    required Color cardColor,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.info_outline_rounded,
+            color: AppPalette.accent,
+            size: 18,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var i = 0; i < scanNotices.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 4),
+                  Text(
+                    scanNotices[i],
+                    softWrap: true,
+                    style: TextStyle(
+                      color: primaryText,
+                      fontSize: 13,
+                      height: 1.45,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

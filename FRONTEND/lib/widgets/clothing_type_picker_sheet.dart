@@ -42,7 +42,8 @@ class ClothingTypePickerDiscardPrompt {
 ///
 /// [failureMessage]를 주면 시트 맨 위(제목 위)에 빨간 느낌표와 함께 보입니다.
 /// 분석이 실패해 직접 입력으로 넘어갈 때 쓰며, 시트가 열리면 읽기 프로그램도 이 줄부터
-/// 읽습니다(DECISIONS 96).
+/// 읽습니다(DECISIONS 96). [failureNotices]는 그 이유 바로 아래에 한 줄씩 이어 보이는
+/// 안내(AI 재촬영 권고 — R4)이며, 이유가 없으면 보이지 않습니다.
 Future<ClothingTypeOption?> showClothingTypePickerSheet({
   required BuildContext context,
   required List<ClothingTypeOption> options,
@@ -50,6 +51,7 @@ Future<ClothingTypeOption?> showClothingTypePickerSheet({
   ValueListenable<List<ClothingTypeOption>>? optionsListenable,
   ClothingTypePickerDiscardPrompt? discardPrompt,
   String? failureMessage,
+  List<String> failureNotices = const [],
 }) {
   final canDismiss = discardPrompt == null;
 
@@ -80,6 +82,7 @@ Future<ClothingTypeOption?> showClothingTypePickerSheet({
         initialSelection: initialSelection,
         discardPrompt: discardPrompt,
         failureMessage: failureMessage,
+        failureNotices: failureNotices,
         onSelected: (option) {
           Navigator.pop(sheetContext, option);
         },
@@ -101,6 +104,7 @@ class ClothingTypePickerSheet extends StatefulWidget {
     this.optionsListenable,
     this.discardPrompt,
     this.failureMessage,
+    this.failureNotices = const [],
   });
 
   // 표시할 선택지와 현재 선택된 초기값입니다.
@@ -114,6 +118,8 @@ class ClothingTypePickerSheet extends StatefulWidget {
   final ClothingTypePickerDiscardPrompt? discardPrompt;
   /// 분석에 실패했을 때 목록 맨 위에 보일 이유입니다. 없으면 그 줄을 그리지 않습니다.
   final String? failureMessage;
+  /// 실패 이유 아래에 이어 보일 안내(재촬영 권고 등)입니다. 이유가 없으면 그리지 않습니다.
+  final List<String> failureNotices;
 
   @override
   State<ClothingTypePickerSheet> createState() =>
@@ -372,14 +378,32 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.only(top: 1),
-                  child: Text(
-                    failureMessage,
-                    style: TextStyle(
-                      color: primaryText,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      height: 1.4,
-                    ),
+                  // 안내는 이유를 풀어 주는 말이라 같은 느낌표 아래에 옅게 잇습니다. 읽기 프로그램은
+                  // 이유와 한 칸으로 이어 읽습니다.
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        failureMessage,
+                        style: TextStyle(
+                          color: primaryText,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          height: 1.4,
+                        ),
+                      ),
+                      for (final notice in widget.failureNotices) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          notice,
+                          style: TextStyle(
+                            color: secondaryText,
+                            fontSize: 13,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ),
