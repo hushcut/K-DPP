@@ -482,7 +482,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
                           color: isSelected
-                              ? AppPalette.accent
+                              ? palette.accentForeground
                               : borderColor,
                           width: isSelected ? 1.5 : 1,
                         ),
@@ -504,7 +504,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
                               option.icon,
                               color: isSelected
                                   ? Colors.white
-                                  : AppPalette.accent,
+                                  : palette.accentForeground,
                             ),
                           ),
                           const SizedBox(width: 14),
@@ -535,9 +535,9 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
                             ),
                           ),
                           if (isSelected)
-                            const Icon(
+                            Icon(
                               Icons.check_circle,
-                              color: AppPalette.accent,
+                              color: palette.accentForeground,
                             )
                           else
                             // 직접 입력도 누르면 무게 칸으로 넘어가므로 다른 줄과 같은 ">" 입니다.

@@ -462,7 +462,7 @@ class _AppBannerViewState extends State<AppBannerView> {
     final (IconData icon, Color iconColor) = switch (widget.kind) {
       AppBannerKind.success => (Icons.check_circle, Colors.green),
       AppBannerKind.failure => (Icons.error_outline, Colors.redAccent),
-      AppBannerKind.info => (Icons.info_outline, AppPalette.accent),
+      AppBannerKind.info => (Icons.info_outline, palette.accentForeground),
     };
 
     // 바깥 칸에 label 을 두고 안쪽 Text 를 빼야 한 번만 읽힌다.

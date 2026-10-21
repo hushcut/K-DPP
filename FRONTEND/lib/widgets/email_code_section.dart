@@ -410,11 +410,11 @@ class EmailCodeSectionState extends State<EmailCodeSection>
                 child: OutlinedButton(
                   onPressed: canRequest ? _requestCode : null,
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: AppPalette.accent,
+                    foregroundColor: palette.accentForeground,
                     side: BorderSide(
                       color: canRequest
-                          ? AppPalette.accent
-                          : AppPalette.accent.withValues(alpha: 0.35),
+                          ? palette.accentForeground
+                          : palette.accentForeground.withValues(alpha: 0.35),
                       width: 1.5,
                     ),
                     shape: RoundedRectangleBorder(
@@ -425,12 +425,12 @@ class EmailCodeSectionState extends State<EmailCodeSection>
                       ? Semantics(
                           label: '인증번호 요청 중',
                           liveRegion: true,
-                          child: const SizedBox(
+                          child: SizedBox(
                             width: 20,
                             height: 20,
                             child: CircularProgressIndicator(
                               strokeWidth: 2.2,
-                              color: AppPalette.accent,
+                              color: palette.accentForeground,
                             ),
                           ),
                         )
@@ -489,7 +489,7 @@ class EmailCodeSectionState extends State<EmailCodeSection>
                 },
                 onFieldSubmitted: widget.onCodeSubmitted,
                 style: TextStyle(color: palette.textPrimary),
-                cursorColor: AppPalette.accent,
+                cursorColor: palette.accentForeground,
                 decoration: authInputDecoration(
                   context,
                   labelText: '인증번호',

@@ -78,6 +78,20 @@ void main() {
       });
     }
 
+    // C55: 다크에서 바탕에 칠한 강조색 #4A4EFE 는 3.4:1(카드 3.1:1)이었다.
+    test('바탕에 칠하는 강조색은 두 테마의 화면 바탕과 카드에서 4.5:1 을 넘는다', () {
+      for (final palette in [AppPalette.light, AppPalette.dark]) {
+        for (final background in [palette.background, palette.card]) {
+          expect(
+            contrast(palette.accentForeground, background),
+            greaterThan(aa),
+            reason: '${palette.accentForeground} on $background',
+          );
+        }
+      }
+      expect(AppPalette.light.accentForeground, AppPalette.accent);
+    });
+
     test('수명 만료 글자는 옷장의 붉은 경고 카드 바탕에서도 4.5:1 을 넘는다', () {
       expect(
         contrast(AppPalette.light.dangerText, Colors.red.shade50),
@@ -364,6 +378,43 @@ void main() {
       );
       expect(decoration.labelStyle?.color, light.inputLabel);
       expect(decoration.hintStyle?.color, light.inputHint);
+    });
+  });
+
+  group('화면이 팔레트 색을 쓴다(다크)', () {
+    testWidgets('옷장의 선택된 탭·탭 밑줄·정렬 아이콘은 다크용 강조색이다', (
+      tester,
+    ) async {
+      final provider = ClosetProvider(
+        storage: FakeClosetStorage(),
+        authSessionStorage: FakeAuthSessionStorage(),
+      );
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: provider),
+            ChangeNotifierProvider(create: (_) => ThemeProvider()),
+            ChangeNotifierProvider(
+              create: (_) => MaterialNameDisplayProvider(),
+            ),
+          ],
+          child: MaterialApp(
+            theme: ThemeData(brightness: Brightness.dark),
+            builder: AppBannerHost.builder,
+            home: Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final tabBar = tester.widget<TabBar>(find.byType(TabBar));
+      expect(tabBar.labelColor, AppPalette.dark.accentForeground);
+      expect(tabBar.indicatorColor, AppPalette.dark.accentForeground);
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.sort)).color,
+        AppPalette.dark.accentForeground,
+      );
+      expect(AppPalette.dark.accentForeground, isNot(AppPalette.accent));
     });
   });
 }

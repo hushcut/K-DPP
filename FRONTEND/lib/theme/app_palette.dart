@@ -12,6 +12,7 @@ class AppPalette {
     required this.textPrimary,
     required this.textSecondary,
     required this.accentText,
+    required this.accentForeground,
     required this.dangerText,
     required this.successText,
     required this.warningText,
@@ -43,6 +44,11 @@ class AppPalette {
   /// 다크 값은 숫자 키보드 막대의 회색 띠(#3A3A3C)에서도 4.5:1 을 넘게(4.9:1)
   /// 하나로 맞췄습니다(DECISIONS 187).
   final Color accentText;
+
+  /// 배경·카드 위에 칠하는 강조색(선택된 탭·글자·아이콘·테두리·커서)입니다. 다크에서 [accent] 는
+  /// 배경 3.4:1·카드 3.1:1 이라 밝힌 #8084FF(배경 5.9:1·카드 5.4:1)를 씁니다. 라이트는 [accent].
+  /// 흰 글자·아이콘을 얹는 바탕(버튼·카드)은 이 색이 아니라 [accent] 그대로입니다(C55).
+  final Color accentForeground;
 
   /// 글자로 쓰는 경고·삭제·만료 색입니다. 라이트는 수명 만료 카드의 붉은 바탕(#FFEBEE)에서도
   /// 4.5:1 을 넘는 #C62828, 다크는 원래 쓰던 redAccent(카드 5.3:1)입니다(C54).
@@ -76,6 +82,7 @@ class AppPalette {
     textPrimary: Color(0xFF111111),
     textSecondary: Color(0xFF5F6368),
     accentText: accent,
+    accentForeground: accent,
     dangerText: Color(0xFFC62828),
     successText: Color(0xFF2E7D32),
     warningText: Color(0xFFB45309),
@@ -91,6 +98,7 @@ class AppPalette {
     textPrimary: Colors.white,
     textSecondary: Color(0xFFD1D1D6),
     accentText: Color(0xFF9EA1FF),
+    accentForeground: Color(0xFF8084FF),
     dangerText: Colors.redAccent,
     successText: Colors.green,
     warningText: Colors.orange,

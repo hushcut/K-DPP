@@ -358,21 +358,25 @@ class SettingsScreen extends StatelessWidget {
                   icon: Icons.camera_alt_outlined,
                   text: '카메라는 스캔 화면에서만 켜지고, 다른 화면에서는 사용하지 않습니다.',
                   textColor: secondaryText,
+                  iconColor: palette.accentForeground,
                 ),
                 _buildPrivacyGuideRow(
                   icon: Icons.delete_outline,
                   text: '카메라로 새로 촬영한 임시 파일은 분석이 끝난 뒤 정리합니다.',
                   textColor: secondaryText,
+                  iconColor: palette.accentForeground,
                 ),
                 _buildPrivacyGuideRow(
                   icon: Icons.photo_library_outlined,
                   text: '앨범에서 선택한 원본 사진은 앱이 수정하지 않습니다.',
                   textColor: secondaryText,
+                  iconColor: palette.accentForeground,
                 ),
                 _buildPrivacyGuideRow(
                   icon: Icons.cloud_done_outlined,
                   text: '서버 분석이 연결된 경우 이미지는 라벨 분석 요청에만 사용됩니다.',
                   textColor: secondaryText,
+                  iconColor: palette.accentForeground,
                 ),
                 const SizedBox(height: 18),
                 SizedBox(
@@ -407,13 +411,14 @@ class SettingsScreen extends StatelessWidget {
     required IconData icon,
     required String text,
     required Color textColor,
+    required Color iconColor,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: AppPalette.accent, size: 21),
+          Icon(icon, color: iconColor, size: 21),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
@@ -444,7 +449,7 @@ class SettingsScreen extends StatelessWidget {
     required IconData icon,
     required String title,
     String? subtitle,
-    Color iconColor = AppPalette.accent,
+    required Color iconColor,
     Color textColor = const Color(0xFF111111),
     Color subtitleColor = const Color(0xFF8C8C8C),
     VoidCallback? onTap,
@@ -573,9 +578,9 @@ class SettingsScreen extends StatelessWidget {
                     color: profileBoxColor,
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.person_outline,
-                    color: AppPalette.accent,
+                    color: palette.accentForeground,
                     size: 30,
                   ),
                 ),
@@ -629,6 +634,7 @@ class SettingsScreen extends StatelessWidget {
                 icon: Icons.person_outline,
                 title: '닉네임',
                 subtitle: userName,
+                iconColor: palette.accentForeground,
                 textColor: primaryText,
                 subtitleColor: secondaryText,
                 onTap: () => _editNickname(context, userName),
@@ -640,6 +646,7 @@ class SettingsScreen extends StatelessWidget {
                     : Icons.mail_outline,
                 title: accountEmail == null ? '로그인' : '이메일',
                 subtitle: accountLabel,
+                iconColor: palette.accentForeground,
                 textColor: primaryText,
                 subtitleColor: secondaryText,
                 showChevron: false,
@@ -658,6 +665,7 @@ class SettingsScreen extends StatelessWidget {
                 title: '화면 설정',
                 subtitle:
                     '${_themeModeLabel(themeMode)} · 소재 이름 ${materialNameDisplay.label}',
+                iconColor: palette.accentForeground,
                 textColor: primaryText,
                 subtitleColor: secondaryText,
                 onTap: () {
@@ -677,6 +685,7 @@ class SettingsScreen extends StatelessWidget {
                 icon: Icons.privacy_tip_outlined,
                 title: '사진 및 권한 안내',
                 subtitle: '스캔에 사용하는 카메라와 사진 처리 방식을 확인합니다.',
+                iconColor: palette.accentForeground,
                 textColor: primaryText,
                 subtitleColor: secondaryText,
                 onTap: () => _showPrivacyGuide(context),
@@ -695,6 +704,7 @@ class SettingsScreen extends StatelessWidget {
                   icon: Icons.lock_outline,
                   title: '비밀번호 변경',
                   subtitle: '비밀번호를 다시 설정합니다.',
+                  iconColor: palette.accentForeground,
                   textColor: primaryText,
                   subtitleColor: secondaryText,
                   onTap: () => _changePassword(context),
@@ -705,6 +715,7 @@ class SettingsScreen extends StatelessWidget {
                 icon: Icons.logout,
                 title: '로그아웃',
                 subtitle: '현재 계정에서 로그아웃합니다.',
+                iconColor: palette.accentForeground,
                 textColor: primaryText,
                 subtitleColor: secondaryText,
                 onTap: () => _confirmLogout(context),

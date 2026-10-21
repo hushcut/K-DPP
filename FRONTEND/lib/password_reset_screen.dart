@@ -257,7 +257,7 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
                                   autocorrect: false,
                                   validator: validateEmailInput,
                                   style: TextStyle(color: primaryText),
-                                  cursorColor: AppPalette.accent,
+                                  cursorColor: palette.accentForeground,
                                   decoration: authInputDecoration(
                                     context,
                                     labelText: '이메일',
@@ -294,7 +294,7 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
                                   autocorrect: false,
                                   validator: validateNewPassword,
                                   style: TextStyle(color: primaryText),
-                                  cursorColor: AppPalette.accent,
+                                  cursorColor: palette.accentForeground,
                                   decoration: authInputDecoration(
                                     context,
                                     labelText: '새 비밀번호',
@@ -334,7 +334,7 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
                                         _passwordController.text,
                                       ),
                                   style: TextStyle(color: primaryText),
-                                  cursorColor: AppPalette.accent,
+                                  cursorColor: palette.accentForeground,
                                   decoration: authInputDecoration(
                                     context,
                                     labelText: '새 비밀번호 확인',
