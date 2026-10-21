@@ -483,6 +483,8 @@ void main() {
         );
         expect(call.minWeightGram, knit.minWeightGram);
         expect(call.maxWeightGram, knit.maxWeightGram);
+        // 예상 무게 범위로 계산하면 실제 무게(weight_grams)는 보내지 않는다.
+        expect(call.weightGram, isNull);
 
         final saved = savedClothes.single;
         expect(saved.title, '분석한 니트');
@@ -498,6 +500,33 @@ void main() {
         expect(shownBanner(tester), isNull);
       },
     );
+
+    testWidgets('실제 무게를 직접 입력했으면 그 무게를 weight_grams 로 보내 서버가 실측 무게로 계산하게 한다', (
+      tester,
+    ) async {
+      await pumpScanScreen(tester, signedIn: true);
+      await tapAlbum(tester);
+      await finishAnalysis(tester, ScanAnalysisSuccess(knitResult()));
+      await tester.scrollUntilVisible(find.text('직접 입력'), 100);
+      await tester.tap(find.text('직접 입력'));
+      await tester.pump();
+      await tester.pump(transition);
+      await tester.enterText(find.widgetWithText(TextField, '의류 종류'), '코트');
+      await tester.enterText(find.widgetWithText(TextField, '실제 무게'), '620');
+      await tester.ensureVisible(find.widgetWithText(ElevatedButton, '적용하기'));
+      await tester.tap(find.widgetWithText(ElevatedButton, '적용하기'));
+      await tester.pump();
+      await tester.pump(transition);
+      expect(find.byType(ScanResultView), findsOneWidget);
+
+      await tapSave(tester);
+
+      final call = carbon.calls.single;
+      expect(call.weightGram, 620);
+      expect(call.minWeightGram, 620);
+      expect(call.maxWeightGram, 620);
+      expect(savedClothes.single.minWeightGram, 620);
+    });
 
     testWidgets('서버 계산이 401 이 아닌 이유로 실패하면 임시 추정값으로 저장하고 그렇게 했다고 안내한다', (
       tester,
@@ -1176,6 +1205,7 @@ class _FakeCarbonApiService extends CarbonApiService {
       Map<String, double> materials,
       double minWeightGram,
       double maxWeightGram,
+      double? weightGram,
       String accessToken,
     })
   >
@@ -1189,11 +1219,13 @@ class _FakeCarbonApiService extends CarbonApiService {
     required double minWeightGram,
     required double maxWeightGram,
     required String accessToken,
+    double? weightGram,
   }) async {
     calls.add((
       materials: materials,
       minWeightGram: minWeightGram,
       maxWeightGram: maxWeightGram,
+      weightGram: weightGram,
       accessToken: accessToken,
     ));
     final rejection = rejectWith;

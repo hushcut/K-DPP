@@ -103,6 +103,9 @@ extension _ScanSaveActions on _ScanScreenState {
               materials: editedMaterials,
               minWeightGram: _selectedClothingType.minWeightGram,
               maxWeightGram: _selectedClothingType.maxWeightGram,
+              weightGram: _selectedClothingType.isDirectWeight
+                  ? _selectedClothingType.estimatedWeightGram
+                  : null,
               accessToken: accessToken,
             );
 
