@@ -5,6 +5,7 @@ Vision 은 부르지 않는다. AI 의 Vision 클라이언트·호출 함수만 
 """
 
 import io
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -183,3 +184,112 @@ def test_parser_success_with_incomplete_total_is_422_with_prefill(client, vision
     assert response.status_code == 422
     assert detail["materials"] == {}
     assert detail["partial_materials"] == {"cotton": 60}
+
+
+# --- 방향 값이 붙은 사진(DECISIONS 273) ---------------------------------------------------------
+# 폰 앱의 앨범 경로(image_picker)는 화소를 눕힌 채 방향 값 6 을 붙인 JPEG 를 올린다. 서버가 바로 세워 AI 에 넘기고,
+# 사진 스캔마다 파일 모양을 한 줄 남긴다(사진·글자·GPS 값은 없이).
+GPS_LATITUDE = (37.0, 7.0, 12.3456)
+
+
+def sideways_bytes(image_format: str = "JPEG") -> bytes:
+    """가로 8 × 세로 4 화소에 방향 값 6(시계 방향 90° 로 보여야 함)과 GPS 를 붙인 사진."""
+    exif = Image.Exif()
+    exif[274] = 6
+    exif[0x8825] = {1: "N", 2: GPS_LATITUDE}
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 4), "white").save(buffer, format=image_format, exif=exif)
+    return buffer.getvalue()
+
+
+@pytest.fixture()
+def ocr_input(monkeypatch):
+    """AI 가 실제로 받은 사진 바이트를 모은다(run_ocr 는 그대로 돈다)."""
+    seen = []
+    original = main.run_ocr
+
+    def spy(path, **kwargs):
+        seen.append(Path(path).read_bytes())
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(main, "run_ocr", spy)
+    return seen
+
+
+def scan_file(client, content: bytes, content_type: str = "image/jpeg"):
+    main.app.dependency_overrides[main.get_current_user] = lambda: SimpleNamespace(id=1)
+    return client.post("/api/scan", files={"image": ("label", content, content_type)})
+
+
+def scan_log_lines(capsys) -> list[str]:
+    return [line for line in capsys.readouterr().err.splitlines() if line.startswith("[scan] 사진 ")]
+
+
+@pytest.mark.parametrize(("image_format", "content_type"), [("JPEG", "image/jpeg"), ("PNG", "image/png")])
+def test_sideways_photo_is_uprighted_without_exif_before_ocr(client, vision, ocr_input, image_format, content_type):
+    vision.answer("COTTON 100%")
+
+    response = scan_file(client, sideways_bytes(image_format), content_type)
+
+    assert response.status_code == 200
+    with Image.open(io.BytesIO(ocr_input[0])) as received:
+        # 방향 값대로 돌린 세로 사진이고, 방향 값·GPS 를 포함한 EXIF 는 남지 않는다.
+        assert (received.format, received.size) == ("JPEG", (4, 8))
+        assert len(received.getexif()) == 0
+
+
+def test_upright_photo_reaches_ocr_unchanged(client, vision, ocr_input):
+    vision.answer("COTTON 100%")
+    content = jpeg_bytes()
+
+    response = scan_file(client, content)
+
+    assert response.status_code == 200
+    assert ocr_input == [content]
+
+
+def test_scan_log_line_has_file_shape_but_no_gps_value(client, vision, capsys):
+    vision.answer("COTTON 100%")
+    content = sideways_bytes()
+
+    scan_file(client, content)
+    [line] = scan_log_lines(capsys)
+
+    for field in (
+        "결과=200", "보낸형식=image/jpeg", "실제형식=JPEG", f"바이트={len(content)}", "크기=8x4", "방향=6",
+        "바로세움=예", "EXIF=있음", "GPS=있음", "색=RGB", "AI판정=success", "소재칸=1", "합계=100",
+        'warnings=["composition_part:unidentified"]',
+    ):
+        assert field in line
+    assert "12.3456" not in line and "37.0" not in line
+
+
+def test_scan_log_line_records_422_codes(client, vision, capsys):
+    vision.answer("혼용율\n겉감\n안감\n면 100%", "혼용율\n겉감 면 100 %\n안감")
+
+    response = scan(client)
+    [line] = scan_log_lines(capsys)
+
+    assert response.status_code == 422
+    assert "결과=422" in line and "방향=없음" in line and "바로세움=아니오" in line and "GPS=없음" in line
+    assert 'parser_error_code="composition_not_found"' in line
+    assert "AI판정=failed" in line and "소재칸=0" in line
+    # 라벨 글자는 남기지 않는다.
+    assert "혼용율" not in line and "면 100" not in line
+
+
+def test_unreadable_photo_is_logged_and_left_to_ai(client, vision, capsys):
+    response = scan_file(client, b"not an image")
+    [line] = scan_log_lines(capsys)
+
+    # 서버는 열지 못한 사진을 바꾸지 않고 넘기며, 오류는 지금처럼 AI 의 형식 검사에서 난다.
+    assert response.status_code == 502
+    assert "결과=502" in line and "실제형식=-" in line and "열기=UnidentifiedImageError" in line
+    assert vision.calls == 0
+
+
+def test_text_scan_writes_no_photo_log_line(client, vision, capsys):
+    response = scan(client, raw_ocr_text="COTTON 100%")
+
+    assert response.status_code == 200
+    assert scan_log_lines(capsys) == []

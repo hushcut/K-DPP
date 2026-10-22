@@ -25,6 +25,8 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, BeforeValidator, Field, StringConstraints
+from PIL import Image, ImageOps
+from io import BytesIO
 import asyncio
 import base64
 import certifi
@@ -2200,8 +2202,77 @@ def validate_scan_upload(image: UploadFile) -> None:
     image.file.seek(0)
 
 
-def extract_label_input(image: UploadFile, raw_ocr_text: str | None, user_id: int) -> str | dict:
-    """파싱할 라벨 글자(str), 또는 사진이면 OCR 근거까지 합쳐 분석한 결과(dict)를 돌려줍니다."""
+def upright_scan_image(content: bytes, facts: dict[str, Any]) -> bytes | None:
+    """받은 사진의 모양을 facts 에 적고, 방향 값(EXIF)이 붙은 JPEG·PNG·WEBP 면 바로 세운 JPEG 를 돌려줍니다.
+
+    폰 앱의 앨범 경로(image_picker)는 화소를 눕힌 채 방향 값 6 을 붙인 JPEG 를 올립니다. AI 는 MPO 만 바로 세우고,
+    방향 값이 남은 사진은 좌표 단계를 꺼 겉감·안감 두 칸 표를 확정하지 못했습니다(DECISIONS 273).
+    그래서 AI 의 MPO 변환과 같은 방식(품질 95)으로 바로 세우며, 이때 EXIF(GPS 포함)는 버립니다.
+    바꿀 필요가 없거나 열 수 없는 사진은 None — 받은 그대로 넘겨 AI 의 형식 검사가 같은 오류를 내게 합니다.
+    """
+    # 로그 줄의 칸 순서를 먼저 정해 둡니다 — 열지 못한 사진은 '-' 로 남습니다.
+    facts.update(
+        실제형식="-", 바이트=len(content), 크기="-", 방향="-", 바로세움="아니오",
+        EXIF="-", GPS="-", 색="-", 지문=hashlib.sha256(content).hexdigest()[:12],
+    )
+    try:
+        with Image.open(BytesIO(content)) as image:
+            exif = image.getexif()
+            orientation = exif.get(274, 1)
+            facts.update(
+                실제형식=image.format,
+                크기=f"{image.width}x{image.height}",
+                방향=exif.get(274, "없음"),
+                EXIF="있음" if len(exif) else "없음",
+                # 칸이 있는지만 봅니다 — GPS 값을 풀다 깨진 칸에 걸려 바로 세우기까지 건너뛰지 않게.
+                GPS="있음" if 0x8825 in exif else "없음",
+                색=image.mode,
+            )
+            # 해상도 상한을 넘는 사진은 펼치지 않습니다 — AI 가 같은 상한으로 거절합니다.
+            too_large = image.width * image.height >= (Image.MAX_IMAGE_PIXELS or math.inf)
+            if orientation == 1 or image.format not in {"JPEG", "PNG", "WEBP"} or too_large:
+                return None
+            buffer = BytesIO()
+            ImageOps.exif_transpose(image).convert("RGB").save(buffer, format="JPEG", quality=95, optimize=True)
+    except Exception as exc:
+        facts["열기"] = type(exc).__name__
+        return None
+    facts["바로세움"] = "예"
+    return buffer.getvalue()
+
+
+def log_scan_upload(
+    status_code: int,
+    facts: dict[str, Any],
+    label_input: str | dict | None,
+    public_warnings: list[str],
+    parser_error_code: str,
+) -> None:
+    """사진 스캔마다 받은 파일의 모양과 결과를 한 줄 남깁니다 — 사진·라벨 글자·GPS 값은 남기지 않습니다(DECISIONS 273)."""
+    analysis = label_input if isinstance(label_input, dict) else {}
+    materials = analysis.get("materials") or {}
+    fields = {
+        "결과": status_code,
+        **facts,
+        "AI판정": analysis.get("status") or "-",
+        "소재칸": len(materials),
+        "합계": round(sum(materials.values()), 1) if materials else 0,
+        "parser_error_code": json.dumps(parser_error_code, ensure_ascii=False),
+        "warnings": json.dumps(public_warnings, ensure_ascii=False),
+    }
+    print("[scan] 사진 " + " ".join(f"{key}={value}" for key, value in fields.items()), file=sys.stderr)
+
+
+def extract_label_input(
+    image: UploadFile,
+    raw_ocr_text: str | None,
+    user_id: int,
+    upload_facts: dict[str, Any] | None = None,
+) -> str | dict:
+    """파싱할 라벨 글자(str), 또는 사진이면 OCR 근거까지 합쳐 분석한 결과(dict)를 돌려줍니다.
+
+    upload_facts 를 주면 사진 OCR 로 간 요청의 파일 모양을 채웁니다(로그용 — log_scan_upload).
+    """
     validate_scan_upload(image)
 
     if raw_ocr_text and raw_ocr_text.strip():
@@ -2244,7 +2315,12 @@ def extract_label_input(image: UploadFile, raw_ocr_text: str | None, user_id: in
                 )
             temp_file.write(chunk)
 
+    facts = {} if upload_facts is None else upload_facts
+    facts["보낸형식"] = image.content_type
     try:
+        upright = upright_scan_image(Path(temp_path).read_bytes(), facts)
+        if upright is not None:
+            Path(temp_path).write_bytes(upright)
         credential_path = (
             Path(__file__).resolve().parents[1]
             / "AI"
@@ -2860,30 +2936,46 @@ def scan_label(
     # 스캔 1회가 곧 외부 OCR 호출 비용이므로 로그인 사용자만 허용하고, 사용자마다 하루 횟수를 셉니다.
     current_user: database.User = Depends(get_current_user),
 ):
-    label_input = extract_label_input(image, raw_ocr_text, current_user.id)
-    # 부분 인식(합계가 100 이 아님)은 여기서 422 로 끝나므로, 아래는 소재를 확정한 경우뿐입니다.
-    materials, care_instruction, raw_ocr_preview, warnings = parse_label_materials(label_input)
-    title = "스캔한 의류"
-    category = "상의"
+    # 사진 OCR 로 간 요청은 결과 코드와 함께 파일 모양을 한 줄 남깁니다(DECISIONS 273).
+    upload_facts: dict[str, Any] = {}
+    label_input = None
+    status_code, public_warnings, parser_error_code = 500, [], ""
+    try:
+        label_input = extract_label_input(image, raw_ocr_text, current_user.id, upload_facts)
+        # 부분 인식(합계가 100 이 아님)은 여기서 422 로 끝나므로, 아래는 소재를 확정한 경우뿐입니다.
+        materials, care_instruction, raw_ocr_preview, warnings = parse_label_materials(label_input)
+        title = "스캔한 의류"
+        category = "상의"
 
-    return {
-        "status": "success",
-        "message": "라벨 인식 완료",
-        # 두 필드는 예전 계약(200 + RATIO_INCOMPLETE)과의 호환으로 남깁니다 — 이제 늘 성공 값입니다.
-        "ai_success": True,
-        "analysis_failure_reason": None,
-        "materials": materials,
-        "material_details": build_material_details(materials, db),
-        "care_instruction": care_instruction,
-        "raw_ocr_preview": raw_ocr_preview,
-        "warnings": warnings,
-        "clothing": {
-            "name": title,
+        response = {
+            "status": "success",
+            "message": "라벨 인식 완료",
+            # 두 필드는 예전 계약(200 + RATIO_INCOMPLETE)과의 호환으로 남깁니다 — 이제 늘 성공 값입니다.
+            "ai_success": True,
+            "analysis_failure_reason": None,
+            "materials": materials,
+            "material_details": build_material_details(materials, db),
+            "care_instruction": care_instruction,
+            "raw_ocr_preview": raw_ocr_preview,
+            "warnings": warnings,
+            "clothing": {
+                "name": title,
+                "category": category,
+            },
+            "title": title,
             "category": category,
-        },
-        "title": title,
-        "category": category,
-    }
+        }
+        status_code, public_warnings = 200, warnings
+        return response
+    except HTTPException as exc:
+        status_code = exc.status_code
+        if isinstance(exc.detail, dict):
+            public_warnings = exc.detail.get("warnings") or []
+            parser_error_code = exc.detail.get("parser_error_code") or ""
+        raise
+    finally:
+        if upload_facts:
+            log_scan_upload(status_code, upload_facts, label_input, public_warnings, parser_error_code)
 
 
 @app.post("/api/carbon/calculate", tags=["v1-carbon"])
