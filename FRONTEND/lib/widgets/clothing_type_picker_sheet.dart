@@ -128,6 +128,9 @@ class ClothingTypePickerSheet extends StatefulWidget {
 
 /// 선택 목록과 직접 입력 폼 사이의 전환 및 입력 검증 상태를 관리합니다.
 class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
+  static const double _minDirectWeightGram = 1;
+  static const double _maxDirectWeightGram = 100000;
+
   final TextEditingController _directNameController = TextEditingController();
   final TextEditingController _directWeightController = TextEditingController();
   final FocusNode _directNameFocusNode = FocusNode();
@@ -198,6 +201,15 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
     if (weight == null || !weight.isFinite || weight <= 0) {
       setState(() {
         _directErrorText = '실제 무게를 g 단위로 입력해 주세요.';
+      });
+      return;
+    }
+
+    // 서버 계산이 받는 무게 범위(BACKEND main.py MAX_WEIGHT_GRAMS · V2 도 1~100,000g)입니다.
+    // 밖의 값은 서버가 거절해 저장되지 않으므로 여기서 먼저 알립니다.
+    if (weight < _minDirectWeightGram || weight > _maxDirectWeightGram) {
+      setState(() {
+        _directErrorText = '실제 무게는 1g 이상 100,000g 이하로 입력해 주세요.';
       });
       return;
     }

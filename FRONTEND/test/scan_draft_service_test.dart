@@ -111,6 +111,77 @@ void main() {
       );
     });
 
+    // 서버 is_supported(BACKEND/main.py build_material_details): 계산이 거절할 소재를 저장 전에 알린다.
+    group('계산 기준이 없는 소재 안내', () {
+      ScanMaterialDetail detail(String name, {required bool supported}) {
+        return ScanMaterialDetail(
+          originalName: name,
+          displayName: name,
+          ratio: 50,
+          isSupported: supported,
+        );
+      }
+
+      ScanResult resultWith(
+        List<ScanMaterialDetail> details, {
+        List<String> warnings = const [],
+      }) {
+        return ScanResult(
+          materials: {for (final item in details) item.originalName: 50},
+          materialDetails: details,
+          careInstruction: '찬물 세탁',
+          warnings: warnings,
+        );
+      }
+
+      test('지원하지 않는 소재 하나는 이름을 넣어 R4 안내 뒤에 알린다', () {
+        final draft = service.buildFromResult(
+          result: resultWith(
+            [detail('면', supported: true), detail('hemp', supported: false)],
+            warnings: const ['composition_part:outer'],
+          ),
+          clothingType: ClothingTypeCatalog.defaultOption,
+        );
+
+        expect(draft.notices, [
+          '겉감 기준으로 읽었어요.',
+          'hemp 소재는 탄소 계산 기준이 없어 이대로는 저장할 수 없어요. 소재를 확인해 주세요.',
+        ]);
+      });
+
+      test('여럿이면 첫 소재와 남은 개수만 쓴다', () {
+        final draft = service.buildFromResult(
+          result: resultWith([
+            detail('hemp', supported: false),
+            detail('acetate', supported: false),
+            detail('alpaca', supported: false),
+          ]),
+          clothingType: ClothingTypeCatalog.defaultOption,
+        );
+
+        expect(draft.notices, [
+          'hemp 외 2개 소재는 탄소 계산 기준이 없어 이대로는 저장할 수 없어요. 소재를 확인해 주세요.',
+        ]);
+      });
+
+      test('모두 지원하거나 소재 상세가 없으면 안내하지 않는다', () {
+        for (final result in [
+          resultWith([detail('면', supported: true)]),
+          ScanResult(materials: const {'cotton': 100}, careInstruction: ''),
+        ]) {
+          expect(
+            service
+                .buildFromResult(
+                  result: result,
+                  clothingType: ClothingTypeCatalog.defaultOption,
+                )
+                .notices,
+            isEmpty,
+          );
+        }
+      });
+    });
+
     test('buildManual creates empty manual draft', () {
       final draft = service.buildManual(
         clothingType: ClothingTypeCatalog.defaultOption,

@@ -12,6 +12,49 @@ import 'package:k_dpp/widgets/number_keyboard_toolbar.dart';
 //   가짜로 통과하므로, 드래그 경로는 fling(700px/s 초과)으로 시험한다.
 // - 하단 안전 영역은 기본 테스트 화면에 없으므로 padding을 넣어 만든다.
 void main() {
+  // 서버 계산은 직접 무게 1~100,000g 만 받는다(BACKEND main.py MAX_WEIGHT_GRAMS · V2 도 같음).
+  testWidgets('직접 무게가 1g 미만이거나 100,000g 을 넘으면 적용하지 않고 범위를 알린다', (tester) async {
+    _usePhoneView(tester);
+    final applyButton = find.widgetWithText(ElevatedButton, '적용하기');
+
+    Future<_SheetResult> openDirectInput() async {
+      final sheet = await _openSheet(tester);
+      await tester.scrollUntilVisible(find.text('직접 입력'), 100);
+      await tester.tap(find.text('직접 입력'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, '의류 종류'), '코트');
+      return sheet;
+    }
+
+    Future<void> applyWeight(String weight) async {
+      await tester.enterText(find.widgetWithText(TextField, '실제 무게'), weight);
+      await tester.ensureVisible(applyButton);
+      await tester.tap(applyButton);
+      await tester.pumpAndSettle();
+    }
+
+    // 끝값은 받는다. 받으면 시트가 닫히므로 값마다 새로 연다.
+    for (final weight in [1.0, 100000.0]) {
+      final accepted = await openDirectInput();
+      await applyWeight(ClothingTypeOption.formatWeightGram(weight));
+
+      expect(accepted.completed, isTrue);
+      expect(accepted.result?.estimatedWeightGram, weight);
+    }
+
+    final rejected = await openDirectInput();
+    for (final weight in ['0.5', '100000.1', '250000']) {
+      await applyWeight(weight);
+
+      expect(
+        find.text('실제 무게는 1g 이상 100,000g 이하로 입력해 주세요.'),
+        findsOneWidget,
+        reason: weight,
+      );
+      expect(rejected.completed, isFalse, reason: weight);
+    }
+  });
+
   group('필수 선택 시트(분석 결과 확인)', () {
     const prompt = ClothingTypePickerDiscardPrompt.analysisResult;
 
