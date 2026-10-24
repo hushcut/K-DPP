@@ -139,3 +139,22 @@ $env:PYTHONIOENCODING="utf-8"
 - `data/stage2/labels_corrections.tsv` 검토 기록, `labels_stage2.json` 줄별 최종 라벨
 - `data/stage2/garment_groups.json` 묶음·분할, `unsure_list.tsv` / `unsure_review.html` 확인 필요 줄
 - `results/stage2_baseline.json` 기준 성능, `logs/stage2_baseline.log` 실행 기록
+
+---
+
+# 5단계: 첫 본 학습 (2026-10-24 14:52 ~ 10-25 03:27, 로컬 PC CPU)
+
+- 설정 `configs/stage5_korean_PP-OCRv5_mobile_rec.yml`: 스모크 설정에서 epoch 10, 매 epoch 저장, 270 step마다 검증, 목록 `data/stage2/train_list.txt`(1,516줄)·`val_list.txt`(365줄), 검증 batch 1만 바꿈. 학습률 1e-4(Cosine, warmup 1), 공식 한국어 사전학습 가중치, 최대 글자 수 25(25자 이상 줄은 학습에서 빠짐: 학습 61줄, 검증 23줄).
+- 소요: 약 12시간 35분, 초당 약 0.3~0.38줄, 오류 없음. 로그 `logs/stage5_train.log`.
+- 학습 중 검증(폭 320 고정) acc: 학습 전 0.632 → epoch 1 0.464 → 2 0.657 → … → **7 0.799(최고)** → 9 0.755. 7 epoch 모델을 `output/stage5_rec_infer_best`로 내보냄.
+- 같은 잘린 이미지·같은 읽기 방식 비교(`scripts/15_stage5_compare.py`, `results/stage5_compare.json`): 검증 365줄 정확 일치 **57.5% → 75.9%**, 띄어쓰기 무시 69.9% → 79.2%, CER **11.2% → 3.9%**. 소재 관련 90줄 65.6% → 80.0%.
+- 새로 틀린 18줄 중 일부는 정답 라벨 쪽이 의심스럽다(`12_005` 결감/겉감, `47_020` 1OO%/100% 등). 사람 확인 전이다.
+- 범위: 검증 사진은 옷 단위로 나뉜 개발용 사진이다. 줄 글자 인식 기준이며 소재·혼용률 판정 정확도가 아니다. 최종 판단은 새 사진으로 한다.
+
+```
+cd C:\kdpp_ocr_exp\PaddleOCR
+..\venv\Scripts\python.exe tools\train.py -c C:\kdpp_ocr_exp\configs\stage5_korean_PP-OCRv5_mobile_rec.yml
+..\venv\Scripts\python.exe tools\export_model.py -c C:\kdpp_ocr_exp\configs\stage5_korean_PP-OCRv5_mobile_rec.yml -o Global.pretrained_model=C:/kdpp_ocr_exp/output/stage5_rec/best_accuracy Global.save_inference_dir=C:/kdpp_ocr_exp/output/stage5_rec_infer_best
+cd ..
+.\venv\Scripts\python.exe scripts\15_stage5_compare.py
+```
