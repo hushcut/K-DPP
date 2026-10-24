@@ -1,0 +1,10 @@
+# 실험 코드·설정·문서만 올린다. 사진·결과·모델·가상환경은 올리지 않는다.
+venv/
+models/
+results/
+*.jpg
+*.jpeg
+*.png
+*.pth
+*.json
+versions_pip_freeze.txt

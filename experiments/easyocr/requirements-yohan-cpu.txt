@@ -1,0 +1,5 @@
+# Python 3.11.9 (paddleocr 실험과 같은 인터프리터), CPU. Paddle 가상환경과 분리.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1+cpu
+torchvision==0.20.1+cpu
+easyocr==1.7.2
