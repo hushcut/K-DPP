@@ -38,6 +38,67 @@ void main() {
     expect(exception.type, ScanApiErrorType.server);
     expect(exception.userMessage, contains('일시적인 문제'));
   });
+  group('사진 분석 하루 한도(BACKEND/API_CONTRACT.md Daily Limit)', () {
+    test('429 SCAN_DAILY_LIMIT 은 계정 하루 한도로 보고, 다시 시도를 권하지 않는다', () {
+      final exception = ScanApiException.fromStatusCode(
+        statusCode: 429,
+        responseBody:
+            '{"status":"error","error_code":"SCAN_DAILY_LIMIT",'
+            '"message":"사진 분석은 하루 20번까지입니다. 소재를 직접 입력하거나 내일 다시 시도해 주세요.",'
+            '"detail":{"message":"사진 분석은 하루 20번까지입니다.",'
+            '"error_code":"SCAN_DAILY_LIMIT","retry_after":30512}}',
+      );
+
+      expect(exception.type, ScanApiErrorType.dailyLimit);
+      expect(exception.statusCode, 429);
+      expect(
+        exception.userMessage,
+        '오늘 사진 분석 횟수를 다 썼어요. 직접 입력하거나 내일 다시 시도해 주세요.',
+      );
+    });
+
+    test('503 SCAN_UNAVAILABLE 은 서버 전체 하루 한도로, 일시적 문제와 나눈다', () {
+      final exception = ScanApiException.fromStatusCode(
+        statusCode: 503,
+        responseBody:
+            '{"status":"error","error_code":"SCAN_UNAVAILABLE",'
+            '"message":"오늘은 사진 분석을 더 할 수 없습니다. 소재를 직접 입력해 주세요.",'
+            '"detail":{"error_code":"SCAN_UNAVAILABLE","retry_after":600}}',
+      );
+
+      expect(exception.type, ScanApiErrorType.serviceDailyLimit);
+      expect(exception.userMessage, '오늘은 사진 분석을 더 할 수 없어요. 직접 입력해 주세요.');
+      expect(exception.userMessage, isNot(contains('다시 시도')));
+    });
+
+    test('detail 에만 error_code 가 있어도 하루 한도로 읽는다', () {
+      final exception = ScanApiException.fromStatusCode(
+        statusCode: 429,
+        responseBody: '{"detail":{"error_code":"SCAN_DAILY_LIMIT"}}',
+      );
+
+      expect(exception.type, ScanApiErrorType.dailyLimit);
+    });
+
+    test('하루 한도 코드가 없는 429·503 은 전과 같이 분류한다', () {
+      expect(
+        ScanApiException.fromStatusCode(
+          statusCode: 429,
+          responseBody: '<html>429 Too Many Requests</html>',
+        ).type,
+        ScanApiErrorType.unknown,
+      );
+      expect(
+        ScanApiException.fromStatusCode(
+          statusCode: 503,
+          responseBody:
+              '{"error_code":"AI_MODULE_FAILED","message":"AI OCR 모듈을 불러오지 못했습니다."}',
+        ).type,
+        ScanApiErrorType.server,
+      );
+    });
+  });
+
   test('HTTP 403은 세션 만료가 아닌 권한 없음으로 분류한다', () {
     final exception = ScanApiException.fromStatusCode(
       statusCode: 403,
