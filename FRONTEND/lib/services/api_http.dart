@@ -8,6 +8,8 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
+import 'image_location_metadata.dart';
+
 /// 주입된 클라이언트가 없을 때 앱 수명 동안 재사용하는 공용 클라이언트입니다.
 /// 연결(keep-alive)을 재사용해 요청마다 TCP/TLS 연결 비용을 내지 않게 합니다.
 final http.Client _sharedApiClient = http.Client();
@@ -115,12 +117,15 @@ Future<ApiHttpResponse> runImageUploadRequest({
   String? accessToken,
   http.Client? client,
 }) async {
+  // 앨범 사진의 촬영 위치가 서버와 Google Vision 으로 가지 않도록 올리기 전에 지운다.
+  final imageBytes = stripLocationMetadata(await imageFile.readAsBytes());
   final request = http.MultipartRequest('POST', uri)
     ..headers.addAll(headers)
     ..files.add(
-      await http.MultipartFile.fromPath(
+      http.MultipartFile.fromBytes(
         fieldName,
-        imageFile.path,
+        imageBytes,
+        filename: imageFile.uri.pathSegments.last,
         // Content-Type을 명시하지 않으면 application/octet-stream으로 전송되어
         // 서버의 이미지 형식 검사(415)에 걸리므로 확장자 기준으로 지정한다.
         contentType: imageMediaTypeForPath(imageFile.path),
