@@ -2202,17 +2202,107 @@ def validate_scan_upload(image: UploadFile) -> None:
     image.file.seek(0)
 
 
-def upright_scan_image(content: bytes, facts: dict[str, Any]) -> bytes | None:
-    """받은 사진의 모양을 facts 에 적고, 방향 값(EXIF)이 붙은 JPEG·PNG·WEBP 면 바로 세운 JPEG 를 돌려줍니다.
+def _strip_jpeg_metadata(content: bytes) -> bytes:
+    """JPEG 에서 APP1 조각(EXIF·XMP)과 끝 표식(EOI) 뒤에 붙은 데이터를 빼고, 나머지 조각과 압축된 화소는 그대로 둡니다."""
+    if not content.startswith(b"\xff\xd8"):
+        raise ValueError("JPEG 시작 표식이 없습니다.")
+    parts, pos = [content[:2]], 2
+    while True:
+        if pos + 2 > len(content) or content[pos] != 0xFF:
+            raise ValueError("JPEG 표식을 읽지 못했습니다.")
+        marker = content[pos + 1]
+        if marker == 0xFF:  # 표식 앞의 채움 바이트
+            pos += 1
+            continue
+        if marker == 0xD9:
+            parts.append(content[pos:pos + 2])
+            return b"".join(parts)
+        if marker == 0x01 or 0xD0 <= marker <= 0xD7:  # 길이가 없는 표식
+            parts.append(content[pos:pos + 2])
+            pos += 2
+            continue
+        end = pos + 2 + int.from_bytes(content[pos + 2:pos + 4], "big")
+        if end < pos + 4 or end > len(content):
+            raise ValueError("JPEG 조각 길이가 맞지 않습니다.")
+        if marker != 0xE1:
+            parts.append(content[pos:end])
+        pos = end
+        if marker == 0xDA:
+            # 압축된 화소는 다음 표식까지 그대로 옮깁니다 — FF00 은 데이터 속 FF, FFD0~FFD7 은 재시작 표식입니다.
+            scan_end = pos
+            while (scan_end := content.find(b"\xff", scan_end)) != -1 and scan_end + 1 < len(content):
+                if content[scan_end + 1] != 0x00 and not 0xD0 <= content[scan_end + 1] <= 0xD7:
+                    break
+                scan_end += 2
+            else:
+                # 끝 표식 없이 끝난 파일은 남은 바이트를 화소로 보고 그대로 둡니다.
+                parts.append(content[pos:])
+                return b"".join(parts)
+            parts.append(content[pos:scan_end])
+            pos = scan_end
+
+
+def _strip_png_metadata(content: bytes) -> bytes:
+    """PNG 에서 eXIf·글자 조각(tEXt·zTXt·iTXt — XMP 도 여기 들어감)과 IEND 뒤 데이터를 뺍니다."""
+    parts, pos = [content[:8]], 8
+    while True:
+        if pos + 12 > len(content):
+            raise ValueError("PNG 조각을 끝까지 읽지 못했습니다.")
+        kind = content[pos + 4:pos + 8]
+        end = pos + 12 + int.from_bytes(content[pos:pos + 4], "big")
+        if end > len(content):
+            raise ValueError("PNG 조각 길이가 맞지 않습니다.")
+        if kind not in {b"eXIf", b"tEXt", b"zTXt", b"iTXt"}:
+            parts.append(content[pos:end])
+        pos = end
+        if kind == b"IEND":
+            return b"".join(parts)
+
+
+def _strip_webp_metadata(content: bytes) -> bytes:
+    """WEBP 에서 EXIF·XMP 조각을 빼고, VP8X 의 두 표시와 RIFF 크기를 그에 맞춥니다."""
+    riff_end = min(len(content), 8 + int.from_bytes(content[4:8], "little"))
+    parts, pos = [], 12
+    while pos + 8 <= riff_end:
+        kind = content[pos:pos + 4]
+        size = int.from_bytes(content[pos + 4:pos + 8], "little")
+        if pos + 8 + size > riff_end:
+            raise ValueError("WEBP 조각 길이가 맞지 않습니다.")
+        end = min(pos + 8 + size + size % 2, riff_end)  # 홀수 길이 조각 뒤의 채움 1바이트
+        chunk = content[pos:end]
+        if kind == b"VP8X":
+            chunk = chunk[:8] + bytes([chunk[8] & ~0x0C & 0xFF]) + chunk[9:]  # 0x08 = EXIF 있음, 0x04 = XMP 있음
+        if kind not in {b"EXIF", b"XMP "}:
+            parts.append(chunk)
+        pos = end
+    body = b"".join(parts)
+    return b"RIFF" + (len(body) + 4).to_bytes(4, "little") + b"WEBP" + body
+
+
+# 사진 형식별로 위치(GPS)가 들어 있을 수 있는 메타데이터만 빼는 함수 — 화소는 바이트 그대로입니다(DECISIONS 275).
+SCAN_METADATA_STRIPPERS = {"JPEG": _strip_jpeg_metadata, "PNG": _strip_png_metadata, "WEBP": _strip_webp_metadata}
+
+
+def _scan_jpeg(image: Image.Image) -> bytes:
+    """AI 의 MPO 변환과 같은 방식(품질 95)으로 다시 저장합니다 — EXIF·XMP 는 따라가지 않습니다."""
+    buffer = BytesIO()
+    image.convert("RGB").save(buffer, format="JPEG", quality=95, optimize=True)
+    return buffer.getvalue()
+
+
+def prepare_scan_image(content: bytes, facts: dict[str, Any]) -> bytes | None:
+    """받은 사진의 모양을 facts 에 적고, AI 에 넘길 사진을 바꿔야 하면 바꾼 바이트를 돌려줍니다.
 
     폰 앱의 앨범 경로(image_picker)는 화소를 눕힌 채 방향 값 6 을 붙인 JPEG 를 올립니다. AI 는 MPO 만 바로 세우고,
     방향 값이 남은 사진은 좌표 단계를 꺼 겉감·안감 두 칸 표를 확정하지 못했습니다(DECISIONS 273).
-    그래서 AI 의 MPO 변환과 같은 방식(품질 95)으로 바로 세우며, 이때 EXIF(GPS 포함)는 버립니다.
+    그래서 방향 값이 붙은 JPEG·PNG·WEBP 는 AI 의 MPO 변환과 같은 방식(품질 95)으로 바로 세우며, 이때 EXIF(GPS 포함)는 버립니다.
+    방향 값이 없거나 1인 사진도 GPS 를 Vision 에 넘기지 않게 EXIF·XMP 를 빼되, 화소는 그대로 둬 Vision 이 보는
+    그림이 바뀌지 않게 합니다(DECISIONS 275). MPO 는 AI 가 첫 장을 다시 저장하며 EXIF 를 버립니다.
     바꿀 필요가 없거나 열 수 없는 사진은 None — 받은 그대로 넘겨 AI 의 형식 검사가 같은 오류를 내게 합니다.
     """
     # 로그 줄의 칸 순서를 먼저 정해 둡니다 — 열지 못한 사진은 '-' 로 남습니다.
     facts.update(
-        실제형식="-", 바이트=len(content), 크기="-", 방향="-", 바로세움="아니오",
+        실제형식="-", 바이트=len(content), 크기="-", 방향="-", 바로세움="아니오", 메타뺌="아니오",
         EXIF="-", GPS="-", 색="-", 지문=hashlib.sha256(content).hexdigest()[:12],
     )
     try:
@@ -2228,17 +2318,30 @@ def upright_scan_image(content: bytes, facts: dict[str, Any]) -> bytes | None:
                 GPS="있음" if 0x8825 in exif else "없음",
                 색=image.mode,
             )
+            if image.format not in SCAN_METADATA_STRIPPERS:
+                return None
             # 해상도 상한을 넘는 사진은 펼치지 않습니다 — AI 가 같은 상한으로 거절합니다.
             too_large = image.width * image.height >= (Image.MAX_IMAGE_PIXELS or math.inf)
-            if orientation == 1 or image.format not in {"JPEG", "PNG", "WEBP"} or too_large:
-                return None
-            buffer = BytesIO()
-            ImageOps.exif_transpose(image).convert("RGB").save(buffer, format="JPEG", quality=95, optimize=True)
+            if orientation != 1 and not too_large:
+                upright = _scan_jpeg(ImageOps.exif_transpose(image))
+                facts.update(바로세움="예", 메타뺌="예")
+                return upright
+            try:
+                stripped = SCAN_METADATA_STRIPPERS[image.format](content)
+            except ValueError:
+                if too_large:
+                    return None
+                # 조각을 끝까지 읽지 못한 사진(끝이 잘린 PNG 등)도 GPS 를 넘기지 않게 다시 저장합니다.
+                reencoded = _scan_jpeg(image)
+                facts["메타뺌"] = "다시저장"
+                return reencoded
     except Exception as exc:
         facts["열기"] = type(exc).__name__
         return None
-    facts["바로세움"] = "예"
-    return buffer.getvalue()
+    if stripped == content:
+        return None
+    facts["메타뺌"] = "예"
+    return stripped
 
 
 def log_scan_upload(
@@ -2318,9 +2421,9 @@ def extract_label_input(
     facts = {} if upload_facts is None else upload_facts
     facts["보낸형식"] = image.content_type
     try:
-        upright = upright_scan_image(Path(temp_path).read_bytes(), facts)
-        if upright is not None:
-            Path(temp_path).write_bytes(upright)
+        prepared = prepare_scan_image(Path(temp_path).read_bytes(), facts)
+        if prepared is not None:
+            Path(temp_path).write_bytes(prepared)
         credential_path = (
             Path(__file__).resolve().parents[1]
             / "AI"
