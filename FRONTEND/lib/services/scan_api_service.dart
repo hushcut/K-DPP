@@ -14,6 +14,12 @@ enum ScanApiErrorType {
   unsupportedMediaType,
   ocrFailed,
   aiRecognitionFailed,
+
+  /// 이 계정의 오늘 사진 분석 횟수를 다 씀(429 `SCAN_DAILY_LIMIT`). 한국 자정에 풀린다.
+  dailyLimit,
+
+  /// 서버 전체의 오늘 사진 분석 횟수가 다 참(503 `SCAN_UNAVAILABLE`). 역시 한국 자정에 풀린다.
+  serviceDailyLimit,
   server,
   network,
   timeout,
@@ -30,6 +36,7 @@ class ScanApiException implements Exception {
     this.partialMaterials = const {},
     this.careInstruction,
     this.rawOcrPreview,
+    this.warnings = const [],
   });
 
   final ScanApiErrorType type;
@@ -46,6 +53,10 @@ class ScanApiException implements Exception {
 
   /// 서버가 인식한 라벨 원문 미리보기다. 값이 없으면 null이다.
   final String? rawOcrPreview;
+
+  /// 서버가 오류 본문(detail)에 실어 보낸 AI 주의 메모 원문이다. 재촬영 권고 같은 공개 코드가
+  /// 들어 있으며, 화면에는 `ScanWarningNotices` 가 아는 코드만 문구로 바꿔 보인다(R4).
+  final List<String> warnings;
 
   String get userMessage {
     switch (type) {
@@ -66,6 +77,11 @@ class ScanApiException implements Exception {
       case ScanApiErrorType.ocrFailed:
       case ScanApiErrorType.aiRecognitionFailed:
         return '라벨을 읽지 못했어요. 직접 입력해 주세요.';
+      // 하루 한도는 다시 찍어도 자정까지 풀리지 않으므로 '다시 시도'를 권하지 않는다.
+      case ScanApiErrorType.dailyLimit:
+        return '오늘 사진 분석 횟수를 다 썼어요. 직접 입력하거나 내일 다시 시도해 주세요.';
+      case ScanApiErrorType.serviceDailyLimit:
+        return '오늘은 사진 분석을 더 할 수 없어요. 직접 입력해 주세요.';
       case ScanApiErrorType.server:
         return '분석 서비스에 일시적인 문제가 생겼어요. 다시 시도하거나 직접 입력해 주세요.';
       case ScanApiErrorType.network:
@@ -105,7 +121,20 @@ class ScanApiException implements Exception {
           'raw_ocr_preview',
           'rawOcrPreview',
         ]),
+        warnings: ScanResult.parseWarnings(detail['warnings']),
       );
+    }
+
+    // 하루 한도는 상태 코드가 아니라 error_code 로 가린다. 같은 503 이 AI 모듈 없음
+    // (`AI_MODULE_FAILED`)에도 쓰이고, 본문 없는 프록시 오류와도 구분해야 한다.
+    switch (_extractErrorCode(decoded, detail)) {
+      case 'SCAN_DAILY_LIMIT':
+        return build(ScanApiErrorType.dailyLimit, '오늘 사진 분석 횟수를 다 썼습니다.');
+      case 'SCAN_UNAVAILABLE':
+        return build(
+          ScanApiErrorType.serviceDailyLimit,
+          '오늘은 사진 분석을 더 할 수 없습니다.',
+        );
     }
 
     switch (statusCode) {
@@ -134,8 +163,8 @@ class ScanApiException implements Exception {
       // (재촬영은 화면의 '다시 촬영' 버튼으로 별도 제공).
       case 502:
         return build(ScanApiErrorType.ocrFailed, 'AI OCR 처리에 실패했습니다.');
-      // AI 파트가 요청한 504 OCR_TIMEOUT 대응이다. 백엔드는 아직 504를 내지
-      // 않지만, 내기 시작하면 일반 서버 오류가 아니라 시간 초과 안내로 보낸다.
+      // 백엔드는 Vision 시간 초과를 504 `OCR_TIMEOUT` 으로 낸다. 일반 서버 오류가
+      // 아니라 시간 초과 안내로 보낸다.
       case 504:
         return build(ScanApiErrorType.timeout, '분석 요청 시간이 초과되었습니다.');
       default:
@@ -176,6 +205,16 @@ class ScanApiException implements Exception {
     final detail = decoded['detail'];
 
     return detail is Map<String, dynamic> ? detail : decoded;
+  }
+
+  /// 백엔드 공통 오류 처리기는 `error_code` 를 본문 맨 위와 detail 양쪽에 싣는다.
+  static String? _extractErrorCode(
+    Map<String, dynamic>? decoded,
+    Map<String, dynamic> detail,
+  ) {
+    final code = decoded?['error_code'] ?? detail['error_code'];
+
+    return code is String && code.isNotEmpty ? code : null;
   }
 
   static String? _extractServerMessage(Map<String, dynamic>? decoded) {

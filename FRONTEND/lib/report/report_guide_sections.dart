@@ -131,7 +131,7 @@ void _showDisposalBottomSheet(
                 child: ElevatedButton(
                   onPressed: () => Navigator.pop(context),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
+                    backgroundColor: AppPalette.success,
                   ),
                   child: const Text(
                     '확인했어요',
@@ -178,6 +178,7 @@ Widget _buildGuideSection({
   required Color secondaryText,
   required Color cardColor,
   required Color borderColor,
+  required Color accentColor,
 }) {
   return Container(
     width: double.infinity,
@@ -213,12 +214,12 @@ Widget _buildGuideSection({
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Padding(
-                  padding: EdgeInsets.only(top: 6),
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
                   child: Icon(
                     Icons.circle,
                     size: 8,
-                    color: AppPalette.accent,
+                    color: accentColor,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -294,6 +295,7 @@ Widget _buildTagChip({
   required IconData icon,
   required String label,
   required bool isDark,
+  required Color accentColor,
 }) {
   final bgColor = isDark ? const Color(0xFF232A45) : const Color(0xFFEEF1FF);
 
@@ -308,14 +310,14 @@ Widget _buildTagChip({
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 16, color: AppPalette.accent),
+          Icon(icon, size: 16, color: accentColor),
           const SizedBox(width: 6),
           Flexible(
             child: Text(
               label,
               softWrap: true,
-              style: const TextStyle(
-                color: AppPalette.accent,
+              style: TextStyle(
+                color: accentColor,
                 fontWeight: FontWeight.w600,
                 fontSize: 12,
               ),

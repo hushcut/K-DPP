@@ -8,17 +8,20 @@ import '../services/auth_api_service.dart';
 import '../theme/app_palette.dart';
 import '../utils/accessibility_announcer.dart';
 import '../utils/auth_form_validators.dart';
+import '../utils/motion_preference.dart';
 import 'app_banner.dart';
 import 'auth_form_widgets.dart';
 
 /// 이메일 칸 바로 아래에 두는 인증번호 요청 버튼과 번호 입력 칸입니다.
 ///
-/// - 번호 칸은 처음부터 보입니다. 요청이 시간 초과로 끝났어도 메일이 왔다면 넣을 수 있습니다.
+/// - 번호 칸은 [인증번호 받기]를 누르는 순간 펼쳐지고, 그 뒤로는 계속 보입니다(DECISIONS 266).
+///   요청이 시간 초과로 끝났어도 메일이 왔다면 넣을 수 있습니다.
+/// - 누르기 전에 제출하면 칸 대신 버튼 아래에 번호를 받으라고 붙입니다(DECISIONS 267).
 /// - 남은 시간과 다시 받기 대기는 기기 시계의 마감 시각으로 셉니다. 메일 앱에 다녀오는
 ///   동안 앱의 타이머가 멈춰도 돌아오면 맞는 값을 보입니다.
-/// - 번호는 그 이메일에만 맞으므로, 받은 뒤 이메일을 고치면 번호 칸과 시간을 비웁니다.
+/// - 번호는 그 이메일에만 맞으므로, 번호를 요청한 뒤 이메일을 고치면 번호 칸과 시간을 비웁니다.
 ///
-/// 이 위젯의 번호 칸은 가장 가까운 [Form] 에 들어가 화면의 제출 검사에 함께 걸립니다.
+/// 이 위젯의 버튼과 번호 칸은 가장 가까운 [Form] 에 들어가 화면의 제출 검사에 함께 걸립니다.
 /// 제출 응답의 인증번호 오류는 [EmailCodeSectionState.showSubmitError] 로 넘깁니다.
 class EmailCodeSection extends StatefulWidget {
   const EmailCodeSection({
@@ -58,11 +61,29 @@ class EmailCodeSection extends StatefulWidget {
   State<EmailCodeSection> createState() => EmailCodeSectionState();
 }
 
-class EmailCodeSectionState extends State<EmailCodeSection> {
+class EmailCodeSectionState extends State<EmailCodeSection>
+    with SingleTickerProviderStateMixin {
   Timer? _ticker;
   bool _isRequesting = false;
 
-  /// 지금 화면에 걸린 번호·대기 시간이 어느 이메일(공백 제거·소문자) 것인지입니다.
+  /// 번호 칸이 나타나기 전에 제출하면 버튼 아래에 안내를 붙이는 폼 칸입니다(DECISIONS 267).
+  final GlobalKey<FormFieldState<void>> _requestFieldKey =
+      GlobalKey<FormFieldState<void>>();
+
+  /// [인증번호 받기]를 누른 적이 있는지입니다. 그때부터 번호 칸이 보이고, 이메일을 고쳐도
+  /// 다시 숨기지 않습니다(DECISIONS 266).
+  bool _isCodeFieldVisible = false;
+
+  /// 번호 칸 자리의 높이를 0 에서 다 펼친 높이까지 키웁니다.
+  late final AnimationController _revealController;
+  late final CurvedAnimation _revealAnimation;
+
+  /// 칸이 펼쳐지는 만큼 버튼 아래 안내(267)를 접습니다.
+  late final Animation<double> _requestErrorFactor;
+
+  /// 번호 칸의 번호와 대기 시간이 어느 이메일(공백 제거·소문자) 것인지입니다. [인증번호 받기]를
+  /// 누를 때 응답을 기다리지 않고 정해 두어, 요청이 시간 초과·503 으로 끝난 뒤 메일로 온 번호를
+  /// 넣었어도 이메일을 고치면 그 번호를 비웁니다(DECISIONS 170).
   String? _targetEmail;
 
   /// [_targetEmail] 로 번호를 받은 적이 있는지입니다. 버튼 문구가 '다시 받기'로 바뀝니다.
@@ -73,9 +94,22 @@ class EmailCodeSectionState extends State<EmailCodeSection> {
   /// 서버가 거절한 이유입니다. 번호 칸 아래에 붙고, 번호를 고치면 지웁니다.
   String? _codeError;
 
+  /// 새 번호를 받으면 번호 칸의 제출 검사 오류를 지우려고 둡니다.
+  final GlobalKey<FormFieldState<String>> _codeFieldKey =
+      GlobalKey<FormFieldState<String>>();
+
   @override
   void initState() {
     super.initState();
+    _revealController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    )..addStatusListener(_handleRevealStatus);
+    _revealAnimation = CurvedAnimation(
+      parent: _revealController,
+      curve: Curves.easeOutCubic,
+    );
+    _requestErrorFactor = ReverseAnimation(_revealAnimation);
     widget.emailController.addListener(_handleEmailChanged);
   }
 
@@ -93,10 +127,24 @@ class EmailCodeSectionState extends State<EmailCodeSection> {
   void dispose() {
     widget.emailController.removeListener(_handleEmailChanged);
     _ticker?.cancel();
+    _revealAnimation.dispose();
+    _revealController.dispose();
     super.dispose();
   }
 
   static String _normalizeEmail(String email) => email.trim().toLowerCase();
+
+  /// 이메일 칸이 아직 [email] 인지입니다. 응답을 기다리는 동안 고쳤으면 그 응답의 번호·대기는
+  /// 지금 칸의 이메일 것이 아닙니다.
+  bool _isCurrentEmail(String email) =>
+      _normalizeEmail(widget.emailController.text) == _normalizeEmail(email);
+
+  // 다 펼친 뒤에 버튼 아래 안내(267)를 지웁니다. 그동안은 칸과 함께 접어 두어, 안내가 먼저
+  // 사라져 아래 칸이 위로 튀었다 내려가지 않게 합니다.
+  void _handleRevealStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed) return;
+    _requestFieldKey.currentState?.validate();
+  }
 
   int _secondsUntil(DateTime? deadline) {
     if (deadline == null) return 0;
@@ -117,6 +165,7 @@ class EmailCodeSectionState extends State<EmailCodeSection> {
     _syncTicker();
   }
 
+  // 번호 칸은 보이는 채로 두고 그 안의 값만 비웁니다(DECISIONS 266).
   void _resetForNewEmail() {
     _targetEmail = null;
     _hasRequested = false;
@@ -161,8 +210,23 @@ class EmailCodeSectionState extends State<EmailCodeSection> {
 
     final email = widget.emailController.text.trim();
     final banner = AppBanner.of(context);
+    final wasCodeFieldVisible = _isCodeFieldVisible;
 
-    setState(() => _isRequesting = true);
+    // 응답을 기다리지 않고 칸을 펼칩니다. 요청이 시간 초과·429 로 끝나도 이미 온 번호를
+    // 넣을 곳이 있어야 합니다(DECISIONS 266).
+    setState(() {
+      _isRequesting = true;
+      _isCodeFieldVisible = true;
+      _targetEmail = _normalizeEmail(email);
+    });
+    if (!wasCodeFieldVisible) {
+      // '동작 줄이기'(iOS 포함)면 펼치지 않고 바로 다 보입니다.
+      if (reducesMotion(context)) {
+        _revealController.value = 1;
+      } else {
+        _revealController.forward();
+      }
+    }
 
     try {
       final result = await widget.authApiService.requestEmailCode(
@@ -173,8 +237,7 @@ class EmailCodeSectionState extends State<EmailCodeSection> {
       if (!mounted) return;
 
       // 기다리는 동안 이메일을 고쳤으면 번호는 지금 칸의 이메일 것이 아니므로 걸지 않습니다.
-      if (_normalizeEmail(widget.emailController.text) ==
-          _normalizeEmail(email)) {
+      if (_isCurrentEmail(email)) {
         final now = widget.now();
 
         setState(() {
@@ -186,10 +249,16 @@ class EmailCodeSectionState extends State<EmailCodeSection> {
           );
           _codeError = null;
         });
-        // 새 번호를 받으면 같은 이메일의 이전 번호는 쓸 수 없습니다.
+        // 새 번호를 받으면 같은 이메일의 이전 번호는 쓸 수 없습니다. 기다리는 동안 제출해 붙은
+        // '인증번호를 받아 입력해 주세요'도 지워 남은 시간이 보이게 합니다. reset 은 칸을 마지막으로
+        // 그린 때의 값으로 되돌리므로 그 뒤에 비웁니다.
+        _codeFieldKey.currentState?.reset();
         widget.codeController.clear();
         _syncTicker();
-        widget.codeFocusNode.requestFocus();
+        // 응답이 칸을 펼친 화면보다 먼저 오면 칸이 아직 포커스를 받지 못해, 그린 뒤 옮깁니다.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) widget.codeFocusNode.requestFocus();
+        });
       }
 
       banner.show(_sentMessage, kind: AppBannerKind.success);
@@ -201,7 +270,8 @@ class EmailCodeSectionState extends State<EmailCodeSection> {
           error.errorCode == AuthErrorCode.emailCodeResendTooSoon ||
           error.errorCode == AuthErrorCode.tooManyAttempts;
 
-      if (isWaitLimit && retryAfter != null) {
+      // 대기도 요청한 이메일 것이라, 기다리는 동안 고쳤으면 지금 칸의 이메일에 걸지 않습니다.
+      if (isWaitLimit && retryAfter != null && _isCurrentEmail(email)) {
         setState(() {
           if (_targetEmail != _normalizeEmail(email)) {
             _resetForNewEmail();
@@ -296,6 +366,28 @@ class EmailCodeSectionState extends State<EmailCodeSection> {
     );
   }
 
+  /// 번호 칸이 나타나기 전에 제출했을 때 버튼 아래에 붙이는 안내입니다(DECISIONS 267).
+  ///
+  /// 입력 칸 아래 오류 문장과 같은 글자 모양·자리(칸 안쪽 여백 22 + 글자 간격 4)에 둡니다.
+  Widget _buildRequestError(BuildContext context, String message) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsetsDirectional.fromSTEB(26, 4, 26, 0),
+      // 입력 칸 오류처럼, 알림을 받지 않는 낭독기(최근 Android)는 live region 으로 스스로 읽습니다.
+      child: Semantics(
+        container: true,
+        liveRegion: !MediaQuery.supportsAnnounceOf(context),
+        child: Text(
+          message,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.error,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
@@ -304,72 +396,108 @@ class EmailCodeSectionState extends State<EmailCodeSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SizedBox(
-          height: 52,
-          child: OutlinedButton(
-            onPressed: canRequest ? _requestCode : null,
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppPalette.accent,
-              side: BorderSide(
-                color: canRequest
-                    ? AppPalette.accent
-                    : AppPalette.accent.withValues(alpha: 0.35),
-                width: 1.5,
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(26),
-              ),
-            ),
-            child: _isRequesting
-                ? Semantics(
-                    label: '인증번호 요청 중',
-                    liveRegion: true,
-                    child: const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.2,
-                        color: AppPalette.accent,
-                      ),
+        // 번호 칸이 숨어 있는 동안은 이 칸이 제출 검사를 대신 막습니다. 첫 오류면 Form 이
+        // 낭독기에도 알립니다.
+        FormField<void>(
+          key: _requestFieldKey,
+          validator: (_) =>
+              _isCodeFieldVisible ? null : validateVerificationCode(''),
+          builder: (field) => Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                height: 52,
+                child: OutlinedButton(
+                  onPressed: canRequest ? _requestCode : null,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: palette.accentForeground,
+                    side: BorderSide(
+                      color: canRequest
+                          ? palette.accentForeground
+                          : palette.accentForeground.withValues(alpha: 0.35),
+                      width: 1.5,
                     ),
-                  )
-                : Text(
-                    _requestButtonLabel,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(26),
                     ),
                   ),
+                  child: _isRequesting
+                      ? Semantics(
+                          label: '인증번호 요청 중',
+                          liveRegion: true,
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.2,
+                              color: palette.accentForeground,
+                            ),
+                          ),
+                        )
+                      : Text(
+                          _requestButtonLabel,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                ),
+              ),
+              // 번호 칸이 펼쳐지는 만큼 접히고, 다 펼치면 지웁니다.
+              if (field.hasError)
+                SizeTransition(
+                  sizeFactor: _requestErrorFactor,
+                  axisAlignment: -1,
+                  child: _buildRequestError(context, field.errorText!),
+                ),
+            ],
           ),
         ),
-        const SizedBox(height: 16),
-        TextFormField(
-          controller: widget.codeController,
-          focusNode: widget.codeFocusNode,
-          keyboardType: TextInputType.number,
-          textInputAction: TextInputAction.next,
-          autofillHints: const [AutofillHints.oneTimeCode],
-          autocorrect: false,
-          enableSuggestions: false,
-          inputFormatters: [
-            FilteringTextInputFormatter.digitsOnly,
-            LengthLimitingTextInputFormatter(6),
-          ],
-          validator: validateVerificationCode,
-          forceErrorText: _codeError,
-          onChanged: (_) {
-            if (_codeError == null) return;
-            setState(() => _codeError = null);
-          },
-          onFieldSubmitted: widget.onCodeSubmitted,
-          style: TextStyle(color: palette.textPrimary),
-          cursorColor: AppPalette.accent,
-          decoration: authInputDecoration(
-            context,
-            labelText: '인증번호',
-            hintText: '6자리 숫자',
-            helper: _buildCodeHelper(context),
+        // 누르기 전에도 칸을 만들어 숨겨 둡니다. 처음부터 Form 에 들어 있어야 제출 검사와
+        // 오류 낭독이 위 칸부터 차례로 갑니다. 펼칠 때는 아래 칸이 한 번에 밀리지 않게
+        // 높이를 키웁니다.
+        SizeTransition(
+          sizeFactor: _revealAnimation,
+          axisAlignment: -1,
+          child: Visibility(
+            visible: _isCodeFieldVisible,
+            maintainState: true,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: TextFormField(
+                key: _codeFieldKey,
+                controller: widget.codeController,
+                focusNode: widget.codeFocusNode,
+                keyboardType: TextInputType.number,
+                textInputAction: TextInputAction.next,
+                autofillHints: const [AutofillHints.oneTimeCode],
+                autocorrect: false,
+                enableSuggestions: false,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(6),
+                ],
+                // 숨어 있는 동안은 위 버튼 칸이 대신 막습니다.
+                validator: (value) => _isCodeFieldVisible
+                    ? validateVerificationCode(value)
+                    : null,
+                forceErrorText: _codeError,
+                onChanged: (_) {
+                  if (_codeError == null) return;
+                  setState(() => _codeError = null);
+                },
+                onFieldSubmitted: widget.onCodeSubmitted,
+                style: TextStyle(color: palette.textPrimary),
+                cursorColor: palette.accentForeground,
+                decoration: authInputDecoration(
+                  context,
+                  labelText: '인증번호',
+                  hintText: '6자리 숫자',
+                  helper: _buildCodeHelper(context),
+                ),
+              ),
+            ),
           ),
         ),
       ],

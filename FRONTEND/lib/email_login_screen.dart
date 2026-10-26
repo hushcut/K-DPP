@@ -165,9 +165,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     final palette = AppPalette.of(context);
     final backgroundColor = palette.background;
     final primaryText = palette.textPrimary;
-    final secondaryText = isDark
-        ? const Color(0xFFD1D1D6)
-        : const Color(0xFF8C8C8C);
+    final secondaryText = palette.textSecondary;
     final iconColor = isDark
         ? const Color(0xFFB8B8BE)
         : const Color(0xFF8C8C8C);
@@ -248,7 +246,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                             autocorrect: false,
                             validator: validateEmailInput,
                             style: TextStyle(color: primaryText),
-                            cursorColor: AppPalette.accent,
+                            cursorColor: palette.accentForeground,
                             decoration: authInputDecoration(
                               context,
                               labelText: '이메일',
@@ -265,7 +263,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                             autocorrect: false,
                             validator: _validatePassword,
                             style: TextStyle(color: primaryText),
-                            cursorColor: AppPalette.accent,
+                            cursorColor: palette.accentForeground,
                             decoration: authInputDecoration(
                               context,
                               labelText: '비밀번호',

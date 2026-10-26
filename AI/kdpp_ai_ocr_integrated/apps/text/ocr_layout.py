@@ -134,21 +134,29 @@ def _vertical_bands(words: list[OcrWord], slope: float = 0.0,
     return bands
 
 
-def _split_tilted_band(words: list[OcrWord]) -> list[tuple[list[OcrWord], float]]:
+def _aligned_with_slope(word: OcrWord, slope: float, *, allow_quantisation: bool = False) -> bool:
+    """Check both polygon edges, including boxes too short to set an angle."""
+    if len(word.vertices) != 4:
+        return False
+    (x0, y0), (x1, y1), (x2, y2), (x3, y3) = word.vertices
+    if min(x1 - x0, x2 - x3, y3 - y0, y2 - y1) <= 0:
+        return False
+    # Integer vertices can move an edge one pixel past the angular boundary,
+    # especially on a short glyph. Keep the existing angular tolerance and
+    # bound the additional displacement in pixels on BOTH polygon edges.
+    # Extra tolerance cannot establish a flat or opposite edge's direction.
+    return all(abs(dy - slope * dx) <= 0.06 * dx
+               or (allow_quantisation and dy * slope > 0 and abs(dy - slope * dx) <= 0.06 * dx + 1)
+               for dx, dy in ((x1 - x0, y1 - y0), (x2 - x3, y2 - y3)))
+
+
+def _split_tilted_band(words: list[OcrWord], *, allow_quantisation: bool = False) -> list[tuple[list[OcrWord], float]]:
     """Split a local direction only when every other box is outside its band."""
     slopes = sorted({value for word in words if (value := _word_slope(word))})
     choices = {}
     for slope in slopes:
-        compatible = []
-        for word in words:
-            if len(word.vertices) != 4:
-                continue
-            (x0, y0), (x1, y1), (x2, y2), (x3, y3) = word.vertices
-            if min(x1 - x0, x2 - x3, y3 - y0, y2 - y1) <= 0:
-                continue
-            angles = ((y1 - y0) / (x1 - x0), (y2 - y3) / (x2 - x3))
-            if max(abs(value - slope) for value in angles) <= 0.06:
-                compatible.append(word)
+        compatible = [word for word in words if _aligned_with_slope(
+            word, slope, allow_quantisation=allow_quantisation)]
         for region in _vertical_bands(compatible, slope, gap_ratio=2.0):
             local_slope = _band_slope(region)
             if not local_slope:
@@ -176,6 +184,10 @@ def _split_tilted_band(words: list[OcrWord]) -> list[tuple[list[OcrWord], float]
                     break
             else:
                 choices[frozenset(region)] = (above, region, below, local_slope)
+    # Preserve an existing partition, including ambiguity. Retry at most once
+    # with pixel precision only when the strict geometry found no region.
+    if not choices and not allow_quantisation:
+        return _split_tilted_band(words, allow_quantisation=True)
     # Competing partitions never get selected by parser success or totals.
     if len(choices) != 1:
         return [(words, 0.0)]
@@ -192,10 +204,21 @@ def spatial_text_from_words(words: list[OcrWord]) -> str:
         if not any(_word_slope(word) for word in page_words):
             pages.append(_horizontal_rows(page_words))
             continue
-        bands = _vertical_bands(page_words)
+        # Partition in the supported reading direction first: distant columns
+        # of one tilted row can occupy disjoint horizontal bands.
+        page_slope = _band_slope(page_words)
+        drift = abs(page_slope) * (max(word.right for word in page_words) - min(word.left for word in page_words))
+        if drift <= median(_projected_height(word, page_slope) for word in page_words):
+            # Small drift already fits the local row grouping. Repartitioning
+            # it could split nearby captions into artificial numeric rows.
+            page_slope = 0.0
+        bands = _vertical_bands(page_words, page_slope)
         regions = []
         for band in bands:
             slope = _band_slope(band)
+            if (not slope and page_slope
+                    and all(_aligned_with_slope(word, page_slope) for word in band)):
+                slope = page_slope
             regions.extend([(band, slope)] if slope else _split_tilted_band(band))
         slopes = [slope for _band, slope in regions]
         if not any(slopes):

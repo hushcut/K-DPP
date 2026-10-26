@@ -31,6 +31,9 @@ extension _ClosetBody on _ClosetScreenState {
         children: [
           DefaultTabController(
             length: 3,
+            // 탭을 누르면 본문이 옆으로 넘어가는 것은 스크롤이라 Flutter 가 줄이지 않습니다(Android 도).
+            // 그래서 동작 줄이기면 넘김 시간을 0 으로 해 바로 넘깁니다. 옷장을 다시 그릴 때 읽습니다.
+            animationDuration: reducesMotion(context) ? Duration.zero : null,
             child: Column(
               children: [
                 _buildHeader(palette, hasClothes: clothesList.isNotEmpty),
@@ -152,7 +155,7 @@ extension _ClosetBody on _ClosetScreenState {
             AppGlassIconButton(
               onPressed: _showSortBottomSheet,
               tooltip: '옷장 정렬',
-              icon: const Icon(Icons.sort, color: AppPalette.accent),
+              icon: Icon(Icons.sort, color: palette.accentForeground),
             ),
           ];
 
@@ -276,6 +279,8 @@ extension _ClosetBody on _ClosetScreenState {
       textInputAction: TextInputAction.search,
       decoration: InputDecoration(
         hintText: '옷 이름, 소재 검색',
+        // 큰 글자에서는 한 줄에 다 들어가지 않아 '…' 로 잘리므로 두 줄까지 보여 줍니다.
+        hintMaxLines: 2,
         hintStyle: TextStyle(color: palette.secondaryText, fontSize: 14),
         prefixIcon: Icon(
           Icons.search,
@@ -314,7 +319,7 @@ extension _ClosetBody on _ClosetScreenState {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: AppPalette.accent, width: 1.4),
+          borderSide: BorderSide(color: palette.accentForeground, width: 1.4),
         ),
       ),
     );
@@ -323,9 +328,9 @@ extension _ClosetBody on _ClosetScreenState {
   /// 전체·상의·하의 목록 사이를 전환하는 탭입니다.
   Widget _buildCategoryTabBar(_ClosetPalette palette) {
     return TabBar(
-      labelColor: AppPalette.accent,
+      labelColor: palette.accentForeground,
       unselectedLabelColor: palette.secondaryText,
-      indicatorColor: AppPalette.accent,
+      indicatorColor: palette.accentForeground,
       indicatorWeight: 3,
       tabs: const [
         Tab(text: '전체'),
@@ -381,11 +386,15 @@ class _ClosetPalette {
     required this.warningBgColor,
     required this.leadingBgColor,
     required this.shadowColor,
+    required this.statusGoodText,
+    required this.statusBadText,
+    required this.accentForeground,
     required this.isDark,
   });
 
   factory _ClosetPalette.from(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final appPalette = AppPalette.of(context);
 
     return _ClosetPalette(
       primaryText: isDark ? Colors.white : const Color(0xFF1A1A1A),
@@ -408,6 +417,9 @@ class _ClosetPalette {
       shadowColor: isDark
           ? Colors.black.withValues(alpha: 0.16)
           : Colors.black.withValues(alpha: 0.03),
+      statusGoodText: appPalette.successText,
+      statusBadText: appPalette.dangerText,
+      accentForeground: appPalette.accentForeground,
       isDark: isDark,
     );
   }
@@ -420,5 +432,12 @@ class _ClosetPalette {
   final Color warningBgColor;
   final Color leadingBgColor;
   final Color shadowColor;
+
+  /// 카드의 건강 상태 글자색입니다. 수명 만료 글자는 붉은 카드 바탕에서도 4.5:1 을 넘습니다(C54).
+  final Color statusGoodText;
+  final Color statusBadText;
+
+  /// 선택된 탭·정렬 아이콘·검색 칸 테두리의 강조색입니다([AppPalette.accentForeground], C55).
+  final Color accentForeground;
   final bool isDark;
 }

@@ -1,0 +1,9 @@
+#!/bin/sh
+# K-DPP managed security hook v1
+root=$(git rev-parse --show-toplevel) || exit 2
+runner="$root/scripts/security/run-hook.sh"
+if [ ! -f "$runner" ]; then
+    echo 'K-DPP: 이 브랜치에 보안 검사 구성이 없어 커밋을 중단합니다.' >&2
+    exit 2
+fi
+exec sh "$runner" staged

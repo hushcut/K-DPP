@@ -42,7 +42,8 @@ extension _ScanSaveActions on _ScanScreenState {
     );
   }
 
-  /// 입력 검증 후 서버 계산을 시도하고 실패 시 로컬 추정값으로 저장합니다.
+  /// 입력 검증 후 서버 계산을 시도합니다. 서버가 입력을 거절하면(400/422) 저장하지 않고,
+  /// 그 밖의 실패는 로컬 추정값으로 저장합니다.
   Future<void> _submitClothes() async {
     if (_isSaving) return;
 
@@ -102,6 +103,9 @@ extension _ScanSaveActions on _ScanScreenState {
               materials: editedMaterials,
               minWeightGram: _selectedClothingType.minWeightGram,
               maxWeightGram: _selectedClothingType.maxWeightGram,
+              weightGram: _selectedClothingType.isDirectWeight
+                  ? _selectedClothingType.estimatedWeightGram
+                  : null,
               accessToken: accessToken,
             );
 
@@ -129,7 +133,22 @@ extension _ScanSaveActions on _ScanScreenState {
               return;
             }
 
-            // 인증 오류 외의 서버 실패는 로컬 저장을 막지 않습니다.
+            if (error.type == CarbonApiErrorType.badRequest) {
+              // 서버가 계산할 수 없는 입력이라고 거절했으니 근거 없는 임시값으로 저장하지 않고,
+              // 입력을 그대로 둔 채 고치거나 다시 찍게 합니다(AI 연동 협의안 R1). 아래 저장
+              // 구간의 finally 에 닿지 않으므로 여기서 저장 버튼을 풉니다.
+              if (mounted) {
+                _updateState(() {
+                  _isSaving = false;
+                });
+                AppBanner.of(
+                  context,
+                ).show(error.userMessage, kind: AppBannerKind.failure);
+              }
+              return;
+            }
+
+            // 인증 오류·입력 거절 외의 서버 실패는 로컬 저장을 막지 않습니다.
             fallbackMessage = error.userMessage;
           }
         }

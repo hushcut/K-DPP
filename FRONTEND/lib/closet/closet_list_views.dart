@@ -157,7 +157,9 @@ extension _ClosetListViews on _ClosetScreenState {
               status: item.health > 20
                   ? '건강 상태: ${item.health}%'
                   : '수명 만료 (배출 권장)',
-              statusColor: item.health > 20 ? Colors.green : Colors.redAccent,
+              statusColor: item.health > 20
+                  ? palette.statusGoodText
+                  : palette.statusBadText,
               statusIcon: item.health > 20
                   ? Icons.sentiment_satisfied_alt
                   : Icons.warning_amber_rounded,
@@ -254,7 +256,9 @@ extension _ClosetListViews on _ClosetScreenState {
             status: item.health > 20
                 ? '건강 상태: ${item.health}%'
                 : '수명 만료 (배출 권장)',
-            statusColor: item.health > 20 ? Colors.green : Colors.redAccent,
+            statusColor: item.health > 20
+                ? palette.statusGoodText
+                : palette.statusBadText,
             statusIcon: item.health > 20
                 ? Icons.sentiment_satisfied_alt
                 : Icons.warning_amber_rounded,
@@ -286,7 +290,7 @@ extension _ClosetListViews on _ClosetScreenState {
     if (_selectionMode) {
       trailing = Icon(
         isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
-        color: isSelected ? AppPalette.accent : palette.secondaryText,
+        color: isSelected ? palette.accentForeground : palette.secondaryText,
       );
     } else if (dragHandleIndex != null) {
       // 손잡이가 '>' 자리에 섭니다.
@@ -320,7 +324,7 @@ extension _ClosetListViews on _ClosetScreenState {
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: isSelected
-                  ? AppPalette.accent
+                  ? palette.accentForeground
                   : (isWarning
                         ? Colors.redAccent.shade200
                         : palette.borderColor),
@@ -360,7 +364,7 @@ extension _ClosetListViews on _ClosetScreenState {
                 child: Icon(
                   Icons.checkroom,
                   color: isSelected
-                      ? AppPalette.accent
+                      ? palette.accentForeground
                       : (isWarning ? Colors.redAccent : palette.secondaryText),
                   size: 30,
                 ),
@@ -392,9 +396,10 @@ extension _ClosetListViews on _ClosetScreenState {
                         Icon(statusIcon, color: statusColor, size: 16),
                         const SizedBox(width: 4),
                         Expanded(
+                          // 작은 화면·큰 글자에서는 그림·'>' 사이 폭이 좁아 두 줄로도 모자랍니다
+                          // (320 폭·1.8배에서 '84%' 가 잘렸다). 상태는 짧아 줄 수를 막지 않습니다.
                           child: Text(
                             status,
-                            maxLines: 2,
                             style: TextStyle(
                               color: statusColor,
                               fontWeight: isWarning

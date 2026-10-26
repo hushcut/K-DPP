@@ -610,7 +610,8 @@ class _CenterScanButton extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         child: SizedBox(
           width: 88,
-          height: 90,
+          // 큰 글자에서 이름이 길어질 자리까지 상자 높이를 다 씁니다.
+          height: BottomNavigationMetrics.boxHeight,
           child: ExcludeSemantics(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -658,11 +659,16 @@ class _CenterScanButton extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 1),
-                SizedBox(
-                  height: 18,
+                // 보통 글자에서는 18 칸 가운데에 두고, 큰 글자에서는 칸이 글자만큼 늘어납니다.
+                ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 18),
                   child: Center(
                     child: Text(
                       '스캔',
+                      textScaler: MediaQuery.textScalerOf(context).clamp(
+                        maxScaleFactor:
+                            BottomNavigationMetrics.labelMaxTextScale,
+                      ),
                       style: TextStyle(
                         color: palette.textSecondary,
                         fontSize: 12,
@@ -701,7 +707,7 @@ class _BottomTabItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
 
-    const activeColor = AppPalette.accent;
+    final activeColor = palette.accentForeground;
     final inactiveColor = palette.textSecondary;
     final color = selected ? activeColor : inactiveColor;
 
@@ -738,6 +744,10 @@ class _BottomTabItem extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       label,
+                      textScaler: MediaQuery.textScalerOf(context).clamp(
+                        maxScaleFactor:
+                            BottomNavigationMetrics.labelMaxTextScale,
+                      ),
                       style: TextStyle(
                         color: animatedColor,
                         fontSize: 12,

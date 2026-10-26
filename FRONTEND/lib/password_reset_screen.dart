@@ -165,9 +165,7 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
     final palette = AppPalette.of(context);
     final backgroundColor = palette.background;
     final primaryText = palette.textPrimary;
-    final secondaryText = isDark
-        ? const Color(0xFFD1D1D6)
-        : const Color(0xFF8C8C8C);
+    final secondaryText = palette.textSecondary;
     final iconColor = isDark
         ? const Color(0xFFB8B8BE)
         : const Color(0xFF8C8C8C);
@@ -259,7 +257,7 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
                                   autocorrect: false,
                                   validator: validateEmailInput,
                                   style: TextStyle(color: primaryText),
-                                  cursorColor: AppPalette.accent,
+                                  cursorColor: palette.accentForeground,
                                   decoration: authInputDecoration(
                                     context,
                                     labelText: '이메일',
@@ -296,7 +294,7 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
                                   autocorrect: false,
                                   validator: validateNewPassword,
                                   style: TextStyle(color: primaryText),
-                                  cursorColor: AppPalette.accent,
+                                  cursorColor: palette.accentForeground,
                                   decoration: authInputDecoration(
                                     context,
                                     labelText: '새 비밀번호',
@@ -336,7 +334,7 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
                                         _passwordController.text,
                                       ),
                                   style: TextStyle(color: primaryText),
-                                  cursorColor: AppPalette.accent,
+                                  cursorColor: palette.accentForeground,
                                   decoration: authInputDecoration(
                                     context,
                                     labelText: '새 비밀번호 확인',

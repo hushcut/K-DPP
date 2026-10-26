@@ -1,10 +1,54 @@
-import 'dart:ui';
-
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+
+/// 아이폰에서 가까운 라벨에도 초점이 맞도록 여는 뒤 카메라다.
+///
+/// camera 플러그인은 렌즈 하나짜리 카메라만 목록에 올리는데, Pro 아이폰의 광각은
+/// 가까우면 초점이 안 맞는다. 초광각이 든 가상 카메라는 기본 카메라 앱처럼 가까우면
+/// 초광각(매크로)으로 스스로 넘어간다(iOS 쪽은 `AppDelegate.swift`).
+class CloseFocusCamera {
+  const CloseFocusCamera({
+    required this.uniqueId,
+    required this.wideZoomFactor,
+  });
+
+  final String uniqueId;
+
+  /// 광각(1x) 화각이 되는 확대 배율이다. 가상 카메라의 배율 1.0 은 초광각 화각이다.
+  final double wideZoomFactor;
+}
+
+/// 근접 초점 카메라를 찾는다. 없는 기기·플랫폼이면 null 이다.
+typedef CloseFocusCameraFinder = Future<CloseFocusCamera?> Function();
+
+const _scanCameraDeviceChannel = MethodChannel('kdpp/scan_camera_device');
+
+/// 아이폰에서만 근접 초점 카메라를 묻는다. 안드로이드는 지금 카메라로 초점이 맞아 묻지 않는다.
+Future<CloseFocusCamera?> findCloseFocusBackCamera() async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return null;
+
+  final reply = await _scanCameraDeviceChannel.invokeMapMethod<String, Object?>(
+    'closeFocusBackCamera',
+  );
+  final uniqueId = reply?['uniqueId'];
+  final wideZoomFactor = reply?['wideZoomFactor'];
+
+  if (uniqueId is! String || uniqueId.isEmpty) return null;
+  if (wideZoomFactor is! num || wideZoomFactor < 1) return null;
+
+  return CloseFocusCamera(
+    uniqueId: uniqueId,
+    wideZoomFactor: wideZoomFactor.toDouble(),
+  );
+}
 
 /// 카메라 초기화·오류·해제를 관리하고 준비 상태 변경을 화면에 알린다.
 class ScanCameraSession extends ChangeNotifier {
+  ScanCameraSession({CloseFocusCameraFinder? findCloseFocusCamera})
+    : _findCloseFocusCamera = findCloseFocusCamera ?? findCloseFocusBackCamera;
+
+  final CloseFocusCameraFinder _findCloseFocusCamera;
   CameraController? _controller;
   bool _isInitializing = false;
   String? _errorMessage;
@@ -22,6 +66,7 @@ class ScanCameraSession extends ChangeNotifier {
   bool get isTakingPicture => _controller?.value.isTakingPicture ?? false;
 
   /// 후면 카메라를 우선 초기화하고 지원되는 경우 자동 초점과 노출을 설정한다.
+  /// 근접 초점 카메라가 있으면 그것을 먼저 열고, 못 열면 첫 후면 카메라로 연다.
   /// 요청 번호로 오래된 비동기 초기화 결과가 새 세션을 덮어쓰지 않게 한다.
   Future<void> initialize({required bool Function() canUseCamera}) async {
     if (!canUseCamera()) return;
@@ -50,14 +95,46 @@ class ScanCameraSession extends ChangeNotifier {
         orElse: () => cameras.first,
       );
 
-      final controller = CameraController(
-        backCamera,
-        ResolutionPreset.high,
-        enableAudio: false,
-      );
-      pendingController = controller;
+      CameraController? controller;
+      final closeFocusCamera = await _findCloseFocusCameraOrNull();
 
-      await controller.initialize();
+      if (closeFocusCamera != null) {
+        final candidate = CameraController(
+          CameraDescription(
+            name: closeFocusCamera.uniqueId,
+            lensDirection: CameraLensDirection.back,
+            sensorOrientation: backCamera.sensorOrientation,
+          ),
+          ResolutionPreset.high,
+          enableAudio: false,
+        );
+        pendingController = candidate;
+
+        try {
+          await candidate.initialize();
+          await candidate.setZoomLevel(closeFocusCamera.wideZoomFactor);
+          controller = candidate;
+        } catch (e) {
+          // 권한 거부는 다른 카메라로 다시 열어도 같으니 권한 안내로 넘긴다.
+          if (_isPermissionError(e)) rethrow;
+
+          debugPrint('근접 초점 카메라를 열지 못해 첫 후면 카메라로 엽니다: $e');
+          pendingController = null;
+          await _disposeFailedController(candidate);
+        }
+      }
+
+      if (controller == null) {
+        controller = CameraController(
+          backCamera,
+          ResolutionPreset.high,
+          enableAudio: false,
+        );
+        pendingController = controller;
+
+        await controller.initialize();
+      }
+
       await _configureAutoFocus(controller);
 
       if (!canUseCamera() || requestId != _requestId) {
@@ -95,6 +172,16 @@ class ScanCameraSession extends ChangeNotifier {
       _errorMessage = _buildCameraErrorMessage(e);
       _isPermissionDenied = _isPermissionError(e);
       notifyListeners();
+    }
+  }
+
+  /// 근접 초점 카메라를 찾는다. 찾다가 실패해도 첫 후면 카메라로 열 수 있게 null 로 둔다.
+  Future<CloseFocusCamera?> _findCloseFocusCameraOrNull() async {
+    try {
+      return await _findCloseFocusCamera();
+    } catch (e) {
+      debugPrint('근접 초점 카메라 찾기 실패: $e');
+      return null;
     }
   }
 

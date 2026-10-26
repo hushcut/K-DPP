@@ -25,6 +25,7 @@ class ScanResultView extends StatelessWidget {
     required this.isSaving,
     required this.isScanFailed,
     this.scanFailureMessage,
+    this.scanNotices = const [],
     required this.titleController,
     required this.selectedClothingType,
     required this.materialInputs,
@@ -55,6 +56,10 @@ class ScanResultView extends StatelessWidget {
   final bool isScanFailed;
   /// 스캔 실패 시 사용자에게 보여 줄 선택적 상세 메시지입니다.
   final String? scanFailureMessage;
+
+  /// AI 가 어느 부위를 읽었는지·가죽 100%로 보았는지 알리는 안내 문구입니다(R4).
+  /// 소재를 확인하는 동안 사라지지 않게 소재 입력 바로 위에 둡니다. 없으면 그리지 않습니다.
+  final List<String> scanNotices;
 
   // 사용자가 편집하는 의류명, 의류 종류, 소재 입력 목록입니다.
   final TextEditingController titleController;
@@ -296,6 +301,7 @@ class ScanResultView extends StatelessWidget {
                   secondaryText: secondaryText,
                   borderColor: borderColor,
                   cardColor: cardColor,
+                  iconColor: palette.accentForeground,
                 ),
                 if (rawOcrPreview.trim().isNotEmpty) ...[
                   const SizedBox(height: 12),
@@ -317,6 +323,15 @@ class ScanResultView extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
+              if (scanNotices.isNotEmpty) ...[
+                _buildScanNotices(
+                  primaryText: primaryText,
+                  borderColor: borderColor,
+                  cardColor: cardColor,
+                  iconColor: palette.accentForeground,
+                ),
+                const SizedBox(height: 10),
+              ],
               ListenableBuilder(
                 listenable: materialInputs,
                 builder: (context, _) {
@@ -343,8 +358,8 @@ class ScanResultView extends StatelessWidget {
                             color: materialInputs.isEmpty
                                 ? secondaryText
                                 : isTotalValid
-                                ? Colors.green
-                                : Colors.redAccent,
+                                ? palette.successText
+                                : palette.dangerText,
                             fontWeight: FontWeight.w600,
                             fontSize: 13,
                           ),
@@ -508,6 +523,7 @@ class ScanResultView extends StatelessWidget {
     required Color secondaryText,
     required Color borderColor,
     required Color cardColor,
+    required Color iconColor,
   }) {
     final normalizedMessage = failureMessage?.trim();
 
@@ -522,7 +538,7 @@ class ScanResultView extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.edit_note, color: AppPalette.accent),
+          Icon(Icons.edit_note, color: iconColor),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -548,6 +564,55 @@ class ScanResultView extends StatelessWidget {
                     height: 1.5,
                   ),
                 ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 분석 결과를 어떻게 읽었는지(부위·가죽 추정) 알려, 아래 소재와 비율을 라벨과 맞춰 보게 합니다.
+  // 안내마다 한 줄씩 따로 읽히게 나눕니다.
+  Widget _buildScanNotices({
+    required Color primaryText,
+    required Color borderColor,
+    required Color cardColor,
+    required Color iconColor,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.info_outline_rounded,
+            color: iconColor,
+            size: 18,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var i = 0; i < scanNotices.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 4),
+                  Text(
+                    scanNotices[i],
+                    softWrap: true,
+                    style: TextStyle(
+                      color: primaryText,
+                      fontSize: 13,
+                      height: 1.45,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -803,7 +868,9 @@ class ScanResultView extends StatelessWidget {
               labelStyle: TextStyle(color: secondaryText),
               hintStyle: TextStyle(color: secondaryText),
               isDense: true,
-              contentPadding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+              // 촘촘한 칸도 높이가 48 이 되게 위아래 여백을 정합니다(C59). 최소 높이 제약으로 늘리면
+              // 누를 곳만 커지고 테두리는 43 으로 그려져, ☰ 아이콘 때문에 48 인 칸과 높이가 어긋났습니다.
+              contentPadding: const EdgeInsets.fromLTRB(12, 14.5, 12, 12.5),
               // 좁은 화면에서 오류 문구가 한 줄로 잘리지 않게 합니다.
               errorMaxLines: 2,
               suffixIcon: materialCatalog == null
@@ -853,7 +920,7 @@ class ScanResultView extends StatelessWidget {
               suffixText: '%',
               suffixStyle: TextStyle(color: secondaryText),
               isDense: true,
-              contentPadding: const EdgeInsets.fromLTRB(8, 12, 8, 10),
+              contentPadding: const EdgeInsets.fromLTRB(8, 14.5, 8, 12.5),
               errorMaxLines: 2,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),

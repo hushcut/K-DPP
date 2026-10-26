@@ -1,10 +1,24 @@
 import re
 from dataclasses import replace, dataclass
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 
+from apps.text.line_analysis_cache import LineAnalysis, line_analysis_scope, reuse_line_analysis
+from apps.text.part_policy import PART_PRIORITY as PART_PRIORITY
+from apps.text.part_policy import OUTER_PARTS
 from apps.text.ratio_contract import EXACT_RATIO_TOTAL, has_exact_total
 from apps.text.translation_alternatives import prepare_translation_alternatives
 from apps.text.scoped_materials import read_yarn_materials, confirmed_yarn_declaration
+from apps.text.line_context import (
+    _CARE_PHRASES,
+    COMPOSITION_HINTS,
+    _contains_only_known_phrases,
+    _EXPLICIT_PART_HEADER_CONTEXTS,
+    _MATERIAL_ONLY_LINE_CONTEXTS,
+    _mentions_care,
+    _RATIO_PAIR_DESCRIPTORS,
+    _RATIO_PREFIX_CONTEXTS,
+)
 
 from apps.text.composition_candidates import (
     CompositionCandidate,
@@ -34,19 +48,6 @@ from apps.text.rules import (
     MATERIAL_KOREAN,
 )
 
-
-PART_PRIORITY = [
-    "outer",
-    "generic",
-    "outer_2",
-    "lining",
-    "filling",
-    "pocket",
-    "rib",
-    "sleeve",
-    "color_block",
-    "embroidery_yarn",
-]
 
 NON_COMPOSITION_WORDS = {
     "제품명",
@@ -88,25 +89,6 @@ DESCRIPTIVE_MATERIAL_PHRASES = {
     "wool-like",
 }
 
-COMPOSITION_HINTS = {
-    "섬유의 조성",
-    "혼용률",
-    "혼용율",
-    "소재",
-    "composition",
-    "fabric content",
-    "material",
-    "materials",
-    "fiber content",
-    "纤维成分",
-    "纖維成分",
-    "面料成分",
-    "材质",
-    "材質",
-    "組成表示",
-    "混用率",
-    "品質表示",
-}
 
 _RATIO_ROW_LABELS = COMPOSITION_HINTS | {
     normalize_text(alias) for aliases in PART_PATTERNS.values() for alias in aliases
@@ -135,26 +117,7 @@ _TEMPERATURE_PATTERN = re.compile(
 )
 
 
-_CARE_PHRASES = tuple(
-    {alias.casefold() for aliases in CARE_RULES.values() for alias in aliases}
-)
 _SPLIT_CARE_BOUNDARY_PHRASES = frozenset(_CARE_PHRASES) | {"dry cleaning only"}
-# Number safety needs broader context than the phrases used to display care
-# instructions. These words alone do not imply a specific care recommendation.
-_CARE_CONTEXT_PATTERN = re.compile(
-    r"(?<![a-z])(?:wash(?:ing)?|rinse|bleach(?:ing)?|iron(?:ing)?|dry(?:ing)?)(?![a-z])"
-    r"|세탁|표백|다림질|건조|드라이"
-    r"|水洗|洗涤|洗滌|漂白|熨|烘|干洗|乾洗"
-    r"|洗濯|手洗|アイロン|乾燥|ドライ"
-)
-
-
-def _mentions_care(line: str) -> bool:
-    """Whether a row also carries care text, whose numbers are not ratios."""
-
-    return bool(_CARE_CONTEXT_PATTERN.search(line)) or any(
-        phrase in line for phrase in _CARE_PHRASES
-    )
 
 
 def _mask_temperatures(line: str) -> str:
@@ -177,7 +140,10 @@ def _looks_like_non_composition_number(line: str) -> bool:
 
 _NUMERIC_IDENTIFIER_ROW_PATTERN = re.compile(r"\(?\s*[0-9]+(?:\s*-\s*[0-9]+){1,3}\s*\)?")
 _WASH_SYMBOL_OCR_PATTERN = re.compile(r"1(?:30|40|50|60|70|95)\s*[/\\]")
-_PAREN_WASH_SYMBOL_OCR_PATTERN = re.compile(r"\(\s*(?:30|40|50|60|70|95)0\s*\)?")
+_OUTLINED_WASH_SYMBOL_OCR_PATTERN = re.compile(
+    r"(?:\(\s*(?:30|40|50|60|70|95)0\s*\)?\s*/?"
+    r"|\\\s*(?:30|40|50|60|70|95)\s*/?)"
+)
 _NUMBERED_OUTER_MARKER_PATTERN = re.compile(
     r"(?<![a-z0-9])(?:outshell|cutshell|shell|outer|겉\s*감)\s*[12](?![a-z0-9.,]|\s*%)"
 )
@@ -255,9 +221,9 @@ def _is_non_composition_numeric_row(
         groups = re.findall(r"[0-9]+", line)
         # Long hyphenated product/contact numbers cannot be percentage ranges.
         return sum(map(len, groups)) >= 7 and max(map(len, groups)) >= 4
-    # A tub outline can turn 30 degrees into '(300'. Keep explicit ratios,
-    # incomplete blocks and plain out-of-range numbers under normal validation.
-    if _PAREN_WASH_SYMBOL_OCR_PATTERN.fullmatch(line):
+    # A tub outline can turn 30 degrees into '(300/' or '\30/'. Only a
+    # complete preceding declaration can fence it off; a bare 30 stays evidence.
+    if _OUTLINED_WASH_SYMBOL_OCR_PATTERN.fullmatch(line):
         return _has_complete_preceding_composition(preceding_infos or [])
     if line in {"30", "40", "50", "60", "70", "95"} and (
         previous is not None
@@ -344,11 +310,7 @@ def _split_part_markers(text: str) -> str:
     for line in text.split("\n"):
         prepared_line = line
         for marker in sorted(markers, key=len, reverse=True):
-            suffix = re.search(
-                rf"(?i)({_part_alias_pattern(marker)})"
-                r"[\s)\]}>:;,./|\-‐‑‒–—]*$",
-                prepared_line,
-            )
+            suffix = _trailing_part_marker_pattern(marker).search(prepared_line)
             if not suffix or suffix.start() == 0:
                 continue
 
@@ -362,13 +324,28 @@ def _split_part_markers(text: str) -> str:
 
     prepared = "\n".join(prepared_lines)
     for marker in sorted(markers, key=len, reverse=True):
-        prepared = re.sub(
-            rf"(?i)(?<!^)(?<!\n)({_part_alias_pattern(marker)})"
-            r"(?=[^\n]*[0-9a-zà-ÿ가-힣一-龥ぁ-んァ-ン])",
+        prepared = _inline_part_marker_pattern(marker).sub(
             lambda match: "\n" + match.group() if is_part_marker_match(prepared, match) else match.group(),
             prepared,
         )
     return prepared
+
+
+# 부위명별 패턴을 한 번만 컴파일해 re 모듈 내부 캐시의 반복 재컴파일을 막는다.
+@lru_cache(maxsize=1024)
+def _trailing_part_marker_pattern(marker: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"(?i)({_part_alias_pattern(marker)})"
+        r"[\s)\]}>:;,./|\-‐‑‒–—]*$"
+    )
+
+
+@lru_cache(maxsize=1024)
+def _inline_part_marker_pattern(marker: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"(?i)(?<!^)(?<!\n)({_part_alias_pattern(marker)})"
+        r"(?=[^\n]*[0-9a-zà-ÿ가-힣一-龥ぁ-んァ-ン])"
+    )
 
 
 def _apply_trailing_part_markers(infos: list[LineInfo]) -> list[LineInfo]:
@@ -593,6 +570,18 @@ def build_line_infos(
     translation_indices: set[int] | None = None,
     translation_warnings: list[str] | None = None,
 ) -> list[LineInfo]:
+    analysis = reuse_line_analysis(text, _build_line_analysis)
+    if restored_indices is not None:
+        restored_indices.update(analysis.restored_indices)
+    if translation_indices is not None:
+        translation_indices.update(analysis.translation_indices)
+    if translation_warnings is not None:
+        translation_warnings.extend(analysis.translation_warnings)
+    # Callers may filter or extend their list; cached rows and evidence stay immutable.
+    return list(analysis.infos)
+
+
+def _build_line_analysis(text: str) -> LineAnalysis:
     infos: list[LineInfo] = []
     current_part = "generic"
     pending_metadata_kind = None
@@ -608,15 +597,11 @@ def build_line_infos(
     # or number across rows and therefore need no reconstructed-pair boundary.
     if not unproven_rewrite:
         restored_rows -= translations.recovered_rows
-    if restored_indices is not None:
-        restored_indices.update(restored_rows)
-    if translation_indices is not None and not unproven_rewrite:
-        translation_indices.update(translations.recovered_rows)
-    if translation_warnings is not None:
-        if translations.recovered_rows:
-            translation_warnings.extend(("registered_translation_alternatives", "multilingual_translation_rows"))
-        if translations.damaged_rows:
-            translation_warnings.extend(("damaged_translation_fragment", "unread_translation_rows"))
+    translation_warnings: list[str] = []
+    if translations.recovered_rows:
+        translation_warnings.extend(("registered_translation_alternatives", "multilingual_translation_rows"))
+    if translations.damaged_rows:
+        translation_warnings.extend(("damaged_translation_fragment", "unread_translation_rows"))
     raw_lines = translations.text.split("\n")
     content_indices = [i for i, raw in enumerate(raw_lines) if normalize_text(raw)]
     last_content_index = content_indices[-1] if content_indices else -1
@@ -718,7 +703,12 @@ def build_line_infos(
             marker_part=marker_part, invalid_evidence=invalid_evidence,
             is_metadata=is_metadata, inferred_metadata=inferred_metadata,
         ))
-    return _mark_split_imitation_leather(_apply_trailing_part_markers(_mark_leading_garment_size(infos)))
+    return LineAnalysis(
+        infos=tuple(_mark_split_imitation_leather(_apply_trailing_part_markers(_mark_leading_garment_size(infos)))),
+        restored_indices=frozenset(restored_rows),
+        translation_indices=frozenset(translations.recovered_rows if not unproven_rewrite else ()),
+        translation_warnings=tuple(translation_warnings),
+    )
 
 
 def _mark_leading_garment_size(infos: list[LineInfo]) -> list[LineInfo]:
@@ -1000,7 +990,7 @@ def _restored_block_has_clear_boundaries(
                         continue
                 if (
                     _NUMERIC_IDENTIFIER_ROW_PATTERN.fullmatch(info.normalized)
-                    or _PAREN_WASH_SYMBOL_OCR_PATTERN.fullmatch(info.normalized)
+                    or _OUTLINED_WASH_SYMBOL_OCR_PATTERN.fullmatch(info.normalized)
                     or _WASH_SYMBOL_OCR_PATTERN.fullmatch(info.normalized)
                     or re.fullmatch(r"[0-9]+", info.normalized)
                 ):
@@ -1082,6 +1072,66 @@ def _restored_block_has_clear_boundaries(
     return clear_boundaries
 
 
+_LEATHER_NOUN = re.compile(
+    r"(?:천연|리얼)?(?:양|소|송아지|돼지|염소|산양|사슴|말)?(?:가죽|피혁)"
+    r"|(?:genuine|real|natural)?(?:leather|cuir|leder|piel|皮革)"
+    r"|(?:cow|calf|lamb|sheep|goat|pig|deer)(?:skin|hide)|cowhide"
+)
+_LEATHER_DESCRIPTOR = re.compile(r"천연|리얼|genuine|real|natural|cow|calf|lamb|sheep|goat|pig|deer|양|소|돼지|염소")
+
+
+def _is_leather_declaration(info: LineInfo, part: str) -> bool:
+    """부위 제목과 가죽 종류 표기만 있는 행인지 확인한다. 숫자·비율·다른 단어가 있으면 거짓이다."""
+
+    if info.marker_part != part or info.numbers or info.explicit_percent or "%" in info.normalized:
+        return False
+    if set(info.materials) - {"leather"}:
+        return False
+    text = info.normalized
+    for alias in sorted(PART_PATTERNS.get(part, []), key=len, reverse=True):
+        heading = normalize_text(alias)
+        if text.startswith(heading):
+            text = text[len(heading):]
+            break
+    else:
+        return False
+    tokens = [token for token in re.split(r"[\s()\[\]{}:;,./·\-]+", text) if token]
+    return (bool(tokens) and any(_LEATHER_NOUN.fullmatch(token) for token in tokens)
+            and all(_LEATHER_NOUN.fullmatch(token) or _LEATHER_DESCRIPTOR.fullmatch(token)
+                    for token in tokens))
+
+
+def _implicit_leather_candidates(
+    infos: list[LineInfo], candidates: list[CompositionCandidate],
+) -> list[CompositionCandidate]:
+    """가죽 부위는 혼용률 없이 종류만 표시하는 관행을 따른다(2026-10-21 정책).
+
+    부위 제목이 붙은 한 행이 가죽 하나만 말하고, 그 부위에 다른 소재·숫자·비율 기호·
+    해석 불가 근거가 전혀 없을 때만 그 부위를 가죽 100%로 본다. 부위 표기가 없는
+    행과 이미 조성 후보가 있는 부위에는 적용하지 않는다. 인조·합성 같은 부정 표현은
+    소재 추출 단계에서 가죽으로 인정되지 않는다.
+    """
+    covered_parts = {candidate.part for candidate in candidates}
+    implicit = []
+    for part in sorted({info.part for info in infos} - covered_parts - {"generic"}):
+        evidence = [
+            info for info in infos
+            if info.part == part and not _is_metadata_line(info)
+            and (info.materials or info.numbers or info.unresolved_materials
+                 or info.invalid_evidence or info.explicit_percent or "%" in info.normalized
+                 or _is_leather_declaration(info, part))
+        ]
+        if len(evidence) != 1:
+            continue
+        row = evidence[0]
+        if not row.unresolved_materials and _is_leather_declaration(row, part):
+            implicit.append(CompositionCandidate(
+                part=part, materials={"leather": Decimal(100)}, source="implicit_leather",
+                explicit_percent=False, start_index=row.index, row_indices=(row.index,),
+            ))
+    return implicit
+
+
 def _best_candidates_by_part(
     text: str,
     *,
@@ -1142,6 +1192,10 @@ def _best_candidates_by_part(
             invalid_evidence_parts=boundary_invalid_evidence_parts,
         )
     ]
+    implicit_leather = _implicit_leather_candidates(infos, candidates)
+    candidates.extend(implicit_leather)
+    # 가죽 종류 수식어(천연·양가죽 등)는 미등록 단어로 표시되지만 위 검사로 확인한 행이다.
+    implicit_leather_rows = {index for candidate in implicit_leather for index in candidate.row_indices}
     heading_indices = _composition_heading_indices(infos)
     best_by_part: dict[str, CompositionCandidate] = {}
     ambiguous_parts: set[str] = set(conflicting_parts)
@@ -1240,6 +1294,7 @@ def _best_candidates_by_part(
 
     invalid_evidence_parts = {
         info.part for info in infos if info.invalid_evidence and not _is_metadata_line(info)
+        and info.index not in implicit_leather_rows
         and (info.materials or "%" in info.normalized
              or _has_invalid_numeric_row(info))
     } | boundary_invalid_evidence_parts
@@ -1459,6 +1514,7 @@ def failed_response(
     return result
 
 
+@line_analysis_scope()
 def parse_label(
     text: str,
     *,
@@ -1551,8 +1607,8 @@ def parse_label(
             parse_evidence=ratio_evidence,
         )
 
-    # A result describes exactly selected_part, never an inferred whole garment.
-    # Keep rejected higher parts visible while choosing the first confirmed part.
+    # A known outer must be confirmed before another part can be primary.
+    # An absent outer does not prevent using an explicitly labelled other part.
     missing_parts = [part for part in PART_PRIORITY if part in expected_parts and part not in parts]
     warnings.extend(f"{part}:composition_not_confirmed" for part in missing_parts)
     unconfirmed_parts = [
@@ -1560,10 +1616,25 @@ def parse_label(
         for part in PART_PRIORITY[: PART_PRIORITY.index(selected_part)]
         if part in expected_parts and part not in parts
     ]
+    unconfirmed_outer_parts = [part for part in unconfirmed_parts if part in OUTER_PARTS]
+    if unconfirmed_outer_parts:
+        return failed_response(
+            text,
+            error_code="incomplete_part_composition",
+            message="겉감 조성을 확정하지 못해 다른 부위로 대신 계산할 수 없습니다.",
+            warnings=warnings,
+            parse_evidence={
+                **ratio_evidence,
+                "unconfirmed_outer_parts": unconfirmed_outer_parts,
+                "confirmed_parts": parts,
+            },
+        )
     if unconfirmed_parts:
         warnings.append(f"representative_part_fallback:{selected_part}")
 
     selected_candidate = candidates[selected_part]
+    if selected_candidate.source == "implicit_leather":
+        warnings.append(f"implicit_leather_composition:{selected_part}")
     parser_confidence = (
         "high"
         if selected_candidate.explicit_percent
@@ -1658,47 +1729,8 @@ _METADATA_VALUE_PATTERNS = {
 _UNLABELED_KOREAN_GARMENT_SIZE_VALUES = {
     str(value) for value in range(80, 125, 5)
 }
-_RATIO_PAIR_DESCRIPTORS = {
-    "organic",
-    "recycled",
-    "combed",
-    "certified",
-    "pure",
-    "fiber",
-    "fibre",
-    "content",
-    "blend",
-    "of",
-    "and",
-    "유기농",
-    "재생",
-    "섬유",
-    "함량",
-    "혼방",
-    "및",
-}
-_RATIO_PREFIX_CONTEXTS = {
-    *COMPOSITION_HINTS,
-    *(alias for aliases in PART_PATTERNS.values() for alias in aliases),
-    "fiber",
-    "fibre",
-    "fabric",
-    "content",
-    "body",
-    "組成",
-    "組成表示",
-    "纤维",
-    "纤维成分",
-    "成分",
-}
-_EXPLICIT_PART_HEADER_CONTEXTS = _RATIO_PREFIX_CONTEXTS | {
-    "fabric",
-    "재질",
-}
 
 
-
-_MATERIAL_ONLY_LINE_CONTEXTS = set(ALIAS_TO_MATERIAL) | _RATIO_PAIR_DESCRIPTORS | _EXPLICIT_PART_HEADER_CONTEXTS
 _RESTORED_ROW_CONTEXTS = (
     _RATIO_PAIR_DESCRIPTORS | _EXPLICIT_PART_HEADER_CONTEXTS
     | _STORAGE_CAPTION_WORDS | set(_CARE_PHRASES)
@@ -1838,25 +1870,6 @@ def _read_numbers(
         item.explicit_percent for item in evidence
     )
     return result, invalid, explicit_percent, evidence
-
-
-def _contains_only_known_phrases(text: str, phrases: set[str]) -> bool:
-    remainder = normalize_text(text)
-    # Use the same normalized aliases and OCR corrections as extraction. This
-    # preserves multilingual names such as bombaž that normalize to bombaz.
-    if phrases is _MATERIAL_ONLY_LINE_CONTEXTS:
-        for evidence in reversed(_material_evidence(remainder)):
-            remainder = remainder[:evidence.start] + " " * (evidence.end - evidence.start) + remainder[evidence.end:]
-    for phrase in sorted(phrases, key=len, reverse=True):
-        if phrase.isascii():
-            remainder = re.sub(
-                rf"(?<![a-z]){re.escape(phrase.casefold())}(?![a-z])",
-                " ",
-                remainder,
-            )
-        else:
-            remainder = remainder.replace(phrase.casefold(), " ")
-    return _TOKEN_PATTERN.search(remainder) is None
 
 
 def _same_line_pairing_is_supported(

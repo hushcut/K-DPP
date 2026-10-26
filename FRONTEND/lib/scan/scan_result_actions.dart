@@ -31,6 +31,7 @@ extension _ScanResultActions on _ScanScreenState {
       _scannedCare = draft.careInstruction;
       _scannedOcrPreview = draft.rawOcrPreview;
       _scanFailureMessage = failureMessage;
+      _scanNotices = draft.notices;
       _originalScannedMaterials = Map.unmodifiable(draft.materials);
       _serverHealth = draft.serverHealth;
       _serverCarbonFootprint = draft.serverCarbonFootprint;
@@ -108,11 +109,13 @@ extension _ScanResultActions on _ScanScreenState {
   }
 
   /// [discardPrompt]를 주면 선택을 건너뛸 수 없고, '다시 촬영' 확인 후에만 null을 반환합니다.
-  /// [failureMessage]는 분석 실패 이유로, 시트 맨 위에 보입니다.
+  /// [failureMessage]는 분석 실패 이유로, 시트 맨 위에 보입니다. [failureNotices]는 그 아래에
+  /// 이어 보이는 안내(재촬영 권고 — R4)입니다.
   Future<ClothingTypeOption?> _showClothingTypePicker({
     required ClothingTypeOption initialSelection,
     ClothingTypePickerDiscardPrompt? discardPrompt,
     String? failureMessage,
+    List<String> failureNotices = const [],
   }) {
     return showClothingTypePickerSheet(
       context: context,
@@ -121,6 +124,7 @@ extension _ScanResultActions on _ScanScreenState {
       initialSelection: initialSelection,
       discardPrompt: discardPrompt,
       failureMessage: failureMessage,
+      failureNotices: failureNotices,
     );
   }
 
@@ -213,7 +217,7 @@ extension _ScanResultActions on _ScanScreenState {
             ElevatedButton(
               onPressed: () => Navigator.pop(dialogContext, true),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent,
+                backgroundColor: AppPalette.danger,
               ),
               child: Text(
                 discardLabel,
@@ -246,6 +250,7 @@ extension _ScanResultActions on _ScanScreenState {
       _isScanFailed = false;
       _scannedCare = '';
       _scanFailureMessage = null;
+      _scanNotices = const [];
       _originalScannedMaterials = const {};
       _serverHealth = null;
       _serverCarbonFootprint = null;

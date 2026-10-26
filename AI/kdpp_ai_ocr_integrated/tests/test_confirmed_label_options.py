@@ -1,5 +1,7 @@
 """사진별 확인 옵션·기본 엄격 판정·미등록 이름 개수 우회 회귀."""
 
+import json
+from pathlib import Path
 
 import pytest
 
@@ -82,3 +84,24 @@ def test_counts_alone_never_supply_a_missing_fiber_name(name):
                          unpaired_ratio_parts=decision.unpaired_ratio_parts,
                          rejected_composition_parts=decision.rejected_composition_parts)
     assert result['status'] == 'failed'
+
+
+def test_saved_confirmed_photos_are_reviewed_without_truth_injection():
+    """kyh/ai d87f145 확인 옵션 검사를 현재 POLY 정책(D-06, 자동 폴리에스터 해석)에 맞춘다."""
+    fixture = json.loads((Path(__file__).parent / 'fixtures/confirmed_label_options.json').read_text(encoding='utf-8'))
+    expected = {'DJ002': {'polyester': 100}, 'DJ019': {'polyester': 100},
+                'DJ009': {'rayon': 45, 'nylon': 28, 'polyester': 22, 'polyurethane': 5}}
+    for item in fixture['responses']:
+        automatic = parse_label(item['text'])
+        if item['confirmed_options'].get('confirmed_polyester_poly'):
+            assert automatic['status'] == 'success'
+            assert automatic['materials'] == expected[item['image_id']]
+            assert 'project_material_alias:poly:polyester' in automatic['warnings']
+        else:
+            assert automatic['status'] == 'failed'
+        result = analyze_label_text(item['text'], **item['confirmed_options'])
+        assert result['status'] == 'success'
+        assert result['materials'] == expected[item['image_id']]
+        assert result['confidence']['ocr'] == 'unknown'
+        if item['image_id'] == 'DJ009':
+            assert 'generic_secondary' in result['parse_evidence']['rejected_composition_parts']

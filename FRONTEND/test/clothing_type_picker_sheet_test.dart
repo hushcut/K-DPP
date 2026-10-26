@@ -12,6 +12,49 @@ import 'package:k_dpp/widgets/number_keyboard_toolbar.dart';
 //   가짜로 통과하므로, 드래그 경로는 fling(700px/s 초과)으로 시험한다.
 // - 하단 안전 영역은 기본 테스트 화면에 없으므로 padding을 넣어 만든다.
 void main() {
+  // 서버 계산은 직접 무게 1~100,000g 만 받는다(BACKEND main.py MAX_WEIGHT_GRAMS · V2 도 같음).
+  testWidgets('직접 무게가 1g 미만이거나 100,000g 을 넘으면 적용하지 않고 범위를 알린다', (tester) async {
+    _usePhoneView(tester);
+    final applyButton = find.widgetWithText(ElevatedButton, '적용하기');
+
+    Future<_SheetResult> openDirectInput() async {
+      final sheet = await _openSheet(tester);
+      await tester.scrollUntilVisible(find.text('직접 입력'), 100);
+      await tester.tap(find.text('직접 입력'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, '의류 종류'), '코트');
+      return sheet;
+    }
+
+    Future<void> applyWeight(String weight) async {
+      await tester.enterText(find.widgetWithText(TextField, '실제 무게'), weight);
+      await tester.ensureVisible(applyButton);
+      await tester.tap(applyButton);
+      await tester.pumpAndSettle();
+    }
+
+    // 끝값은 받는다. 받으면 시트가 닫히므로 값마다 새로 연다.
+    for (final weight in [1.0, 100000.0]) {
+      final accepted = await openDirectInput();
+      await applyWeight(ClothingTypeOption.formatWeightGram(weight));
+
+      expect(accepted.completed, isTrue);
+      expect(accepted.result?.estimatedWeightGram, weight);
+    }
+
+    final rejected = await openDirectInput();
+    for (final weight in ['0.5', '100000.1', '250000']) {
+      await applyWeight(weight);
+
+      expect(
+        find.text('실제 무게는 1g 이상 100,000g 이하로 입력해 주세요.'),
+        findsOneWidget,
+        reason: weight,
+      );
+      expect(rejected.completed, isFalse, reason: weight);
+    }
+  });
+
   group('필수 선택 시트(분석 결과 확인)', () {
     const prompt = ClothingTypePickerDiscardPrompt.analysisResult;
 
@@ -330,6 +373,61 @@ void main() {
       variant: TargetPlatformVariant.only(TargetPlatform.iOS),
     );
 
+    // AI 연동 협의안 R4: 422 의 재촬영 권고는 실패 이유를 풀어 주는 말이라 이유 바로 다음에 두고,
+    // 시트가 열리면 처음 읽히는 칸에서 이유에 이어 읽힌다.
+    testWidgets(
+      '실패 이유 아래 안내(재촬영 권고)를 주면 이유 바로 다음 줄에 보이고 첫 칸에서 이유에 이어 읽힌다',
+      (tester) async {
+        const notice = '소재·혼용률 부분을 다시 찍어 주세요.';
+        final semantics = tester.ensureSemantics();
+        _usePhoneView(tester);
+        await _openSheet(
+          tester,
+          discardPrompt: ClothingTypePickerDiscardPrompt.manualAfterFailure,
+          failureMessage: failureMessage,
+          failureNotices: const [notice],
+        );
+
+        Rect rectOf(String text) => tester.getRect(
+          find.descendant(
+            of: find.byType(BottomSheet),
+            matching: find.text(text),
+          ),
+        );
+        expect(
+          rectOf(notice).top,
+          greaterThanOrEqualTo(rectOf(failureMessage).bottom),
+        );
+        expect(rectOf(notice).top, lessThan(rectOf('의류 종류 선택').top));
+        // 느낌표는 이유 줄의 하나뿐이다.
+        expect(
+          find.descendant(
+            of: find.byType(BottomSheet),
+            matching: find.byIcon(Icons.error_outline),
+          ),
+          findsOneWidget,
+        );
+
+        expect(_traversalLabels(tester).take(2), [
+          '$failureMessage\n$notice',
+          '의류 종류 선택',
+        ]);
+        semantics.dispose();
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+
+    testWidgets('실패 이유가 없으면 안내만 따로 보이지 않는다', (tester) async {
+      _usePhoneView(tester);
+      await _openSheet(
+        tester,
+        discardPrompt: ClothingTypePickerDiscardPrompt.analysisResult,
+        failureNotices: const ['소재·혼용률 부분을 다시 찍어 주세요.'],
+      );
+
+      expect(find.text('소재·혼용률 부분을 다시 찍어 주세요.'), findsNothing);
+    });
+
     testWidgets(
       '실패 이유가 없으면(분석 성공·결과 화면의 유형 변경) 이유 줄 없이 제목부터 읽힌다',
       (tester) async {
@@ -523,6 +621,7 @@ Future<_SheetResult> _openSheet(
   WidgetTester tester, {
   ClothingTypePickerDiscardPrompt? discardPrompt,
   String? failureMessage,
+  List<String> failureNotices = const [],
 }) async {
   final sheet = _SheetResult();
 
@@ -539,6 +638,7 @@ Future<_SheetResult> _openSheet(
                   initialSelection: ClothingTypeCatalog.defaultOption,
                   discardPrompt: discardPrompt,
                   failureMessage: failureMessage,
+                  failureNotices: failureNotices,
                 ).then((value) {
                   sheet
                     ..completed = true

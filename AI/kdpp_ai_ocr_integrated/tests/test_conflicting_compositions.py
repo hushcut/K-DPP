@@ -24,11 +24,10 @@ def test_conflict_is_rejected_despite_candidate_rank(text):
     result = parse_label(text)
     assert any("ambiguous_composition_candidates" in warning for warning in result["warnings"])
     if "LINING" in text:
-        assert result["status"] == "success"
-        assert result["selected_part"] == "lining"
-        assert result["materials"] == {"polyester": 100}
-        assert "outer" not in result["parts"]
-        assert parse_materials(text) == {"polyester": 100}
+        assert result["status"] == "failed"
+        assert result["error_code"] == "incomplete_part_composition"
+        assert result["materials"] == result["parts"] == {}
+        assert parse_materials(text) == {}
     else:
         assert result["status"] == "failed"
         assert result["materials"] == {}
@@ -115,10 +114,9 @@ def test_unclassified_percentage_text_is_not_silently_discarded():
     assert "generic:unresolved_material_token" in result["warnings"]
 
 
-def test_outer_heading_residual_stays_evidence_when_confirmed_lining_is_selected():
+def test_outer_heading_residual_prevents_lining_from_becoming_primary():
     result = parse_label("OUTER 混用率 57% 38% 5%\nLINING POLYESTER 100%")
-    assert result["status"] == "success"
-    assert result["selected_part"] == "lining"
-    assert result["materials"] == {"polyester": 100}
-    assert "outer" not in result["parts"]
+    assert result["status"] == "failed"
+    assert result["error_code"] == "incomplete_part_composition"
+    assert result["materials"] == result["parts"] == {}
     assert "outer:unpaired_ratio_rows" in result["warnings"]

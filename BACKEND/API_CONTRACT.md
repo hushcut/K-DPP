@@ -1,6 +1,18 @@
 # K-DPP Backend API Contract
 
-기준 브랜치: `develop(중간통합)`
+탄소 V2 추가 계약: [CARBON_V2_API.md](CARBON_V2_API.md).
+PR 88 보완·배포·앱 전환 기준: [CARBON_V2_REVIEW_RESOLUTION.md](CARBON_V2_REVIEW_RESOLUTION.md).
+
+V2 입력도 소재 20칸/소재명 64자/OCR 4,000자 제한을 적용합니다.
+`MATERIAL_NOT_FOUND`의 `detail.unknown_materials`는 미등록 양수 소재명 목록입니다.
+`/me/history`의 V2 항목은 `provenance_status`, `result_kind`, `formula_version`,
+`calculation_snapshot: null`, `provenance_url`을 제공합니다. 전체 스냅샷은
+`GET /api/v2/carbon/results/{id}`로 별도 조회하며 본인 결과에만 접근 가능합니다.
+기존 V1 이력에는 출처를 소급 생성하지 않습니다(`provenance_status: unavailable`).
+V2의 `average_carbon_footprint`는 대표 무게 기반 값의 호환 별칭이며 통계적 평균이 아닙니다.
+DB 적용·계수 선정·연구용 실행: [CARBON_V2_INTEGRATION.md](CARBON_V2_INTEGRATION.md).
+
+기준 브랜치: `develop` (2026-08-29 `develop(중간통합)`에서 이름을 바꿈)
 
 이 문서는 프론트엔드, 백엔드, AI/OCR 파트가 같은 응답 구조를 기준으로 연동하기 위한 API 계약서입니다.
 
@@ -223,6 +235,14 @@ Header:
 ```text
 Authorization: Bearer <token>
 ```
+
+## POST /auth/password · POST /auth/withdraw
+
+비밀번호 변경과 회원 탈퇴입니다. 둘 다 `Authorization: Bearer <token>` 과 현재 비밀번호 재인증이 필요합니다.
+카카오 계정은 탈퇴 때 `password` 대신 `kakao_access_token` 을 보내고, 비밀번호 변경은 400 `PASSWORD_NOT_SET` 입니다.
+요청·응답·오류 코드·탈퇴와 겹친 탄소 계산은
+[docs/SCAN_API_CONTRACT.md](../docs/SCAN_API_CONTRACT.md) 2-3절이 정본입니다(두 문서에 같은 표를
+두면 한쪽만 고쳐져 어긋나므로 여기에는 옮기지 않습니다). 카카오 계정의 경위는 아래 '변경 이력 — 카카오 로그인'.
 
 ## POST /auth/password-reset
 
@@ -799,7 +819,8 @@ Header: `Authorization: Bearer <token>`
 
 ## POST /analyze
 
-기존 연동 호환용 API입니다. 소재 혼용률만 받아 탄소배출계수를 계산하고 저장합니다.
+기존 연동 호환용 API입니다. 소재 혼용률만 받아 탄소배출계수를 계산합니다. 로그인하지 않아도 부를 수 있고,
+**이력에 저장하지 않습니다**(2026-08-29 `a1deaf0` 부터 계산 전용 — `tests/test_analysis.py`).
 
 최종 의류 탄소배출량은 무게 정보가 포함된 `POST /api/carbon/calculate`를 사용합니다.
 

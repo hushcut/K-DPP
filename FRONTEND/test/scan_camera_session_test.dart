@@ -117,6 +117,183 @@ void main() {
     expect(session.isPermissionDenied, isFalse);
   });
 
+  // 2026-10-23 폰 확인(iPhone 16 Pro Max): 라벨을 가까이 찍으면 초점이 안 맞았다
+  // (광각의 최소 초점 거리). 기본 카메라 앱처럼 초광각(매크로)으로 넘어가도록
+  // 아이폰은 초광각이 든 가상 카메라를 먼저 연다.
+  group('아이폰 근접 초점 카메라', () {
+    const closeFocusCamera = CloseFocusCamera(
+      uniqueId: 'virtual-triple',
+      wideZoomFactor: 2,
+    );
+
+    ScanCameraSession sessionFinding(CloseFocusCameraFinder find) =>
+        ScanCameraSession(findCloseFocusCamera: find);
+
+    test('찾으면 그 카메라를 열고 광각 화각 배율로 맞춘다', () async {
+      session = sessionFinding(() async => closeFocusCamera);
+      await session.initialize(canUseCamera: () => true);
+
+      expect(session.isReady, isTrue);
+      expect(platform.createdNames, ['virtual-triple']);
+      expect(platform.zoomLevels, [2.0]);
+      expect(
+        session.controller!.description.lensDirection,
+        CameraLensDirection.back,
+      );
+      expect(
+        session.controller!.description.sensorOrientation,
+        _backCamera.sensorOrientation,
+      );
+    });
+
+    test('없는 기기면 지금처럼 첫 후면 카메라를 열고 배율은 건드리지 않는다', () async {
+      session = sessionFinding(() async => null);
+      await session.initialize(canUseCamera: () => true);
+
+      expect(session.isReady, isTrue);
+      expect(platform.createdNames, ['0']);
+      expect(platform.zoomLevels, isEmpty);
+    });
+
+    test('찾다가 실패해도 첫 후면 카메라로 연다', () async {
+      session = sessionFinding(() async => throw MissingPluginException());
+      await session.initialize(canUseCamera: () => true);
+
+      expect(session.isReady, isTrue);
+      expect(session.errorMessage, isNull);
+      expect(platform.createdNames, ['0']);
+    });
+
+    test('배율을 못 맞추면 그 카메라를 해제하고 첫 후면 카메라로 연다', () async {
+      platform.failZoom = true;
+      session = sessionFinding(() async => closeFocusCamera);
+      await session.initialize(canUseCamera: () => true);
+
+      expect(platform.createdNames, ['virtual-triple', '0']);
+      expect(platform.disposeIds, [101]);
+      expect(platform.orientationStreams.first.cancelled, isTrue);
+      expect(session.isReady, isTrue);
+      expect(session.errorMessage, isNull);
+      expect(session.controller!.description.name, '0');
+    });
+
+    test('초기화에 실패하면 그 카메라를 해제하고 첫 후면 카메라로 연다', () async {
+      platform.failInitializeNames.add('virtual-triple');
+      session = sessionFinding(() async => closeFocusCamera);
+      await session.initialize(canUseCamera: () => true);
+
+      expect(platform.createdNames, ['virtual-triple', '0']);
+      expect(platform.disposeIds, [101]);
+      expect(platform.zoomLevels, isEmpty);
+      expect(session.isReady, isTrue);
+      expect(session.controller!.description.name, '0');
+    });
+
+    test('첫 후면 카메라마저 실패하면 둘 다 해제하고 카메라 오류를 보인다', () async {
+      platform.failInitialize = true;
+      session = sessionFinding(() async => closeFocusCamera);
+      await session.initialize(canUseCamera: () => true);
+
+      expect(platform.createdNames, ['virtual-triple', '0']);
+      expect(platform.disposeIds, [101, 102]);
+      expect(session.isInitializing, isFalse);
+      expect(session.errorMessage, contains('카메라를 시작하지 못했어요'));
+    });
+
+    test('권한 거부면 다른 카메라로 다시 열지 않고 권한 안내를 보인다', () async {
+      platform.permissionDenied = true;
+      session = sessionFinding(() async => closeFocusCamera);
+      await session.initialize(canUseCamera: () => true);
+
+      expect(platform.createdNames, ['virtual-triple']);
+      expect(platform.permissionRequestCount, 1);
+      expect(platform.disposeIds, [-1]);
+      expect(session.isPermissionDenied, isTrue);
+      expect(session.errorMessage, contains('카메라 권한이 꺼져 있어요'));
+    });
+
+    test('여는 사이 요청이 무효화되면 첫 후면 카메라로 다시 열지 않고 해제만 한다', () async {
+      platform.holdInitialize = true;
+      session = sessionFinding(() async => closeFocusCamera);
+
+      final staleRequest = session.initialize(canUseCamera: () => true);
+      await _waitUntil(() => platform.heldInitialize != null);
+
+      await session.disposeCamera();
+      platform.heldInitialize!.complete();
+      await staleRequest;
+
+      expect(platform.createdNames, ['virtual-triple']);
+      expect(platform.disposeIds, [101]);
+      expect(session.isReady, isFalse);
+      expect(session.isInitializing, isFalse);
+    });
+  });
+
+  group('근접 초점 카메라 찾기(iOS 채널)', () {
+    const channel = MethodChannel('kdpp/scan_camera_device');
+    final calls = <String>[];
+    Object? reply;
+
+    TestDefaultBinaryMessenger messenger() =>
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+    setUp(() {
+      calls.clear();
+      reply = null;
+      messenger().setMockMethodCallHandler(channel, (call) async {
+        calls.add(call.method);
+        return reply;
+      });
+    });
+
+    tearDown(() {
+      messenger().setMockMethodCallHandler(channel, null);
+      debugDefaultTargetPlatformOverride = null;
+    });
+
+    test('안드로이드에서는 묻지 않는다', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      reply = {'uniqueId': 'virtual-triple', 'wideZoomFactor': 2.0};
+
+      expect(await findCloseFocusBackCamera(), isNull);
+      expect(calls, isEmpty);
+    });
+
+    test('아이폰에서 받은 ID와 광각 화각 배율을 돌려준다', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      reply = {'uniqueId': 'virtual-triple', 'wideZoomFactor': 2.0};
+
+      final camera = await findCloseFocusBackCamera();
+
+      expect(calls, ['closeFocusBackCamera']);
+      expect(camera!.uniqueId, 'virtual-triple');
+      expect(camera.wideZoomFactor, 2.0);
+    });
+
+    test('아이폰에 그런 카메라가 없으면(답이 null) null', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+
+      expect(await findCloseFocusBackCamera(), isNull);
+      expect(calls, ['closeFocusBackCamera']);
+    });
+
+    test('답의 모양이 어긋나면 null', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+
+      for (final malformed in <Map<String, Object?>>[
+        {'wideZoomFactor': 2.0},
+        {'uniqueId': '', 'wideZoomFactor': 2.0},
+        {'uniqueId': 'virtual-triple'},
+        {'uniqueId': 'virtual-triple', 'wideZoomFactor': '2'},
+        {'uniqueId': 'virtual-triple', 'wideZoomFactor': 0.5},
+      ]) {
+        reply = malformed;
+        expect(await findCloseFocusBackCamera(), isNull, reason: '$malformed');
+      }
+    });
+  });
+
   // 2026-09-18 폰 확인(SM-N986N): 설정에서 카메라 권한을 끈 뒤 스캔 탭을 열면
   // 로딩 원만 돌고 권한 안내가 끝내 뜨지 않았다(약 2분에 초기화 실패 182번).
   group('생명주기 서비스와 함께 — 카메라 권한 거부', () {
@@ -222,9 +399,18 @@ class _FakeCameraX extends CameraPlatform {
   bool holdInitialize = false;
   Completer<void>? heldInitialize;
 
+  /// 이 이름의 카메라는 초기화 단계에서 실패한다.
+  final failInitializeNames = <String>{};
+  bool failZoom = false;
+
   final orientationStreams = <_CountedStream<DeviceOrientationChangedEvent>>[];
   final disposeIds = <int>[];
   int disposeThrowCount = 0;
+
+  /// createCamera에 넘어온 카메라 이름과 setZoomLevel에 넘어온 배율을 차례로 담는다.
+  final createdNames = <String>[];
+  final zoomLevels = <double>[];
+  final _cameraNames = <int, String>{};
 
   final _initializedStreams =
       <int, List<StreamController<CameraInitializedEvent>>>{};
@@ -247,6 +433,8 @@ class _FakeCameraX extends CameraPlatform {
     CameraDescription cameraDescription,
     MediaSettings mediaSettings,
   ) async {
+    createdNames.add(cameraDescription.name);
+
     if (permissionDenied) {
       permissionRequestCount++;
       onPermissionRequest?.call();
@@ -258,6 +446,7 @@ class _FakeCameraX extends CameraPlatform {
     }
 
     final cameraId = _nextCameraId++;
+    _cameraNames[cameraId] = cameraDescription.name;
     _preview = cameraId;
     _liveProducers.add(cameraId);
     return cameraId;
@@ -285,7 +474,8 @@ class _FakeCameraX extends CameraPlatform {
       await held.future;
     }
 
-    if (failInitialize) {
+    if (failInitialize ||
+        failInitializeNames.contains(_cameraNames[cameraId])) {
       throw PlatformException(code: 'bindFailed');
     }
 
@@ -302,6 +492,15 @@ class _FakeCameraX extends CameraPlatform {
         ),
       );
     }
+  }
+
+  @override
+  Future<void> setZoomLevel(int cameraId, double zoom) async {
+    if (failZoom) {
+      throw CameraException('setZoomLevelFailed', 'zoom out of bounds');
+    }
+
+    zoomLevels.add(zoom);
   }
 
   @override

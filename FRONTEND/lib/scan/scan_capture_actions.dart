@@ -93,6 +93,8 @@ extension _ScanCaptureActions on _ScanScreenState {
   ///
   /// 실패 이유는 유형 선택 시트 맨 위에 보입니다. 고른 뒤 배너로 띄우면 시트가 먼저 떠
   /// 실패했다는 말이 없고 '다시 촬영'으로 나가면 끝내 알리지 못했다(DECISIONS 96).
+  /// AI 가 재촬영을 권하면(422 `detail.warnings` — R4) 그 안내도 이유 바로 아래에 보입니다.
+  /// 직접 입력을 고른 뒤의 결과 화면에는 다시 보이지 않습니다.
   Future<void> _showManualFallback(ScanApiException exception) async {
     if (!mounted) return;
 
@@ -102,6 +104,7 @@ extension _ScanCaptureActions on _ScanScreenState {
       initialSelection: _selectedClothingType,
       discardPrompt: ClothingTypePickerDiscardPrompt.manualAfterFailure,
       failureMessage: message,
+      failureNotices: ScanWarningNotices.forFailure(exception.warnings),
     );
 
     if (!mounted) return;
@@ -135,6 +138,7 @@ extension _ScanCaptureActions on _ScanScreenState {
       _scannedCare = '';
       _scannedOcrPreview = '';
       _scanFailureMessage = null;
+      _scanNotices = const [];
       _originalScannedMaterials = const {};
       _serverHealth = null;
       _serverCarbonFootprint = null;

@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/closet_provider.dart';
@@ -296,6 +298,26 @@ void main() {
     final slide = tester.widget<SlideTransition>(tabSlide());
     expect(slide.position.value.dx, greaterThan(0));
     await tester.pumpAndSettle();
+  });
+
+  // 하단 메뉴는 색과 채운 아이콘으로만 지금 탭을 보여 준다. 낭독기에는 '선택됨' 으로 알린다.
+  testWidgets('하단 메뉴의 홈·옷장은 낭독기에 지금 보는 탭을 알린다', (tester) async {
+    final semantics = tester.ensureSemantics();
+    await pumpMainScreen(tester);
+
+    SemanticsData tabData(String label) =>
+        find.semantics.byLabel(label).evaluate().single.getSemanticsData();
+
+    expect(tabData('홈').flagsCollection.isSelected, Tristate.isTrue);
+    expect(tabData('홈').flagsCollection.isButton, isTrue);
+    expect(tabData('옷장').flagsCollection.isSelected, Tristate.isFalse);
+
+    await tester.tap(find.text('옷장'));
+    await tester.pumpAndSettle();
+
+    expect(tabData('홈').flagsCollection.isSelected, Tristate.isFalse);
+    expect(tabData('옷장').flagsCollection.isSelected, Tristate.isTrue);
+    semantics.dispose();
   });
 
   // 스캔은 탭이 아니라 리포트·설정처럼 위에 쌓는 화면이다(2026-09-26 사용자 결정 A안: iOS 에서 밀어서 닫히게).
@@ -1101,6 +1123,45 @@ void main() {
       expect(await savedIdsFor(storage, 'a@example.com'), [null]);
       expect(find.textContaining('로그인이 만료됐어요'), findsNothing);
     });
+
+    // AI 연동 협의안 R1: 입력 거절(400/422)이면 근거 없는 임시값으로 어느 옷장에도 넣지 않는다.
+    // 저장 구간의 finally 를 거치지 않으므로 설정·"<" 잠금이 따로 풀리는지도 본다.
+    testWidgets('계산이 입력 거절이면 어느 옷장에도 넣지 않고 리포트를 열지 않으며 설정 잠금을 푼다', (
+      tester,
+    ) async {
+      final (provider, storage, carbonApi) = await startHeldServerSave(tester);
+      expect(settingsButton(tester).onPressed, isNull);
+
+      carbonApi.fail(CarbonApiErrorType.badRequest);
+      await tester.pump();
+      await tester.pump(routeTransition);
+
+      expect(provider.items, isEmpty);
+      expect(
+        await savedIdsFor(storage, 'a@example.com'),
+        anyOf(isNull, isEmpty),
+      );
+      expect(find.byType(ScanResultView), findsOneWidget);
+      expect(find.text('상세 리포트'), findsNothing);
+      expect(settingsButton(tester).onPressed, isNotNull);
+    });
+
+    testWidgets('로그아웃 뒤 계산이 입력 거절이면 저장을 시작한 계정 옷장에도 넣지 않는다', (tester) async {
+      final (provider, storage, carbonApi) = await startHeldServerSave(tester);
+
+      await provider.logout();
+      carbonApi.fail(CarbonApiErrorType.badRequest);
+      await tester.pump();
+      await tester.pump(routeTransition);
+
+      expect(provider.items, isEmpty);
+      expect(await storage.loadClothesListOrNull(), isNull);
+      expect(
+        await savedIdsFor(storage, 'a@example.com'),
+        anyOf(isNull, isEmpty),
+      );
+      expect(find.text('상세 리포트'), findsNothing);
+    });
   });
 
   // 2026-10-01 DECISIONS 75: 선택 모드에선 하단 메뉴를 높이는 남긴 채 아래로 밀어 숨기고,
@@ -1207,6 +1268,46 @@ void main() {
     await pumpMainScreen(tester, navigationBarOpacity: 1.0);
     expect(find.byType(BackdropFilter), findsNothing);
   });
+
+  // C58: 글자를 키우면 스캔 버튼 아래 '스캔' 이 18 칸에 위아래가 잘렸다(1.8배부터).
+  // 이제 상자(94) 안에서 2배까지 늘어나고, 그보다 크면 세 이름 모두 2배에서 멈춘다.
+  for (final scale in [2.0, 3.0]) {
+    testWidgets('글자 $scale배·320 폭에서도 하단 메뉴 이름이 잘리지 않고, 세 이름이 같은 크기다', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = scale;
+      addTearDown(tester.view.reset);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+      await pumpMainScreen(tester);
+      expect(tester.takeException(), isNull);
+
+      final barBottom = tester
+          .getRect(
+            find
+                .ancestor(
+                  of: find.text('홈'),
+                  matching: find.byType(FrostedSurface),
+                )
+                .first,
+          )
+          .bottom;
+      for (final label in ['스캔', '홈', '옷장']) {
+        // 12pt 이름은 2배(24)까지만 커진다.
+        expect(
+          tester.widget<Text>(find.text(label)).textScaler?.scale(12),
+          24,
+          reason: label,
+        );
+        // 글자 높이(24 × 줄 높이 1.1)를 다 받았다(칸에 잘리지 않는다).
+        final rect = tester.getRect(find.text(label));
+        expect(rect.height, greaterThanOrEqualTo(24 * 1.1 - 0.5), reason: label);
+        expect(rect.bottom, lessThanOrEqualTo(barBottom), reason: label);
+      }
+    });
+  }
 }
 
 /// 탄소 계산 응답을 붙잡아 두는 서비스입니다. 계산을 기다리는 사이 계정을 바꿔 보는 데 씁니다(C26).
@@ -1239,6 +1340,7 @@ class _HeldCarbonApiService extends CarbonApiService {
     required double minWeightGram,
     required double maxWeightGram,
     required String accessToken,
+    double? weightGram,
   }) {
     calls++;
     return _response.future;

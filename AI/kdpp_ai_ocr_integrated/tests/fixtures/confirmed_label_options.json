@@ -1,0 +1,28 @@
+{
+  "responses": [
+    {
+      "image_id": "DJ002",
+      "text": "GRATEFUL DAYS.\nPOLY 100%\nHAND WASH DRY\n00 HOT BLEACH\n00 HOT HOH\nUNION OBJET\nMADCINKONCA\nDO NOT TUMBLE BRY www.unianebjet.co.ke\nDO HOT CYCLEAN",
+      "image_key": "35c274e4161599e28a3cd39c68cebe87c93151f23bd64dcda7b6608051fb1ebd",
+      "confirmed_options": {
+        "confirmed_polyester_poly": true
+      }
+    },
+    {
+      "image_id": "DJ009",
+      "text": "MATERIAL\nRAYON 45%\nNYLON 28%\nPOLYESTER 22%\nPOLYURETHANE 5%\nOLYESTER 35%\nRAYONISH\nPOLYURETHANE 5% /\nWASHING INFO\nDRY CLEAN\nUSE COOL RON\nDO NOT BLEACH\nNO TWISTING\nAxa\nCS INQUIRY\nMADE IN KOREA",
+      "image_key": "fc45d05439508869130c7410a7d9ed2e0314aa644ce3ff787c5aef6f2adbad85",
+      "confirmed_options": {
+        "confirmed_first_generic": true
+      }
+    },
+    {
+      "image_id": "DJ019",
+      "text": "LENO. 700\n•취급시주의사항-\n230°C\n삼성\n단독 손세탁하여 주십시오\n100% POLY\n제조사: (주)가인임포트\n제조국: MADE IN CHINA\n경기도 양주시",
+      "image_key": "c44896d6dc02a81fb699c4da8bf6df587060e8eec7da6645ac2eef93f144e09c",
+      "confirmed_options": {
+        "confirmed_polyester_poly": true
+      }
+    }
+  ]
+}

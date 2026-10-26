@@ -131,10 +131,9 @@ def test_explicit_metadata_does_not_invalidate_composition(
 def test_metadata_does_not_hide_or_supply_composition_evidence(text) -> None:
     if text.startswith("OUTER"):
         result = parse_label(text)
-        assert result["status"] == "success"
-        assert result["selected_part"] == "lining"
-        assert result["materials"] == {"nylon": 100}
-        assert "outer" not in result["parts"]
+        assert result["status"] == "failed"
+        assert result["error_code"] == "incomplete_part_composition"
+        assert result["materials"] == result["parts"] == {}
     else:
         assert_rejected(text)
 
@@ -279,12 +278,12 @@ def test_descriptors_punctuation_and_metadata_do_not_invalidate_ratios(
     ("OUTER COTTON 95%\nLINING NYLON 100%", {"nylon": 100}),
     ("겉감: 인조모피\n안감: 폴리에스터 100%", {"polyester": 100}),
 ])
-def test_unconfirmed_outer_selects_a_separate_confirmed_lining(text, expected) -> None:
+def test_unconfirmed_outer_is_not_replaced_by_separate_lining(text, expected) -> None:
     result = parse_label(text)
-    assert result["status"] == "success"
-    assert result["selected_part"] == "lining"
-    assert result["materials"] == expected
-    assert "outer" not in result["parts"]
+    assert result["status"] == "failed"
+    assert result["error_code"] == "incomplete_part_composition"
+    assert result["materials"] == result["parts"] == {}
+    assert result["parse_evidence"]["confirmed_parts"]["lining"] == expected
     assert "outer:composition_not_confirmed" in result["warnings"]
 
 
@@ -412,12 +411,11 @@ def test_suffix_part_marker_supports_multi_material_composition() -> None:
     }
 
 
-def test_incomplete_suffix_outer_selects_confirmed_lining() -> None:
+def test_incomplete_suffix_outer_cannot_be_replaced_by_lining() -> None:
     result = parse_label("COTTON 95% SHELL\nNYLON 100% LINING")
-    assert result["status"] == "success"
-    assert result["selected_part"] == "lining"
-    assert result["materials"] == {"nylon": 100}
-    assert "outer" not in result["parts"]
+    assert result["status"] == "failed"
+    assert result["error_code"] == "incomplete_part_composition"
+    assert result["materials"] == result["parts"] == {}
 
 
 def test_inline_part_transition_remains_supported() -> None:

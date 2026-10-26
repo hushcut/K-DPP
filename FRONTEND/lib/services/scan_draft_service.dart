@@ -1,6 +1,7 @@
 import '../models/clothing_type_option.dart';
 import '../models/scan_result.dart';
 import '../utils/clothing_type_catalog.dart';
+import '../utils/scan_warning_notices.dart';
 
 /// 스캔 결과 편집 화면을 초기화하는 데 필요한 임시 입력 상태다.
 class ScanDraft {
@@ -11,6 +12,7 @@ class ScanDraft {
     required this.title,
     required this.isManualMaterialMode,
     this.rawOcrPreview = '',
+    this.notices = const [],
     this.serverHealth,
     this.serverCarbonFootprint,
     this.serverWeightGram,
@@ -26,6 +28,10 @@ class ScanDraft {
   /// 서버가 인식한 라벨 원문이다. 직접 입력 시 참고용으로만 보여 주며,
   /// 값이 없으면 빈 문자열이다.
   final String rawOcrPreview;
+
+  /// AI 가 보낸 공개 코드를 바꾼 안내 문구(부위·가죽 추정 — R4)다. 소재를 확인하는 동안 결과 화면에
+  /// 보이기만 하고 저장 이력·옷장에는 남기지 않는다. 없으면 빈 목록이다.
+  final List<String> notices;
 
   final int? serverHealth;
   final double? serverCarbonFootprint;
@@ -62,6 +68,10 @@ class ScanDraftService {
           ? scannedTitle!
           : clothingType.defaultTitle,
       isManualMaterialMode: false,
+      notices: List.unmodifiable([
+        ...ScanWarningNotices.forSuccess(result.warnings),
+        ?_unsupportedMaterialNotice(result),
+      ]),
       serverHealth: result.health,
       serverCarbonFootprint: result.carbonFootprint,
       serverWeightGram: result.weightGram,
@@ -92,6 +102,24 @@ class ScanDraftService {
       isManualMaterialMode: true,
       rawOcrPreview: _sanitizeOcrPreview(rawOcrPreview),
     );
+  }
+
+  /// 서버가 `is_supported: false` 로 표시한 소재(AI 는 읽지만 서버 계수표에 없는 소재)를
+  /// 결과 화면에서 미리 알린다. 서버 계산은 이 소재를 거절하고 앱은 그때 저장하지 않으므로
+  /// (AI 연동 협의안 R1), 저장 버튼을 누르기 전에 소재를 확인하게 한다. 이름은 편집 폼에 보이는
+  /// 표시명이고, 계산 거절 배너(`CarbonApiException.userMessage`)처럼 첫 소재와 남은 개수만 쓴다.
+  String? _unsupportedMaterialNotice(ScanResult result) {
+    final names = [
+      for (final detail in result.materialDetails)
+        if (!detail.isSupported) detail.displayName,
+    ];
+
+    if (names.isEmpty) return null;
+
+    final others = names.length - 1;
+    final label = others == 0 ? names.first : '${names.first} 외 $others개';
+
+    return '$label 소재는 탄소 계산 기준이 없어 이대로는 저장할 수 없어요. 소재를 확인해 주세요.';
   }
 
   /// 이름이 비었거나 폼에서 고칠 수 없는 비율(NaN·무한대·음수)은 제외한다.

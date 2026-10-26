@@ -88,9 +88,9 @@ Widget _buildReportBody(
         children: [
           Row(
             children: [
-              const Icon(
+              Icon(
                 Icons.verified_user_outlined,
-                color: AppPalette.accent,
+                color: palette.accentForeground,
                 size: 28,
               ),
               const SizedBox(width: 8),
@@ -135,11 +135,13 @@ Widget _buildReportBody(
                 icon: Icons.category_outlined,
                 label: item.category,
                 isDark: isDark,
+                accentColor: palette.accentForeground,
               ),
               _buildTagChip(
                 icon: Icons.layers_outlined,
                 label: mainMaterial,
                 isDark: isDark,
+                accentColor: palette.accentForeground,
               ),
             ],
           ),
@@ -162,7 +164,7 @@ Widget _buildReportBody(
                           : 'CO2eq 기준 서버 계산값'
                     : 'CO2eq 기준 임시 추정값',
                 icon: Icons.eco_outlined,
-                color: AppPalette.accent,
+                color: palette.accentForeground,
                 primaryText: primaryText,
                 secondaryText: secondaryText,
                 cardColor: cardColor,
@@ -222,6 +224,7 @@ Widget _buildReportBody(
             secondaryText: secondaryText,
             cardColor: cardColor,
             borderColor: borderColor,
+            accentColor: palette.accentForeground,
           ),
           const SizedBox(height: 12),
 
@@ -234,6 +237,7 @@ Widget _buildReportBody(
             secondaryText: secondaryText,
             cardColor: cardColor,
             borderColor: borderColor,
+            accentColor: palette.accentForeground,
           ),
           const SizedBox(height: 24),
 
@@ -256,6 +260,7 @@ Widget _buildReportBody(
             item,
             primaryText: primaryText,
             secondaryText: secondaryText,
+            accentColor: palette.accentForeground,
             cardColor: cardColor,
             borderColor: borderColor,
             isDark: isDark,
@@ -266,6 +271,7 @@ Widget _buildReportBody(
             item,
             primaryText: primaryText,
             secondaryText: secondaryText,
+            accentColor: palette.accentForeground,
             cardColor: cardColor,
             borderColor: borderColor,
             isDark: isDark,
@@ -275,6 +281,7 @@ Widget _buildReportBody(
           _buildCarbonScopeNotice(
             primaryText: primaryText,
             secondaryText: secondaryText,
+            accentColor: palette.accentForeground,
             isDark: isDark,
           ),
           const SizedBox(height: 12),
@@ -283,6 +290,7 @@ Widget _buildReportBody(
             item,
             primaryText: primaryText,
             secondaryText: secondaryText,
+            accentColor: palette.accentForeground,
             cardColor: cardColor,
             borderColor: borderColor,
           ),
@@ -324,7 +332,7 @@ Widget _buildReportBody(
               onPressed: () =>
                   _showDisposalBottomSheet(context, item, disposalGuide),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
+                backgroundColor: AppPalette.success,
                 minimumSize: const Size.fromHeight(54),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 16,
@@ -372,11 +380,11 @@ Widget _buildReportBody(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.delete_outline, color: Colors.redAccent),
-                  SizedBox(width: 8),
+                  const Icon(Icons.delete_outline, color: Colors.redAccent),
+                  const SizedBox(width: 8),
                   Flexible(
                     child: Text(
                       '이 의류 삭제하기',
@@ -384,7 +392,7 @@ Widget _buildReportBody(
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: Colors.redAccent,
+                        color: palette.dangerText,
                       ),
                     ),
                   ),

@@ -188,19 +188,23 @@ void main() {
 
     testWidgets('iOS: "동작 줄이기"가 켜져 있으면 모양은 그대로이고 바탕색만 바뀐다', (tester) async {
       await _pumpBackButton(tester, disableAnimations: true);
-      final button = find.byType(AppBackButton);
+      await _expectOnlyFillChangesWhilePressed(tester);
+    }, variant: _iOS);
 
-      final gesture = await tester.startGesture(tester.getCenter(button));
-      await tester.pump();
-      await gesture.moveBy(const Offset(40, 0));
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(_matrixOf(tester, button), Matrix4.identity());
-      expect(
-        _fillOf(tester, button),
-        AppGlassStyle.pressedFill(tester.element(button)),
+    // 실제 iOS 는 '동작 줄이기'를 disableAnimations 가 아니라 reduceMotion 으로만 알립니다(DECISIONS 268).
+    testWidgets('iOS: 기기의 "동작 줄이기"(reduceMotion)도 모양은 그대로 두고 바탕색만 바꾼다', (
+      tester,
+    ) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(
+            reduceMotion: true,
+            supportsAnnounce: true,
+          );
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
       );
-      await gesture.up();
-      await tester.pumpAndSettle();
+      await _pumpBackButton(tester);
+      await _expectOnlyFillChangesWhilePressed(tester);
     }, variant: _iOS);
 
     testWidgets('iOS: 누를 수 없는 버튼은 눌러도 반응하지 않는다', (tester) async {
@@ -548,6 +552,23 @@ Future<void> _pumpBackButton(
       ),
     ),
   );
+}
+
+/// "<" 를 누른 채 당겨도 모양은 그대로이고 바탕색만 눌림 색인지 봅니다('동작 줄이기').
+Future<void> _expectOnlyFillChangesWhilePressed(WidgetTester tester) async {
+  final button = find.byType(AppBackButton);
+
+  final gesture = await tester.startGesture(tester.getCenter(button));
+  await tester.pump();
+  await gesture.moveBy(const Offset(40, 0));
+  await tester.pump(const Duration(milliseconds: 300));
+  expect(_matrixOf(tester, button), Matrix4.identity());
+  expect(
+    _fillOf(tester, button),
+    AppGlassStyle.pressedFill(tester.element(button)),
+  );
+  await gesture.up();
+  await tester.pumpAndSettle();
 }
 
 Future<void> _pumpCloset(WidgetTester tester) async {
