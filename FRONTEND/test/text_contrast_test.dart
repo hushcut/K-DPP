@@ -22,6 +22,8 @@ import 'package:k_dpp/utils/clothing_type_catalog.dart';
 import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:k_dpp/widgets/auth_form_widgets.dart';
 import 'package:k_dpp/widgets/clothing_type_picker_sheet.dart';
+import 'package:k_dpp/widgets/material_input_collection.dart';
+import 'package:k_dpp/widgets/scan_result_view.dart';
 import 'package:provider/provider.dart';
 
 import 'helpers/fake_auth_session_storage.dart';
@@ -415,6 +417,49 @@ void main() {
         AppPalette.dark.accentForeground,
       );
       expect(AppPalette.dark.accentForeground, isNot(AppPalette.accent));
+    });
+
+    testWidgets('스캔 결과의 AI 안내 카드 아이콘은 다크용 강조색이다', (tester) async {
+      final materialInputs = MaterialInputCollection()
+        ..setFromMaterials({'cotton': 100});
+      final titleController = TextEditingController(text: '새로 스캔한 의류');
+      addTearDown(materialInputs.dispose);
+      addTearDown(titleController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(brightness: Brightness.dark),
+          home: Scaffold(
+            body: ScanResultView(
+              formKey: GlobalKey<FormState>(),
+              hasTriedSubmit: false,
+              isSaving: false,
+              isScanFailed: false,
+              titleController: titleController,
+              selectedClothingType: ClothingTypeCatalog.defaultOption,
+              materialInputs: materialInputs,
+              scannedCare: '찬물 세탁',
+              originalMaterials: const {'cotton': 100},
+              scanNotices: const ['겉감 소재만 읽었어요.'],
+              validateTitle: (_) => null,
+              validateMaterialName: (_) => null,
+              validateMaterialValue: (_) => null,
+              onSelectClothingType: () {},
+              onAddMaterial: () {},
+              onRemoveMaterial: (_) {},
+              onSubmit: () {},
+              onReset: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('겉감 소재만 읽었어요.'), findsOneWidget);
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.info_outline_rounded)).color,
+        AppPalette.dark.accentForeground,
+      );
     });
   });
 }
