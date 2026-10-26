@@ -5,11 +5,12 @@ Vision 은 부르지 않는다. AI 의 Vision 클라이언트·호출 함수만 
 """
 
 import io
+import random
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PIL import Image
+from PIL import Image, PngImagePlugin
 
 import main
 from apps.text import ocr_text
@@ -28,11 +29,12 @@ def jpeg_bytes() -> bytes:
 
 @pytest.fixture()
 def vision(client, monkeypatch):
-    """가짜 Vision: 부른 횟수를 모은다. answer(text, layout) 로 돌려줄 글자를, fail(exc) 로 예외를 정한다."""
-    state = SimpleNamespace(calls=0, payload=None, error=None)
+    """가짜 Vision: 부른 횟수와 받은 사진 바이트를 모은다. answer(text, layout) 로 돌려줄 글자를, fail(exc) 로 예외를 정한다."""
+    state = SimpleNamespace(calls=0, contents=[], payload=None, error=None)
 
-    def fake_google_ocr(*_args, **_kwargs):
+    def fake_google_ocr(_client, content, **_kwargs):
         state.calls += 1
+        state.contents.append(content)
         if state.error is not None:
             raise state.error
         return state.payload
@@ -238,7 +240,7 @@ def test_sideways_photo_is_uprighted_without_exif_before_ocr(client, vision, ocr
         assert len(received.getexif()) == 0
 
 
-def test_upright_photo_reaches_ocr_unchanged(client, vision, ocr_input):
+def test_photo_without_metadata_reaches_ocr_unchanged(client, vision, ocr_input):
     vision.answer("COTTON 100%")
     content = jpeg_bytes()
 
@@ -293,3 +295,118 @@ def test_text_scan_writes_no_photo_log_line(client, vision, capsys):
 
     assert response.status_code == 200
     assert scan_log_lines(capsys) == []
+
+
+# --- 방향 값이 없거나 1인 사진의 GPS(DECISIONS 275) -----------------------------------------------
+# 바로 세우지 않는 사진도 EXIF·XMP 를 빼고 넘긴다. 화소는 바이트 그대로라 Vision 이 보는 그림은 같다.
+XMP_WITH_GPS = (
+    '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+    '<rdf:Description xmlns:exif="http://ns.adobe.com/exif/1.0/" exif:GPSLatitude="37,7.2058N"/>'
+    "</rdf:RDF></x:xmpmeta>"
+)
+
+
+def located_bytes(image_format: str, orientation: int | None = None, image: Image.Image | None = None, **params) -> bytes:
+    """EXIF 의 GPS 칸과 XMP 의 GPS 를 붙인 사진(기본 8 × 4). 방향 값은 주지 않으면 붙이지 않는다."""
+    exif = Image.Exif()
+    if orientation is not None:
+        exif[274] = orientation
+    exif[0x8825] = {1: "N", 2: GPS_LATITUDE}
+    if image_format == "PNG":
+        params["pnginfo"] = PngImagePlugin.PngInfo()
+        params["pnginfo"].add_itxt("XML:com.adobe.xmp", XMP_WITH_GPS)
+    else:
+        params["xmp"] = XMP_WITH_GPS.encode()
+    if image is None:
+        image = Image.new("RGB", (8, 4), "white")
+        image.putpixel((2, 1), (200, 30, 30))
+    buffer = io.BytesIO()
+    image.save(buffer, format=image_format, exif=exif, **params)
+    return buffer.getvalue()
+
+
+def assert_no_location(content: bytes) -> None:
+    # 디코더가 읽지 않는 자리에 남아도 바이트는 Google 로 가므로, EXIF(TIFF 머리)·XMP 의 GPS 가 바이트 어디에도 없어야 한다.
+    assert b"II*\x00" not in content and b"MM\x00*" not in content
+    assert b"GPSLatitude" not in content
+
+
+@pytest.mark.parametrize(
+    ("image_format", "content_type"), [("JPEG", "image/jpeg"), ("PNG", "image/png"), ("WEBP", "image/webp")],
+)
+@pytest.mark.parametrize("orientation", [None, 1])
+def test_located_photo_reaches_vision_without_gps_and_same_pixels(
+    client, vision, ocr_input, capsys, image_format, content_type, orientation,
+):
+    vision.answer("COTTON 100%")
+    content = located_bytes(image_format, orientation)
+    with pytest.raises(AssertionError):
+        assert_no_location(content)
+
+    response = scan_file(client, content, content_type)
+
+    assert response.status_code == 200
+    assert vision.contents
+    for sent in [*ocr_input, *vision.contents]:
+        assert_no_location(sent)
+    if image_format == "WEBP":
+        # VP8X 의 'EXIF 있음(0x08)·XMP 있음(0x04)' 표시도 내린다.
+        assert ocr_input[0][12:16] == b"VP8X" and not ocr_input[0][20] & 0x0C
+    with Image.open(io.BytesIO(content)) as before, Image.open(io.BytesIO(ocr_input[0])) as after:
+        assert (after.format, after.size, after.mode) == (before.format, before.size, before.mode)
+        assert after.tobytes() == before.tobytes()
+    [line] = scan_log_lines(capsys)
+    assert "바로세움=아니오" in line and "메타뺌=예" in line and "GPS=있음" in line
+
+
+# 잡음 사진이라 압축된 화소 속에 FF00 이 생긴다. 재시작 표식(FFD0~FFD7)과 progressive(SOS 여럿·사이의 표)도 지나가 본다.
+@pytest.mark.parametrize("params", [{"restart_marker_rows": 1}, {"progressive": True}])
+def test_jpeg_keeps_color_profile_and_compressed_pixels_but_not_trailer(client, vision, ocr_input, params):
+    vision.answer("COTTON 100%")
+    noise = Image.frombytes("RGB", (64, 48), random.Random(275).randbytes(64 * 48 * 3))
+    image = located_bytes("JPEG", image=noise, icc_profile=b"test-icc", **params)
+    content = image + b"after-eoi GPSLatitude"
+
+    response = scan_file(client, content)
+
+    assert response.status_code == 200
+    [sent] = ocr_input
+    assert_no_location(sent)
+    with Image.open(io.BytesIO(sent)) as received:
+        assert received.info["icc_profile"] == b"test-icc"
+    # 압축된 화소(첫 SOS 부터 EOI 까지)는 바이트 그대로이고, EOI 뒤에 붙은 데이터는 따라가지 않는다.
+    assert sent[sent.index(b"\xff\xda"):] == image[image.index(b"\xff\xda"):]
+    assert sent.endswith(b"\xff\xd9")
+
+
+def test_mpo_reaches_vision_without_gps(client, vision):
+    # MPO 는 서버가 손대지 않고, AI 가 첫 장을 JPEG 로 다시 저장하며 EXIF 를 버린다.
+    vision.answer("COTTON 100%")
+    exif = Image.Exif()
+    exif[0x8825] = {1: "N", 2: GPS_LATITUDE}
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 4), "white").save(
+        buffer, format="MPO", save_all=True, append_images=[Image.new("RGB", (8, 4), "black")], exif=exif,
+    )
+
+    response = scan_file(client, buffer.getvalue())
+
+    assert response.status_code == 200
+    assert vision.contents
+    for sent in vision.contents:
+        assert_no_location(sent)
+
+
+def test_photo_with_unreadable_chunks_is_reencoded_without_gps(client, vision, ocr_input, capsys):
+    # 끝(IEND)이 잘린 PNG 는 조각을 끝까지 읽지 못해도, GPS 를 넘기지 않게 다시 저장해 넘긴다.
+    vision.answer("COTTON 100%")
+    content = located_bytes("PNG")[:-12]
+
+    response = scan_file(client, content, "image/png")
+
+    assert response.status_code == 200
+    [sent] = ocr_input
+    assert_no_location(sent)
+    assert Image.open(io.BytesIO(sent)).format == "JPEG"
+    [line] = scan_log_lines(capsys)
+    assert "메타뺌=다시저장" in line
