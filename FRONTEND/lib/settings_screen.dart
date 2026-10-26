@@ -268,6 +268,9 @@ class SettingsScreen extends StatelessWidget {
 
     final isKakaoAccount = provider.loginMethods.contains(LoginMethod.kakao);
 
+    // 탈퇴 요청과 옷장 백업 올리기가 겹치지 않게 예약을 거둡니다. 그만두면 다시 예약합니다.
+    provider.cancelScheduledClosetBackup();
+
     final outcome = await showDialog<_AccountActionResult>(
       context: context,
       barrierDismissible: false,
@@ -281,7 +284,10 @@ class SettingsScreen extends StatelessWidget {
       ),
     );
 
-    if (outcome == null) return;
+    if (outcome == null) {
+      provider.scheduleClosetBackup();
+      return;
+    }
 
     if (!context.mounted) return;
 
@@ -330,6 +336,10 @@ class SettingsScreen extends StatelessWidget {
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      // 옷장 백업 줄까지 더해 작은 폰·큰 글자에서는 기본 상한(화면의 9/16)을 넘으므로, 내용만큼 키우고
+      // 그래도 넘치면 스크롤합니다. 상태 표시줄 밑까지 커지지 않게 안전 영역을 지킵니다.
+      isScrollControlled: true,
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -339,67 +349,78 @@ class SettingsScreen extends StatelessWidget {
         final secondaryText = palette.textSecondary;
 
         return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '사진 및 권한 안내',
-                  style: TextStyle(
-                    color: primaryText,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                _buildPrivacyGuideRow(
-                  icon: Icons.camera_alt_outlined,
-                  text: '카메라는 스캔 화면에서만 켜지고, 다른 화면에서는 사용하지 않습니다.',
-                  textColor: secondaryText,
-                  iconColor: palette.accentForeground,
-                ),
-                _buildPrivacyGuideRow(
-                  icon: Icons.delete_outline,
-                  text: '카메라로 새로 촬영한 임시 파일은 분석이 끝난 뒤 정리합니다.',
-                  textColor: secondaryText,
-                  iconColor: palette.accentForeground,
-                ),
-                _buildPrivacyGuideRow(
-                  icon: Icons.photo_library_outlined,
-                  text: '앨범에서 선택한 원본 사진은 앱이 수정하지 않습니다.',
-                  textColor: secondaryText,
-                  iconColor: palette.accentForeground,
-                ),
-                _buildPrivacyGuideRow(
-                  icon: Icons.cloud_done_outlined,
-                  text: '서버 분석이 연결된 경우 이미지는 라벨 분석 요청에만 사용됩니다.',
-                  textColor: secondaryText,
-                  iconColor: palette.accentForeground,
-                ),
-                const SizedBox(height: 18),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.pop(sheetContext),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppPalette.accent,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      '확인했어요',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                      ),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '사진 및 권한 안내',
+                    style: TextStyle(
+                      color: primaryText,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 14),
+                  _buildPrivacyGuideRow(
+                    icon: Icons.camera_alt_outlined,
+                    text: '카메라는 스캔 화면에서만 켜지고, 다른 화면에서는 사용하지 않습니다.',
+                    textColor: secondaryText,
+                    iconColor: palette.accentForeground,
+                  ),
+                  _buildPrivacyGuideRow(
+                    icon: Icons.delete_outline,
+                    text: '카메라로 새로 촬영한 임시 파일은 분석이 끝난 뒤 정리합니다.',
+                    textColor: secondaryText,
+                    iconColor: palette.accentForeground,
+                  ),
+                  _buildPrivacyGuideRow(
+                    icon: Icons.photo_library_outlined,
+                    text: '앨범에서 선택한 원본 사진은 앱이 수정하지 않습니다.',
+                    textColor: secondaryText,
+                    iconColor: palette.accentForeground,
+                  ),
+                  _buildPrivacyGuideRow(
+                    icon: Icons.cloud_done_outlined,
+                    text: '서버 분석이 연결된 경우 이미지는 라벨 분석 요청에만 사용됩니다.',
+                    textColor: secondaryText,
+                    iconColor: palette.accentForeground,
+                  ),
+                  // 옷장 서버 백업(DECISIONS 242·243) — 이 줄과 탈퇴 문구가 들어간 빌드부터 팀 밖에 줍니다.
+                  _buildPrivacyGuideRow(
+                    icon: Icons.backup_outlined,
+                    text:
+                        '로그인하면 옷장(옷 이름·분류·소재·세탁 지침·탄소 추정값)을 서버(AWS 호주)에 백업해요. '
+                        '탈퇴하면 서버에서 바로 지워지고, 서버의 백업 파일에서도 최대 30일 안에 지워져요.',
+                    textColor: secondaryText,
+                    iconColor: palette.accentForeground,
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(sheetContext),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppPalette.accent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        '확인했어요',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -1233,8 +1254,8 @@ class _WithdrawDialogState extends State<_WithdrawDialog>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                '계정과 서버에 저장된 분석 이력이 모두 삭제됩니다.\n'
-                '이 기기의 옷장도 함께 비워지며, 되돌릴 수 없습니다.',
+                '계정과 서버에 저장된 분석 이력·옷장 백업이 모두 지워져요.\n'
+                '이 기기의 옷장도 함께 비워지고, 되돌릴 수 없어요.',
                 style: TextStyle(height: 1.5),
               ),
               const SizedBox(height: 16),

@@ -1,7 +1,20 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/closet_backup_state.dart';
 import '../models/closet_sort_option.dart';
 import '../models/clothes.dart';
+
+/// 계정 옷장 값을 읽은 결과입니다([ClosetStorage.loadClothesListWithStatusFor]).
+enum ClosetLoadStatus {
+  /// 저장된 적이 없습니다.
+  missing,
+
+  /// 저장된 값을 그대로 읽었습니다.
+  ok,
+
+  /// 값은 있는데 해독되지 않거나, 배열이 아니거나, 옷이 아닌 원소가 있습니다.
+  corrupt,
+}
 
 /// 옷장 목록과 사용자 이름·이메일·id·로그인 방법을 영구 저장하기 위한 추상 인터페이스다.
 ///
@@ -29,6 +42,21 @@ abstract class ClosetStorage {
   Future<List<Clothes>?> loadClothesListOrNullFor(String ownerKey);
   /// 특정 계정의 옷장 목록을 삭제한다.
   Future<void> clearClothesListFor(String ownerKey);
+  /// 특정 계정의 옷장 목록을 불러오며, 저장된 적이 없는지·값이 망가졌는지도 알려 준다.
+  /// 망가진 값에서 돌려주는 목록은 [loadClothesListOrNullFor] 와 같다(읽을 수 있는 옷만, 아니면 빈 목록).
+  Future<(List<Clothes>, ClosetLoadStatus)> loadClothesListWithStatusFor(
+    String ownerKey,
+  );
+
+  /// 특정 계정 옷장을 서버 백업과 마지막으로 맞춘 상태를 불러온다. 없거나 모양이 틀리면 null 이다.
+  Future<ClosetBackupState?> loadClosetBackupStateFor(String ownerKey);
+  /// 특정 계정 옷장을 서버 백업과 맞춘 상태를 저장한다.
+  Future<void> saveClosetBackupStateFor(
+    String ownerKey,
+    ClosetBackupState state,
+  );
+  /// 특정 계정 옷장을 서버 백업과 맞춘 상태를 지운다 — 다음 동기화는 첫 맞춤(합치기)이 된다.
+  Future<void> clearClosetBackupStateFor(String ownerKey);
 
   /// 마지막으로 사용한 사용자 이름을 저장한다.
   Future<void> saveUserName(String userName);
@@ -77,6 +105,7 @@ abstract class ClosetStorage {
 class ClosetStorageService implements ClosetStorage {
   static const String _closetItemsKey = 'closet_items';
   static const String _accountClosetItemsKeyPrefix = 'closet_items_account_';
+  static const String _closetBackupStateKeyPrefix = 'closet_backup_state_';
   static const String _userNameKey = 'user_name';
   static const String _userNameCustomizedKey = 'user_name_customized';
   static const String _userEmailKey = 'user_email';
@@ -125,7 +154,8 @@ class ClosetStorageService implements ClosetStorage {
 
   @override
   Future<void> saveClothesListFor(String ownerKey, List<Clothes> items) async {
-    final encoded = jsonEncode(items.map((item) => item.toJson()).toList());
+    // 서버 백업의 지문(closetFingerprint)이 이 글자로 계산되므로 같은 함수를 씁니다.
+    final encoded = closetCanonicalJson(items);
 
     await _prefs.setString(_accountClosetKey(ownerKey), encoded);
   }
@@ -146,6 +176,35 @@ class ClosetStorageService implements ClosetStorage {
   @override
   Future<void> clearClothesListFor(String ownerKey) async {
     await _prefs.remove(_accountClosetKey(ownerKey));
+  }
+
+  @override
+  Future<(List<Clothes>, ClosetLoadStatus)> loadClothesListWithStatusFor(
+    String ownerKey,
+  ) async {
+    final raw = await _prefs.getString(_accountClosetKey(ownerKey));
+    if (raw == null) return (<Clothes>[], ClosetLoadStatus.missing);
+    return (_decodeClothesList(raw), _clothesListStatus(raw));
+  }
+
+  @override
+  Future<ClosetBackupState?> loadClosetBackupStateFor(String ownerKey) async {
+    return ClosetBackupState.tryDecode(
+      await _prefs.getString(_closetBackupStateKey(ownerKey)),
+    );
+  }
+
+  @override
+  Future<void> saveClosetBackupStateFor(
+    String ownerKey,
+    ClosetBackupState state,
+  ) async {
+    await _prefs.setString(_closetBackupStateKey(ownerKey), state.encode());
+  }
+
+  @override
+  Future<void> clearClosetBackupStateFor(String ownerKey) async {
+    await _prefs.remove(_closetBackupStateKey(ownerKey));
   }
 
   @override
@@ -236,11 +295,35 @@ class ClosetStorageService implements ClosetStorage {
   }
 
   String _accountClosetKey(String ownerKey) {
+    return '$_accountClosetItemsKeyPrefix${_ownerKeyTail(ownerKey)}';
+  }
+
+  // 백업 상태는 옷장과 같은 꼬리를 써서, 옷장 키가 있는 계정에만 상태가 따라붙게 합니다.
+  String _closetBackupStateKey(String ownerKey) {
+    return '$_closetBackupStateKeyPrefix${_ownerKeyTail(ownerKey)}';
+  }
+
+  String _ownerKeyTail(String ownerKey) {
     final normalizedKey = ownerKey.trim().toLowerCase();
-    final encodedKey = base64Url
-        .encode(utf8.encode(normalizedKey))
-        .replaceAll('=', '');
-    return '$_accountClosetItemsKeyPrefix$encodedKey';
+    return base64Url.encode(utf8.encode(normalizedKey)).replaceAll('=', '');
+  }
+
+  // 저장된 값이 그대로 읽히는지 봅니다. [_decodeClothesList] 가 조용히 버리는 경우가 corrupt 입니다.
+  ClosetLoadStatus _clothesListStatus(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List || decoded.any((item) => item is! Map)) {
+        return ClosetLoadStatus.corrupt;
+      }
+
+      for (final item in decoded) {
+        Clothes.fromJson(Map<String, dynamic>.from(item as Map));
+      }
+
+      return ClosetLoadStatus.ok;
+    } catch (_) {
+      return ClosetLoadStatus.corrupt;
+    }
   }
 
   List<Clothes> _decodeClothesList(String? raw) {

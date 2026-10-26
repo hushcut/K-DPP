@@ -9,6 +9,7 @@ import 'package:k_dpp/splash_screen.dart';
 import 'package:provider/provider.dart';
 
 import 'helpers/fake_auth_session_storage.dart';
+import 'helpers/fake_closet_backup_api.dart';
 import 'helpers/fake_closet_storage.dart';
 
 void main() {
@@ -87,6 +88,63 @@ void main() {
     expect(find.text('로그인 화면'), findsNothing);
     expect(provider.userName, '홍길동');
     expect(provider.userEmail, 'honggildong@example.com');
+  });
+
+  testWidgets('유효한 세션이면 메인 화면으로 가기 전에 서버 백업의 옷을 되살린다', (tester) async {
+    final authStorage = FakeAuthSessionStorage()
+      ..savedSession = AuthSession(
+        accessToken: 'valid-token',
+        expiresAt: DateTime.now().add(const Duration(hours: 1)),
+      );
+    final storage = FakeClosetStorage();
+    await storage.saveUserEmail('honggildong@example.com');
+    await storage.saveUserId(1);
+    final api = FakeClosetBackupApi()
+      ..putServerBackup([
+        {'title': '백업 셔츠', 'category': '상의'},
+      ]);
+    final provider = ClosetProvider(
+      storage: storage,
+      authSessionStorage: authStorage,
+      backupApi: api,
+      backupUploadDelay: Duration.zero,
+    );
+    var itemsWhenMainOpened = -1;
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: provider,
+        child: MaterialApp(
+          initialRoute: '/splash',
+          routes: {
+            '/splash': (context) => SplashScreen(
+              minimumDisplayDuration: Duration.zero,
+              authSessionValidationService: _FakeValidationService(
+                const AuthSessionValid(
+                  AuthUser(
+                    id: 1,
+                    email: 'honggildong@example.com',
+                    nickname: '홍길동',
+                  ),
+                ),
+              ),
+            ),
+            '/login': (context) => const Scaffold(body: Text('로그인 화면')),
+            '/main': (context) {
+              itemsWhenMainOpened = provider.count;
+              return const Scaffold(body: Text('메인 화면'));
+            },
+          },
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('메인 화면'), findsOneWidget);
+    expect(itemsWhenMainOpened, 1);
+    expect(provider.items.single.title, '백업 셔츠');
+    expect(api.fetchTokens, ['valid-token']);
   });
 
   // C33: 세션 검증의 세 분기(Invalid / Unavailable / 프로필 동기화 실패) 중

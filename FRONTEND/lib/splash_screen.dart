@@ -83,6 +83,8 @@ class _SplashScreenState extends State<SplashScreen>
                 userId: user.id,
                 loginMethods: user.loginMethods,
               );
+              // 이 계정 백업과 처음 맞추면 서버 옷을 받아 합친 뒤 이력을 맞춥니다(올리기는 기다리지 않음).
+              await provider.syncClosetBackup();
               await provider.synchronizeServerHistory(history);
             } catch (error, stackTrace) {
               // 프로필·이력 동기화 실패가 유효한 로그인 상태를

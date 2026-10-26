@@ -284,6 +284,14 @@ void main() {
     );
 
     await _openAccountMenu(tester, '회원 탈퇴');
+    // 탈퇴가 서버의 옷장 백업까지 지운다는 것을 알린다(DECISIONS 242).
+    expect(
+      find.text(
+        '계정과 서버에 저장된 분석 이력·옷장 백업이 모두 지워져요.\n'
+        '이 기기의 옷장도 함께 비워지고, 되돌릴 수 없어요.',
+      ),
+      findsOneWidget,
+    );
     await tester.enterText(find.byType(TextField).first, 'password123');
     await tester.tap(find.widgetWithText(ElevatedButton, '탈퇴'));
     await tester.pumpAndSettle();
@@ -575,6 +583,14 @@ void main() {
 
     expect(find.text('카메라는 스캔 화면에서만 켜지고, 다른 화면에서는 사용하지 않습니다.'), findsOneWidget);
     expect(find.text('카메라로 새로 촬영한 임시 파일은 분석이 끝난 뒤 정리합니다.'), findsOneWidget);
+    // 옷장 서버 백업을 알린 빌드부터 팀 밖에 준다(DECISIONS 242).
+    expect(
+      find.text(
+        '로그인하면 옷장(옷 이름·분류·소재·세탁 지침·탄소 추정값)을 서버(AWS 호주)에 백업해요. '
+        '탈퇴하면 서버에서 바로 지워지고, 서버의 백업 파일에서도 최대 30일 안에 지워져요.',
+      ),
+      findsOneWidget,
+    );
   });
 
   group('카카오 계정', () {

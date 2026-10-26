@@ -7,9 +7,67 @@ import 'package:k_dpp/services/auth_api_service.dart';
 import 'package:k_dpp/services/post_login_sync_service.dart';
 
 import 'helpers/fake_auth_session_storage.dart';
+import 'helpers/fake_closet_backup_api.dart';
 import 'helpers/fake_closet_storage.dart';
 
 void main() {
+  test('서버 백업에서 되살린 옷도 같은 로그인 동기화에서 서버 계산값을 받는다', () async {
+    // 옷장 백업과 맞춘 뒤에 이력을 맞춰야, 되살린 옷의 계산값이 그 자리에서 갱신된다(DECISIONS 242).
+    final backedUp = Clothes(
+      title: '백업 셔츠',
+      category: '상의',
+      health: 85,
+      materials: {'cotton': 100},
+      careInstruction: '찬물 세탁',
+      carbonFootprint: 9.9,
+      savedResultId: 21,
+      registeredAt: DateTime(2026, 10, 1, 9),
+    );
+    final api = FakeClosetBackupApi(serverUserId: 7)
+      ..putServerBackup([backedUp.toJson()], version: 1);
+    final provider = ClosetProvider(
+      storage: FakeClosetStorage(),
+      authSessionStorage: FakeAuthSessionStorage(),
+      backupApi: api,
+    );
+    await provider.setAuthenticatedUser(
+      nickname: '홍길동',
+      email: 'honggildong@example.com',
+      userId: 7,
+      accessToken: 'valid-token',
+      expiresInSeconds: 3600,
+    );
+
+    final service = PostLoginSyncService(
+      authApiService: _FakeAuthApiService(
+        snapshot: const AuthSessionSnapshot(
+          user: AuthUser(
+            id: 7,
+            email: 'honggildong@example.com',
+            nickname: '홍길동',
+          ),
+          history: [
+            AnalysisHistoryRecord(
+              id: 21,
+              materials: {'cotton': 100},
+              carbonFootprint: 1.46,
+              carbonFootprintMin: 0.83,
+              carbonFootprintMax: 2.08,
+              minWeightGram: 100,
+              maxWeightGram: 250,
+            ),
+          ],
+        ),
+      ),
+    );
+
+    await service.synchronize(provider: provider, accessToken: 'valid-token');
+
+    expect(provider.items.single.title, '백업 셔츠');
+    expect(provider.items.single.carbonFootprint, 1.46);
+    provider.dispose();
+  });
+
   test('로그인 직후 서버 프로필과 기존 의류 계산값을 동기화한다', () async {
     final provider = ClosetProvider(
       storage: FakeClosetStorage(),
