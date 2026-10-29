@@ -1,0 +1,7 @@
+venv/
+downloads/
+models/
+results/
+logs/
+__pycache__/
+versions_pip_freeze.txt

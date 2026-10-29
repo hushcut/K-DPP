@@ -1,0 +1,12 @@
+# Python 3.11.9. CPU builds of torch/torchvision are installed from the PyTorch CPU index.
+torch==2.8.0
+torchvision==0.23.0
+transformers==5.20.2
+numpy==1.26.4
+Pillow==11.3.0
+accelerate
+safetensors
+sentencepiece
+protobuf
+psutil
+einops
