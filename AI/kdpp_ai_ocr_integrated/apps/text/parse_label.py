@@ -139,6 +139,27 @@ def _looks_like_non_composition_number(line: str) -> bool:
 
 
 _NUMERIC_IDENTIFIER_ROW_PATTERN = re.compile(r"\(?\s*[0-9]+(?:\s*-\s*[0-9]+){1,3}\s*\)?")
+# 연락처·품번·치수 범위는 하이픈 외에 점·빗금·괄호·더하기·물결로도 묶음을 잇는다.
+_SEPARATED_NUMBER_ROW_PATTERN = re.compile(r"[0-9+\-./()~\s]+")
+
+
+def _is_separated_numeric_identifier(line: str) -> bool:
+    """기호로 이은 숫자 묶음 중 혼용률이 될 수 없는 연락처·품번·범위를 찾는다."""
+
+    if not _SEPARATED_NUMBER_ROW_PATTERN.fullmatch(line) or not re.search(r"[-./()+~]", line):
+        return False
+    # A decimal is one value; ``100.0000001`` must stay a malformed ratio.
+    numbers = re.findall(r"[0-9]+(?:\.[0-9]+)?", line)
+    if len(numbers) < 2:
+        return False
+    integers = [number for number in numbers if "." not in number]
+    # A fiber ratio never exceeds 100; a long run with a four-digit group is a
+    # phone or product number. ``40-60`` and ``60.5/39.5`` remain ratio evidence.
+    return (
+        (sum(len(number.replace(".", "")) for number in numbers) >= 7
+         and max(len(number.split(".")[0]) for number in numbers) >= 4)
+        or any(len(number) > 3 or int(number) > 100 for number in integers)
+    )
 _WASH_SYMBOL_OCR_PATTERN = re.compile(r"1(?:30|40|50|60|70|95)\s*[/\\]")
 _OUTLINED_WASH_SYMBOL_OCR_PATTERN = re.compile(
     r"(?:\(\s*(?:30|40|50|60|70|95)0\s*\)?\s*/?"
@@ -216,6 +237,8 @@ def _is_non_composition_numeric_row(
             and "%" not in following
             and _contains_only_known_phrases(following, set(_CARE_PHRASES))
             and _has_complete_preceding_composition(preceding_infos or [])):
+        return True
+    if _is_separated_numeric_identifier(line):
         return True
     if _NUMERIC_IDENTIFIER_ROW_PATTERN.fullmatch(line):
         groups = re.findall(r"[0-9]+", line)
