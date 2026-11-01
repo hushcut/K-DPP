@@ -393,7 +393,7 @@ class SettingsScreen extends StatelessWidget {
                   _buildPrivacyGuideRow(
                     icon: Icons.backup_outlined,
                     text:
-                        '로그인하면 옷장(옷 이름·분류·소재·세탁 지침·탄소 추정값)을 서버(AWS 호주)에 백업해요. '
+                        '로그인하면 옷장(옷 이름·분류·소재·세탁 지침·탄소 추정값)을 서버에 백업해요. '
                         '탈퇴하면 서버에서 바로 지워지고, 서버의 백업 파일에서도 최대 30일 안에 지워져요.',
                     textColor: secondaryText,
                     iconColor: palette.accentForeground,
