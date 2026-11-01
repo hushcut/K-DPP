@@ -1,3 +1,4 @@
+import 'package:k_dpp/models/closet_backup_state.dart';
 import 'package:k_dpp/models/closet_sort_option.dart';
 import 'package:k_dpp/models/clothes.dart';
 import 'package:k_dpp/services/closet_storage_service.dart';
@@ -10,6 +11,12 @@ class FakeClosetStorage implements ClosetStorage {
   String? _savedUserEmail;
   int? _savedUserId;
   List<String>? _savedLoginMethods;
+  final Map<String, ClosetBackupState> _backupStates = {};
+  // 다음에 저장하기 전까지 '값이 망가짐'으로 읽힐 계정들입니다([markClosetCorrupt]).
+  final Set<String> _corruptOwners = {};
+
+  /// 백업 상태 저장 실패를 흉내 낼 때 던질 오류입니다.
+  Object? saveBackupStateError;
 
   /// 옷장 저장 실패를 흉내 낼 때 던질 오류입니다.
   Object? saveClothesError;
@@ -105,6 +112,63 @@ class FakeClosetStorage implements ClosetStorage {
     }
 
     _accountItems[_normalizeKey(ownerKey)] = List<Clothes>.from(items);
+    _corruptOwners.remove(_normalizeKey(ownerKey));
+  }
+
+  @override
+  Future<(List<Clothes>, ClosetLoadStatus)> loadClothesListWithStatusFor(
+    String ownerKey,
+  ) async {
+    final key = _normalizeKey(ownerKey);
+    final items = _accountItems[key];
+
+    if (items == null) return (<Clothes>[], ClosetLoadStatus.missing);
+    return (
+      List<Clothes>.from(items),
+      _corruptOwners.contains(key)
+          ? ClosetLoadStatus.corrupt
+          : ClosetLoadStatus.ok,
+    );
+  }
+
+  @override
+  Future<ClosetBackupState?> loadClosetBackupStateFor(String ownerKey) async {
+    return _backupStates[_normalizeKey(ownerKey)];
+  }
+
+  @override
+  Future<void> saveClosetBackupStateFor(
+    String ownerKey,
+    ClosetBackupState state,
+  ) async {
+    if (saveBackupStateError case final error?) {
+      throw error;
+    }
+
+    _backupStates[_normalizeKey(ownerKey)] = state;
+  }
+
+  @override
+  Future<void> clearClosetBackupStateFor(String ownerKey) async {
+    _backupStates.remove(_normalizeKey(ownerKey));
+  }
+
+  /// 저장된 계정 옷장을 '값은 있는데 망가짐'으로 읽히게 합니다. 그 계정에 다시 저장하면 풀립니다.
+  /// 목록은 [items] 로 바꿉니다(망가진 값에서 읽어 낸 옷).
+  void markClosetCorrupt(String ownerKey, {List<Clothes> items = const []}) {
+    final key = _normalizeKey(ownerKey);
+    _accountItems[key] = List<Clothes>.from(items);
+    _corruptOwners.add(key);
+  }
+
+  /// 계정의 백업 상태입니다. 시험이 저장·삭제 여부를 볼 때 씁니다.
+  ClosetBackupState? backupStateFor(String ownerKey) {
+    return _backupStates[_normalizeKey(ownerKey)];
+  }
+
+  /// 계정의 백업 상태를 직접 넣습니다(이미 맞춘 기기 흉내).
+  void putBackupState(String ownerKey, ClosetBackupState state) {
+    _backupStates[_normalizeKey(ownerKey)] = state;
   }
 
   @override

@@ -1,12 +1,15 @@
 // 로그인 사용자별 옷장, 선택 의류, 인증 세션을 메모리와 로컬 저장소에 동기화하는 파일입니다.
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'models/analysis_history_record.dart';
+import 'models/closet_backup_state.dart';
 import 'models/closet_sort_option.dart';
 import 'models/clothes.dart';
 import 'services/auth_api_service.dart';
 import 'services/auth_session_storage_service.dart';
+import 'services/closet_backup_api_service.dart';
 import 'services/closet_storage_service.dart';
 
 /// 앱 전역에서 사용하는 옷장·사용자 상태를 보관하고 변경 시 화면에 알립니다.
@@ -43,11 +46,53 @@ class ClosetProvider with ChangeNotifier {
   int _sortMutationVersion = 0;
   AuthSession? _authSession;
 
+  // 옷장 서버 백업(DECISIONS 242)입니다. null 이면 백업을 모두 건너뜁니다(시험 기본값).
+  final ClosetBackupApi? _backupApi;
+
+  /// 옷장 변경을 모아 서버에 한 번에 올리기까지 기다리는 시간입니다.
+  final Duration backupUploadDelay;
+
+  /// 서버에 닿지 못한 첫 맞춤을 옷장이 바뀔 때 다시 하기까지 두는 최소 간격입니다.
+  final Duration firstSyncRetryInterval;
+
+  final DateTime Function() _now;
+
+  Timer? _backupUploadTimer;
+  bool _isBackupUploading = false;
+  // 올리는 중에 또 바뀌면 끝난 뒤 한 번 더 올립니다.
+  bool _isBackupUploadQueued = false;
+  // 첫 맞춤 뒤 처음 올릴 때의 표시입니다. 그 사이 기기 변경이 없는데 409 가 오면 덮지 않고
+  // 한 번 더 받아 합칩니다 — 첫 맞춤과 업로드 사이에 다른 폰이 넣은 옷이 빠지지 않게.
+  ({String ownerKey, int mutationVersion})? _firstSyncUpload;
+  // 첫 맞춤이 진행 중인 옷장 주인들입니다. 주인마다 따로 두어, A 의 받기가 걸린 사이 로그인한 B 가 건너뛰어지지 않게 합니다.
+  final Set<String> _firstSyncRunningOwnerKeys = {};
+  // 탈퇴 대화상자가 떠 있는 동안 백업 예약을 멈춥니다([cancelScheduledClosetBackup]).
+  bool _isBackupPaused = false;
+  // 탈퇴 정리 중인 옷장 주인입니다. 그사이 끝난 받기가 지운 옷장·상태를 되살리지 않게 합니다.
+  String? _purgingOwnerKey;
+  // 첫 맞춤에서 서버에 닿지 못한 옷장 주인입니다. 그 옷장이 바뀌면 첫 맞춤을 다시 해 봅니다.
+  String? _firstSyncRetryOwnerKey;
+  DateTime? _lastFirstSyncAttemptAt;
+  Timer? _firstSyncRetryTimer;
+  // 이번 실행에서 서버가 거절해(413·422 등) 백업을 멈춘 옷장 주인들입니다.
+  final Set<String> _backupRejectedOwnerKeys = {};
+  // 백업 요청이 401 을 받은 토큰들입니다. 같은 토큰으로는 이번 실행에 다시 보내지 않습니다.
+  final Set<String> _backupUnauthorizedTokens = {};
+  final StreamController<int> _closetRestoreController =
+      StreamController<int>.broadcast();
+  bool _isDisposed = false;
+
   ClosetProvider({
     ClosetStorage? storage,
     AuthSessionStorage? authSessionStorage,
+    ClosetBackupApi? backupApi,
+    this.backupUploadDelay = const Duration(seconds: 2),
+    this.firstSyncRetryInterval = const Duration(seconds: 30),
+    DateTime Function()? now,
   }) : _storageService = storage ?? ClosetStorageService(),
-       _authSessionStorage = authSessionStorage ?? AuthSessionStorageService();
+       _authSessionStorage = authSessionStorage ?? AuthSessionStorageService(),
+       _backupApi = backupApi,
+       _now = now ?? DateTime.now;
 
   UnmodifiableListView<Clothes> get items => UnmodifiableListView(_items);
 
@@ -109,6 +154,9 @@ class ClosetProvider with ChangeNotifier {
   ClosetSortOption get closetSortOption => _closetSortOption;
 
   bool get isAuthenticated => _authSession != null && !_authSession!.isExpired;
+
+  /// 서버 백업에서 옷을 되살릴 때마다 되살린 벌 수를 보냅니다. 화면은 이것으로 배너를 띄웁니다.
+  Stream<int> get closetRestores => _closetRestoreController.stream;
 
   /// 기기에 표시할 닉네임을 갱신하고 로컬 저장소에도 기록합니다.
   /// 사용자가 직접 바꾼 값이므로 이후 서버 프로필 동기화가 덮어쓰지 않습니다.
@@ -256,6 +304,9 @@ class ClosetProvider with ChangeNotifier {
     Object? closetClearError;
     StackTrace? closetClearStackTrace;
 
+    _cancelBackupTimers();
+    _purgingOwnerKey = ownerKey;
+
     if (ownerKey != null) {
       try {
         await _storageService.clearClothesListFor(ownerKey);
@@ -263,9 +314,21 @@ class ClosetProvider with ChangeNotifier {
         closetClearError = error;
         closetClearStackTrace = stackTrace;
       }
+
+      // 옷장 키가 지워지면 다음 로드가 상태도 지우지만, 여기서도 지워 남지 않게 합니다.
+      try {
+        await _storageService.clearClosetBackupStateFor(ownerKey);
+      } catch (error, stackTrace) {
+        closetClearError ??= error;
+        closetClearStackTrace ??= stackTrace;
+      }
     }
 
-    await logout();
+    try {
+      await logout();
+    } finally {
+      _purgingOwnerKey = null;
+    }
 
     if (closetClearError != null) {
       Error.throwWithStackTrace(
@@ -276,7 +339,12 @@ class ClosetProvider with ChangeNotifier {
   }
 
   /// 메모리의 사용자·옷장 상태와 기기에 저장된 인증 정보를 초기화합니다.
+  ///
+  /// 서버 백업과 맞춘 상태는 남겨, 같은 계정으로 다시 로그인하면 받아 합치지 않고 이어서 올립니다.
   Future<void> logout() async {
+    _cancelBackupTimers();
+    _isBackupPaused = false;
+    _firstSyncRetryOwnerKey = null;
     _mutationVersion++;
     _items.clear();
     _selectedClothes = null;
@@ -418,11 +486,17 @@ class ClosetProvider with ChangeNotifier {
       if (_hasSignedOut) {
         throw StateError('로그아웃한 뒤에는 옷장을 저장하지 않습니다.');
       }
+      // 로그인 중인데 주인이 없으면 공용 칸에 들어가 다음 이메일 계정 옷장에 합쳐지고,
+      // 이 계정의 서버 백업에도 오르지 않습니다([setUserProfile] 과 같은 원칙).
+      if (_authSession != null) {
+        throw StateError('로그인 중인데 옷장 주인이 없어 저장하지 않습니다.');
+      }
       await _storageService.saveClothesList(_items);
       return;
     }
 
     await _storageService.saveClothesListFor(ownerKey, _items);
+    _onAccountClosetSaved(ownerKey);
   }
 
   /// 새 의류를 목록과 현재 리포트 대상으로 등록한 뒤 저장합니다.
@@ -463,8 +537,14 @@ class ClosetProvider with ChangeNotifier {
     // 로그인 전에 시작한 저장은 넣을 계정 옷장이 없습니다.
     if (ownerKey == null) return false;
 
-    final savedItems = await _storageService.loadClothesListOrNullFor(ownerKey);
-    if (savedItems == null) return false;
+    final (savedItems, status) = await _storageService
+        .loadClothesListWithStatusFor(ownerKey);
+    if (status == ClosetLoadStatus.missing) return false;
+
+    // 망가진 값을 읽은 목록으로 덮으므로, 그 계정의 백업 상태를 먼저 지워 다음 동기화가 합치기가 되게 합니다.
+    if (status == ClosetLoadStatus.corrupt) {
+      await _storageService.clearClosetBackupStateFor(ownerKey);
+    }
 
     await _storageService.saveClothesListFor(ownerKey, [
       ...savedItems,
@@ -577,6 +657,7 @@ class ClosetProvider with ChangeNotifier {
         previousItems = List<Clothes>.from(_items);
         previousSelected = _selectedClothes;
         mutationVersion = ++_mutationVersion;
+        _carryFirstSyncUploadPast(mutationVersion);
       }
 
       _items[index] = updated;
@@ -630,10 +711,15 @@ class ClosetProvider with ChangeNotifier {
     required bool migrateLegacyData,
   }) async {
     // 존재 확인과 로드를 한 번의 읽기로 처리해 시작 경로의 저장소 I/O를 줄입니다.
-    final accountItems = await _storageService.loadClothesListOrNullFor(
-      ownerKey,
-    );
-    final hasAccountData = accountItems != null;
+    final (accountItems, accountStatus) = await _storageService
+        .loadClothesListWithStatusFor(ownerKey);
+    final hasAccountData = accountStatus != ClosetLoadStatus.missing;
+
+    // 계정 옷장 키가 없거나 값이 망가졌으면 서버 백업과 맞춘 상태도 믿을 수 없습니다.
+    // 저장보다 먼저 지워, 다음 동기화가 서버 백업을 받아 합치게 합니다(DECISIONS 242).
+    if (accountStatus != ClosetLoadStatus.ok) {
+      await _storageService.clearClosetBackupStateFor(ownerKey);
+    }
 
     // 예전 공용 옷장은 계정 옷장에 실제로 합쳐 저장한 뒤에만 비워서 유실을 막습니다.
     final legacyItems = migrateLegacyData
@@ -641,7 +727,7 @@ class ClosetProvider with ChangeNotifier {
         : null;
     final shouldClearLegacyData = legacyItems != null;
 
-    final savedItems = [...?accountItems, ...?legacyItems];
+    final savedItems = [...accountItems, ...?legacyItems];
     final migratedItems = savedItems
         .where((item) => !_isLegacySampleClothes(item))
         .toList();
@@ -654,6 +740,7 @@ class ClosetProvider with ChangeNotifier {
     _selectedClothes = _items.isNotEmpty ? _items.last : null;
 
     if (!hasAccountData ||
+        accountStatus == ClosetLoadStatus.corrupt ||
         shouldClearLegacyData ||
         migratedItems.length != savedItems.length) {
       await _storageService.saveClothesListFor(ownerKey, _items);
@@ -669,6 +756,482 @@ class ClosetProvider with ChangeNotifier {
     _items.clear();
     _selectedClothes = null;
     _closetOwnerKey = null;
+  }
+
+  /// 이 기기 옷장을 서버 백업과 맞추고, 서버에서 새로 들어온 옷 수를 돌려줍니다(DECISIONS 242).
+  ///
+  /// 스플래시(세션 유효)와 로그인 뒤 동기화가 [setUserProfile] 바로 뒤에 부릅니다. 이 계정 백업과
+  /// 맞춘 적이 없을 때만 서버 백업을 받아 합치고(첫 맞춤), 이미 맞췄으면 바뀐 내용만 올립니다.
+  /// 기다리는 것은 받기·합치기·상태 저장까지이고 올리기는 기다리지 않습니다. 예외를 던지지 않습니다.
+  Future<int> syncClosetBackup() async {
+    final api = _backupApi;
+    final ownerKey = _closetOwnerKey;
+    final token = _backupToken;
+    final userId = _userId;
+
+    if (api == null || ownerKey == null || token == null || userId == null) {
+      return 0;
+    }
+    if (!_firstSyncRunningOwnerKeys.add(ownerKey)) return 0;
+
+    try {
+      final state = await _storageService.loadClosetBackupStateFor(ownerKey);
+      if (ownerKey != _closetOwnerKey) return 0;
+
+      if (state != null &&
+          state.matches(userId: userId, apiBaseUrl: api.baseUrl)) {
+        // 켜기만 한 폰은 지문이 같아 올리지 않습니다 — 다른 폰에서 바꾼 백업을 덮지 않게.
+        if (closetFingerprint(_items) != state.fingerprint) {
+          _scheduleBackupUpload();
+        }
+        return 0;
+      }
+
+      return await _runFirstSync(
+        api,
+        ownerKey: ownerKey,
+        token: token,
+        userId: userId,
+      );
+    } catch (error) {
+      // 옷 이름·소재가 로그에 남지 않게 오류의 종류만 적습니다.
+      debugPrint('옷장 서버 백업과 맞추지 못했습니다: ${error.runtimeType}');
+      return 0;
+    } finally {
+      _firstSyncRunningOwnerKeys.remove(ownerKey);
+    }
+  }
+
+  /// 예약된 백업 올리기를 거두고, [scheduleClosetBackup]·로그아웃 전까지 새로 예약하지 않습니다.
+  /// 탈퇴 요청 전에 부릅니다 — 올리는 중이던 요청이 끝난 뒤 다시 올리는 것도 막습니다.
+  void cancelScheduledClosetBackup() {
+    _isBackupPaused = true;
+    _cancelBackupTimers();
+  }
+
+  /// [cancelScheduledClosetBackup] 으로 거둔 예약을 되돌립니다 — 서버에 닿지 못한 첫 맞춤이 있으면 그것을,
+  /// 아니면 올리기를 예약합니다(올리기는 지금 옷장이 맞춘 내용과 다를 때만 보냅니다).
+  void scheduleClosetBackup() {
+    _isBackupPaused = false;
+    final ownerKey = _closetOwnerKey;
+    if (ownerKey != null) _onAccountClosetSaved(ownerKey);
+  }
+
+  // 첫 맞춤: 서버 백업을 받아, 기기 목록 + 기기에 짝이 없는 서버 옷으로 합치고, 올리기 전에
+  // '서버 판을 이 기기 표기로 본 지문'을 상태로 남깁니다.
+  //
+  // [conflictMutationVersion] 은 첫 올리기가 409 를 받아 한 번 더 받을 때 그 순간의 변경 번호입니다.
+  // 이때 기기는 이미 '맞춘 기기'라, 받는 사이 기기가 바뀌었으면 합치지 않고 폰 우선으로 올립니다
+  // — 합치면 그사이 지운 옷이 되살아납니다.
+  Future<int> _runFirstSync(
+    ClosetBackupApi api, {
+    required String ownerKey,
+    required String token,
+    required int userId,
+    int? conflictMutationVersion,
+  }) async {
+    final isRetry = conflictMutationVersion != null;
+
+    if (_isBackupStopped(ownerKey, token)) return 0;
+
+    _lastFirstSyncAttemptAt = _now();
+    final result = await api.fetch(accessToken: token);
+
+    final ClosetBackupFetched fetched;
+    switch (result) {
+      case ClosetBackupFetched():
+        fetched = result;
+      case ClosetBackupFetchFailed(failure: ClosetBackupFailure.unavailable):
+        // 다시 받기는 이미 맞춘 기기라, 다음 변경 때 보통 올리기(409 면 폰 우선)로 이어 갑니다.
+        if (!isRetry) _firstSyncRetryOwnerKey = ownerKey;
+        return 0;
+      case ClosetBackupFetchFailed(:final failure):
+        _stopBackup(failure, ownerKey: ownerKey, token: token);
+        return 0;
+    }
+
+    if (ownerKey != _closetOwnerKey ||
+        ownerKey == _purgingOwnerKey ||
+        token != _backupToken ||
+        fetched.userId != userId) {
+      return 0;
+    }
+
+    // 서버 옷을 하나라도 못 읽으면 합치지도 올리지도 않습니다 — 읽지 못한 백업을 덮지 않게.
+    final serverItems = _parseBackupClothes(fetched.items);
+    if (serverItems == null) return 0;
+
+    // 상태는 그대로 둡니다 — 그사이 폰 우선으로 올려 받은 더 새 판을 이 받기의 판으로 되돌리지 않게.
+    if (isRetry && conflictMutationVersion != _mutationVersion) {
+      _scheduleBackupUpload();
+      return 0;
+    }
+
+    // 계산과 반영 사이에 await 를 두지 않아, 그 사이 들어온 변경을 잃지 않게 합니다.
+    final merged = _mergeWithBackupClothes(_items, serverItems);
+    final restoredCount = merged.length - _items.length;
+
+    if (restoredCount > 0) {
+      final mutationVersion = ++_mutationVersion;
+      final previousItems = List<Clothes>.of(_items);
+      final previousSelected = _selectedClothes;
+
+      _items
+        ..clear()
+        ..addAll(merged);
+      _selectedClothes = _items.last;
+      _notifyIfAlive();
+
+      try {
+        await _storageService.saveClothesListFor(ownerKey, merged);
+      } catch (error) {
+        if (mutationVersion == _mutationVersion) {
+          _items
+            ..clear()
+            ..addAll(previousItems);
+          _selectedClothes = previousSelected;
+          _notifyIfAlive();
+        }
+        debugPrint('서버 백업에서 받은 옷을 저장하지 못했습니다: ${error.runtimeType}');
+        return 0;
+      }
+
+      // 저장하는 사이 다른 계정으로 바뀌었으면 그 계정 화면에 알리지 않습니다.
+      if (!_isDisposed && ownerKey == _closetOwnerKey) {
+        _closetRestoreController.add(restoredCount);
+      }
+    }
+
+    final mutationVersionAfterMerge = _mutationVersion;
+    if (ownerKey == _purgingOwnerKey) return restoredCount;
+
+    try {
+      // 올리기보다 먼저 남겨, 올리기가 실패해도 이 기기는 '맞춘 기기'가 됩니다.
+      // 그래야 다음 실행에서 다시 합쳐 이 기기에서 지운 옷이 돌아오지 않습니다.
+      await _storageService.saveClosetBackupStateFor(
+        ownerKey,
+        ClosetBackupState(
+          userId: userId,
+          apiBaseUrl: api.baseUrl,
+          version: fetched.version,
+          fingerprint: closetFingerprint(serverItems),
+        ),
+      );
+    } catch (error) {
+      debugPrint('옷장 백업 상태를 저장하지 못했습니다: ${error.runtimeType}');
+      return restoredCount;
+    }
+
+    if (_firstSyncRetryOwnerKey == ownerKey) _firstSyncRetryOwnerKey = null;
+
+    if (ownerKey == _closetOwnerKey &&
+        closetFingerprint(_items) != closetFingerprint(serverItems)) {
+      _firstSyncUpload = isRetry
+          ? null
+          : (ownerKey: ownerKey, mutationVersion: mutationVersionAfterMerge);
+      _scheduleBackupUpload();
+    }
+
+    return restoredCount;
+  }
+
+  // 서버 이력 반영은 사용자가 바꾼 것이 아니라, 첫 맞춤 직후라면 409 때 다시 받아 합치는 보호를 그대로 둡니다.
+  // (스플래시·로그인은 첫 맞춤 바로 뒤에 이력을 맞추므로, 세면 다른 폰 옷이 늘 폰 우선 재전송에 덮입니다.)
+  void _carryFirstSyncUploadPast(int mutationVersion) {
+    final firstSync = _firstSyncUpload;
+
+    if (firstSync != null &&
+        firstSync.ownerKey == _closetOwnerKey &&
+        firstSync.mutationVersion == mutationVersion - 1) {
+      _firstSyncUpload = (
+        ownerKey: firstSync.ownerKey,
+        mutationVersion: mutationVersion,
+      );
+    }
+  }
+
+  // 옷장이 바뀌어 계정 칸에 저장된 뒤 부릅니다.
+  void _onAccountClosetSaved(String ownerKey) {
+    if (_backupApi == null) return;
+
+    if (_firstSyncRetryOwnerKey == ownerKey) {
+      _scheduleFirstSyncRetry();
+      return;
+    }
+
+    _scheduleBackupUpload();
+  }
+
+  void _scheduleBackupUpload() {
+    if (_backupApi == null || _isDisposed || _isBackupPaused) return;
+
+    _backupUploadTimer?.cancel();
+    _backupUploadTimer = Timer(backupUploadDelay, () {
+      _backupUploadTimer = null;
+      unawaited(_runBackupUpload());
+    });
+  }
+
+  // 서버에 닿지 못한 첫 맞춤을 다시 합니다. 마지막 시도에서 [firstSyncRetryInterval] 은 둡니다.
+  void _scheduleFirstSyncRetry() {
+    if (_isDisposed || _isBackupPaused) return;
+
+    var delay = backupUploadDelay;
+    final lastAttemptAt = _lastFirstSyncAttemptAt;
+
+    if (lastAttemptAt != null) {
+      final remaining =
+          firstSyncRetryInterval - _now().difference(lastAttemptAt);
+      if (remaining > delay) delay = remaining;
+    }
+
+    _firstSyncRetryTimer?.cancel();
+    _firstSyncRetryTimer = Timer(delay, () {
+      _firstSyncRetryTimer = null;
+      unawaited(syncClosetBackup());
+    });
+  }
+
+  void _cancelBackupTimers() {
+    // 올리는 중 대기하던 다시 올리기도 거둡니다 — 끝난 뒤 새 타이머가 생기지 않게.
+    _isBackupUploadQueued = false;
+    _backupUploadTimer?.cancel();
+    _backupUploadTimer = null;
+    _firstSyncRetryTimer?.cancel();
+    _firstSyncRetryTimer = null;
+  }
+
+  // 지금 옷장을 서버에 올립니다. 동시에 하나만 보내고, 보낼 값은 보내는 순간 한 번에 잡습니다.
+  Future<void> _runBackupUpload() async {
+    final api = _backupApi;
+    if (api == null || _isDisposed) return;
+
+    if (_isBackupUploading) {
+      _isBackupUploadQueued = true;
+      return;
+    }
+
+    final ownerKey = _closetOwnerKey;
+    final token = _backupToken;
+    final userId = _userId;
+
+    if (ownerKey == null || token == null || userId == null) return;
+    if (_isBackupStopped(ownerKey, token)) return;
+
+    _isBackupUploading = true;
+    var retryFirstSync = false;
+    int? firstSyncMutationVersionAtConflict;
+
+    try {
+      final state = await _storageService.loadClosetBackupStateFor(ownerKey);
+
+      // 상태를 읽는 사이 계정이 바뀌었으면 보내지 않습니다.
+      if (ownerKey != _closetOwnerKey ||
+          token != _backupToken ||
+          userId != _userId) {
+        return;
+      }
+      if (state == null ||
+          !state.matches(userId: userId, apiBaseUrl: api.baseUrl)) {
+        return;
+      }
+
+      final snapshot = List<Clothes>.of(_items);
+      final sentFingerprint = closetFingerprint(snapshot);
+      if (sentFingerprint == state.fingerprint) return;
+
+      final payload = snapshot.map((item) => item.toJson()).toList();
+      final firstSync = _firstSyncUpload;
+      _firstSyncUpload = null;
+      final firstSyncMutationVersion = firstSync?.ownerKey == ownerKey
+          ? firstSync?.mutationVersion
+          : null;
+
+      var result = await api.upload(
+        accessToken: token,
+        userId: userId,
+        baseVersion: state.version,
+        items: payload,
+      );
+
+      if (result is ClosetBackupConflict) {
+        final isSameSession =
+            ownerKey == _closetOwnerKey && token == _backupToken;
+
+        if (isSameSession && firstSyncMutationVersion == _mutationVersion) {
+          // 첫 맞춤 뒤 이 기기는 그대로인데 다른 기기가 먼저 바꿨으면, 덮지 않고 한 번 더 받아 합칩니다.
+          retryFirstSync = true;
+          firstSyncMutationVersionAtConflict = _mutationVersion;
+          return;
+        }
+
+        if (!isSameSession) return;
+
+        // 폰 우선: 같은 목록을 지금 서버 판 위에 한 번 더 보냅니다. 또 409 면 다음 변경 때.
+        result = await api.upload(
+          accessToken: token,
+          userId: userId,
+          baseVersion: result.currentVersion,
+          items: payload,
+        );
+      }
+
+      switch (result) {
+        case ClosetBackupUploaded(:final version):
+          // 보낼 때 잡아 둔 주인의 상태에 씁니다(그사이 주인이 바뀌었어도).
+          await _storageService.saveClosetBackupStateFor(
+            ownerKey,
+            ClosetBackupState(
+              userId: userId,
+              apiBaseUrl: api.baseUrl,
+              version: version,
+              fingerprint: sentFingerprint,
+            ),
+          );
+          if (ownerKey == _closetOwnerKey &&
+              closetFingerprint(_items) != sentFingerprint) {
+            _isBackupUploadQueued = true;
+          }
+        case ClosetBackupConflict():
+          break;
+        case ClosetBackupUploadFailed(:final failure):
+          _stopBackup(failure, ownerKey: ownerKey, token: token);
+      }
+    } catch (error) {
+      debugPrint('옷장 서버 백업을 올리지 못했습니다: ${error.runtimeType}');
+    } finally {
+      _isBackupUploading = false;
+
+      if (retryFirstSync && !_isBackupPaused) {
+        unawaited(
+          _retryFirstSyncAfterConflict(
+            api,
+            ownerKey,
+            token,
+            userId,
+            conflictMutationVersion: firstSyncMutationVersionAtConflict!,
+          ),
+        );
+      } else if (_isBackupUploadQueued) {
+        _isBackupUploadQueued = false;
+        _scheduleBackupUpload();
+      }
+    }
+  }
+
+  Future<void> _retryFirstSyncAfterConflict(
+    ClosetBackupApi api,
+    String ownerKey,
+    String token,
+    int userId, {
+    required int conflictMutationVersion,
+  }) async {
+    if (_isDisposed || !_firstSyncRunningOwnerKeys.add(ownerKey)) return;
+
+    try {
+      await _runFirstSync(
+        api,
+        ownerKey: ownerKey,
+        token: token,
+        userId: userId,
+        conflictMutationVersion: conflictMutationVersion,
+      );
+    } catch (error) {
+      debugPrint('옷장 서버 백업과 다시 맞추지 못했습니다: ${error.runtimeType}');
+    } finally {
+      _firstSyncRunningOwnerKeys.remove(ownerKey);
+    }
+  }
+
+  // 401 은 그 토큰으로, 거절은 그 옷장 주인으로 이번 실행 동안 멈춥니다. 403 주인 불일치와
+  // 못 닿음은 이번 시도만 버립니다.
+  void _stopBackup(
+    ClosetBackupFailure failure, {
+    required String ownerKey,
+    required String token,
+  }) {
+    switch (failure) {
+      case ClosetBackupFailure.unauthorized:
+        _backupUnauthorizedTokens.add(token);
+      case ClosetBackupFailure.rejected:
+        _backupRejectedOwnerKeys.add(ownerKey);
+        debugPrint('서버가 옷장 백업을 거절해 이번 실행 동안 멈춥니다.');
+      case ClosetBackupFailure.ownerMismatch:
+      case ClosetBackupFailure.unavailable:
+        break;
+    }
+  }
+
+  bool _isBackupStopped(String ownerKey, String token) {
+    return _backupRejectedOwnerKeys.contains(ownerKey) ||
+        _backupUnauthorizedTokens.contains(token);
+  }
+
+  // 만료된 세션의 토큰으로는 백업을 부르지 않습니다.
+  String? get _backupToken =>
+      isAuthenticated ? _authSession!.accessToken : null;
+
+  void _notifyIfAlive() {
+    if (!_isDisposed) notifyListeners();
+  }
+
+  // 서버 백업의 원소를 모두 옷으로 읽습니다. 하나라도 못 읽으면 null 입니다.
+  static List<Clothes>? _parseBackupClothes(List<Object?> rawItems) {
+    final items = <Clothes>[];
+
+    for (final rawItem in rawItems) {
+      if (rawItem is! Map) return null;
+
+      try {
+        items.add(Clothes.fromJson(Map<String, dynamic>.from(rawItem)));
+      } catch (_) {
+        return null;
+      }
+    }
+
+    return items;
+  }
+
+  /// 첫 맞춤 합치기: 기기 목록(순서·내용 그대로) + 기기에 짝이 없는 서버 옷(서버 순서)입니다.
+  ///
+  /// 짝은 등록 시각이 둘 다 있으면 그 글자와 서버 저장 id 가 모두 같을 때, 둘 다 없으면 저장
+  /// 글자 전체가 같을 때이고, 한쪽만 있으면 짝이 아닙니다. 한 벌은 한 번만 짝이 됩니다.
+  static List<Clothes> _mergeWithBackupClothes(
+    List<Clothes> localItems,
+    List<Clothes> serverItems,
+  ) {
+    final unmatchedLocal = <String, int>{};
+
+    for (final item in localItems) {
+      final key = _backupMatchKey(item);
+      unmatchedLocal[key] = (unmatchedLocal[key] ?? 0) + 1;
+    }
+
+    final merged = List<Clothes>.of(localItems);
+
+    for (final item in serverItems) {
+      final key = _backupMatchKey(item);
+      final remaining = unmatchedLocal[key] ?? 0;
+
+      if (remaining > 0) {
+        unmatchedLocal[key] = remaining - 1;
+      } else {
+        merged.add(item);
+      }
+    }
+
+    return merged;
+  }
+
+  // 같은 키 = 짝입니다. 등록 시각이 있는 옷('r:')과 없는 옷('j:')은 키가 겹치지 않습니다.
+  static String _backupMatchKey(Clothes item) {
+    final json = item.toJson();
+    final registeredAt = json['registeredAt'];
+
+    if (registeredAt != null) {
+      return 'r:$registeredAt|${item.savedResultId}';
+    }
+    return 'j:${jsonEncode(json)}';
   }
 
   /// 계정별 옷장의 주인 키입니다. 이메일 계정은 지금까지처럼 정규화한 이메일을 써서 이미 저장된
@@ -842,5 +1405,13 @@ class ClosetProvider with ChangeNotifier {
     }
 
     await _storageService.clearClothesListFor(ownerKey);
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    _cancelBackupTimers();
+    _closetRestoreController.close();
+    super.dispose();
   }
 }
