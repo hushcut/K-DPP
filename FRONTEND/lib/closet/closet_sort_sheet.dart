@@ -33,12 +33,12 @@ extension _ClosetSortSheet on _ClosetScreenState {
                 ),
                 const SizedBox(height: 20),
                 _buildSortOptionTile(
-                  label: '친환경 순',
+                  label: '탄소 낮은 순',
                   value: ClosetSortOption.eco,
                   primaryText: primaryText,
                 ),
                 _buildSortOptionTile(
-                  label: '건강도 순',
+                  label: '소재 점수 순',
                   value: ClosetSortOption.health,
                   primaryText: primaryText,
                 ),

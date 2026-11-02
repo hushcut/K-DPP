@@ -448,7 +448,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
         ),
         const SizedBox(height: 8),
         Text(
-          '탄소발자국 계산에 사용할 의류 무게 범위를 선택해 주세요.',
+          '소재 생산 단계 예상 탄소배출량 계산에 사용할 의류 무게 범위를 선택해 주세요.',
           style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
         ),
         const SizedBox(height: 18),
@@ -607,7 +607,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
       ),
       const SizedBox(height: 8),
       Text(
-        '실제 무게를 알고 있다면 더 정확하게 탄소발자국을 계산할 수 있어요.',
+        '실제 무게를 알고 있다면 그 무게로 소재 생산 단계 예상 탄소배출량을 계산할 수 있어요.',
         style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
       ),
       const SizedBox(height: 18),

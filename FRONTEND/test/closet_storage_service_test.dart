@@ -170,7 +170,7 @@ void main() {
       expect(await service.loadClosetSortOption(), ClosetSortOption.custom);
     });
 
-    test('저장된 값이 없으면 친환경 순으로 시작한다', () async {
+    test('저장된 값이 없으면 탄소 낮은 순으로 시작한다', () async {
       final service = ClosetStorageService();
 
       expect(await service.loadClosetSortOption(), ClosetSortOption.eco);

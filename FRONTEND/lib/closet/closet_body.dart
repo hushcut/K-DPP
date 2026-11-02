@@ -101,6 +101,7 @@ extension _ClosetBody on _ClosetScreenState {
           const SizedBox(height: 10),
           Text(
             '현재 정렬: $_sortLabel',
+            textAlign: TextAlign.center,
             style: TextStyle(color: palette.secondaryText, fontSize: 13),
           ),
           const SizedBox(height: 6),

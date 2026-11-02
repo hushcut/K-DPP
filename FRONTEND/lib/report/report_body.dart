@@ -251,7 +251,8 @@ Widget _buildReportBody(
           ),
           const SizedBox(height: 8),
           Text(
-            '이 수치는 전체 생애주기 배출량이 아닙니다. 소재와 무게를 바탕으로 원료·소재 생산 단계에서 발생한 탄소 배출량을 추정한 값입니다.',
+            '이 수치는 전체 생애주기 배출량이 아닙니다. 소재와 무게를 바탕으로 원료·소재 생산 단계에서 발생한 탄소 배출량을 추정한 값입니다. '
+            '${_carbonAssumptionText(item)}',
             style: TextStyle(color: secondaryText, fontSize: 13),
           ),
           const SizedBox(height: 16),
@@ -320,7 +321,7 @@ Widget _buildReportBody(
           ),
           _buildHistoryRow(
             '권장 조치',
-            item.health <= 20 ? '재사용·기부·분리배출 검토' : '현재 관리 방식 유지',
+            item.health <= 20 ? '세탁 지침 확인' : '현재 관리 방식 유지',
             primaryText: primaryText,
             secondaryText: secondaryText,
           ),

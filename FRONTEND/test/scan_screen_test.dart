@@ -202,7 +202,7 @@ void main() {
       expect(materialField('20'), findsOneWidget);
       expect(find.textContaining('찬물 손세탁'), findsOneWidget);
       // 소재를 고치지 않았으니 서버 건강도를 그대로 쓴다.
-      expect(find.textContaining('건강도: 72%'), findsOneWidget);
+      expect(find.textContaining('소재 참고 점수: 72점'), findsOneWidget);
       semantics.dispose();
     });
 
@@ -1143,7 +1143,7 @@ void main() {
       expect(find.text(outerNotice), findsOneWidget);
       expect(find.text(acetateNotice), findsNothing);
       expect(find.textContaining(noBasisPreview), findsNothing);
-      expect(find.textContaining('임시 예상 탄소발자국'), findsOneWidget);
+      expect(find.textContaining('소재 생산 단계 예상 탄소배출량(임시)'), findsOneWidget);
       expect(find.textContaining('kg CO2eq'), findsOneWidget);
 
       // 같은 소재면 대소문자가 달라도 안내가 남는다(이름은 서버 표시명 그대로 보인다).

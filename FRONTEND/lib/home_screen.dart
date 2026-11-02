@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'closet_provider.dart';
 import 'models/clothes.dart';
 import 'theme/app_palette.dart';
+import 'utils/carbon_comparison.dart';
 import 'utils/material_name.dart';
 
 /// [ClosetProvider]의 집계값을 카드 형태로 표시하고 주요 탭 이동 콜백을 제공합니다.
@@ -91,7 +92,7 @@ class HomeScreen extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  '최근 등록한 의류 상태',
+                  '최근 등록한 의류',
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
@@ -116,7 +117,7 @@ class HomeScreen extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            '최근 등록된 의류의 상태와 관리 포인트를 확인해 보세요.',
+            '최근 등록된 의류의 소재 참고 점수와 관리 포인트를 확인해 보세요.',
             style: TextStyle(fontSize: 13, color: secondaryText),
           ),
           const SizedBox(height: 16),
@@ -177,12 +178,12 @@ class HomeScreen extends StatelessWidget {
     return copied.take(2).toList();
   }
 
-  // 전체 탄소량을 표시하고 이해를 돕기 위한 소나무 환산값을 함께 제공합니다.
+  // 전체 탄소량을 표시하고 이해를 돕기 위한 자동차 주행 환산값을 함께 제공합니다.
   Widget _buildCarbonDashboard({
     required double totalCarbon,
     required int clothesCount,
   }) {
-    final savedTrees = totalCarbon <= 0 ? 0 : (totalCarbon / 6).ceil();
+    final carKm = totalCarbon / passengerCarKgCo2EqPerKm;
 
     return Container(
       width: double.infinity,
@@ -231,7 +232,7 @@ class HomeScreen extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             clothesCount > 0
-                ? '등록된 의류 $clothesCount벌 기준으로 집계된 값입니다.'
+                ? '등록된 의류 $clothesCount벌의 원료·소재 생산 단계 추정값이에요.'
                 : '의류를 등록하면 탄소 현황이 자동으로 집계됩니다.',
             style: const TextStyle(
               color: Colors.white,
@@ -249,13 +250,19 @@ class HomeScreen extends StatelessWidget {
             ),
             child: Row(
               children: [
-                const Icon(Icons.park, color: Colors.white, size: 18),
+                const Icon(
+                  Icons.directions_car_filled_outlined,
+                  color: Colors.white,
+                  size: 18,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    savedTrees > 0
-                        ? '소나무 약 $savedTrees그루 규모와 비슷해요'
-                        : '의류를 등록해 탄소 정보를 확인해 보세요',
+                    totalCarbon <= 0
+                        ? '의류를 등록해 탄소 정보를 확인해 보세요'
+                        : carKm < 0.1
+                        ? '자동차 0.1km 주행보다 적어요(참고 환산)'
+                        : '자동차 약 ${formatImpactValue(carKm)}km 주행과 비슷해요(참고 환산)',
                     style: const TextStyle(color: Colors.white, fontSize: 13),
                   ),
                 ),
@@ -286,13 +293,13 @@ class HomeScreen extends StatelessWidget {
 
     if (latestItem == null) {
       tipTitle = '오늘의 관리 팁';
-      tipBody = '새 의류를 등록하면 소재와 상태를 바탕으로 맞춤 관리 팁을 제공할 수 있어요.';
+      tipBody = '새 의류를 등록하면 소재를 바탕으로 맞춤 관리 팁을 제공할 수 있어요.';
       iconData = Icons.tips_and_updates_outlined;
       iconColor = Colors.orange;
       iconBgColor = isDark ? const Color(0xFF3A2C1F) : Colors.orange.shade50;
     } else if (averageHealth < 40) {
-      tipTitle = '의류 컨디션 점검이 필요해요';
-      tipBody = '현재 평균 건강도가 낮아요. 건조기 사용을 줄이고 세탁 지침을 우선 확인해 주세요.';
+      tipTitle = '의류 관리를 점검해 보세요';
+      tipBody = '평균 소재 참고 점수가 낮아요. 건조기 사용을 줄이고 세탁 지침을 우선 확인해 주세요.';
       iconData = Icons.warning_amber_rounded;
       iconColor = Colors.redAccent;
       iconBgColor = isDark ? const Color(0xFF3A2222) : Colors.red.shade50;
@@ -399,7 +406,7 @@ class HomeScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            '스캔 탭에서 케어 라벨을 촬영하면 의류 상태와 관리 정보를 여기서 확인할 수 있어요.',
+            '스캔 탭에서 케어 라벨을 촬영하면 의류 소재와 관리 정보를 여기서 확인할 수 있어요.',
             style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
           ),
           if (onStartScan != null) ...[
@@ -447,6 +454,7 @@ class HomeScreen extends StatelessWidget {
     final Color statusTextColor = percentage > 70
         ? palette.successText
         : (percentage > 40 ? palette.warningText : palette.dangerText);
+    final scoreText = percentage > 20 ? '$percentage점' : '점수 없음';
 
     return Semantics(
       button: onTap != null,
@@ -480,7 +488,7 @@ class HomeScreen extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      '$percentage%',
+                      scoreText,
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         color: statusTextColor,
@@ -498,13 +506,13 @@ class HomeScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 Semantics(
-                  label: '건강 상태 $percentage퍼센트',
-                  value: '$percentage%',
+                  label: '소재 참고 점수 $scoreText',
+                  value: scoreText,
                   child: ExcludeSemantics(
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(4),
                       child: LinearProgressIndicator(
-                        value: percentage / 100,
+                        value: percentage > 20 ? percentage / 100 : 0,
                         backgroundColor: progressBackgroundColor,
                         color: statusColor,
                         minHeight: 8,
@@ -532,14 +540,14 @@ class HomeScreen extends StatelessWidget {
   // 건강도 구간을 사용자가 이해하기 쉬운 관리 문구로 변환합니다.
   String _buildHealthSubtitle(Clothes item) {
     if (item.health <= 20) {
-      return '수명 만료에 가까워요. 재사용 또는 분리배출 방법을 함께 확인해 보세요.';
+      return '점수 정보가 없어요. 세탁 지침을 확인해 주세요.';
     }
     if (item.health <= 40) {
-      return '관리 주의 단계예요. 세탁 빈도와 건조 방식을 점검해 주세요.';
+      return '소재 기준으로 관리에 주의가 필요해요. 세탁 빈도와 건조 방식을 점검해 주세요.';
     }
     if (item.health <= 70) {
-      return '현재 상태는 보통이에요. 세탁 지침을 지키면 더 오래 입을 수 있어요.';
+      return '소재 기준으로 보통이에요. 세탁 지침을 지키면 더 오래 입을 수 있어요.';
     }
-    return '현재 상태가 좋아요. 지금의 관리 방식을 유지해 주세요.';
+    return '소재 기준으로 좋은 편이에요. 지금의 관리 방식을 유지해 주세요.';
   }
 }

@@ -155,8 +155,8 @@ extension _ClosetListViews on _ClosetScreenState {
               title: item.title,
               category: item.category,
               status: item.health > 20
-                  ? '건강 상태: ${item.health}%'
-                  : '수명 만료 (배출 권장)',
+                  ? '소재 참고 점수: ${item.health}점'
+                  : '점수 정보 없음',
               statusColor: item.health > 20
                   ? palette.statusGoodText
                   : palette.statusBadText,
@@ -253,9 +253,7 @@ extension _ClosetListViews on _ClosetScreenState {
             item: item,
             title: item.title,
             category: item.category,
-            status: item.health > 20
-                ? '건강 상태: ${item.health}%'
-                : '수명 만료 (배출 권장)',
+            status: item.health > 20 ? '소재 참고 점수: ${item.health}점' : '점수 정보 없음',
             statusColor: item.health > 20
                 ? palette.statusGoodText
                 : palette.statusBadText,
