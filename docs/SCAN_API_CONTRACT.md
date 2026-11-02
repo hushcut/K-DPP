@@ -84,12 +84,14 @@ Authorization: Bearer <token>
 
 `warnings`(2026-10-11 추가, 422 `detail` 에도 있음)는 AI 가 붙인 주의 메모 목록입니다. `generic:unpaired_ratio_rows` 같은
 `<부위>:<코드>` 모양의 소재 판정 경고와 "OCR 좌표를 바탕으로 재구성한 줄 순서를 사용했습니다." 같은 한국어 처리 안내가
-섞여 있어, 화면에 보이려면 아는 코드만 문구로 바꾸고 나머지는 무시해야 합니다. **지금 앱은 읽지 않습니다**(표시 여부는 앱 몫 —
-DECISIONS 211). AI 의 `confidence`·`parse_evidence`·`ocr` 는 응답에 없습니다(DECISIONS 210).
+섞여 있어, 앱은 아는 코드만 문구로 바꾸고 나머지는 보이지 않습니다(`scan_warning_notices.dart`). 200 의 부위 안내(`composition_part:*`)와
+가죽 추정 안내(`implicit_leather_composition:*`)는 결과 화면에, 422 의 재촬영 권고(`composition_action:retake_composition_region`)는 종류 선택
+시트의 실패 이유 아래에 보입니다. 부위·재촬영 코드 표는 `AI/kdpp_ai_ocr_integrated/README.md` 의 '공개 부위·재촬영 안내 (`warnings`, R4)' 절이고,
+가죽 추정 코드는 그 표에 없어 앱이 접두어로 판별합니다. AI 의 `confidence`·`parse_evidence`·`ocr` 는 응답에 없습니다(DECISIONS 210).
 
 ### `material_details`의 프론트 사용 (2026-09-08 추가)
 
-프론트는 `materials`의 키가 아니라 **`material_details[].display_name`(한글명)**을 편집 폼의
+프론트는 `materials`의 키가 아니라 **`material_details[].display_name`(한글명. 서버 표에 없는 소재는 AI 가 돌려준 영문 소재 키 — 예: `acetate`)**을 편집 폼의
 소재 키로 씁니다(`scan_result.dart` `displayMaterials` → `scan_draft_service.dart`).
 그 키는 화면 표기뿐 아니라 **저장 전 프리뷰 탄소값**과 **옷장에 저장되는 건강도**를
 구하는 데도 쓰이고, 저장 시 `/api/carbon/calculate`로 그대로 전송됩니다.
@@ -99,11 +101,11 @@ DECISIONS 211). AI 의 `confidence`·`parse_evidence`·`ocr` 는 응답에 없�
 | `display_name` | 편집 폼 소재명 · 로컬 계수/건강도 조회 키 · 저장 요청의 `materials` 키 |
 | `standard_name` | 표시명 역조회에만 사용 (`displayNameFor`) |
 | `original_name` | 표시명 역조회 기준 |
-| `is_supported` | 현재 미사용 |
+| `is_supported` | `false` 면 그 소재의 `display_name` 으로 결과 화면에 '읽었지만 탄소 계산 기준이 없어 저장할 수 없어요' 안내를 보임(폼에서 고치거나 지우면 사라짐) |
 
-따라서 **`display_name` 값은 서버 소재 표(`BACKEND/init_data.py`의 `MATERIAL_SEEDS`)의
-`name_ko`·`aliases` 안에 있어야 합니다.** 여기 없는 이름을 내려보내면 저장 요청이
-400 `MATERIAL_NOT_FOUND`로 거부됩니다.
+따라서 **저장되려면 `display_name` 값이 서버 소재 표(`BACKEND/init_data.py`의 `MATERIAL_SEEDS`)의
+`name_ko`·`aliases` 안에 있어야 합니다.** 표에 없는 소재는 `is_supported: false` 로 이름을 그대로 내려보내고,
+그 이름으로 저장하면 400 `MATERIAL_NOT_FOUND`로 거부됩니다.
 
 프론트의 로컬 추정기(`clothing_estimator.dart`)는 영문 표준명 기준의 계수표를 갖고 있어
 한글 표시명을 되돌리는 별칭 표를 함께 둡니다. 이 표가 서버 시드를 따라오지 못하면
@@ -111,9 +113,10 @@ DECISIONS 211). AI 의 `confidence`·`parse_evidence`·`ocr` 는 응답에 없�
 (2026-09-08 이전의 실제 동작). **`BACKEND/tests/test_material_name_contract.py`가
 두 표를 맞대어 검사**하므로 시드에 소재를 추가할 때는 프론트 별칭 표도 함께 갱신해야 합니다.
 
-⚠️ 프론트 계수표의 **숫자**는 아직 서버 시드와 다릅니다(예: 울 25.0 vs 서버 13.9).
-위 별칭 표는 이름 대응만 맞춘 것이라, 프리뷰 값과 저장 후 서버 값은 여전히 벌어집니다.
-계수 정본을 어디에 둘지는 미결(`NEXT_WORK.md` D08).
+프론트 계수표의 **숫자**는 서버 시드의 사본입니다. 지금은 모두 같고, 어긋나면
+`BACKEND/tests/test_material_name_contract.py` 가 실패합니다.
+계수가 같아도 프리뷰는 의류 종류의 대표 무게로, 저장값은 무게 범위의 중간으로 계산해 값이 다를 수 있습니다.
+계수 정본을 어디에 둘지는 미결입니다.
 
 ## 2. 스캔 오류
 
@@ -142,11 +145,11 @@ DECISIONS 211). AI 의 `confidence`·`parse_evidence`·`ocr` 는 응답에 없�
 > `BACKEND/API_CONTRACT.md`의 error_code 목록은 백엔드 내부 참고용이며, 두 문서가
 > 어긋나면 이 표가 우선합니다.
 >
-> **`error_code` 열은 백엔드 내부 규약이고 프론트 동작의 근거가 아닙니다.**
-> `FRONTEND/lib`·`test` 전체에서 `error_code`/`errorCode` 검색 결과가 0건입니다.
-> 프론트가 응답 본문에서 읽는 것은 `message`/`detail`/`error`/`reason`뿐이고,
-> 그마저 화면 문구로 쓰이지 않습니다(`userMessage`는 enum 고정 문자열).
-> **프론트 동작을 가르는 유일한 축은 HTTP 상태코드입니다.**
+> **`error_code` 열은 대부분 백엔드 내부 규약이고 프론트 동작의 근거가 아닙니다.**
+> 스캔 오류에서 프론트가 `error_code` 로 가르는 것은 하루 한도 둘(`SCAN_DAILY_LIMIT`·`SCAN_UNAVAILABLE`)뿐입니다.
+> 같은 503 이 `AI_MODULE_FAILED` 에도 쓰이고 본문 없는 프록시 오류와도 구분해야 하기 때문입니다(`scan_api_service.dart`).
+> 스캔 오류의 안내 문구에는 서버의 `message`·`error`·`reason` 을 쓰지 않습니다(`userMessage`는 enum 고정 문자열). 422 `detail` 의 값은 아래 '422 `detail`의 프론트 사용'대로 씁니다.
+> **그 밖의 스캔 오류에서 프론트 동작을 가르는 축은 HTTP 상태코드입니다.**
 
 | HTTP | error_code | 프론트 처리 |
 | --- | --- | --- |
@@ -156,15 +159,16 @@ DECISIONS 211). AI 의 `confidence`·`parse_evidence`·`ocr` 는 응답에 없�
 | 413 | `PAYLOAD_TOO_LARGE` | 사진 용량 초과 안내 (상한 10MB) |
 | 415 | `UNSUPPORTED_IMAGE_FORMAT` | 지원하지 않는 이미지 안내 (JPEG/PNG/WebP만 허용) ※ |
 | 422 | `MATERIAL_EXTRACTION_FAILED` | 소재 직접 입력 흐름 (소재를 못 찾았거나 부분 인식 — 2026-10-11부터 부분 인식도 422) |
-| 429 | `SCAN_DAILY_LIMIT` | **전용 분기 없음** — '사진을 분석하지 못했어요. 직접 입력해 주세요.'(`unknown`) + 소재 직접 입력 흐름 (2-5절) |
-| 502 | `OCR_FAILED` | 소재 직접 입력 안내 + `다시 촬영` 버튼 제공 |
-| 503 | `AI_MODULE_FAILED`·`SCAN_UNAVAILABLE` | **전용 분기 없음** — 아래 '그 외 5xx'와 같게 처리됨 (`SCAN_UNAVAILABLE` 은 2-5절) |
+| 429 | `SCAN_DAILY_LIMIT` | '오늘 사진 분석 횟수를 다 썼어요. 직접 입력하거나 내일 다시 시도해 주세요.'(`dailyLimit`) + 소재 직접 입력 흐름 (2-5절) |
+| 502 | `OCR_FAILED` | 아래 '그 외 5xx'와 같은 문구(라벨이 아니라 OCR 서비스 실패) + 소재 직접 입력 흐름 |
+| 503 | `AI_MODULE_FAILED`·`SCAN_UNAVAILABLE` | `SCAN_UNAVAILABLE` 은 '오늘은 사진 분석을 더 할 수 없어요. 직접 입력해 주세요.'(`serviceDailyLimit`) + 소재 직접 입력 흐름 (2-5절) · `AI_MODULE_FAILED` 는 전용 분기 없이 아래 '그 외 5xx'와 같게 처리됨 |
 | 504 | `OCR_TIMEOUT` | 시간 초과 안내 + 직접 입력 유도 (2026-10-11부터 백엔드가 냄 — Vision 시간 초과) |
 | 500 · 그 외 5xx | — | 일시적 서버 문제 안내 (`statusCode >= 500` 폴백) |
 
-**503에 대한 주의**: 프론트에 503 전용 case가 없어 `statusCode >= 500` 폴백을 타고
-500·504와 **똑같은 문구**가 나옵니다. 이전 판에 적혀 있던 "서버/AI 모듈 문제 안내"는
-구현되지 않은 내용이었습니다(2026-09-08 정정).
+**503에 대한 주의**: `AI_MODULE_FAILED` 의 503 은 전용 case 가 없어 `statusCode >= 500` 폴백을 타고
+500·502 와 **똑같은 문구**('분석 서비스에 일시적인 문제가 생겼어요. 다시 시도하거나 직접 입력해 주세요.')가 나옵니다.
+504 는 시간 초과 문구입니다. `SCAN_UNAVAILABLE` 의 503 은 `error_code` 로 먼저 갈라 따로 안내합니다.
+`다시 촬영`은 어느 한 오류의 전용 버튼이 아니라, 실패 때 여는 종류 선택 시트에 공통으로 있습니다.
 
 **503이 실제로 나는 경우**: 서버 기동 시 `from apps...` import 실패(`BACKEND/main.py` 의
 `extract_label_input`·`ensure_label_parser` — OCR·분석·라벨 파서 모듈), 그리고 2026-10-07부터 서버 전체 하루 사진 분석 상한
@@ -193,6 +197,9 @@ Vision 일시 장애를 503 으로 내지 않는 것은 위 두 경우와 섞이
 | `care_instruction` | 관리 지침 문구 | AI 가 읽은 관리 지침(예: `'표백 금지; 찬물 세탁'`), 못 읽으면 상수 `'라벨 표기법에 맞춰 관리하세요.'` |
 | `raw_ocr_preview` | '인식된 라벨 원문' 카드 | AI가 읽어낸 라벨 글자 (상한 220자) |
 
+`detail.warnings` 는 폼에 넣지 않습니다. 재촬영 권고 코드가 있으면 종류 선택 시트의 실패 이유 아래에 안내를 보입니다
+(위 `warnings` 설명).
+
 **`partial_materials`는 거의 늘 비어 있습니다.** 2026-10-11 AI 통합부터 부분 인식도 422 지만, AI 는 확정하지 못한
 비율을 실패 응답에 담지 않고 `materials`·`parts` 를 `{}` 로 비웁니다(합계를 맞추거나 나머지 소재를 추측하지 않음 —
 AI 담당 10-11 전달). 서버가 값을 채우는 것은 AI 가 성공이라고 했는데 합계가 100 이 아닌 드문 경우뿐입니다.
@@ -205,10 +212,9 @@ AI 담당 10-11 전달). 서버가 값을 채우는 것은 AI 가 성공이라�
 `analysis_failure_reason: "RATIO_INCOMPLETE"` 로 200 이 나갔고, 프론트가 `ai_success` 를 읽지 않아 화면에는
 "스캔 완료!"로 표시됐습니다. 2026-10-11부터 이 경우가 422 라 직접 입력 흐름으로 갑니다(DECISIONS 200).
 
-※ **415의 WebP 허용은 백엔드 상수(`main.py:52`) 기준입니다.** AI 계층은 JPEG/PNG만 받습니다
-(`ksw/ai-ocr-enhancement`의 `SUPPORTED_IMAGE_FORMATS`). 현재는 백엔드가 OCR 텍스트를
-직접 다루므로 문제되지 않지만, HTTP 서비스로 전환하면 정합이 필요합니다
-(`docs/AI_REQUESTS.md` F-6).
+※ **415의 WebP 허용은 백엔드 상수(`BACKEND/main.py` 의 `SUPPORTED_IMAGE_TYPES`) 기준입니다.** AI 계층
+(`apps/text/ocr_image.py` 의 `SUPPORTED_IMAGE_FORMATS`)은 JPEG·PNG·WebP·MPO 를 받아 어긋나지 않습니다.
+앱의 415 안내 문구는 JPG·PNG 만 말합니다.
 
 ## 2-1. 인증 오류 (401 / 403)
 
@@ -226,9 +232,10 @@ AI 담당 10-11 전달). 서버가 값을 채우는 것은 AI 가 성공이라�
 로그인만 반복하게 되기 때문입니다. `scan_api_service` / `carbon_api_service` /
 `auth_api_models` 세 곳 모두 이 구분을 따릅니다.
 
-> **현재 백엔드는 403을 발생시키지 않습니다.** 관리자 기능 등 권한 구분이 생길 때를 대비한
-> 예약 코드이며, 프론트에만 처리 경로가 준비돼 있습니다. 백엔드에는 오류 코드 맵
-> (`DEFAULT_ERROR_CODES`)에만 `403: "AUTH_REQUIRED"`로 등록돼 있습니다.
+> **스캔·탄소 계산 경로에서 백엔드는 403을 내지 않습니다.** 관리자 기능 등 권한 구분이 생길 때를 대비한
+> 예약 코드이며, 프론트에 처리 경로가 준비돼 있습니다. 오류 코드 맵(`DEFAULT_ERROR_CODES`)에 `403: "AUTH_REQUIRED"`로
+> 등록돼 있고, 지금 403 을 내는 곳은 옷장 백업 `POST /me/closet` 의 `CLOSET_OWNER_MISMATCH`(로그인한 계정의 옷장이
+> 아님) 하나입니다.
 
 ## 2-2. 로그인·가입 시도 제한 (429)
 
@@ -437,10 +444,10 @@ SQLite 때 있던 두 경합 — 지워진 `user_id`로 고아 행이 남는 것
 | 세는 것 | Vision 을 부르기 직전에 센다. 성공·422·502·504 모두 세고 되돌리지 않음(키가 없는 로컬·리허설 서버의 502 도 세므로 한 계정 21번째부터 429) |
 | 세지 않는 것 | `raw_ocr_text` 로 OCR 을 건너뛴 요청, 413·415, OCR·분석·라벨 파서 모듈 없음(503 `AI_MODULE_FAILED` — Vision 전에 확인), 막힌 요청 |
 
-**프론트 처리(앱 변경 없음)**: 429 는 전용 case 가 없어 `ScanApiErrorType.unknown`
-('사진을 분석하지 못했어요. 직접 입력해 주세요.'), 503 은 '그 외 5xx'('분석 서비스에 일시적인
-문제가 생겼어요. 다시 시도하거나 직접 입력해 주세요.')로 종류 선택 시트 맨 위에 보이고 소재 직접
-입력으로 넘어갑니다. '오늘 횟수를 다 썼다'는 이유를 보이려면 `case 429:` 를 더하면 됩니다(선택).
+**프론트 처리**: 두 응답 모두 `error_code` 로 가려 따로 안내합니다. 429 는 `ScanApiErrorType.dailyLimit`
+('오늘 사진 분석 횟수를 다 썼어요. 직접 입력하거나 내일 다시 시도해 주세요.'), 503 은 `serviceDailyLimit`
+('오늘은 사진 분석을 더 할 수 없어요. 직접 입력해 주세요.')로 종류 선택 시트 맨 위에 보이고 소재 직접
+입력으로 넘어갑니다. 같은 503 이라도 `AI_MODULE_FAILED` 는 '그 외 5xx' 문구입니다.
 
 받아들인 한계: 한 사람이 계정을 여럿 만들어 서버 전체 상한을 다 쓰면 그날 자정까지 모든 사용자가 503
 (직접 입력)입니다. 청구 최악값은 지켜지고, 운영자가 app 을 다시 띄우면 풀립니다(`deploy/README.md` 'Vision 키').
@@ -505,6 +512,7 @@ Authorization: Bearer <token>
 
 - 로그인 토큰이 있으면 서버 탄소 계산을 먼저 시도합니다.
 - 서버 계산 성공 시 `carbon_footprint`, `carbon_footprint_min`, `carbon_footprint_max`, `saved_result_id`를 서버값으로 저장합니다.
-- 인증 만료, 네트워크 오류, 서버 오류가 발생하면 로컬 추정값으로 저장하고 사용자에게 안내합니다. 다만 앱 소재표(서버 표의 사본)에 없는 소재가 있으면 추정할 근거가 없으므로 저장하지 않고 입력을 그대로 둡니다.
+- 서버가 입력을 거절하면(400·422) 저장하지 않고 입력을 그대로 둔 채 이유를 안내합니다.
+- 인증 만료, 네트워크 오류, 시간 초과, 서버 오류, 403 등 그 밖의 4xx, 응답 해석 실패가 발생하면 로컬 추정값으로 저장하고 사용자에게 안내합니다. 다만 앱 소재표(서버 표의 사본)에 없는 소재가 있으면 추정할 근거가 없으므로 저장하지 않고 입력을 그대로 둡니다.
 - 스캔 단계의 임시 결과는 서버 저장값으로 취급하지 않습니다.
 

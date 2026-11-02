@@ -37,6 +37,15 @@ flutter run \
   --dart-define=API_BASE_URL=http://192.168.0.10:8000
 ```
 
+배포 서버로 빌드할 때는 `API_BASE_URL`에 배포 주소를 전달합니다. 빠뜨려도 빌드는 성공하지만
+앱이 개발용 기본 주소로 요청해 서버에 닿지 못합니다. `kakao.env`는 아래 카카오 로그인 안내를 따릅니다.
+
+```bash
+flutter build apk --release \
+  --dart-define=API_BASE_URL=https://api.kdpp-app.com \
+  --dart-define-from-file=kakao.env
+```
+
 각 API 주소를 따로 지정해야 할 때는 기존 환경변수도 사용할 수 있습니다.
 
 ```powershell
@@ -69,8 +78,9 @@ flutter run --dart-define-from-file=kakao.env
 ## Android 네트워크 정책
 
 - Debug/Profile 빌드는 로컬 FastAPI 연결을 위해 HTTP 통신을 허용합니다.
-- Release 빌드는 평문 HTTP를 허용하지 않으므로 HTTPS 운영 주소를
-  `API_BASE_URL`로 전달해야 합니다.
+- Release 빌드에는 HTTPS 운영 주소를 `API_BASE_URL`로 전달합니다. 매니페스트의 HTTP 허용은
+  Debug/Profile 에만 있지만, Dart 의 HTTP 통신은 이 설정을 따르지 않아 Release 도 `http://` 주소로
+  요청이 나갑니다. 평문 전송을 막아 주는 장치로 믿으면 안 됩니다.
 - 카메라 권한은 라벨 스캔 화면에서 사용합니다.
 
 ## iOS 실행 준비

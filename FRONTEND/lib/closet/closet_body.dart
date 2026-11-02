@@ -434,7 +434,7 @@ class _ClosetPalette {
   final Color leadingBgColor;
   final Color shadowColor;
 
-  /// 카드의 건강 상태 글자색입니다. 수명 만료 글자는 붉은 카드 바탕에서도 4.5:1 을 넘습니다(C54).
+  /// 카드의 소재 참고 점수 글자색입니다. '점수 정보 없음' 글자는 붉은 카드 바탕에서도 4.5:1 을 넘습니다(C54).
   final Color statusGoodText;
   final Color statusBadText;
 

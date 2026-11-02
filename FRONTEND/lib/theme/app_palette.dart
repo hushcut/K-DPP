@@ -50,7 +50,7 @@ class AppPalette {
   /// 흰 글자·아이콘을 얹는 바탕(버튼·카드)은 이 색이 아니라 [accent] 그대로입니다(C55).
   final Color accentForeground;
 
-  /// 글자로 쓰는 경고·삭제·만료 색입니다. 라이트는 수명 만료 카드의 붉은 바탕(#FFEBEE)에서도
+  /// 글자로 쓰는 경고·삭제 색입니다. 라이트는 '점수 정보 없음' 카드의 붉은 바탕(#FFEBEE)에서도
   /// 4.5:1 을 넘는 #C62828, 다크는 원래 쓰던 redAccent(카드 5.3:1)입니다(C54).
   /// 아이콘·테두리는 3:1 이면 되므로 그대로 redAccent 를 씁니다.
   final Color dangerText;
