@@ -52,6 +52,52 @@ def read_image(path, exif_transpose):
     return np.ascontiguousarray(np.asarray(image)[:, :, ::-1])  # OpenCV 순서(BGR)
 
 
+def load_models(exp, det_model, rec_model, det_params, textline_orientation_model=None):
+    detector = baseline.TextDetection(model_name=det_model, model_dir=str(exp / f"models/base/{det_model}_infer"),
+                                      device="cpu", enable_mkldnn=False, **det_params)
+    recognizer = baseline.TextRecognition(model_name=rec_model, model_dir=str(exp / f"models/base/{rec_model}_infer"),
+                                          device="cpu", enable_mkldnn=False)
+    classifier = None
+    if textline_orientation_model:
+        from paddleocr import TextLineOrientationClassification
+        classifier = TextLineOrientationClassification(
+            model_name=textline_orientation_model, model_dir=str(exp / f"models/base/{textline_orientation_model}_infer"),
+            device="cpu", enable_mkldnn=False)
+    return detector, recognizer, classifier
+
+
+def read_lines(image, models, max_side, max_pixels=None):
+    """BGR 이미지 한 장의 글자 줄을 읽는다. polygon은 scale을 곱한 입력 기준 좌표다."""
+    detector, recognizer, classifier = models
+    original_hw = list(image.shape[:2])
+    scale = min(1.0, max_side / max(original_hw))
+    if max_pixels:
+        scale = min(scale, (max_pixels / (original_hw[0] * original_hw[1])) ** 0.5)
+    if scale < 1:
+        image = baseline.cv2.resize(image, None, fx=scale, fy=scale, interpolation=baseline.cv2.INTER_AREA)
+    detected = list(detector.predict(image))[0]
+    polygons = sorted(detected["dt_polys"], key=lambda q: (q[:, 1].min(), q[:, 0].min()))
+    kept, skipped = [], 0
+    for index, polygon in enumerate(polygons):
+        crop, rotated = baseline.crop_quad(image, polygon)
+        if crop.shape[0] < 12 or crop.shape[1] < 24:
+            skipped += 1
+            continue
+        kept.append(({"index": index, "polygon": polygon.tolist(), "rotated": rotated}, crop))
+    if classifier and kept:
+        for i, ((entry, crop), angle) in enumerate(zip(kept, classifier.predict([c for _, c in kept]))):
+            entry["textline_angle"] = 180 if int(angle["class_ids"][0]) == 1 else 0
+            if entry["textline_angle"] == 180:
+                kept[i] = (entry, baseline.cv2.rotate(crop, baseline.cv2.ROTATE_180))
+    predictions = list(recognizer.predict([crop for _, crop in kept])) if kept else []
+    if len(predictions) != len(kept):
+        raise RuntimeError("글자 영역 수와 인식 결과 수가 다릅니다.")
+    lines = [{**entry, "text": result["rec_text"].strip(), "score": round(float(result["rec_score"]), 4)}
+             for (entry, _), result in zip(kept, predictions)]
+    return {"original_hw": original_hw, "scale": scale, "detected_lines": len(polygons),
+            "recognized_lines": len(lines), "skipped_small": skipped, "lines": lines}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--photos", required=True, type=Path)
@@ -85,19 +131,8 @@ def main():
                      ("paddlepaddle", "paddleocr", "paddlex", "numpy", "opencv-contrib-python", "Pillow")},
     }
     load_started = time.perf_counter()
-    detector = baseline.TextDetection(model_name=settings["det_model"],
-                                      model_dir=str(exp / "models/base/PP-OCRv5_server_det_infer"),
-                                      device="cpu", enable_mkldnn=False, **det_params)
-    recognizer = baseline.TextRecognition(model_name=settings["rec_model"],
-                                          model_dir=str(exp / "models/base/korean_PP-OCRv5_mobile_rec_infer"),
-                                          device="cpu", enable_mkldnn=False)
-    classifier = None
-    if args.textline_orientation:
-        from paddleocr import TextLineOrientationClassification
-        classifier = TextLineOrientationClassification(
-            model_name=settings["textline_orientation_model"],
-            model_dir=str(exp / f"models/base/{settings['textline_orientation_model']}_infer"),
-            device="cpu", enable_mkldnn=False)
+    models = load_models(exp, settings["det_model"], settings["rec_model"], det_params,
+                         settings["textline_orientation_model"])
     settings["model_load_seconds"] = round(time.perf_counter() - load_started, 3)
     args.output.mkdir(parents=True)
     (args.output / "run_config.json").write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -106,37 +141,13 @@ def main():
         photo = args.photos / item["source"]
         started = time.perf_counter()
         image = read_image(photo, args.exif_transpose)
-        original_hw = list(image.shape[:2])
-        scale = min(1.0, args.max_side / max(original_hw))
-        if args.max_pixels:
-            scale = min(scale, (args.max_pixels / (original_hw[0] * original_hw[1])) ** 0.5)
-        if scale < 1:
-            image = baseline.cv2.resize(image, None, fx=scale, fy=scale, interpolation=baseline.cv2.INTER_AREA)
-        detected = list(detector.predict(image))[0]
-        polygons = sorted(detected["dt_polys"], key=lambda q: (q[:, 1].min(), q[:, 0].min()))
-        kept, skipped = [], 0
-        for index, polygon in enumerate(polygons):
-            crop, rotated = baseline.crop_quad(image, polygon)
-            if crop.shape[0] < 12 or crop.shape[1] < 24:
-                skipped += 1
-                continue
-            kept.append(({"index": index, "polygon": polygon.tolist(), "rotated": rotated}, crop))
-        if classifier and kept:
-            for i, ((entry, crop), angle) in enumerate(zip(kept, classifier.predict([c for _, c in kept]))):
-                entry["textline_angle"] = 180 if int(angle["class_ids"][0]) == 1 else 0
-                if entry["textline_angle"] == 180:
-                    kept[i] = (entry, baseline.cv2.rotate(crop, baseline.cv2.ROTATE_180))
-        predictions = list(recognizer.predict([crop for _, crop in kept])) if kept else []
-        if len(predictions) != len(kept):
-            raise RuntimeError("글자 영역 수와 인식 결과 수가 다릅니다.")
-        lines = [{**entry, "text": result["rec_text"].strip(), "score": round(float(result["rec_score"]), 4)}
-                 for (entry, _), result in zip(kept, predictions)]
+        read = read_lines(image, models, args.max_side, args.max_pixels)
         seconds = round(time.perf_counter() - started, 3)
         if hashlib.sha256(photo.read_bytes()).hexdigest() != item["sha256"]:
             raise RuntimeError("실행 전후 원본 이미지 해시가 다릅니다.")
+        lines = read.pop("lines")
         result = {"id": item["id"], "source_name": photo.name, "source_sha256": item["sha256"],
-                  "status": "success", "truncated": False, "original_hw": original_hw, "scale": scale,
-                  "detected_lines": len(polygons), "recognized_lines": len(lines), "skipped_small": skipped,
+                  "status": "success", "truncated": False, **read,
                   "inference_seconds": seconds, "peak_rss_mb": peak_rss_mb(), "lines": lines}
         out = args.output / item["id"]
         out.mkdir()
