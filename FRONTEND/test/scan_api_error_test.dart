@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/services/scan_api_service.dart';
 
 void main() {
-  test('HTTP 502는 OCR 실패로 분류해 직접 입력 안내를 제공한다', () {
+  test('HTTP 502는 OCR 실패로 분류하고, 라벨 탓이 아니라 서비스 문제로 안내한다', () {
     final exception = ScanApiException.fromStatusCode(
       statusCode: 502,
       responseBody: '{"message":"AI OCR 처리에 실패했습니다."}',
@@ -10,7 +10,31 @@ void main() {
 
     expect(exception.type, ScanApiErrorType.ocrFailed);
     expect(exception.statusCode, 502);
-    expect(exception.userMessage, '라벨을 읽지 못했어요. 직접 입력해 주세요.');
+    expect(
+      exception.userMessage,
+      '분석 서비스에 일시적인 문제가 생겼어요. 다시 시도하거나 직접 입력해 주세요.',
+    );
+  });
+
+  test('본문이 코드 없는 프록시 502 도 같은 문장이고, 422 와는 문구가 나뉜다', () {
+    final proxy = ScanApiException.fromStatusCode(
+      statusCode: 502,
+      responseBody: '<html>502 Bad Gateway</html>',
+    );
+    final recognition = ScanApiException.fromStatusCode(
+      statusCode: 422,
+      responseBody: '{"error_code":"MATERIAL_EXTRACTION_FAILED"}',
+    );
+
+    expect(proxy.type, ScanApiErrorType.ocrFailed);
+    expect(
+      proxy.userMessage,
+      const ScanApiException(
+        type: ScanApiErrorType.server,
+        message: '',
+      ).userMessage,
+    );
+    expect(recognition.userMessage, '라벨을 읽지 못했어요. 직접 입력해 주세요.');
   });
 
   test('라벨을 못 읽은 것과 원인을 모르는 분석 실패를 짧은 문장으로 나눈다(DECISIONS 98)', () {

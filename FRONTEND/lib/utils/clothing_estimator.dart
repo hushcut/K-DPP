@@ -18,12 +18,11 @@ class ClothingEstimator {
   /// 서버가 모르는 소재에 쓰는 배출계수다.
   /// 소재를 아직 하나도 넣지 않은 상태의 프리뷰에도 같은 값을 쓴다.
   ///
-  /// ⚠️ **이 값은 프리뷰에서 끝나지 않는다.** 서버는 모르는 소재를
-  /// 400 `MATERIAL_NOT_FOUND`로 거부하지만, `scan_save_actions.dart`의 저장 경로는
-  /// 인증 오류가 아닌 서버 실패를 저장 중단 사유로 보지 않는다. 안내 문구만 띄우고
-  /// **이 추정값 그대로 옷장에 저장**하며, 그 항목은 `savedResultId`가 null이라
-  /// 서버 이력에 행이 없고 이후 동기화 갱신 대상도 되지 못한다
-  /// (HANDOFF '발견했으나 미해결' 1번). 표시는 '임시 추정값'으로 정직하다.
+  /// ⚠️ **근거 없는 값이다.** 로그인 상태의 저장은 서버가 거절(400)해도, 서버가 답하지
+  /// 못해도 이 값으로 옷장에 남기지 않고([materialsWithoutFactor] ·
+  /// `scan_save_actions.dart`), 표에 없는 소재가 있으면 미리보기도 숫자 대신 안내를 보인다
+  /// (DECISIONS 288).
+  /// 남는 경로는 서버 계산을 거치지 않는 비로그인 저장뿐이다(R1 범위 밖 — 사용자 2026-10-20).
   static const double defaultEmissionFactor = 10.0;
 
   /// 입력된 모든 소재 비율의 합을 계산한다.
@@ -76,6 +75,20 @@ class ClothingEstimator {
     }
 
     return double.parse(emission.toStringAsFixed(1));
+  }
+
+  /// 배출계수 표에 없는 소재를 입력 순서대로 돌려준다.
+  ///
+  /// 표가 서버 표의 사본이라 서버가 답하지 못할 때의 판정 근거로 쓴다(DECISIONS 288).
+  /// 서버가 답하면 서버 판정이 우선이다 — 표가 낡아도 서버가 받는 소재를 먼저 막지 않는다.
+  static List<String> materialsWithoutFactor(Iterable<String> materials) {
+    return [
+      for (final material in materials)
+        if (!_emissionFactorsByStandardName.containsKey(
+          MaterialName.standardize(material),
+        ))
+          material,
+    ];
   }
 
   /// 소재 구성의 단순성 및 소재 종류에 따라 초기 건강 점수를 60~95로 산정한다.

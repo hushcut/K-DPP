@@ -32,6 +32,7 @@ extension _ScanResultActions on _ScanScreenState {
       _scannedOcrPreview = draft.rawOcrPreview;
       _scanFailureMessage = failureMessage;
       _scanNotices = draft.notices;
+      _scanUnsupportedMaterials = draft.unsupportedMaterials;
       _originalScannedMaterials = Map.unmodifiable(draft.materials);
       _serverHealth = draft.serverHealth;
       _serverCarbonFootprint = draft.serverCarbonFootprint;
@@ -251,6 +252,7 @@ extension _ScanResultActions on _ScanScreenState {
       _scannedCare = '';
       _scanFailureMessage = null;
       _scanNotices = const [];
+      _scanUnsupportedMaterials = const [];
       _originalScannedMaterials = const {};
       _serverHealth = null;
       _serverCarbonFootprint = null;

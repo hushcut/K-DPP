@@ -98,7 +98,11 @@ extension _ScanCaptureActions on _ScanScreenState {
   Future<void> _showManualFallback(ScanApiException exception) async {
     if (!mounted) return;
 
-    final message = exception.userMessage;
+    // 값을 채워 둘 때는 직접 입력이 아니라 확인을 부탁합니다(DECISIONS 237·288).
+    final message =
+        _scanDraftService.prefillMaterials(exception.partialMaterials).isEmpty
+        ? exception.userMessage
+        : ScanDraftService.prefilledFailureMessage;
 
     final selectedType = await _showClothingTypePicker(
       initialSelection: _selectedClothingType,
@@ -139,6 +143,7 @@ extension _ScanCaptureActions on _ScanScreenState {
       _scannedOcrPreview = '';
       _scanFailureMessage = null;
       _scanNotices = const [];
+      _scanUnsupportedMaterials = const [];
       _originalScannedMaterials = const {};
       _serverHealth = null;
       _serverCarbonFootprint = null;

@@ -22,6 +22,7 @@ import 'services/scan_capture_service.dart';
 import 'services/scan_draft_service.dart';
 import 'services/scan_save_service.dart';
 import 'theme/app_palette.dart';
+import 'utils/clothing_estimator.dart';
 import 'utils/clothing_type_catalog.dart';
 import 'utils/scan_form_validator.dart';
 import 'utils/scan_warning_notices.dart';
@@ -104,6 +105,7 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   String? _scanFailureMessage;
   // 분석 결과에 붙은 부위·가죽 추정 안내입니다(R4). 결과 화면에만 보이고 저장하지 않습니다.
   List<String> _scanNotices = const [];
+  List<String> _scanUnsupportedMaterials = const [];
   Map<String, double> _originalScannedMaterials = const {};
   int? _serverHealth;
   double? _serverCarbonFootprint;

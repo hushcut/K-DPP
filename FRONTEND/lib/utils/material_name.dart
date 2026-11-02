@@ -150,6 +150,20 @@ class MaterialName {
     };
   }
 
+  /// 편집 폼에 넣을 이름으로 바꾼다. 서버 표에 있으면 한글명, 없으면 받은 그대로다
+  /// (성공 경로의 서버 표시명과 같은 꼴). 번역할 근거가 없는 이름을 지어내지 않는다.
+  static String formName(String material) {
+    return _koreanNamesByStandardName[standardize(material)] ?? material.trim();
+  }
+
+  /// 안내 문구에 넣을 소재 이름을 만든다. 목록을 다 늘어놓으면 길이에 끝이 없어
+  /// 첫 소재와 남은 개수만 쓴다('아세테이트 외 2개').
+  static String summarize(List<String> names) {
+    final others = names.length - 1;
+
+    return others == 0 ? names.first : '${names.first} 외 $others개';
+  }
+
   /// 소재 맵을 화면에 보여줄 (이름, 혼용률) 목록으로 바꾼다.
   ///
   /// 한 옷에 같은 소재가 '면'과 'cotton' 두 키로 들어 있을 수 있다. 이름만 바꾸면

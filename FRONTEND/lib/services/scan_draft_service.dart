@@ -1,6 +1,7 @@
 import '../models/clothing_type_option.dart';
 import '../models/scan_result.dart';
 import '../utils/clothing_type_catalog.dart';
+import '../utils/material_name.dart';
 import '../utils/scan_warning_notices.dart';
 
 /// 스캔 결과 편집 화면을 초기화하는 데 필요한 임시 입력 상태다.
@@ -13,6 +14,7 @@ class ScanDraft {
     required this.isManualMaterialMode,
     this.rawOcrPreview = '',
     this.notices = const [],
+    this.unsupportedMaterials = const [],
     this.serverHealth,
     this.serverCarbonFootprint,
     this.serverWeightGram,
@@ -33,6 +35,10 @@ class ScanDraft {
   /// 보이기만 하고 저장 이력·옷장에는 남기지 않는다. 없으면 빈 목록이다.
   final List<String> notices;
 
+  /// 서버가 `is_supported: false` 로 표시한 소재의 표시명이다. 사용자가 폼에서 고치거나 지우면
+  /// 안내도 사라져야 하므로 문구가 아니라 이름으로 넘긴다. 없으면 빈 목록이다.
+  final List<String> unsupportedMaterials;
+
   final int? serverHealth;
   final double? serverCarbonFootprint;
   final double? serverWeightGram;
@@ -46,6 +52,11 @@ class ScanDraftService {
   const ScanDraftService();
 
   static const int _maxOcrPreviewLength = 300;
+
+  /// 실패했지만 폼을 미리 채울 때 '직접 입력해 주세요' 대신 보이는 문구다. 채운 값은 확정이 아니라
+  /// 사진에서 읽은 값이므로 확인을 부탁한다. 계산은 저장 때만 한다(DECISIONS 237·288).
+  static const String prefilledFailureMessage =
+      '라벨을 확실히 읽지 못했어요. 사진에서 읽은 값이 맞는지 확인해 주세요.';
 
   /// 스캔 결과의 카테고리로 최초 의류 유형을 추론한다.
   ClothingTypeOption inferInitialType(ScanResult result) {
@@ -68,9 +79,10 @@ class ScanDraftService {
           ? scannedTitle!
           : clothingType.defaultTitle,
       isManualMaterialMode: false,
-      notices: List.unmodifiable([
-        ...ScanWarningNotices.forSuccess(result.warnings),
-        ?_unsupportedMaterialNotice(result),
+      notices: ScanWarningNotices.forSuccess(result.warnings),
+      unsupportedMaterials: List.unmodifiable([
+        for (final detail in result.materialDetails)
+          if (!detail.isSupported) detail.displayName,
       ]),
       serverHealth: result.health,
       serverCarbonFootprint: result.carbonFootprint,
@@ -81,8 +93,8 @@ class ScanDraftService {
 
   /// 소재를 직접 입력하는 수동 초안을 만든다.
   ///
-  /// 자동 분석이 실패해도 서버가 부분 인식 결과를 함께 보내면 그대로 초기값에
-  /// 채워, 이미 인식된 값을 사용자가 다시 입력하지 않게 한다. 서버가 보내지
+  /// 자동 분석이 실패해도 서버가 부분 인식 결과를 함께 보내면 [prefillMaterials]로
+  /// 초기값에 채워, 이미 인식된 값을 사용자가 다시 입력하지 않게 한다. 서버가 보내지
   /// 않으면 종전과 같이 빈 소재 목록과 기본 안내 문구를 쓴다.
   ScanDraft buildManual({
     required ClothingTypeOption clothingType,
@@ -94,7 +106,7 @@ class ScanDraftService {
 
     return ScanDraft(
       clothingType: clothingType,
-      materials: _sanitizeMaterials(partialMaterials),
+      materials: prefillMaterials(partialMaterials),
       careInstruction: normalizedCare?.isNotEmpty == true
           ? normalizedCare!
           : ScanResult.defaultCareInstruction,
@@ -104,38 +116,23 @@ class ScanDraftService {
     );
   }
 
-  /// 서버가 `is_supported: false` 로 표시한 소재(AI 는 읽지만 서버 계수표에 없는 소재)를
-  /// 결과 화면에서 미리 알린다. 서버 계산은 이 소재를 거절하고 앱은 그때 저장하지 않으므로
-  /// (AI 연동 협의안 R1), 저장 버튼을 누르기 전에 소재를 확인하게 한다. 이름은 편집 폼에 보이는
-  /// 표시명이고, 계산 거절 배너(`CarbonApiException.userMessage`)처럼 첫 소재와 남은 개수만 쓴다.
-  String? _unsupportedMaterialNotice(ScanResult result) {
-    final names = [
-      for (final detail in result.materialDetails)
-        if (!detail.isSupported) detail.displayName,
-    ];
-
-    if (names.isEmpty) return null;
-
-    final others = names.length - 1;
-    final label = others == 0 ? names.first : '${names.first} 외 $others개';
-
-    return '$label 소재는 탄소 계산 기준이 없어 이대로는 저장할 수 없어요. 소재를 확인해 주세요.';
-  }
-
-  /// 이름이 비었거나 폼에서 고칠 수 없는 비율(NaN·무한대·음수)은 제외한다.
-  Map<String, double> _sanitizeMaterials(Map<String, double> materials) {
-    final sanitized = <String, double>{};
+  /// 서버가 보낸 부분 인식 결과를 폼에 넣을 값으로 바꾼다. 비어 있으면 미리 채우지 않는다.
+  ///
+  /// 이름이 비었거나 폼에서 고칠 수 없는 비율(NaN·무한대·음수)은 제외한다. 서버는 표준명
+  /// (`cotton`)으로 보내므로 성공 경로의 표시명처럼 한글로 바꾸고, 같은 소재는 합친다.
+  Map<String, double> prefillMaterials(Map<String, double> materials) {
+    final prefilled = <String, double>{};
 
     for (final entry in materials.entries) {
-      final name = entry.key.trim();
       final ratio = entry.value;
 
-      if (name.isEmpty || !ratio.isFinite || ratio < 0) continue;
+      if (entry.key.trim().isEmpty || !ratio.isFinite || ratio < 0) continue;
 
-      sanitized[name] = ratio;
+      final name = MaterialName.formName(entry.key);
+      prefilled[name] = (prefilled[name] ?? 0) + ratio;
     }
 
-    return Map.unmodifiable(sanitized);
+    return Map.unmodifiable(prefilled);
   }
 
   /// 서버가 상한(220자)을 지키지 않아도 화면이 무너지지 않도록 길이를 자른다.

@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:k_dpp/models/scan_result.dart';
 import 'package:k_dpp/services/scan_draft_service.dart';
 import 'package:k_dpp/utils/clothing_type_catalog.dart';
+import 'package:k_dpp/utils/scan_warning_notices.dart';
 
 void main() {
   group('ScanDraftService', () {
@@ -134,7 +135,7 @@ void main() {
         );
       }
 
-      test('지원하지 않는 소재 하나는 이름을 넣어 R4 안내 뒤에 알린다', () {
+      test('지원하지 않는 소재는 이름만 넘기고 R4 안내와 섞지 않는다', () {
         final draft = service.buildFromResult(
           result: resultWith(
             [detail('면', supported: true), detail('hemp', supported: false)],
@@ -143,13 +144,12 @@ void main() {
           clothingType: ClothingTypeCatalog.defaultOption,
         );
 
-        expect(draft.notices, [
-          '겉감 기준으로 읽었어요.',
-          'hemp 소재는 탄소 계산 기준이 없어 이대로는 저장할 수 없어요. 소재를 확인해 주세요.',
-        ]);
+        // 문구로 굳히지 않고 이름으로 넘겨, 고치면 사라지게 한다(DECISIONS 288). 부위 안내는 따로 남는다.
+        expect(draft.notices, ['겉감 기준으로 읽었어요.']);
+        expect(draft.unsupportedMaterials, ['hemp']);
       });
 
-      test('여럿이면 첫 소재와 남은 개수만 쓴다', () {
+      test('문구는 읽은 것과 계산할 수 없는 것을 나눠 말하고, 여럿이면 첫 소재와 남은 개수만 쓴다', () {
         final draft = service.buildFromResult(
           result: resultWith([
             detail('hemp', supported: false),
@@ -159,9 +159,17 @@ void main() {
           clothingType: ClothingTypeCatalog.defaultOption,
         );
 
-        expect(draft.notices, [
-          'hemp 외 2개 소재는 탄소 계산 기준이 없어 이대로는 저장할 수 없어요. 소재를 확인해 주세요.',
-        ]);
+        expect(draft.unsupportedMaterials, ['hemp', 'acetate', 'alpaca']);
+        expect(
+          ScanWarningNotices.forUnsupportedMaterials(
+            draft.unsupportedMaterials,
+          ),
+          'hemp 외 2개 소재는 읽었지만 탄소 계산 기준이 없어 저장할 수 없어요. 라벨과 다르면 고쳐 주세요.',
+        );
+        expect(
+          ScanWarningNotices.forUnsupportedMaterials(const ['hemp']),
+          'hemp 소재는 읽었지만 탄소 계산 기준이 없어 저장할 수 없어요. 라벨과 다르면 고쳐 주세요.',
+        );
       });
 
       test('모두 지원하거나 소재 상세가 없으면 안내하지 않는다', () {
@@ -169,15 +177,13 @@ void main() {
           resultWith([detail('면', supported: true)]),
           ScanResult(materials: const {'cotton': 100}, careInstruction: ''),
         ]) {
-          expect(
-            service
-                .buildFromResult(
-                  result: result,
-                  clothingType: ClothingTypeCatalog.defaultOption,
-                )
-                .notices,
-            isEmpty,
+          final draft = service.buildFromResult(
+            result: result,
+            clothingType: ClothingTypeCatalog.defaultOption,
           );
+
+          expect(draft.notices, isEmpty);
+          expect(draft.unsupportedMaterials, isEmpty);
         }
       });
     });
@@ -200,10 +206,26 @@ void main() {
         rawOcrPreview: '  COTTON 60% WOOL 15%  ',
       );
 
-      expect(draft.materials, {'cotton': 60.0, 'wool': 15.0});
+      // 서버는 표준명으로 보내지만 폼에는 성공 경로처럼 한글 이름으로 보인다.
+      expect(draft.materials, {'면': 60.0, '울': 15.0});
       expect(draft.careInstruction, '손세탁; 표백 금지');
       expect(draft.rawOcrPreview, 'COTTON 60% WOOL 15%');
       expect(draft.isManualMaterialMode, isTrue);
+    });
+
+    test('미리 채울 값은 같은 소재를 합치고, 표에 없는 소재는 받은 이름 그대로 둔다', () {
+      expect(
+        service.prefillMaterials(const {
+          'cotton': 50,
+          '면': 10,
+          'acetate': 40,
+          ' cotton': 5,
+          ' ': 5,
+          'wool': -1,
+        }),
+        {'면': 65.0, 'acetate': 40.0},
+      );
+      expect(service.prefillMaterials(const {'': 60}), isEmpty);
     });
 
     test('buildManual은 서버 값이 비어 있으면 기존 기본값을 유지한다', () {
@@ -229,7 +251,7 @@ void main() {
         },
       );
 
-      expect(draft.materials, {'cotton': 60.0});
+      expect(draft.materials, {'면': 60.0});
     });
 
     test('buildManual은 지나치게 긴 라벨 원문을 잘라 낸다', () {

@@ -8,6 +8,7 @@ import '../utils/leading_zero_trimmer.dart';
 import '../utils/percent_limit_formatter.dart';
 import '../utils/scan_calculation_resolver.dart';
 import '../utils/scan_form_validator.dart';
+import '../utils/scan_warning_notices.dart';
 import 'material_edit_controller.dart';
 import 'material_input_collection.dart';
 import 'material_picker_sheet.dart';
@@ -26,6 +27,7 @@ class ScanResultView extends StatelessWidget {
     required this.isScanFailed,
     this.scanFailureMessage,
     this.scanNotices = const [],
+    this.unsupportedMaterials = const [],
     required this.titleController,
     required this.selectedClothingType,
     required this.materialInputs,
@@ -60,6 +62,9 @@ class ScanResultView extends StatelessWidget {
   /// AI 가 어느 부위를 읽었는지·가죽 100%로 보았는지 알리는 안내 문구입니다(R4).
   /// 소재를 확인하는 동안 사라지지 않게 소재 입력 바로 위에 둡니다. 없으면 그리지 않습니다.
   final List<String> scanNotices;
+
+  /// 서버가 계산 기준이 없다고 표시한 소재의 표시명입니다. 폼에 남아 있는 동안만 안내합니다.
+  final List<String> unsupportedMaterials;
 
   // 사용자가 편집하는 의류명, 의류 종류, 소재 입력 목록입니다.
   final TextEditingController titleController;
@@ -119,9 +124,11 @@ class ScanResultView extends StatelessWidget {
     final statusTitle = isScanFailed ? '스캔 실패' : '스캔 완료!';
     // 실패 원인은 아래 '직접 입력 모드' 카드만 말합니다. 여기서 원인을 정해 말하면
     // 인터넷·서버 오류 때 카드와 다른 원인이 됩니다(DECISIONS 207).
-    final statusSubtitle = isScanFailed
+    final statusSubtitle = !isScanFailed
+        ? '의류 무게 기준과 분석 결과를 확인해 주세요.'
+        : originalMaterials.isEmpty
         ? '소재와 혼용률을 직접 입력해 주세요.'
-        : '의류 무게 기준과 분석 결과를 확인해 주세요.';
+        : '소재와 혼용률을 확인해 주세요.';
 
     final form = Container(
       color: backgroundColor,
@@ -249,8 +256,9 @@ class ScanResultView extends StatelessWidget {
               ListenableBuilder(
                 listenable: materialInputs,
                 builder: (context, _) {
+                  final materials = materialInputs.collectEditedMaterials();
                   final calculation = ScanCalculationResolver.resolve(
-                    materials: materialInputs.collectEditedMaterials(),
+                    materials: materials,
                     clothingType: selectedClothingType,
                     originalMaterials: originalMaterials,
                     serverHealth: serverHealth,
@@ -258,6 +266,14 @@ class ScanResultView extends StatelessWidget {
                     serverWeightGram: serverWeightGram,
                     serverCalculationMethod: serverCalculationMethod,
                   );
+                  // 계수표에 없는 소재가 있으면 기본계수로 만든 숫자를 보이지 않습니다(DECISIONS 288).
+                  final carbonText =
+                      !calculation.usesServerCarbon &&
+                          ClothingEstimator.materialsWithoutFactor(
+                            materials.keys,
+                          ).isNotEmpty
+                      ? '계산 기준이 없는 소재가 있어요'
+                      : '${calculation.carbonFootprint.toStringAsFixed(1)} kg CO2eq';
 
                   return Container(
                     padding: const EdgeInsets.all(16),
@@ -278,7 +294,7 @@ class ScanResultView extends StatelessWidget {
                           child: Text(
                             '무게 기준: ${selectedClothingType.label} · ${selectedClothingType.weightDisplayText}\n'
                             '${calculation.usesServerHealth ? '건강도' : '예상 건강도'}: ${calculation.health}%\n'
-                            '${calculation.usesServerCarbon ? '최종 탄소발자국' : '임시 예상 탄소발자국'}: ${calculation.carbonFootprint.toStringAsFixed(1)} kg CO2eq',
+                            '${calculation.usesServerCarbon ? '최종 탄소발자국' : '임시 예상 탄소발자국'}: $carbonText',
                             softWrap: true,
                             style: TextStyle(
                               fontSize: 14,
@@ -323,15 +339,28 @@ class ScanResultView extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              if (scanNotices.isNotEmpty) ...[
-                _buildScanNotices(
-                  primaryText: primaryText,
-                  borderColor: borderColor,
-                  cardColor: cardColor,
-                  iconColor: palette.accentForeground,
-                ),
-                const SizedBox(height: 10),
-              ],
+              ListenableBuilder(
+                listenable: materialInputs,
+                builder: (context, _) {
+                  final notices = [
+                    ...scanNotices,
+                    ?_remainingUnsupportedNotice(),
+                  ];
+
+                  if (notices.isEmpty) return const SizedBox.shrink();
+
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _buildScanNotices(
+                      notices: notices,
+                      primaryText: primaryText,
+                      borderColor: borderColor,
+                      cardColor: cardColor,
+                      iconColor: palette.accentForeground,
+                    ),
+                  );
+                },
+              ),
               ListenableBuilder(
                 listenable: materialInputs,
                 builder: (context, _) {
@@ -574,7 +603,25 @@ class ScanResultView extends StatelessWidget {
 
   // 분석 결과를 어떻게 읽었는지(부위·가죽 추정) 알려, 아래 소재와 비율을 라벨과 맞춰 보게 합니다.
   // 안내마다 한 줄씩 따로 읽히게 나눕니다.
+  // 서버가 표시한 소재를 고치거나 지웠으면 더 안내하지 않습니다. 부위·가죽 안내([scanNotices])와
+  // 달리 그 소재가 폼에 남아 있는 동안만 맞는 말입니다.
+  String? _remainingUnsupportedNotice() {
+    final currentNames = {
+      for (final name in materialInputs.collectEditedMaterials().keys)
+        name.toLowerCase(),
+    };
+    final remaining = [
+      for (final name in unsupportedMaterials)
+        if (currentNames.contains(name.trim().toLowerCase())) name,
+    ];
+
+    return remaining.isEmpty
+        ? null
+        : ScanWarningNotices.forUnsupportedMaterials(remaining);
+  }
+
   Widget _buildScanNotices({
+    required List<String> notices,
     required Color primaryText,
     required Color borderColor,
     required Color cardColor,
@@ -601,10 +648,10 @@ class ScanResultView extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                for (var i = 0; i < scanNotices.length; i++) ...[
+                for (var i = 0; i < notices.length; i++) ...[
                   if (i > 0) const SizedBox(height: 4),
                   Text(
-                    scanNotices[i],
+                    notices[i],
                     softWrap: true,
                     style: TextStyle(
                       color: primaryText,
