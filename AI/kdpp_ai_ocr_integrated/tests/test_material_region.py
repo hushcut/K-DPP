@@ -111,6 +111,21 @@ def test_unmapped_exif_orientation_is_not_cropped():
         prepare_material_region(image_bytes(exif_orientation=6), (60, 190, 440, 390))
 
 
+def test_normalized_exif_image_is_cropped_in_its_upright_coordinate_frame():
+    normalized = ocr_text.validate_image_bytes(image_bytes(exif_orientation=6))
+    assert (normalized.width, normalized.height) == (600, 800)
+    region = (240, 100, 440, 230)
+    cropped = prepare_material_region(normalized.content, region)
+    with Image.open(BytesIO(cropped.content)) as image:
+        bbox = image.convert('L').point(lambda value: 255 if value < 80 else 0).getbbox()
+    assert bbox is not None
+    x, y = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+    a, b, c, d, e, f = cropped.transform
+    assert a * x + b * y + c == pytest.approx(339, abs=2)
+    assert d * x + e * y + f == pytest.approx(160, abs=2)
+    assert cropped.region == region
+
+
 def words_in_crop(words, transform):
     a, b, c, d, e, f = transform
     determinant = a*e-b*d

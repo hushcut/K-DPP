@@ -373,6 +373,12 @@ def prepare_material_region(
     if not (0 <= left < right <= validated.width and 0 <= top < bottom <= validated.height):
         raise InvalidImageError('소재 영역의 좌표가 올바르지 않습니다.')
     try:
+        # Normalizing pixels does not prove that a caller's existing box was
+        # measured in the upright frame. The OCR pipeline passes upright bytes.
+        if validated.content != content:
+            with Image.open(BytesIO(content)) as original:
+                if original.getexif().get(274, 1) != 1:
+                    raise InvalidImageError('방향이 확인되지 않은 이미지의 소재 영역은 자르지 않습니다.')
         with Image.open(BytesIO(validated.content)) as image:
             if image.getexif().get(274, 1) != 1:
                 raise InvalidImageError('방향이 확인되지 않은 이미지의 소재 영역은 자르지 않습니다.')
