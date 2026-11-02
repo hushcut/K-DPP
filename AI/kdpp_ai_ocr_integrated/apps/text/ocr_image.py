@@ -71,7 +71,7 @@ Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 @dataclass(frozen=True)
 class ValidatedImage:
     content: bytes
-    image_format: str
+    image_format: str  # Original input container; MPO content is converted to JPEG.
     width: int
     height: int
 
@@ -95,31 +95,42 @@ def read_image_bytes(image_path: str | os.PathLike[str]) -> bytes:
         raise InvalidImageError(f"이미지 파일을 읽을 수 없습니다: {image_path}") from exc
 
 
-def _convert_mpo_to_jpeg(content: bytes) -> bytes:
-    """MPO의 첫 프레임을 Vision OCR이 받을 수 있는 JPEG로 변환한다."""
+def _normalize_ocr_image(content: bytes, image_format: str) -> tuple[bytes, int, int]:
+    """원본 후보부터 방향·크기·좌표 기준을 맞추고 MPO는 JPEG로 변환한다."""
 
     try:
         with Image.open(BytesIO(content)) as image:
-            frame = ImageOps.exif_transpose(image).convert("RGB")
+            if image_format != "MPO" and image.getexif().get(274, 1) not in (2, 3, 4, 5, 6, 7, 8):
+                return content, image.width, image.height
+            frame = ImageOps.exif_transpose(image)
+            output_format = "JPEG" if image_format == "MPO" else image_format
+            options: dict[str, Any] = {"format": output_format, "exif": b""}
+            if output_format == "JPEG":
+                frame = frame.convert("RGB")
+                options.update(quality=95, optimize=True)
+            elif output_format == "WEBP":
+                options["lossless"] = True
             buffer = BytesIO()
-            frame.save(buffer, format="JPEG", quality=95, optimize=True)
+            frame.save(buffer, **options)
+            width, height = frame.size
+            _validate_image_dimensions(width, height)
     except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
         raise ImageTooLargeError(
-            "MPO 이미지가 안전한 처리 범위를 넘습니다."
+            "이미지 방향 보정이 안전한 처리 범위를 넘습니다."
         ) from exc
     except (UnidentifiedImageError, OSError, ValueError) as exc:
-        raise InvalidImageError("MPO 이미지를 JPEG로 변환하지 못했습니다.") from exc
+        raise InvalidImageError("이미지 방향 보정 또는 형식 변환에 실패했습니다.") from exc
     except MemoryError as exc:
         raise ImageTooLargeError(
-            "MPO 이미지를 변환할 메모리가 부족합니다."
+            "이미지 방향을 보정할 메모리가 부족합니다."
         ) from exc
 
     converted = buffer.getvalue()
     if len(converted) > MAX_IMAGE_BYTES:
         raise ImageTooLargeError(
-            f"변환된 MPO 이미지는 {MAX_IMAGE_BYTES // (1024 * 1024)}MB 이하여야 합니다."
+            f"변환된 이미지는 {MAX_IMAGE_BYTES // (1024 * 1024)}MB 이하여야 합니다."
         )
-    return converted
+    return converted, width, height
 
 
 def validate_image_bytes(
@@ -169,8 +180,7 @@ def validate_image_bytes(
     if image_format not in SUPPORTED_IMAGE_FORMATS:
         raise UnsupportedImageError("JPG, PNG, WEBP 또는 MPO 이미지만 지원합니다.")
 
-    if image_format == "MPO":
-        content = _convert_mpo_to_jpeg(content)
+    content, width, height = _normalize_ocr_image(content, image_format)
 
     return ValidatedImage(
         content=content,
