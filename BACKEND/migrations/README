@@ -1,0 +1,1 @@
+K-DPP 백엔드 Alembic 리비전(PostgreSQL 전용). 사용법은 BACKEND/README.md 의 'DB 마이그레이션 (Alembic)' 절.

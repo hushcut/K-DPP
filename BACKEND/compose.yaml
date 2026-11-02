@@ -1,0 +1,39 @@
+# 로컬 개발용 PostgreSQL. 앱은 지금처럼 venv 로 실행하고 DB 만 여기서 띄웁니다.
+#   docker compose up -d --wait   # BACKEND 폴더에서
+#   docker compose down           # 멈춤(데이터는 볼륨에 남음)
+#   docker compose down -v        # 멈추고 데이터까지 지움
+#
+# 계정·비밀번호는 이 컴퓨터 안에서만 쓰는 개발용 값이라 그대로 둡니다. 포트를
+# 127.0.0.1 에만 열어 같은 공유기의 다른 기기에서는 접속할 수 없습니다.
+# 배포 서버는 별도 Compose 파일과 비밀값을 씁니다.
+name: k-dpp
+
+services:
+  postgres:
+    # 메이저 버전을 고정합니다(메이저가 바뀌면 데이터 폴더를 그대로 못 씀).
+    # 18.x 안의 보안 패치는 `docker compose pull` 로 받습니다.
+    image: postgres:18-trixie
+    environment:
+      POSTGRES_USER: kdpp
+      POSTGRES_PASSWORD: kdpp
+      POSTGRES_DB: k_dpp
+    ports:
+      # 5432 를 이미 쓰고 있으면 K_DPP_DB_PORT=5433 처럼 바꾸고,
+      # K_DPP_DATABASE_URL·K_DPP_TEST_DATABASE_URL 의 포트도 맞춥니다.
+      - "127.0.0.1:${K_DPP_DB_PORT:-5432}:5432"
+    volumes:
+      # PostgreSQL 18 이미지부터 볼륨 위치가 /var/lib/postgresql 입니다
+      # (17 이하의 /var/lib/postgresql/data 가 아님).
+      - pgdata:/var/lib/postgresql
+      # 처음 만들 때만 실행됩니다: pytest 용 k_dpp_test DB 를 만듭니다.
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # -h 127.0.0.1: 처음 만들 때 init 스크립트를 돌리는 임시 서버는 소켓으로만
+      # 떠서, 소켓으로 물으면 k_dpp_test 가 생기기 전에 healthy 가 될 수 있습니다.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U kdpp -d k_dpp"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  pgdata:

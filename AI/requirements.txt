@@ -1,6 +1,0 @@
-fastapi
-uvicorn
-opencv-python
-google-cloud-vision
-pandas
-scikit-learn

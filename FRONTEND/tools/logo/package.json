@@ -1,0 +1,12 @@
+{
+  "name": "kdpp-logo-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Export and validate the approved K-DPP logo assets",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "export": "node export.cjs",
+    "verify": "node verify.cjs"
+  },
+  "devDependencies": { "sharp": "0.35.4" }
+}

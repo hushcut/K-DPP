@@ -1,39 +1,107 @@
+// 앱 시작 준비, 전역 상태 등록, 테마와 이름 기반 라우트를 구성하는 진입 파일입니다.
 import 'package:flutter/material.dart';
-import 'login_screen.dart';
-import 'main_screen.dart';
-import 'report_screen.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
 import 'package:provider/provider.dart';
 import 'closet_provider.dart';
+import 'config/kakao_config.dart';
+import 'login_screen.dart';
+import 'main_screen.dart';
+import 'splash_screen.dart';
+import 'email_login_screen.dart';
+import 'password_reset_screen.dart';
+import 'signup_screen.dart';
+import 'settings_screen.dart';
+import 'theme/app_theme.dart';
+import 'theme_provider.dart';
+import 'utils/motion_preference.dart';
+import 'display_settings_screen.dart';
+import 'material_name_display_provider.dart';
+import 'navigation_bar_opacity_provider.dart';
+import 'services/closet_backup_api_service.dart';
+import 'widgets/app_banner.dart';
+import 'widgets/closet_restore_notice.dart';
 
-void main() {
-  runApp(const MyApp());
+/// Flutter 바인딩과 화면 방향을 설정한 뒤 앱 전역 Provider를 주입합니다.
+Future<void> main() async {
+  // iOS '동작 줄이기'도 Flutter 가 애니메이션을 줄이게 기본 바인딩 대신 앱 바인딩을 만듭니다.
+  AppWidgetsBinding();
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+
+  // 키가 있는 빌드에서만 카카오 SDK 를 준비합니다(KakaoConfig). 실패해도 앱은 띄우고,
+  // 그때 카카오 로그인은 실패 안내로 끝납니다.
+  if (KakaoConfig.isEnabled) {
+    try {
+      await KakaoSdk.init(nativeAppKey: KakaoConfig.nativeAppKey);
+    } catch (error, stackTrace) {
+      debugPrint('카카오 SDK 를 준비하지 못했습니다: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
+  // 로그인한 계정의 옷장은 서버에도 백업합니다(DECISIONS 242).
+  final closetProvider = ClosetProvider(backupApi: ClosetBackupApiService());
+  final themeProvider = ThemeProvider();
+  final materialNameDisplayProvider = MaterialNameDisplayProvider();
+  final navigationBarOpacityProvider = NavigationBarOpacityProvider();
+  await themeProvider.loadThemeMode();
+  await materialNameDisplayProvider.load();
+  await navigationBarOpacityProvider.load();
+
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: closetProvider),
+        ChangeNotifierProvider.value(value: themeProvider),
+        ChangeNotifierProvider.value(value: materialNameDisplayProvider),
+        ChangeNotifierProvider.value(value: navigationBarOpacityProvider),
+      ],
+      child: const MyApp(),
+    ),
+  );
 }
 
+/// 현재 테마 설정을 반영해 K-DPP의 최상위 [MaterialApp]을 구성합니다.
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // 앱 전체에 ClosetProvider 보관소를 제공합니다!
-    return ChangeNotifierProvider(
-      create: (context) => ClosetProvider(),
-      child: MaterialApp(
-        title: 'EcoLabel',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF4A4EFE)),
-          useMaterial3: true,
-        ),
-        initialRoute: '/login',
-        routes: {
-          '/login': (context) => const LoginScreen(),
-          '/main': (context) => const MainScreen(),
-          '/report': (context) => Scaffold(
-            appBar: AppBar(title: const Text('상세 리포트')),
-            body: const ReportScreen(),
+    // ThemeProvider가 알림을 보내면 MaterialApp의 themeMode도 즉시 갱신됩니다.
+    return Consumer<ThemeProvider>(
+      builder: (context, themeProvider, child) {
+        return MaterialApp(
+          title: 'K-DPP',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.light(),
+          darkTheme: AppTheme.dark(),
+          themeMode: themeProvider.themeMode,
+          // 앱 문구가 전부 한국어라 앱 언어도 한국어로 고정합니다. 기본값(영어)이면
+          // TalkBack이 한국어 글자와 숫자를 영어 음성으로 읽습니다(2026-09-18 폰 확인).
+          locale: const Locale('ko', 'KR'),
+          supportedLocales: const [Locale('ko', 'KR')],
+          localizationsDelegates: GlobalMaterialLocalizations.delegates,
+          // 알림은 Navigator 위 공용 배너로 띄워 화면을 넘어가도 남게 합니다(AppBanner).
+          // 서버 백업에서 옷을 되살린 알림도 그 배너로 띄웁니다(ClosetRestoreNotice).
+          builder: (context, child) => AppBannerHost.builder(
+            context,
+            ClosetRestoreNotice(child: child ?? const SizedBox.shrink()),
           ),
-        },
-      ),
+          initialRoute: '/splash',
+          // 스플래시부터 인증 화면과 메인 화면까지 앱의 주요 이동 경로입니다.
+          routes: {
+            '/splash': (context) => const SplashScreen(),
+            '/login': (context) => const LoginScreen(),
+            '/email-login': (context) => const EmailLoginScreen(),
+            '/signup': (context) => const SignupScreen(),
+            '/password-reset': (context) => const PasswordResetScreen(),
+            '/settings': (context) => const SettingsScreen(),
+            '/display-settings': (context) => const DisplaySettingsScreen(),
+            '/main': (context) => const MainScreen(),
+          },
+        );
+      },
     );
   }
 }

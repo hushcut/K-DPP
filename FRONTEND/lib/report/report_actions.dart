@@ -1,0 +1,83 @@
+// 의류 삭제 확인, Provider 저장 반영과 화면 복귀 동작을 처리합니다.
+part of '../report_screen.dart';
+
+/// 삭제 확인 후 Provider에서 제거하고 변경사항을 저장한 뒤 호출 화면으로 복귀합니다.
+Future<void> _confirmDelete(
+  BuildContext context,
+  Clothes item, {
+  VoidCallback? onDeleted,
+}) async {
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+  final palette = AppPalette.of(context);
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) {
+      return AlertDialog(
+        backgroundColor: palette.card,
+        title: Text(
+          '의류 삭제',
+          style: TextStyle(
+            color: palette.textPrimary,
+          ),
+        ),
+        content: Text(
+          '"${item.title}"을(를) 삭제할까요?\n이 작업은 되돌릴 수 없습니다.',
+          style: TextStyle(
+            height: 1.5,
+            color: isDark ? const Color(0xFFD1D1D6) : const Color(0xFF444444),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppPalette.danger,
+            ),
+            child: const Text('삭제', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      );
+    },
+  );
+
+  if (confirmed != true) return;
+
+  if (!context.mounted) return;
+
+  final bool wasRemoved;
+
+  try {
+    wasRemoved = await context.read<ClosetProvider>().removeClothes(item);
+  } catch (_) {
+    // 저장 실패 시 Provider가 목록을 되돌리므로 리포트에 머물며 재시도를 안내합니다.
+    if (!context.mounted) return;
+
+    AppBanner.of(context).show(
+      '의류 삭제를 저장하지 못했어요. 다시 시도해 주세요.',
+      kind: AppBannerKind.failure,
+    );
+    return;
+  }
+
+  if (!context.mounted) return;
+
+  // 이미 지워져 있었다면 요청과 상관없이 알게 된 상태라 안내다.
+  AppBanner.of(context).show(
+    wasRemoved ? '"${item.title}"이(가) 삭제됐어요.' : '이미 옷장에서 삭제된 의류예요.',
+    kind: wasRemoved ? AppBannerKind.success : AppBannerKind.info,
+  );
+
+  if (onDeleted != null) {
+    onDeleted();
+    return;
+  }
+
+  // 맨 위 라우트만 바꾸면 그 위에 연 화면이 남거나 /main 이 두 겹이 되므로 스택을 정리합니다.
+  // (현재 셸은 항상 onDeleted를 넘기므로 도달하지 않지만, 단독 라우트로 열릴 때를 위한 대비입니다.)
+  Navigator.pushNamedAndRemoveUntil(context, '/main', (route) => false, arguments: 2);
+}

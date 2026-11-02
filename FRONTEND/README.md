@@ -1,22 +1,103 @@
-<<<<<<< HEAD
-# k_dpp
+# K-DPP Flutter Frontend
 
-A new Flutter project.
+의류 케어 라벨을 스캔하고 소재, 관리 방법, 건강도와 탄소발자국을 확인하는 Flutter 앱입니다.
 
-## Getting Started
+## 기본 실행
 
-This project is a starting point for a Flutter application.
+Android Emulator와 로컬 FastAPI 서버를 사용할 때는 기본 API 주소인
+`http://10.0.2.2:8000`이 자동으로 적용됩니다.
 
-A few resources to get you started if this is your first Flutter project:
+iOS Simulator에서는 Mac에서 실행 중인 로컬 서버를
+`http://127.0.0.1:8000`으로 자동 연결합니다.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+```powershell
+flutter pub get
+flutter run
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
-=======
-# K-DPP
-k-dpp 
->>>>>>> d9f307d730c80e624d750f14c778e03023e7ec56
+백엔드는 호스트 PC의 `8000` 포트에서 실행되어 있어야 합니다.
+
+## API 주소 설정
+
+인증, 스캔, 탄소 계산 API가 같은 서버를 사용하면 `API_BASE_URL` 하나만
+지정합니다.
+
+```powershell
+flutter run --dart-define=API_BASE_URL=http://192.168.0.10:8000
+```
+
+실제 Android 기기에서는 `10.0.2.2` 대신 백엔드가 실행 중인 PC의 같은
+네트워크 IP 주소를 사용합니다.
+
+실제 iPhone에서도 Mac과 같은 Wi-Fi에 연결한 뒤 Mac의 네트워크 IP를
+전달합니다.
+
+```bash
+flutter run \
+  --dart-define=API_BASE_URL=http://192.168.0.10:8000
+```
+
+각 API 주소를 따로 지정해야 할 때는 기존 환경변수도 사용할 수 있습니다.
+
+```powershell
+flutter run `
+  --dart-define=AUTH_API_BASE_URL=https://api.example.com `
+  --dart-define=SCAN_API_ENDPOINT=https://api.example.com/api/scan `
+  --dart-define=CARBON_API_ENDPOINT=https://api.example.com/api/carbon/calculate
+```
+
+## 카카오 로그인 키
+
+카카오 로그인 버튼은 카카오 **네이티브 앱 키**를 넣은 빌드에만 보입니다. 저장소가 공개라
+키는 커밋하지 않고 `FRONTEND/kakao.env`(gitignore) 한 파일에 둡니다.
+
+1. `kakao.env.example`을 `kakao.env`로 복사하고 `KAKAO_NATIVE_APP_KEY=` 뒤에 키를 붙입니다
+   (따옴표·주석·다른 값 없이 이 한 줄만 — iOS xcconfig 가 `//` 뒤를 주석으로 읽습니다).
+2. 실행·빌드할 때 같은 파일을 넘깁니다.
+
+```bash
+flutter run --dart-define-from-file=kakao.env
+```
+
+- iOS(`ios/Flutter/*.xcconfig`)와 Android(`android/app/build.gradle.kts`)는 이 파일을 직접 읽어
+  카카오 로그인에서 돌아오는 주소(`kakao<키>`)를 앱에 등록합니다. `--dart-define-from-file`을
+  빼면 버튼이 숨겨집니다.
+- 파일이 없어도 빌드는 됩니다(카카오 버튼만 숨김).
+- 로그인이 되려면 카카오 개발자 콘솔의 네이티브 앱 키에 Android 패키지명·키 해시와 iOS 번들 ID가
+  등록돼 있어야 합니다.
+
+## Android 네트워크 정책
+
+- Debug/Profile 빌드는 로컬 FastAPI 연결을 위해 HTTP 통신을 허용합니다.
+- Release 빌드는 평문 HTTP를 허용하지 않으므로 HTTPS 운영 주소를
+  `API_BASE_URL`로 전달해야 합니다.
+- 카메라 권한은 라벨 스캔 화면에서 사용합니다.
+
+## iOS 실행 준비
+
+iOS 빌드와 시뮬레이터 실행은 macOS와 Xcode가 필요합니다.
+
+```bash
+flutter pub get
+cd ios
+pod install
+cd ..
+flutter run
+```
+
+- iOS 최소 버전은 15.0입니다. Xcode 27이 15.0 미만 배포 타깃을 더 이상 빌드하지
+  못해 13.0에서 올렸습니다(2026-09-20). iOS 13을 지원하는 기기는 모두 iOS 15를
+  지원하므로 지원 기기 범위는 그대로입니다.
+- 카메라, 앨범, 로컬 네트워크 권한 설명이 등록되어 있습니다.
+- 로그인 세션은 iOS Keychain에 저장됩니다.
+- 화면 방향은 iPhone과 iPad 모두 세로로 고정됩니다.
+- 운영 빌드는 평문 HTTP 대신 HTTPS API 주소를 사용해야 합니다.
+- Xcode의 Runner 타깃에서 실제 Apple Developer Team과 고유 Bundle
+  Identifier를 설정해야 실기기 설치와 배포가 가능합니다.
+
+## 검사
+
+```powershell
+flutter analyze
+flutter test
+```
