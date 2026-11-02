@@ -268,7 +268,7 @@ extension _ClosetListViews on _ClosetScreenState {
     );
   }
 
-  /// 의류의 분류·건강 상태와 선택·경고·재정렬 상태를 한 행에 표시합니다.
+  /// 의류의 분류·소재 참고 점수와 선택·경고·재정렬 상태를 한 행에 표시합니다.
   ///
   /// [dragHandleIndex] 가 있으면(내 설정 순 평소) 오른쪽 끝에 그 위치의 ≡ 손잡이를 둡니다.
   Widget _buildClosetItem(
