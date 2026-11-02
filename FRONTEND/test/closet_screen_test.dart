@@ -59,7 +59,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('현재 정렬: 친환경 순'), findsOneWidget);
+    expect(find.textContaining('현재 정렬: 탄소 낮은 순'), findsOneWidget);
+    // 큰 글자에서 줄이 나뉘어도 아래 안내 줄처럼 가운데에 둔다.
+    expect(
+      tester.widget<Text>(find.textContaining('현재 정렬:')).textAlign,
+      TextAlign.center,
+    );
 
     await tester.tap(find.byTooltip('옷장 정렬'));
     await tester.pumpAndSettle();
@@ -113,12 +118,12 @@ void main() {
 
     await tester.tap(find.byTooltip('옷장 정렬'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('건강도 순'));
+    await tester.tap(find.text('소재 점수 순'));
     await tester.pumpAndSettle();
 
     // 화면이 Provider를 그대로 따르므로 되돌림이 즉시 보인다.
     // 화면만 새 기준을 유지하면 나중에 화면이 재생성될 때 말없이 바뀐다.
-    expect(find.textContaining('현재 정렬: 친환경 순'), findsOneWidget);
+    expect(find.textContaining('현재 정렬: 탄소 낮은 순'), findsOneWidget);
     expectAppBanner(
       tester,
       '정렬 방식을 저장하지 못해 이전 기준으로 되돌렸어요.',
@@ -439,10 +444,10 @@ void main() {
     await tester.tap(find.byTooltip('옷장 정렬'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('건강도 순'));
+    await tester.tap(find.text('소재 점수 순'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('현재 정렬: 건강도 순'), findsOneWidget);
+    expect(find.textContaining('현재 정렬: 소재 점수 순'), findsOneWidget);
   });
 
   testWidgets('정렬 시트는 선택한 항목에만 체크를 두고 나머지는 비운다', (tester) async {
@@ -473,10 +478,10 @@ void main() {
     expect(find.byIcon(Icons.radio_button_off), findsNothing);
     expect(find.byIcon(Icons.radio_button_checked), findsNothing);
 
-    // 체크는 현재 기준(기본값 친환경 순) 줄에 있어야 한다.
+    // 체크는 현재 기준(기본값 탄소 낮은 순) 줄에 있어야 한다.
     expect(
       find.descendant(
-        of: find.widgetWithText(InkWell, '친환경 순'),
+        of: find.widgetWithText(InkWell, '탄소 낮은 순'),
         matching: find.byIcon(Icons.check),
       ),
       findsOneWidget,
@@ -490,10 +495,10 @@ void main() {
     );
 
     // 색과 아이콘만으로 알리면 낭독기에서는 네 항목이 구분되지 않는다.
-    expect(find.bySemanticsLabel('친환경 순 정렬'), findsOneWidget);
+    expect(find.bySemanticsLabel('탄소 낮은 순 정렬'), findsOneWidget);
     expect(find.bySemanticsLabel('내 설정 순 정렬'), findsOneWidget);
     expect(
-      tester.getSemantics(find.bySemanticsLabel('친환경 순 정렬')),
+      tester.getSemantics(find.bySemanticsLabel('탄소 낮은 순 정렬')),
       isSemantics(isSelected: true, isButton: true),
     );
     expect(
@@ -975,7 +980,7 @@ void main() {
         expect(find.text('내 옷장'), findsNothing);
         expect(find.byTooltip('옷장 정렬'), findsNothing);
         // 헤더 틀은 그대로라 정렬 안내와 검색창(검색어 포함)이 남지만, 입력은 막힌다.
-        expect(find.text('현재 정렬: 친환경 순'), findsOneWidget);
+        expect(find.text('현재 정렬: 탄소 낮은 순'), findsOneWidget);
         expect(
           tester.widget<TextField>(find.byType(TextField)).enabled,
           isFalse,
@@ -1309,7 +1314,7 @@ void main() {
         );
         expect(tester.takeException(), isNull);
 
-        for (final text in ['건강 상태: 88%', '수명 만료 (배출 권장)', '옷 이름, 소재 검색']) {
+        for (final text in ['소재 참고 점수: 88점', '점수 정보 없음', '옷 이름, 소재 검색']) {
           final finder = find.text(text);
           final paragraph = tester.renderObject<RenderParagraph>(finder);
           expect(paragraph.didExceedMaxLines, isFalse, reason: text);
@@ -1428,7 +1433,7 @@ Clothes _clothes(
   );
 }
 
-/// '홍길동 카드 1'부터 n까지. 친환경 순(기본)에서도 이 순서로 보이게 탄소량을 늘려 간다.
+/// '홍길동 카드 1'부터 n까지. 탄소 낮은 순(기본)에서도 이 순서로 보이게 탄소량을 늘려 간다.
 List<Clothes> _numbered(int count) => [
   for (var i = 1; i <= count; i++)
     _clothes('홍길동 카드 $i', carbonFootprint: i.toDouble()),

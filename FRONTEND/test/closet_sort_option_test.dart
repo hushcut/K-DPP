@@ -17,7 +17,7 @@ void main() {
       expect(ClosetSortOption.custom.storageValue, 'custom');
     });
 
-    test('저장된 값이 없거나 알 수 없으면 친환경 순으로 돌아간다', () {
+    test('저장된 값이 없거나 알 수 없으면 탄소 낮은 순으로 돌아간다', () {
       expect(ClosetSortOption.fromStorage(null), ClosetSortOption.eco);
       expect(ClosetSortOption.fromStorage(''), ClosetSortOption.eco);
       expect(ClosetSortOption.fromStorage('예전에_쓰던_값'), ClosetSortOption.eco);

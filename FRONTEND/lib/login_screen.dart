@@ -204,7 +204,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '라벨 스캔으로 의류 상태와 관리 정보를\n쉽게 확인할 수 있어요.',
+                        '라벨 스캔으로 의류 소재와 관리 정보를\n쉽게 확인할 수 있어요.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 14,

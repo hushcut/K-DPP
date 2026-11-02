@@ -293,8 +293,8 @@ class ScanResultView extends StatelessWidget {
                         Expanded(
                           child: Text(
                             '무게 기준: ${selectedClothingType.label} · ${selectedClothingType.weightDisplayText}\n'
-                            '${calculation.usesServerHealth ? '건강도' : '예상 건강도'}: ${calculation.health}%\n'
-                            '${calculation.usesServerCarbon ? '최종 탄소발자국' : '임시 예상 탄소발자국'}: $carbonText',
+                            '소재 참고 점수: ${materials.isEmpty ? '소재를 넣으면 계산돼요' : '${calculation.health}점'}\n'
+                            '소재 생산 단계 예상 탄소배출량${calculation.usesServerCarbon ? '' : '(임시)'}: $carbonText',
                             softWrap: true,
                             style: TextStyle(
                               fontSize: 14,

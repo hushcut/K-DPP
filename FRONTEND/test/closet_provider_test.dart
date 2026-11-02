@@ -1174,7 +1174,7 @@ void main() {
   });
 
   group('정렬 기준 저장', () {
-    test('기본값은 친환경 순이고 선택하면 저장소에 기록한다', () async {
+    test('기본값은 탄소 낮은 순이고 선택하면 저장소에 기록한다', () async {
       final storage = FakeClosetStorage();
       final provider = ClosetProvider(storage: storage);
 

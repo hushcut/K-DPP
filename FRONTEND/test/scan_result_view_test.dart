@@ -56,6 +56,99 @@ void main() {
     );
   });
 
+  // 서버 계산이든 앱 추정이든 같은 말로 부르고, 앱 추정에만 임시라고 붙인다(협의안 R3).
+  testWidgets('예상 탄소배출량은 서버 값이 아닐 때만 임시라고 붙인다', (tester) async {
+    final materialInputs = MaterialInputCollection()
+      ..setFromMaterials({'cotton': 100});
+    final titleController = TextEditingController(text: '새로 스캔한 의류');
+    addTearDown(materialInputs.dispose);
+    addTearDown(titleController.dispose);
+
+    Future<void> pumpView({double? serverCarbon}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ScanResultView(
+              key: ValueKey(serverCarbon),
+              formKey: GlobalKey<FormState>(),
+              hasTriedSubmit: false,
+              isSaving: false,
+              isScanFailed: false,
+              titleController: titleController,
+              selectedClothingType: ClothingTypeCatalog.defaultOption,
+              materialInputs: materialInputs,
+              scannedCare: '찬물 세탁',
+              originalMaterials: const {'cotton': 100},
+              serverHealth: 72,
+              serverCarbonFootprint: serverCarbon,
+              serverWeightGram: serverCarbon == null
+                  ? null
+                  : ClothingTypeCatalog.defaultOption.estimatedWeightGram,
+              serverCalculationMethod: serverCarbon == null
+                  ? null
+                  : 'weight_based_v1',
+              validateTitle: (_) => null,
+              validateMaterialName: (_) => null,
+              validateMaterialValue: (_) => null,
+              onSelectClothingType: () {},
+              onAddMaterial: () {},
+              onRemoveMaterial: (_) {},
+              onSubmit: () {},
+              onReset: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await pumpView();
+    expect(find.textContaining('소재 참고 점수: 72점'), findsOneWidget);
+    expect(find.textContaining('소재 생산 단계 예상 탄소배출량(임시):'), findsOneWidget);
+
+    await pumpView(serverCarbon: 1.5);
+    expect(find.textContaining('소재 참고 점수: 72점'), findsOneWidget);
+    expect(find.textContaining('소재 생산 단계 예상 탄소배출량:'), findsOneWidget);
+    expect(find.textContaining('(임시)'), findsNothing);
+  });
+
+  testWidgets('소재가 하나도 없으면 소재 참고 점수를 지어내지 않는다', (tester) async {
+    final materialInputs = MaterialInputCollection()..addEmpty();
+    final titleController = TextEditingController();
+    addTearDown(materialInputs.dispose);
+    addTearDown(titleController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ScanResultView(
+            formKey: GlobalKey<FormState>(),
+            hasTriedSubmit: false,
+            isSaving: false,
+            isScanFailed: true,
+            titleController: titleController,
+            selectedClothingType: ClothingTypeCatalog.defaultOption,
+            materialInputs: materialInputs,
+            scannedCare: '',
+            originalMaterials: const {},
+            validateTitle: (_) => null,
+            validateMaterialName: (_) => null,
+            validateMaterialValue: (_) => null,
+            onSelectClothingType: () {},
+            onAddMaterial: () {},
+            onRemoveMaterial: (_) {},
+            onSubmit: () {},
+            onReset: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('소재 참고 점수: 소재를 넣으면 계산돼요'), findsOneWidget);
+    expect(find.textContaining('80점'), findsNothing);
+  });
+
   testWidgets('스캔 실패 화면은 직접 소재 입력 흐름으로 분리된다', (tester) async {
     final materialInputs = MaterialInputCollection()..addEmpty();
     final titleController = TextEditingController(text: '새로 스캔한 의류');

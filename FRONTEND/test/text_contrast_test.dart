@@ -94,7 +94,7 @@ void main() {
       expect(AppPalette.light.accentForeground, AppPalette.accent);
     });
 
-    test('수명 만료 글자는 옷장의 붉은 경고 카드 바탕에서도 4.5:1 을 넘는다', () {
+    test('점수 정보 없음 글자는 옷장의 붉은 경고 카드 바탕에서도 4.5:1 을 넘는다', () {
       expect(
         contrast(AppPalette.light.dangerText, Colors.red.shade50),
         greaterThan(aa),
@@ -159,7 +159,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('홈 건강도 퍼센트 글자는 좋음·주의·경고 글자색이다', (tester) async {
+    testWidgets('홈 소재 참고 점수 글자는 좋음·주의·경고 글자색이다', (tester) async {
       for (final (health, expected) in [
         (71, light.successText),
         (41, light.warningText),
@@ -170,11 +170,11 @@ void main() {
         ]);
         await pump(tester, provider, const Scaffold(body: HomeScreen()));
 
-        expect(textColor(tester, find.text('$health%')), expected);
+        expect(textColor(tester, find.text('$health점')), expected);
       }
     });
 
-    testWidgets('옷장 카드의 건강 상태 글자는 두 목록 모두 좋음·경고 글자색이고, 지우기 확인 버튼은 경고 바탕이다', (
+    testWidgets('옷장 카드의 소재 참고 점수 글자는 두 목록 모두 좋음·경고 글자색이고, 지우기 확인 버튼은 경고 바탕이다', (
       tester,
     ) async {
       final provider = await providerWith([
@@ -187,8 +187,8 @@ void main() {
         Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
       );
 
-      expect(textColor(tester, find.text('건강 상태: 88%')), light.successText);
-      expect(textColor(tester, find.text('수명 만료 (배출 권장)')), light.dangerText);
+      expect(textColor(tester, find.text('소재 참고 점수: 88점')), light.successText);
+      expect(textColor(tester, find.text('점수 정보 없음')), light.dangerText);
 
       // '내 설정 순' 은 끌어 옮기는 다른 목록으로 그린다.
       await tester.tap(find.byTooltip('옷장 정렬'));
@@ -196,8 +196,8 @@ void main() {
       await tester.tap(find.text('내 설정 순'));
       await tester.pumpAndSettle();
       expect(find.byType(ReorderableListView), findsOneWidget);
-      expect(textColor(tester, find.text('건강 상태: 88%')), light.successText);
-      expect(textColor(tester, find.text('수명 만료 (배출 권장)')), light.dangerText);
+      expect(textColor(tester, find.text('소재 참고 점수: 88점')), light.successText);
+      expect(textColor(tester, find.text('점수 정보 없음')), light.dangerText);
 
       await tester.tap(find.text('선택'));
       await tester.pumpAndSettle();
@@ -312,7 +312,10 @@ void main() {
         await tester.tap(find.text('시트 열기'));
         await tester.pumpAndSettle();
         expect(
-          textColor(tester, find.text('탄소발자국 계산에 사용할 의류 무게 범위를 선택해 주세요.')),
+          textColor(
+            tester,
+            find.text('소재 생산 단계 예상 탄소배출량 계산에 사용할 의류 무게 범위를 선택해 주세요.'),
+          ),
           light.textSecondary,
         );
 
@@ -334,7 +337,7 @@ void main() {
         expect(
           textColor(
             tester,
-            find.text('실제 무게를 알고 있다면 더 정확하게 탄소발자국을 계산할 수 있어요.'),
+            find.text('실제 무게를 알고 있다면 그 무게로 소재 생산 단계 예상 탄소배출량을 계산할 수 있어요.'),
           ),
           light.textSecondary,
         );
