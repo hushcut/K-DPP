@@ -1,3 +1,5 @@
+import 'material_name.dart';
+
 /// 스캔 응답 `warnings` 의 공개 코드(AI 연동 협의안 R4)를 화면 안내 문구로 바꾼다.
 ///
 /// `warnings` 에는 공개 코드와 함께 진단 경고(`generic:unpaired_ratio_rows` 같은 판정 메모,
@@ -59,6 +61,14 @@ class ScanWarningNotices {
   /// 분석에 실패했을 때(422) 종류 선택 시트의 실패 이유 아래에 보일 안내다. 재촬영 권고뿐이다.
   static List<String> forFailure(Iterable<String> warnings) {
     return warnings.contains(_retakeAction) ? const [_retakeNotice] : const [];
+  }
+
+  /// 서버가 `is_supported: false` 로 표시한 소재(AI 는 읽지만 서버 계수표에 없는 소재)를 저장 전에
+  /// 알리는 문구다(협의안 R2). 읽은 것과 계산할 수 없는 것을 나눠 말하고, 라벨이 맞는 사용자에게
+  /// 다른 소재를 고르라고 떠밀지 않는다. 이름은 편집 폼에 보이는 표시명이다.
+  static String forUnsupportedMaterials(List<String> names) {
+    return '${MaterialName.summarize(names)} 소재는 읽었지만 탄소 계산 기준이 없어 저장할 수 없어요. '
+        '라벨과 다르면 고쳐 주세요.';
   }
 
   static String? _partNotice(String warning) {

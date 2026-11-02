@@ -74,7 +74,6 @@ class ScanApiException implements Exception {
         return '이 사진 형식은 분석할 수 없어요. JPG 또는 PNG 사진을 사용해 주세요.';
       // DECISIONS 98: 원인 설명을 줄여 짧게. 이 문장은 종류 선택 시트 맨 위와
       // 결과 화면 '직접 입력 모드' 카드에 나간다.
-      case ScanApiErrorType.ocrFailed:
       case ScanApiErrorType.aiRecognitionFailed:
         return '라벨을 읽지 못했어요. 직접 입력해 주세요.';
       // 하루 한도는 다시 찍어도 자정까지 풀리지 않으므로 '다시 시도'를 권하지 않는다.
@@ -82,6 +81,9 @@ class ScanApiException implements Exception {
         return '오늘 사진 분석 횟수를 다 썼어요. 직접 입력하거나 내일 다시 시도해 주세요.';
       case ScanApiErrorType.serviceDailyLimit:
         return '오늘은 사진 분석을 더 할 수 없어요. 직접 입력해 주세요.';
+      // 502 는 라벨이 아니라 OCR 서비스 쪽 실패다(코드 없는 프록시 502 포함). 라벨 탓으로 말하면
+      // 같은 라벨을 계속 다시 찍게 되니 서버 오류와 같은 문장을 쓴다(DECISIONS 288).
+      case ScanApiErrorType.ocrFailed:
       case ScanApiErrorType.server:
         return '분석 서비스에 일시적인 문제가 생겼어요. 다시 시도하거나 직접 입력해 주세요.';
       case ScanApiErrorType.network:
@@ -159,7 +161,7 @@ class ScanApiException implements Exception {
           'AI가 라벨을 인식하지 못했습니다.',
         );
       // 백엔드 계약상 502는 OCR 처리 실패다. 422(소재 추출 실패)와 원인이 다르므로
-      // 타입을 분리하되, 안내는 두 경우 모두 직접 입력으로 유도한다
+      // 타입과 문구를 나눈다. 두 경우 모두 직접 입력으로 갈 수 있다
       // (재촬영은 화면의 '다시 촬영' 버튼으로 별도 제공).
       case 502:
         return build(ScanApiErrorType.ocrFailed, 'AI OCR 처리에 실패했습니다.');

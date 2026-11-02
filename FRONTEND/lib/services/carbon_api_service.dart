@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../config/api_environment.dart';
+import '../utils/material_name.dart';
 import 'api_http.dart';
 
 /// 탄소 계산 API 오류를 사용자 안내와 대체 계산 정책에 사용할 범주로 구분한다.
@@ -42,6 +43,13 @@ class CarbonApiException implements Exception {
     'WEIGHT_RANGE_INVALID',
   };
 
+  /// 계산 기준이 없는 소재로 저장하지 못했을 때의 문장입니다. 서버가 거절했을 때와, 서버가 답하지
+  /// 못해 앱 소재표로 막았을 때(DECISIONS 288) 같이 씁니다. '소재는' 을 붙여 소재 이름의 받침과
+  /// 상관없이 조사가 맞게 합니다.
+  static String unknownMaterialsMessage(List<String> names) {
+    return '${MaterialName.summarize(names)} 소재는 탄소 계산 기준이 없어 저장하지 못했어요.';
+  }
+
   /// 배너에 띄우는 문장입니다. 원인마다 길게 다르던 문장은 한 문장으로 줄이고,
   /// 기준 없는 소재·인터넷 끊김·로그인 만료만 따로 알립니다(DECISIONS 98).
   /// 입력 거절(400/422)은 저장하지 않으므로 저장하지 못했다고 알립니다(AI 연동 협의안 R1).
@@ -49,13 +57,7 @@ class CarbonApiException implements Exception {
     switch (type) {
       case CarbonApiErrorType.badRequest:
         if (unknownMaterials.isNotEmpty) {
-          // 목록을 다 늘어놓으면 길이에 끝이 없어 첫 소재와 남은 개수만 보입니다.
-          // '소재는' 을 붙여 소재 이름의 받침과 상관없이 조사가 맞게 합니다.
-          final others = unknownMaterials.length - 1;
-          final names = others == 0
-              ? unknownMaterials.first
-              : '${unknownMaterials.first} 외 $others개';
-          return '$names 소재는 탄소 계산 기준이 없어 저장하지 못했어요.';
+          return unknownMaterialsMessage(unknownMaterials);
         }
         // 무게 거절을 소재 문구로 안내하면 사용자가 고칠 곳을 찾지 못합니다.
         if (_weightErrorCodes.contains(errorCode)) {

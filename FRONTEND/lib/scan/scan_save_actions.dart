@@ -42,8 +42,30 @@ extension _ScanSaveActions on _ScanScreenState {
     );
   }
 
+  /// 서버 계산 없이 저장해야 하는데 앱 소재표에도 없는 소재가 있으면 저장을 막습니다. 저장하면
+  /// 근거 없는 기본계수 값이 옷장·홈 합계·서버 백업에 섞입니다(협의안 T5, DECISIONS 288).
+  /// 온라인에서도 저장되지 않는 옷이라 잃는 것이 없고, 입력은 그대로 둡니다.
+  bool _blockSaveWithoutCarbonBasis(Map<String, double> materials) {
+    final unknown = ClothingEstimator.materialsWithoutFactor(materials.keys);
+
+    if (unknown.isEmpty) return false;
+
+    if (mounted) {
+      _updateState(() {
+        _isSaving = false;
+      });
+      AppBanner.of(context).show(
+        CarbonApiException.unknownMaterialsMessage(unknown),
+        kind: AppBannerKind.failure,
+      );
+    }
+
+    return true;
+  }
+
   /// 입력 검증 후 서버 계산을 시도합니다. 서버가 입력을 거절하면(400/422) 저장하지 않고,
-  /// 그 밖의 실패는 로컬 추정값으로 저장합니다.
+  /// 그 밖의 실패는 로컬 추정값으로 저장합니다. 다만 앱 소재표에 없는 소재는 추정할 근거가
+  /// 없으니 서버가 받아 주지 않으면 저장하지 않습니다.
   Future<void> _submitClothes() async {
     if (_isSaving) return;
 
@@ -88,6 +110,8 @@ extension _ScanSaveActions on _ScanScreenState {
         final ownerKey = provider.closetOwnerKey;
 
         if (accessToken != null && !provider.isAuthenticated) {
+          if (_blockSaveWithoutCarbonBasis(editedMaterials)) return;
+
           await _saveLocallyAfterSessionExpiry(
             provider: provider,
             ownerKey: ownerKey,
@@ -125,6 +149,8 @@ extension _ScanSaveActions on _ScanScreenState {
             );
           } on CarbonApiException catch (error) {
             if (error.type == CarbonApiErrorType.unauthorized) {
+              if (_blockSaveWithoutCarbonBasis(editedMaterials)) return;
+
               await _saveLocallyAfterSessionExpiry(
                 provider: provider,
                 ownerKey: ownerKey,
@@ -148,7 +174,9 @@ extension _ScanSaveActions on _ScanScreenState {
               return;
             }
 
-            // 인증 오류·입력 거절 외의 서버 실패는 로컬 저장을 막지 않습니다.
+            if (_blockSaveWithoutCarbonBasis(editedMaterials)) return;
+
+            // 인증 오류·입력 거절 외의 서버 실패는 아는 소재의 로컬 저장을 막지 않습니다.
             fallbackMessage = error.userMessage;
           }
         }
