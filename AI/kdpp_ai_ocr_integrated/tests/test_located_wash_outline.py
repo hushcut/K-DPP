@@ -72,6 +72,30 @@ def test_independent_same_location_care_band_preserves_all_three_fiber_ratios():
     assert decision.best.materials == _EXPECTED
 
 
+@pytest.mark.parametrize("response_indices", [(0,), (1,), (0, 1)])
+@pytest.mark.parametrize("move_care_to_ratio_column", [False, True])
+def test_fullwidth_percentages_preserve_recovery_and_ratio_column_guard(response_indices, move_care_to_ratio_column):
+    def edit(responses):
+        fullwidth = str.maketrans("0123456789%", "０１２３４５６７８９％")
+        for index in response_indices:
+            response = responses[index]
+            for text in ("68", "27", "5", "%"):
+                _change_word(response, text, text.translate(fullwidth))
+        if move_care_to_ratio_column:
+            for response in responses:
+                for word in response["words"]:
+                    if word["text"] in {"1300", "/", "30102", "A"}:
+                        _move(word, dx=400)
+    candidates = _readings(edit)
+    if move_care_to_ratio_column:
+        _assert_blocked(candidates)
+    else:
+        decision = _assess_candidates(candidates)
+        assert decision.status == "success"
+        assert decision.best.selected_part == "outer"
+        assert decision.best.materials == _EXPECTED
+
+
 @pytest.mark.parametrize("temperature", ["30", "40", "50", "60", "70", "95"])
 def test_temperature_grammar_requires_the_same_care_temperature_in_both_reads(temperature):
     def edit(responses):

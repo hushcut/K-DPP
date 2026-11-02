@@ -508,7 +508,9 @@ def _same_region_outlined_care_recovery(candidate, alternative, part, candidates
             if not length or (x1 - x0) / length < math.cos(math.radians(15)):
                 return False
         height = median(word.height for word in core)
-        ratio_left = min(word.left for word in core if re.search(r"[0-9%]", word.text))
+        ratio_left = min((word.left for word in core if re.search(r"[0-9%]", normalize_text(word.text))), default=None)
+        if ratio_left is None:
+            return False
         if (min(word.top for word in care) < max(word.bottom for word in core) + height
                 or min(word.top for word in care) > max(word.bottom for word in core) + 6 * height
                 or max(word.right for word in care) + height >= ratio_left):
