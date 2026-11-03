@@ -2119,7 +2119,7 @@ def serialize_analysis_result(result: database.AnalysisResult) -> dict:
 # 422·502)와 상관없이 되돌리지 않습니다. raw_ocr_text 로 OCR 을 건너뛴 요청, 업로드 검사(413·415)나
 # OCR 모듈 없음(503)으로 끝난 요청은 세지 않습니다. 하루는 한국 자정(00:00 KST)에 바뀝니다.
 # 기록은 로그인 한도처럼 프로세스 메모리에 둡니다 — 재시작하면 그날 수를 0부터 다시 셉니다.
-SCAN_USER_DAILY_MAX = 20
+SCAN_USER_DAILY_MAX = 60
 # 한국은 서머타임이 없어 UTC+9 로 고정하면 정확합니다.
 KST_OFFSET = timedelta(hours=9)
 
