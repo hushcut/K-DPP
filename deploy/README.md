@@ -1,5 +1,7 @@
 # K-DPP 배포 (Docker Compose)
 
+탄소 V2 앱 전환·공개 계수 등록 순서: [CARBON_V2_ACTIVATION.md](CARBON_V2_ACTIVATION.md).
+
 서버 한 대에 **앱 + PostgreSQL + Caddy(자동 HTTPS) + 백업** 을 한 Compose 로 띄웁니다.
 로컬 개발은 이 폴더가 아니라 `BACKEND/README.md`(DB 만 Compose, 앱은 venv)를 따릅니다.
 

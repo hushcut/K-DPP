@@ -411,7 +411,7 @@ void main() {
       find.text('소재별 탄소배출계수(kg CO2eq/kg)와 의류 무게(g)를 곱해 계산했습니다.'),
       findsOneWidget,
     );
-    expect(find.text('출처: K-DPP 소재별 배출계수 표(추정값)'), findsOneWidget);
+    expect(find.text('출처: 기존 V1 개발용 계수(문헌 출처 미확정)'), findsOneWidget);
     expect(find.textContaining('팀 승인'), findsNothing);
     expect(find.textContaining('development estimates'), findsNothing);
   });
@@ -546,7 +546,7 @@ void main() {
 
       expect(find.text('1.4 kg CO2eq'), findsOneWidget);
       expect(find.text('서버 계산값 · 0.8~2.1 kg CO2eq 범위'), findsOneWidget);
-      expect(find.text('서버 계산값'), findsOneWidget);
+      expect(find.text('기존 서버 계산 · 계수 출처 미확인'), findsOneWidget);
       expect(find.text('백엔드 계산값'), findsNothing);
       expect(find.text('앱 임시 추정값'), findsNothing);
     });
@@ -558,7 +558,8 @@ void main() {
       );
 
       // 카드 부제와 '출처' 줄이 같은 말을 쓴다.
-      expect(find.text('서버 계산값'), findsNWidgets(2));
+      expect(find.text('서버 계산값'), findsOneWidget);
+      expect(find.text('기존 서버 계산 · 계수 출처 미확인'), findsOneWidget);
       expect(find.textContaining('kg CO2eq 범위'), findsNothing);
     });
 

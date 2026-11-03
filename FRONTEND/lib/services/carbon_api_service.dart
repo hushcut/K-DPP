@@ -36,6 +36,17 @@ class CarbonApiException implements Exception {
   final String? errorCode;
   final List<String> unknownMaterials;
 
+  bool get blocksLocalEstimate => const {
+    'CALCULATION_PROFILE_UNAVAILABLE',
+    'CALCULATION_PROFILE_INVALID',
+    'FACTOR_UNAVAILABLE',
+    'FACTOR_INCOMPATIBLE',
+    'FACTOR_INVALID',
+    'COMPOSITION_SCOPE_UNSUPPORTED',
+    'IDEMPOTENCY_CONFLICT',
+    'V2_RESPONSE_INVALID',
+  }.contains(errorCode);
+
   // 서버가 무게 때문에 계산을 거절한 코드입니다(BACKEND/API_CONTRACT.md 주요 error_code).
   static const Set<String> _weightErrorCodes = {
     'WEIGHT_MISSING',
@@ -54,6 +65,13 @@ class CarbonApiException implements Exception {
   /// 기준 없는 소재·인터넷 끊김·로그인 만료만 따로 알립니다(DECISIONS 98).
   /// 입력 거절(400/422)은 저장하지 않으므로 저장하지 못했다고 알립니다(AI 연동 협의안 R1).
   String get userMessage {
+    if (errorCode == 'CALCULATION_PROFILE_UNAVAILABLE' ||
+        errorCode == 'CALCULATION_PROFILE_INVALID') {
+      return 'V2 계산 기준이 아직 준비되지 않아 저장하지 못했어요. 잠시 후 다시 시도해 주세요.';
+    }
+    if (blocksLocalEstimate && type != CarbonApiErrorType.badRequest) {
+      return 'V2 계산 근거를 확인할 수 없어 저장하지 못했어요. 잠시 후 다시 시도해 주세요.';
+    }
     switch (type) {
       case CarbonApiErrorType.badRequest:
         if (unknownMaterials.isNotEmpty) {
@@ -116,6 +134,7 @@ class CarbonApiException implements Exception {
             type: CarbonApiErrorType.server,
             statusCode: statusCode,
             message: error.message ?? '서버 내부 오류입니다.',
+            errorCode: error.errorCode,
           );
         }
 
@@ -123,6 +142,7 @@ class CarbonApiException implements Exception {
           type: CarbonApiErrorType.unknown,
           statusCode: statusCode,
           message: error.message ?? '탄소 계산 요청을 처리하지 못했습니다.',
+          errorCode: error.errorCode,
         );
     }
   }
@@ -264,7 +284,7 @@ class CarbonCalculationResult {
   }
 }
 
-/// 인증된 사용자의 소재 구성과 무게 범위를 서버 탄소 계산 API에 전달한다.
+/// 인증된 사용자의 소재 구성과 유형 ID/실측 무게를 V2 탄소 계산 API에 전달한다.
 class CarbonApiService {
   CarbonApiService({
     String? endpoint,
@@ -281,14 +301,16 @@ class CarbonApiService {
   /// Bearer 토큰을 포함해 계산을 요청하고 모든 실패를 [CarbonApiException]으로 통일한다.
   /// 외부에서 클라이언트를 주입하지 않은 경우 요청 종료 시 직접 닫는다.
   ///
-  /// [weightGram]은 사용자가 직접 입력한 실제 무게다. 보내면 서버가 범위보다 이 값을 먼저 쓰고
-  /// `weight_source: direct` 로 돌려준다. 예상 무게 범위로 계산할 때는 null 이다.
+  /// [weightGram]은 사용자 입력 실측 무게로, [clothingTypeId]보다 우선한다.
+  /// 유형 무게의 대표/범위는 서버 카탈로그에서 결정한다. min/maxWeightGram은
+  /// 기존 화면 호출부 호환용이며 V2 요청 본문에는 전송하지 않는다.
   Future<CarbonCalculationResult> calculate({
     required Map<String, double> materials,
     required double minWeightGram,
     required double maxWeightGram,
     required String accessToken,
     double? weightGram,
+    String? clothingTypeId,
   }) async {
     try {
       final response = await runJsonApiRequest(
@@ -298,8 +320,8 @@ class CarbonApiService {
         timeout: requestTimeout,
         jsonBody: {
           'materials': materials,
-          'min_weight_grams': minWeightGram,
-          'max_weight_grams': maxWeightGram,
+          'composition_scope': 'single',
+          'clothing_type_id': ?clothingTypeId,
           'weight_grams': ?weightGram,
         },
         accessToken: accessToken,
@@ -317,6 +339,19 @@ class CarbonApiService {
 
       if (decoded is! Map<String, dynamic>) {
         throw const FormatException('응답이 JSON 객체 형식이 아닙니다.');
+      }
+
+      if (decoded['formula_version'] != 'fiber_mass_v2' ||
+          decoded['calculation_scope'] != 'fiber_production_estimate' ||
+          decoded['usage_scope'] != 'public_estimate' ||
+          decoded['research_only'] != false ||
+          decoded['calculation_source'] is! String ||
+          (decoded['calculation_source'] as String).trim().isEmpty) {
+        throw const CarbonApiException(
+          type: CarbonApiErrorType.invalidResponse,
+          errorCode: 'V2_RESPONSE_INVALID',
+          message: '공개용 V2 계산 근거가 없는 응답입니다.',
+        );
       }
 
       return CarbonCalculationResult.fromJson(decoded);

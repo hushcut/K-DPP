@@ -52,7 +52,7 @@ flutter build apk --release \
 flutter run `
   --dart-define=AUTH_API_BASE_URL=https://api.example.com `
   --dart-define=SCAN_API_ENDPOINT=https://api.example.com/api/scan `
-  --dart-define=CARBON_API_ENDPOINT=https://api.example.com/api/carbon/calculate
+  --dart-define=CARBON_API_ENDPOINT=https://api.example.com/api/v2/carbon/calculate
 ```
 
 ## 카카오 로그인 키

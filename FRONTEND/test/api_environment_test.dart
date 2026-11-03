@@ -20,7 +20,7 @@ void main() {
     expect(ApiEnvironment.scanEndpoint, '${ApiEnvironment.baseUrl}/api/scan');
     expect(
       ApiEnvironment.carbonEndpoint,
-      '${ApiEnvironment.baseUrl}/api/carbon/calculate',
+      '${ApiEnvironment.baseUrl}/api/v2/carbon/calculate',
     );
     expect(
       ApiEnvironment.materialsEndpoint,

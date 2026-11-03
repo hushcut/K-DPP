@@ -60,13 +60,31 @@ def test_public_policy_and_lightweight_owned_history(client):
         "materials": {"cotton": 60, "polyester": 40}}, headers=headers)
     assert result.status_code == 200, result.text
     assert result.json()["carbon_footprint"] == 0.85
+    assert "IDEMAT 2026 RevB2" in result.json()["calculation_source"]
+    assert "data from www.ecocostsvalue.com" in result.json()["calculation_source"]
+    assert "÷ 1000" in result.json()["calculation_basis"]
+    assert "500g (사용자 입력)" in result.json()["calculation_basis"]
+    assert "버진 비텍스처 필라멘트" in result.json()["calculation_note"]
     history = client.get("/me/history", headers=headers)
     assert len(history.content) < 4000
     item = history.json()["history"][0]
     assert item["calculation_snapshot"] is None
+    assert item["calculation_source"] == result.json()["calculation_source"]
     assert client.get(item["provenance_url"], headers=headers).json()["calculation_snapshot"]
     other = login(client, "other-v2@example.com")
     assert client.get(item["provenance_url"], headers=other).status_code == 404
+
+
+def test_public_v2_never_substitutes_legacy_cashmere(client):
+    with database.SessionLocal() as session:
+        publish_manifest(session, approved_public_manifest(), apply=True, free_public_release=True)
+    headers = login(client)
+    result = client.post(URL, json={**PAYLOAD, "materials": {"cashmere": 100}}, headers=headers)
+    assert result.status_code == 422
+    assert result.json()["error_code"] == "FACTOR_UNAVAILABLE"
+    assert result.json()["detail"]["unknown_materials"] == ["cashmere"]
+    with database.SessionLocal() as session:
+        assert session.query(database.AnalysisResult).count() == 0
 
 
 def test_unknown_material_contract(client):
@@ -75,6 +93,24 @@ def test_unknown_material_contract(client):
     response = client.post(URL, json={**PAYLOAD, "materials": {"unknown-fiber": 100}}, headers=headers)
     assert response.status_code == 400
     assert response.json()["detail"]["unknown_materials"] == ["unknown-fiber"]
+
+
+def test_historical_v2_source_comes_from_its_own_snapshot(client):
+    headers = login(client)
+    seed_profile()
+    assert client.post(URL, json=PAYLOAD, headers=headers).status_code == 200
+    with database.SessionLocal() as session:
+        result = session.query(database.AnalysisResult).one()
+        snapshot = json.loads(result.calculation_snapshot_json)
+        snapshot["response"].pop("calculation_source")
+        result.calculation_snapshot_json = json.dumps(snapshot)
+        session.query(database.CalculationProfile).one().status = "retired"
+        session.commit()
+        publish_manifest(session, approved_public_manifest(), apply=True, free_public_release=True)
+    old = client.get("/me/history", headers=headers).json()["history"][0]
+    assert "TEST ONLY" in old["calculation_source"]
+    assert "IDEMAT" not in old["calculation_source"]
+    assert old["carbon_footprint"] == 1.66
 
 
 def test_atomic_replacement_and_failed_replacement_preserve_old(client):

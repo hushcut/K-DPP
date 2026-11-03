@@ -1341,6 +1341,7 @@ class _HeldCarbonApiService extends CarbonApiService {
     required double maxWeightGram,
     required String accessToken,
     double? weightGram,
+    String? clothingTypeId,
   }) {
     calls++;
     return _response.future;

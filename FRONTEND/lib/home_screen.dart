@@ -26,6 +26,10 @@ class HomeScreen extends StatelessWidget {
     final closetProvider = context.watch<ClosetProvider>();
     final clothesCount = closetProvider.count;
     final totalCarbon = closetProvider.totalCarbonFootprint;
+    final carbonGroups = <String, List<Clothes>>{};
+    for (final item in closetProvider.items) {
+      carbonGroups.putIfAbsent(item.carbonBasisLabel, () => []).add(item);
+    }
     final averageHealth = closetProvider.averageHealth;
     final latestItem = closetProvider.latestItem;
     final recentItems = _getRecentItems(closetProvider.items.toList());
@@ -70,10 +74,37 @@ class HomeScreen extends StatelessWidget {
           ),
           const SizedBox(height: 32),
 
-          _buildCarbonDashboard(
-            totalCarbon: totalCarbon,
-            clothesCount: clothesCount,
-          ),
+          if (carbonGroups.length <= 1)
+            _buildCarbonDashboard(
+              totalCarbon: totalCarbon,
+              clothesCount: clothesCount,
+            )
+          else ...[
+            Text(
+              '계산 기준별 탄소 현황',
+              style: TextStyle(color: primaryText, fontSize: 18),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'V2·기존 서버·앱 임시값은 기준별로 나눠 표시해요. 서로의 차이는 감축량이 아닙니다.',
+              style: TextStyle(color: secondaryText, fontSize: 13),
+            ),
+            for (final group in carbonGroups.entries) ...[
+              const SizedBox(height: 12),
+              Text(
+                group.key,
+                style: TextStyle(color: primaryText, fontSize: 13),
+              ),
+              const SizedBox(height: 6),
+              _buildCarbonDashboard(
+                totalCarbon: group.value.fold(
+                  0.0,
+                  (sum, item) => sum + item.carbonFootprint,
+                ),
+                clothesCount: group.value.length,
+              ),
+            ],
+          ],
           const SizedBox(height: 24),
 
           _buildCareTipCard(
