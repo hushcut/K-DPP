@@ -59,6 +59,7 @@ def main():
     parser.add_argument("--max-pixels", type=int, help="가로×세로가 이 값을 넘으면 비율을 유지해 축소한다.")
     parser.add_argument("--loop-guard", action="store_true", help="같은 단위가 반복되는 생성을 멈추고 미완료로 기록한다.")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--prompt", help="모델 기본 프롬프트 대신 쓸 문구.")
     args = parser.parse_args()
     if args.input_manifest:
         if args.ids:
@@ -88,6 +89,7 @@ def main():
     torch.set_num_interop_threads(1)
     torch.manual_seed(0)
     model_class, prompt = MODELS[args.model]
+    prompt = args.prompt or prompt
     settings = {
         "model": args.model, "model_id": manifest["model_id"], "revision": manifest["revision"],
         "device": "cpu", "dtype": "float32", "threads": args.threads, "prompt": prompt,
@@ -187,6 +189,9 @@ def main():
         result["source_unchanged"] = hashlib.sha256(photo.read_bytes()).hexdigest() == digest
         result["rss_mb"] = round(process.memory_info().rss / 1024**2, 1)
         result["peak_rss_mb"] = round(getattr(process.memory_info(), "peak_wset", process.memory_info().rss) / 1024**2, 1)
+        # 배터리·전원 상태에 따라 같은 출력의 시간이 2배 이상 달라져 사진마다 남긴다.
+        battery = psutil.sensors_battery()
+        result["power_plugged"] = battery.power_plugged if battery else None
         dump(out / "result.json", result)
         (out / "text.txt").write_text(result["text"] + "\n", encoding="utf-8")
         rows.append(result)
