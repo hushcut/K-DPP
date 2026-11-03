@@ -33,12 +33,15 @@ def ocr_coordinate_frame(
     original: bytes, candidate: bytes, source: str,
 ) -> tuple[tuple[float, ...], tuple[float, ...]] | None:
     """Map a generated candidate's word boxes back to the unchanged input image."""
-    with Image.open(BytesIO(original)) as image:
-        if image.getexif().get(274, 1) != 1:
-            return None  # EXIF orientation needs its own verified coordinate map.
-        width, height = image.size
-    with Image.open(BytesIO(candidate)) as image:
-        output_width, output_height = image.size
+    try:
+        with Image.open(BytesIO(original)) as image:
+            if image.getexif().get(274, 1) != 1:
+                return None  # EXIF orientation needs its own verified coordinate map.
+            width, height = image.size
+        with Image.open(BytesIO(candidate)) as image:
+            output_width, output_height = image.size
+    except (UnidentifiedImageError, OSError, ValueError, SyntaxError) as exc:
+        raise InvalidImageError("OCR 좌표 기준 이미지가 올바르지 않습니다.") from exc
     region = (0.0, 0.0, float(width), float(height))
     if source != "rotated":
         return ((width / output_width, 0.0, 0.0, 0.0, height / output_height, 0.0), region)
@@ -118,7 +121,7 @@ def _normalize_ocr_image(content: bytes, image_format: str) -> tuple[bytes, int,
         raise ImageTooLargeError(
             "이미지 방향 보정이 안전한 처리 범위를 넘습니다."
         ) from exc
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
+    except (UnidentifiedImageError, OSError, ValueError, SyntaxError) as exc:
         raise InvalidImageError("이미지 방향 보정 또는 형식 변환에 실패했습니다.") from exc
     except MemoryError as exc:
         raise ImageTooLargeError(
@@ -170,6 +173,7 @@ def validate_image_bytes(
         UnidentifiedImageError,
         OSError,
         ValueError,
+        SyntaxError,
     ) as exc:
         raise InvalidImageError("올바른 이미지 파일이 아닙니다.") from exc
     except MemoryError as exc:
@@ -250,7 +254,7 @@ def preprocess_image_bytes(content: bytes) -> bytes:
         raise ImageTooLargeError(
             "OCR 전처리 범위를 넘는 고해상도 이미지입니다."
         ) from exc
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
+    except (UnidentifiedImageError, OSError, ValueError, SyntaxError) as exc:
         raise InvalidImageError("OCR 전처리 중 이미지 디코딩에 실패했습니다.") from exc
     except MemoryError as exc:
         raise ImageTooLargeError(
@@ -275,7 +279,7 @@ def preprocess_denoised_image_bytes(content: bytes) -> bytes:
         raise ImageTooLargeError(
             "OCR 전처리 범위를 넘는 고해상도 이미지입니다."
         ) from exc
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
+    except (UnidentifiedImageError, OSError, ValueError, SyntaxError) as exc:
         raise InvalidImageError(
             "노이즈 완화 OCR 전처리 중 이미지 디코딩에 실패했습니다."
         ) from exc
@@ -317,7 +321,7 @@ def preprocess_rotated_image_bytes(content: bytes) -> bytes:
         raise ImageTooLargeError(
             "OCR 전처리 범위를 넘는 고해상도 이미지입니다."
         ) from exc
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
+    except (UnidentifiedImageError, OSError, ValueError, SyntaxError) as exc:
         raise InvalidImageError(
             "미세 회전 OCR 전처리 중 이미지 디코딩에 실패했습니다."
         ) from exc
@@ -350,7 +354,7 @@ def preprocess_reflection_image_bytes(content: bytes) -> bytes:
         raise ImageTooLargeError(
             "OCR 전처리 범위를 넘는 고해상도 이미지입니다."
         ) from exc
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
+    except (UnidentifiedImageError, OSError, ValueError, SyntaxError) as exc:
         raise InvalidImageError(
             "반사 보정 OCR 전처리 중 이미지 디코딩에 실패했습니다."
         ) from exc

@@ -77,6 +77,62 @@ def test_already_upright_input_is_not_reencoded(image_format, orientation):
     assert ocr_image.validate_image_bytes(content).content == content
 
 
+def damaged_exif_image(image_format):
+    buffer = BytesIO()
+    # Valid container/pixels, invalid TIFF header inside EXIF. JFIF DPI keeps
+    # JPEG's loader from reading and swallowing the EXIF error during open().
+    Image.new('RGB', (64, 40), 'white').save(
+        buffer, format=image_format, exif=b'Exif\0\0BAD!0000', dpi=(72, 72),
+    )
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize('image_format', ['JPEG', 'PNG', 'WEBP'])
+@pytest.mark.parametrize('operation', [
+    'validate_image_bytes', 'preprocess_image_bytes', 'preprocess_denoised_image_bytes',
+    'preprocess_rotated_image_bytes', 'preprocess_reflection_image_bytes', 'ocr_coordinate_frame',
+])
+def test_readable_pixels_with_broken_exif_raise_a_controlled_input_error(image_format, operation):
+    content = damaged_exif_image(image_format)
+    with Image.open(BytesIO(content)) as image:
+        image.load()  # The failure is metadata, not a fabricated unreadable image.
+        assert image.size == (64, 40)
+        if image_format == 'JPEG':
+            assert image.info['dpi'] == (72, 72)
+    with pytest.raises(ocr_image.InvalidImageError) as caught:
+        if operation == 'ocr_coordinate_frame':
+            ocr_image.ocr_coordinate_frame(content, oriented_image('PNG'), 'original')
+        else:
+            getattr(ocr_image, operation)(content)
+    assert isinstance(caught.value.__cause__, SyntaxError)
+
+
+def forbid_vision(*_args, **_kwargs):
+    pytest.fail('invalid image must stop before Vision client creation or RPC')
+
+
+@pytest.mark.parametrize('image_format', ['JPEG', 'PNG', 'WEBP'])
+def test_broken_exif_stops_before_vision_client_creation(monkeypatch, image_format):
+    monkeypatch.setattr(ocr_text, '_get_vision_client', forbid_vision)
+    monkeypatch.setattr(ocr_text, '_run_google_ocr', forbid_vision)
+    with pytest.raises(ocr_image.InvalidImageError):
+        ocr_text.run_ocr_bytes(damaged_exif_image(image_format))
+
+
+@pytest.mark.parametrize('orientation', [2, 6, 8])
+def test_truncated_oriented_jpeg_is_rejected_before_vision(monkeypatch, orientation):
+    content = oriented_image('JPEG', orientation)[:-8]
+    # JPEG verify() checks the header; the required orientation transform must
+    # still decode the pixels and reject missing data without a raw fallback.
+    with Image.open(BytesIO(content)) as image:
+        assert image.getexif()[274] == orientation
+        image.verify()
+    monkeypatch.setattr(ocr_text, '_get_vision_client', forbid_vision)
+    monkeypatch.setattr(ocr_text, '_run_google_ocr', forbid_vision)
+    with pytest.raises(ocr_image.InvalidImageError):
+        ocr_text.run_ocr_bytes(content)
+
+
 def test_transformed_candidate_maps_into_upright_input_frame():
     validated = ocr_image.validate_image_bytes(oriented_image('JPEG', 6))
     buffer = BytesIO()
