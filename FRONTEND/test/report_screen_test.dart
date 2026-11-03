@@ -487,11 +487,12 @@ void main() {
       double? carbonFootprintMax,
       double? minWeightGram,
       double? maxWeightGram,
+      int health = 82,
     }) {
       return Clothes(
         title: '수치 확인 셔츠',
         category: '상의',
-        health: 82,
+        health: health,
         materials: {'cotton': 100},
         careInstruction: '찬물 세탁',
         carbonFootprint: carbonFootprint,
@@ -545,7 +546,8 @@ void main() {
 
       expect(find.text('1.4 kg CO2eq'), findsOneWidget);
       expect(find.text('서버 계산값 · 0.8~2.1 kg CO2eq 범위'), findsOneWidget);
-      expect(find.text('백엔드 계산값'), findsOneWidget);
+      expect(find.text('서버 계산값'), findsOneWidget);
+      expect(find.text('백엔드 계산값'), findsNothing);
       expect(find.text('앱 임시 추정값'), findsNothing);
     });
 
@@ -555,7 +557,8 @@ void main() {
         clothesWith(source: CarbonFootprintSource.server),
       );
 
-      expect(find.text('서버 계산값'), findsOneWidget);
+      // 카드 부제와 '출처' 줄이 같은 말을 쓴다.
+      expect(find.text('서버 계산값'), findsNWidgets(2));
       expect(find.textContaining('kg CO2eq 범위'), findsNothing);
     });
 
@@ -573,6 +576,37 @@ void main() {
       );
       expect(find.text('실제 무게 612.5g'), findsOneWidget);
       expect(find.textContaining('선택 무게 범위'), findsNothing);
+    });
+
+    // 직접 넣은 무게를 '추정 무게'라고 하면 틀린 설명이 된다(협의안 R3).
+    testWidgets('계산 가정은 무게가 추정인지 입력한 값인지 가려 적는다', (tester) async {
+      const limit = '옷의 부위별 구성이나 생산 국가·공정 등에 따라 달라질 수 있어요.';
+
+      for (final item in [
+        clothesWith(minWeightGram: 99.5, maxWeightGram: 250),
+        clothesWith(),
+      ]) {
+        await pumpReportFor(tester, item);
+        expect(find.textContaining('저장된 소재 조성과 추정 무게 기준이며'), findsOneWidget);
+        expect(find.textContaining(limit), findsOneWidget);
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+
+      await pumpReportFor(
+        tester,
+        clothesWith(minWeightGram: 612.5, maxWeightGram: 612.5),
+      );
+      expect(find.textContaining('저장된 소재 조성과 입력한 무게 기준이며'), findsOneWidget);
+      expect(find.textContaining(limit), findsOneWidget);
+      // 부위를 모르는 옷을 겉감 기준이라고 하면 틀린 말이 된다.
+      expect(find.textContaining('겉감 대표'), findsNothing);
+    });
+
+    testWidgets('점수 정보가 없는 옷에 버리라고 권하지 않는다', (tester) async {
+      await pumpReportFor(tester, clothesWith(health: 0));
+
+      expect(find.text('세탁 지침 확인'), findsOneWidget);
+      expect(find.text('재사용·기부·분리배출 검토'), findsNothing);
     });
   });
 }

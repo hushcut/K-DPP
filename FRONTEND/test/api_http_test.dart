@@ -1,10 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:k_dpp/services/api_http.dart';
+
+import 'helpers/jpeg_with_location.dart';
 
 void main() {
   late Directory tempDirectory;
@@ -84,5 +87,41 @@ void main() {
       expect(response.statusCode, 200);
       expect(response.body, '{"ok":true}');
     });
+  });
+
+  test('올리는 사진에서 위치(GPS)를 지우고 방향 값과 파일 이름은 그대로 보낸다', () async {
+    await imageFile.writeAsBytes(
+      buildJpeg(
+        headerSegments: [exifSegment(buildTiff(endian: Endian.little))],
+      ),
+    );
+    late Uint8List sentBody;
+    final client = MockClient((request) async {
+      sentBody = request.bodyBytes;
+      return http.Response('{"ok":true}', 200);
+    });
+
+    await runImageUploadRequest(
+      uri: Uri.parse('https://example.test/api/scan'),
+      headers: const {},
+      timeout: const Duration(seconds: 5),
+      imageFile: imageFile,
+      fieldName: 'image',
+      client: client,
+    );
+
+    expect(
+      containsBytes(sentBody, rationalBytes(latitudeRationals, Endian.little)),
+      isFalse,
+    );
+    expect(containsBytes(sentBody, latin1.encode('Exif\x00\x00')), isTrue);
+    expect(
+      containsBytes(sentBody, utf8.encode('filename="label.jpg"')),
+      isTrue,
+    );
+    expect(
+      containsBytes(sentBody, utf8.encode('content-type: image/jpeg')),
+      isTrue,
+    );
   });
 }

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../config/api_environment.dart';
+import '../utils/material_name.dart';
 import 'api_http.dart';
 
 /// 탄소 계산 API 오류를 사용자 안내와 대체 계산 정책에 사용할 범주로 구분한다.
@@ -23,13 +24,31 @@ class CarbonApiException implements Exception {
     required this.type,
     required this.message,
     this.statusCode,
+    this.errorCode,
     this.unknownMaterials = const [],
   });
 
   final CarbonApiErrorType type;
   final String message;
   final int? statusCode;
+
+  /// 서버 응답의 `error_code` 입니다. 전송 오류처럼 응답이 없으면 null 입니다.
+  final String? errorCode;
   final List<String> unknownMaterials;
+
+  // 서버가 무게 때문에 계산을 거절한 코드입니다(BACKEND/API_CONTRACT.md 주요 error_code).
+  static const Set<String> _weightErrorCodes = {
+    'WEIGHT_MISSING',
+    'WEIGHT_INVALID',
+    'WEIGHT_RANGE_INVALID',
+  };
+
+  /// 계산 기준이 없는 소재로 저장하지 못했을 때의 문장입니다. 서버가 거절했을 때와, 서버가 답하지
+  /// 못해 앱 소재표로 막았을 때(DECISIONS 288) 같이 씁니다. '소재는' 을 붙여 소재 이름의 받침과
+  /// 상관없이 조사가 맞게 합니다.
+  static String unknownMaterialsMessage(List<String> names) {
+    return '${MaterialName.summarize(names)} 소재는 탄소 계산 기준이 없어 저장하지 못했어요.';
+  }
 
   /// 배너에 띄우는 문장입니다. 원인마다 길게 다르던 문장은 한 문장으로 줄이고,
   /// 기준 없는 소재·인터넷 끊김·로그인 만료만 따로 알립니다(DECISIONS 98).
@@ -38,13 +57,11 @@ class CarbonApiException implements Exception {
     switch (type) {
       case CarbonApiErrorType.badRequest:
         if (unknownMaterials.isNotEmpty) {
-          // 목록을 다 늘어놓으면 길이에 끝이 없어 첫 소재와 남은 개수만 보입니다.
-          // '소재는' 을 붙여 소재 이름의 받침과 상관없이 조사가 맞게 합니다.
-          final others = unknownMaterials.length - 1;
-          final names = others == 0
-              ? unknownMaterials.first
-              : '${unknownMaterials.first} 외 $others개';
-          return '$names 소재는 탄소 계산 기준이 없어 저장하지 못했어요.';
+          return unknownMaterialsMessage(unknownMaterials);
+        }
+        // 무게 거절을 소재 문구로 안내하면 사용자가 고칠 곳을 찾지 못합니다.
+        if (_weightErrorCodes.contains(errorCode)) {
+          return '탄소량을 계산할 수 없어 저장하지 못했어요. 의류 무게를 확인해 주세요.';
         }
         return '탄소량을 계산할 수 없어 저장하지 못했어요. 소재와 혼용률을 확인해 주세요.';
       case CarbonApiErrorType.unauthorized:
@@ -76,6 +93,7 @@ class CarbonApiException implements Exception {
           type: CarbonApiErrorType.badRequest,
           statusCode: statusCode,
           message: error.message ?? '탄소 계산 요청값을 확인해 주세요.',
+          errorCode: error.errorCode,
           unknownMaterials: error.unknownMaterials,
         );
       case 401:
@@ -130,6 +148,7 @@ class CarbonApiException implements Exception {
           decoded['message']?.toString().trim() ??
           detailMap?['message']?.toString().trim() ??
           (detail is String ? detail.trim() : null);
+      final rawErrorCode = decoded['error_code'] ?? detailMap?['error_code'];
       final rawUnknownMaterials =
           detailMap?['unknown_materials'] ?? decoded['unknown_materials'];
       final unknownMaterials = rawUnknownMaterials is List
@@ -141,6 +160,9 @@ class CarbonApiException implements Exception {
 
       return _CarbonServerError(
         message: message?.isEmpty == true ? null : message,
+        errorCode: rawErrorCode is String && rawErrorCode.isNotEmpty
+            ? rawErrorCode
+            : null,
         unknownMaterials: unknownMaterials,
       );
     } catch (_) {
@@ -258,11 +280,15 @@ class CarbonApiService {
 
   /// Bearer 토큰을 포함해 계산을 요청하고 모든 실패를 [CarbonApiException]으로 통일한다.
   /// 외부에서 클라이언트를 주입하지 않은 경우 요청 종료 시 직접 닫는다.
+  ///
+  /// [weightGram]은 사용자가 직접 입력한 실제 무게다. 보내면 서버가 범위보다 이 값을 먼저 쓰고
+  /// `weight_source: direct` 로 돌려준다. 예상 무게 범위로 계산할 때는 null 이다.
   Future<CarbonCalculationResult> calculate({
     required Map<String, double> materials,
     required double minWeightGram,
     required double maxWeightGram,
     required String accessToken,
+    double? weightGram,
   }) async {
     try {
       final response = await runJsonApiRequest(
@@ -274,6 +300,7 @@ class CarbonApiService {
           'materials': materials,
           'min_weight_grams': minWeightGram,
           'max_weight_grams': maxWeightGram,
+          'weight_grams': ?weightGram,
         },
         accessToken: accessToken,
         client: client,
@@ -321,8 +348,13 @@ class CarbonApiService {
 }
 
 class _CarbonServerError {
-  const _CarbonServerError({this.message, this.unknownMaterials = const []});
+  const _CarbonServerError({
+    this.message,
+    this.errorCode,
+    this.unknownMaterials = const [],
+  });
 
   final String? message;
+  final String? errorCode;
   final List<String> unknownMaterials;
 }

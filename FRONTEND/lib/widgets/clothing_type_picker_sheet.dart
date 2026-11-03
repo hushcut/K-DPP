@@ -42,7 +42,8 @@ class ClothingTypePickerDiscardPrompt {
 ///
 /// [failureMessage]를 주면 시트 맨 위(제목 위)에 빨간 느낌표와 함께 보입니다.
 /// 분석이 실패해 직접 입력으로 넘어갈 때 쓰며, 시트가 열리면 읽기 프로그램도 이 줄부터
-/// 읽습니다(DECISIONS 96).
+/// 읽습니다(DECISIONS 96). [failureNotices]는 그 이유 바로 아래에 한 줄씩 이어 보이는
+/// 안내(AI 재촬영 권고 — R4)이며, 이유가 없으면 보이지 않습니다.
 Future<ClothingTypeOption?> showClothingTypePickerSheet({
   required BuildContext context,
   required List<ClothingTypeOption> options,
@@ -50,6 +51,7 @@ Future<ClothingTypeOption?> showClothingTypePickerSheet({
   ValueListenable<List<ClothingTypeOption>>? optionsListenable,
   ClothingTypePickerDiscardPrompt? discardPrompt,
   String? failureMessage,
+  List<String> failureNotices = const [],
 }) {
   final canDismiss = discardPrompt == null;
 
@@ -80,6 +82,7 @@ Future<ClothingTypeOption?> showClothingTypePickerSheet({
         initialSelection: initialSelection,
         discardPrompt: discardPrompt,
         failureMessage: failureMessage,
+        failureNotices: failureNotices,
         onSelected: (option) {
           Navigator.pop(sheetContext, option);
         },
@@ -101,6 +104,7 @@ class ClothingTypePickerSheet extends StatefulWidget {
     this.optionsListenable,
     this.discardPrompt,
     this.failureMessage,
+    this.failureNotices = const [],
   });
 
   // 표시할 선택지와 현재 선택된 초기값입니다.
@@ -114,6 +118,8 @@ class ClothingTypePickerSheet extends StatefulWidget {
   final ClothingTypePickerDiscardPrompt? discardPrompt;
   /// 분석에 실패했을 때 목록 맨 위에 보일 이유입니다. 없으면 그 줄을 그리지 않습니다.
   final String? failureMessage;
+  /// 실패 이유 아래에 이어 보일 안내(재촬영 권고 등)입니다. 이유가 없으면 그리지 않습니다.
+  final List<String> failureNotices;
 
   @override
   State<ClothingTypePickerSheet> createState() =>
@@ -122,6 +128,9 @@ class ClothingTypePickerSheet extends StatefulWidget {
 
 /// 선택 목록과 직접 입력 폼 사이의 전환 및 입력 검증 상태를 관리합니다.
 class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
+  static const double _minDirectWeightGram = 1;
+  static const double _maxDirectWeightGram = 100000;
+
   final TextEditingController _directNameController = TextEditingController();
   final TextEditingController _directWeightController = TextEditingController();
   final FocusNode _directNameFocusNode = FocusNode();
@@ -192,6 +201,15 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
     if (weight == null || !weight.isFinite || weight <= 0) {
       setState(() {
         _directErrorText = '실제 무게를 g 단위로 입력해 주세요.';
+      });
+      return;
+    }
+
+    // 서버 계산이 받는 무게 범위(BACKEND main.py MAX_WEIGHT_GRAMS · V2 도 1~100,000g)입니다.
+    // 밖의 값은 서버가 거절해 저장되지 않으므로 여기서 먼저 알립니다.
+    if (weight < _minDirectWeightGram || weight > _maxDirectWeightGram) {
+      setState(() {
+        _directErrorText = '실제 무게는 1g 이상 100,000g 이하로 입력해 주세요.';
       });
       return;
     }
@@ -372,14 +390,32 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.only(top: 1),
-                  child: Text(
-                    failureMessage,
-                    style: TextStyle(
-                      color: primaryText,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      height: 1.4,
-                    ),
+                  // 안내는 이유를 풀어 주는 말이라 같은 느낌표 아래에 옅게 잇습니다. 읽기 프로그램은
+                  // 이유와 한 칸으로 이어 읽습니다.
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        failureMessage,
+                        style: TextStyle(
+                          color: primaryText,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          height: 1.4,
+                        ),
+                      ),
+                      for (final notice in widget.failureNotices) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          notice,
+                          style: TextStyle(
+                            color: secondaryText,
+                            fontSize: 13,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ),
@@ -412,7 +448,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
         ),
         const SizedBox(height: 8),
         Text(
-          '탄소발자국 계산에 사용할 의류 무게 범위를 선택해 주세요.',
+          '소재 생산 단계 예상 탄소배출량 계산에 사용할 의류 무게 범위를 선택해 주세요.',
           style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
         ),
         const SizedBox(height: 18),
@@ -458,7 +494,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
                           color: isSelected
-                              ? AppPalette.accent
+                              ? palette.accentForeground
                               : borderColor,
                           width: isSelected ? 1.5 : 1,
                         ),
@@ -480,7 +516,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
                               option.icon,
                               color: isSelected
                                   ? Colors.white
-                                  : AppPalette.accent,
+                                  : palette.accentForeground,
                             ),
                           ),
                           const SizedBox(width: 14),
@@ -511,9 +547,9 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
                             ),
                           ),
                           if (isSelected)
-                            const Icon(
+                            Icon(
                               Icons.check_circle,
-                              color: AppPalette.accent,
+                              color: palette.accentForeground,
                             )
                           else
                             // 직접 입력도 누르면 무게 칸으로 넘어가므로 다른 줄과 같은 ">" 입니다.
@@ -571,7 +607,7 @@ class _ClothingTypePickerSheetState extends State<ClothingTypePickerSheet> {
       ),
       const SizedBox(height: 8),
       Text(
-        '실제 무게를 알고 있다면 더 정확하게 탄소발자국을 계산할 수 있어요.',
+        '실제 무게를 알고 있다면 그 무게로 소재 생산 단계 예상 탄소배출량을 계산할 수 있어요.',
         style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
       ),
       const SizedBox(height: 18),

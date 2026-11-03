@@ -45,7 +45,7 @@ InputDecoration authInputDecoration(
     ),
     focusedBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(28),
-      borderSide: const BorderSide(color: AppPalette.accent, width: 1.5),
+      borderSide: BorderSide(color: palette.accentForeground, width: 1.5),
     ),
     errorBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(28),

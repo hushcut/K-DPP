@@ -627,11 +627,15 @@ void main() {
       expect(find.byType(AppBannerView), findsNothing);
     });
 
-    testWidgets('동작 줄이기는 슬라이드만 없애고 시간은 그대로다', (tester) async {
+    Future<void> expectNoSlideSameDuration(
+      WidgetTester tester,
+      FakeAccessibilityFeatures features,
+    ) async {
       _useIPhoneView(tester);
-      tester.platformDispatcher.accessibilityFeaturesTestValue =
-          const FakeAccessibilityFeatures(disableAnimations: true);
-      addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+      tester.platformDispatcher.accessibilityFeaturesTestValue = features;
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
       await _pumpApp(tester);
 
       _banner(tester).show('의류 정보가 수정됐어요.', kind: AppBannerKind.success);
@@ -644,7 +648,29 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
       await tester.pump();
       expect(find.byType(AppBannerView), findsNothing);
+    }
+
+    testWidgets('Android 애니메이션 삭제는 슬라이드만 없애고 시간은 그대로다', (tester) async {
+      await expectNoSlideSameDuration(
+        tester,
+        const FakeAccessibilityFeatures(disableAnimations: true),
+      );
     });
+
+    // iOS 는 '동작 줄이기'를 disableAnimations 가 아니라 reduceMotion 으로만 알립니다(DECISIONS 268).
+    testWidgets(
+      'iOS 동작 줄이기도 슬라이드만 없애고 시간은 그대로다',
+      (tester) async {
+        await expectNoSlideSameDuration(
+          tester,
+          const FakeAccessibilityFeatures(
+            reduceMotion: true,
+            supportsAnnounce: true,
+          ),
+        );
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
   });
 
   group('기록', () {

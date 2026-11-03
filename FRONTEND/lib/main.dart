@@ -15,14 +15,18 @@ import 'signup_screen.dart';
 import 'settings_screen.dart';
 import 'theme/app_theme.dart';
 import 'theme_provider.dart';
+import 'utils/motion_preference.dart';
 import 'display_settings_screen.dart';
 import 'material_name_display_provider.dart';
 import 'navigation_bar_opacity_provider.dart';
+import 'services/closet_backup_api_service.dart';
 import 'widgets/app_banner.dart';
+import 'widgets/closet_restore_notice.dart';
 
 /// Flutter 바인딩과 화면 방향을 설정한 뒤 앱 전역 Provider를 주입합니다.
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  // iOS '동작 줄이기'도 Flutter 가 애니메이션을 줄이게 기본 바인딩 대신 앱 바인딩을 만듭니다.
+  AppWidgetsBinding();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
   // 키가 있는 빌드에서만 카카오 SDK 를 준비합니다(KakaoConfig). 실패해도 앱은 띄우고,
@@ -36,7 +40,8 @@ Future<void> main() async {
     }
   }
 
-  final closetProvider = ClosetProvider();
+  // 로그인한 계정의 옷장은 서버에도 백업합니다(DECISIONS 242).
+  final closetProvider = ClosetProvider(backupApi: ClosetBackupApiService());
   final themeProvider = ThemeProvider();
   final materialNameDisplayProvider = MaterialNameDisplayProvider();
   final navigationBarOpacityProvider = NavigationBarOpacityProvider();
@@ -78,7 +83,11 @@ class MyApp extends StatelessWidget {
           supportedLocales: const [Locale('ko', 'KR')],
           localizationsDelegates: GlobalMaterialLocalizations.delegates,
           // 알림은 Navigator 위 공용 배너로 띄워 화면을 넘어가도 남게 합니다(AppBanner).
-          builder: AppBannerHost.builder,
+          // 서버 백업에서 옷을 되살린 알림도 그 배너로 띄웁니다(ClosetRestoreNotice).
+          builder: (context, child) => AppBannerHost.builder(
+            context,
+            ClosetRestoreNotice(child: child ?? const SizedBox.shrink()),
+          ),
           initialRoute: '/splash',
           // 스플래시부터 인증 화면과 메인 화면까지 앱의 주요 이동 경로입니다.
           routes: {

@@ -172,8 +172,8 @@ void main() {
     );
 
     expect(draft.materials.keys, ['unobtainium']);
-    // 기본계수 10.0 × 0.18kg = 1.8. 이 값은 프리뷰에서 끝나지 않는다 —
-    // 서버가 400 MATERIAL_NOT_FOUND로 거부해도 저장 경로는 이 추정값을 옷장에 남긴다.
+    // 기본계수 10.0 × 0.18kg = 1.8. 이 값이 옷장에 남는 길은 서버 계산을 거치지 않는 비로그인
+    // 저장뿐이다. 로그인 저장은 서버 거절·장애 모두 막고 미리보기도 숫자를 보이지 않는다(DECISIONS 288).
     expect(
       ClothingEstimator.estimateCarbonFootprint(draft.materials, tee),
       1.8,

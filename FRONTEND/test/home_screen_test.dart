@@ -8,7 +8,7 @@ import 'helpers/fake_closet_storage.dart';
 
 /// 홈 대시보드가 옷장 집계값을 화면 문구로 옮기는 분기를 확인한다.
 ///
-/// 합계·소나무 환산·관리 팁·최근 의류 순서는 모두 [ClosetProvider] 의 값을 그대로
+/// 합계·자동차 주행 환산·관리 팁·최근 의류 순서는 모두 [ClosetProvider] 의 값을 그대로
 /// 계산해 보여 주는데, 그동안 홈 화면을 띄운 테스트는 코튼 팁 하나뿐이라 이 계산이
 /// 바뀌어도 전체 테스트가 초록이었다.
 void main() {
@@ -52,7 +52,7 @@ void main() {
   }
 
   group('탄소 현황', () {
-    testWidgets('합계를 소수 한 자리로, 벌 수와 소나무 환산을 함께 보여 준다', (tester) async {
+    testWidgets('합계를 소수 한 자리로, 벌 수와 자동차 주행 환산을 함께 보여 준다', (tester) async {
       await pumpHome(tester, [
         clothesWith(title: '셔츠', carbonFootprint: 2.5),
         clothesWith(title: '바지', carbonFootprint: 4.5),
@@ -60,18 +60,45 @@ void main() {
 
       expect(find.text('7.0'), findsOneWidget);
       expect(find.text('현재 옷장에 2개의 의류가 등록되어 있어요.'), findsOneWidget);
-      expect(find.text('등록된 의류 2벌 기준으로 집계된 값입니다.'), findsOneWidget);
-      // 7.0 / 6 을 올림해 2그루다. 내림·반올림이면 1그루가 된다.
-      expect(find.text('소나무 약 2그루 규모와 비슷해요'), findsOneWidget);
+      expect(find.text('등록된 의류 2벌의 원료·소재 생산 단계 추정값이에요.'), findsOneWidget);
+      // 7.0 / 0.244 = 28.7 km 를 리포트와 같은 규칙으로 반올림한다.
+      expect(find.text('자동차 약 29km 주행과 비슷해요(참고 환산)'), findsOneWidget);
+      expect(find.byIcon(Icons.directions_car_filled_outlined), findsOneWidget);
+      expect(find.textContaining('소나무'), findsNothing);
     });
 
-    // 환산은 올림이라 아주 적은 양도 '약 1그루' 다(NEXT_WORK D12 — 고칠지는 따로).
-    // 반올림으로 바뀌면 0그루가 되어 '등록해 보세요' 문구로 떨어진다.
-    testWidgets('0보다 크면 아무리 적어도 소나무 1그루로 올린다', (tester) async {
+    // 아주 적은 양도 0 으로 떨어지지 않고 소수 한 자리로 남는다.
+    testWidgets('10km 아래는 소수 한 자리로 보여 준다', (tester) async {
       await pumpHome(tester, [clothesWith(title: '양말', carbonFootprint: 0.1)]);
 
       expect(find.text('0.1'), findsOneWidget);
-      expect(find.text('소나무 약 1그루 규모와 비슷해요'), findsOneWidget);
+      expect(find.text('자동차 약 0.4km 주행과 비슷해요(참고 환산)'), findsOneWidget);
+    });
+
+    // 0.1km 아래는 반올림하면 '약 0km' 가 되어 없는 양처럼 읽힌다.
+    testWidgets('0.1km 아래는 그보다 적다고 보여 준다', (tester) async {
+      await pumpHome(tester, [clothesWith(title: '양말', carbonFootprint: 0.01)]);
+
+      expect(find.text('자동차 0.1km 주행보다 적어요(참고 환산)'), findsOneWidget);
+      expect(find.textContaining('약 0km'), findsNothing);
+    });
+
+    // 같은 탄소량이면 리포트의 '자동차' 칸과 숫자가 같아야 한다(report_screen_test).
+    testWidgets('주행 환산은 리포트와 같은 규칙으로 자리수를 맞춘다', (tester) async {
+      final cases = <double, String>{9.2: '38', 36.7: '150'};
+
+      for (final entry in cases.entries) {
+        await pumpHome(tester, [
+          clothesWith(title: '셔츠', carbonFootprint: entry.key),
+        ]);
+
+        expect(
+          find.text('자동차 약 ${entry.value}km 주행과 비슷해요(참고 환산)'),
+          findsOneWidget,
+        );
+
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
     });
 
     testWidgets('빈 옷장은 0.0 과 등록 안내를 보여 준다', (tester) async {
@@ -90,12 +117,13 @@ void main() {
       // 관리 팁도 옷이 없을 때의 문구다.
       expect(find.text('오늘의 관리 팁'), findsOneWidget);
       expect(
-        find.text('새 의류를 등록하면 소재와 상태를 바탕으로 맞춤 관리 팁을 제공할 수 있어요.'),
+        find.text('새 의류를 등록하면 소재를 바탕으로 맞춤 관리 팁을 제공할 수 있어요.'),
         findsOneWidget,
       );
 
       // 최근 의류 자리에는 빈 카드와 스캔 버튼이 나온다.
       expect(find.text('아직 등록된 의류가 없습니다'), findsOneWidget);
+      expect(find.textContaining('의류 소재와 관리 정보를'), findsOneWidget);
       await tester.ensureVisible(find.text('스캔하러 가기'));
       await tester.tap(find.text('스캔하러 가기'));
       expect(scanRequests, 1);
@@ -110,8 +138,8 @@ void main() {
         clothesWith(title: '면 티셔츠', health: 40, materials: const {'면': 100}),
       ]);
 
-      expect(find.text('의류 컨디션 점검이 필요해요'), findsOneWidget);
-      expect(find.textContaining('현재 평균 건강도가 낮아요.'), findsOneWidget);
+      expect(find.text('의류 관리를 점검해 보세요'), findsOneWidget);
+      expect(find.textContaining('평균 소재 참고 점수가 낮아요.'), findsOneWidget);
       expect(find.text('코튼 소재 관리 팁'), findsNothing);
     });
 
@@ -122,7 +150,7 @@ void main() {
         clothesWith(title: '면 티셔츠', health: 50, materials: const {'면': 100}),
       ]);
 
-      expect(find.text('의류 컨디션 점검이 필요해요'), findsNothing);
+      expect(find.text('의류 관리를 점검해 보세요'), findsNothing);
       expect(find.text('코튼 소재 관리 팁'), findsOneWidget);
     });
   });
@@ -164,15 +192,56 @@ void main() {
       );
     });
 
+    // 소재만으로 매긴 점수라 옷의 실제 상태·수명처럼 읽히면 안 된다(협의안 R3).
+    testWidgets('최근 의류의 점수를 소재 참고 점수로 보여 주고 낭독도 같다', (tester) async {
+      final semantics = tester.ensureSemantics();
+      await pumpHome(tester, [clothesWith(title: '셔츠', health: 88)]);
+
+      expect(find.text('최근 등록한 의류'), findsOneWidget);
+      expect(find.text('88점'), findsOneWidget);
+      expect(find.text('88%'), findsNothing);
+      // 카드가 낭독을 한 칸으로 합치므로 합친 이름 안에서 찾는다.
+      expect(find.bySemanticsLabel(RegExp('소재 참고 점수 88점')), findsOneWidget);
+      expect(
+        find.text('최근 등록된 의류의 소재 참고 점수와 관리 포인트를 확인해 보세요.'),
+        findsOneWidget,
+      );
+      semantics.dispose();
+    });
+
+    // 옷장의 '점수 정보 없음'과 같은 기준(20 이하)이다. 숫자를 함께 보이면 어긋난다.
+    testWidgets('점수가 없는 옷은 숫자 대신 점수 없음으로 보여 주고 낭독도 같다', (tester) async {
+      final semantics = tester.ensureSemantics();
+      await pumpHome(tester, [clothesWith(title: '셔츠', health: 20)]);
+
+      expect(find.text('점수 없음'), findsOneWidget);
+      expect(find.text('20점'), findsNothing);
+      expect(find.bySemanticsLabel(RegExp('소재 참고 점수 점수 없음')), findsOneWidget);
+      expect(
+        tester
+            .widget<LinearProgressIndicator>(
+              find.byType(LinearProgressIndicator),
+            )
+            .value,
+        0,
+      );
+      semantics.dispose();
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await pumpHome(tester, [clothesWith(title: '셔츠', health: 21)]);
+      expect(find.text('21점'), findsOneWidget);
+      expect(find.text('점수 없음'), findsNothing);
+    });
+
     testWidgets('건강도 구간마다 다른 관리 문구를 붙인다', (tester) async {
       // 문구 경계는 20·40·70 '이하' 다. 경계값과 그 바로 위를 짝지어 본다.
       const cases = <int, String>{
-        20: '수명 만료에 가까워요. 재사용 또는 분리배출 방법을 함께 확인해 보세요.',
-        21: '관리 주의 단계예요. 세탁 빈도와 건조 방식을 점검해 주세요.',
-        40: '관리 주의 단계예요. 세탁 빈도와 건조 방식을 점검해 주세요.',
-        41: '현재 상태는 보통이에요. 세탁 지침을 지키면 더 오래 입을 수 있어요.',
-        70: '현재 상태는 보통이에요. 세탁 지침을 지키면 더 오래 입을 수 있어요.',
-        71: '현재 상태가 좋아요. 지금의 관리 방식을 유지해 주세요.',
+        20: '점수 정보가 없어요. 세탁 지침을 확인해 주세요.',
+        21: '소재 기준으로 관리에 주의가 필요해요. 세탁 빈도와 건조 방식을 점검해 주세요.',
+        40: '소재 기준으로 관리에 주의가 필요해요. 세탁 빈도와 건조 방식을 점검해 주세요.',
+        41: '소재 기준으로 보통이에요. 세탁 지침을 지키면 더 오래 입을 수 있어요.',
+        70: '소재 기준으로 보통이에요. 세탁 지침을 지키면 더 오래 입을 수 있어요.',
+        71: '소재 기준으로 좋은 편이에요. 지금의 관리 방식을 유지해 주세요.',
       };
 
       for (final entry in cases.entries) {

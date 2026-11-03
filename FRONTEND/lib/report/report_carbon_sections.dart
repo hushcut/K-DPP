@@ -69,6 +69,7 @@ Widget _buildProductionCarbonCard(
   Clothes item, {
   required Color primaryText,
   required Color secondaryText,
+  required Color accentColor,
   required Color cardColor,
   required Color borderColor,
   required bool isDark,
@@ -100,9 +101,9 @@ Widget _buildProductionCarbonCard(
                 color: AppPalette.accent.withValues(alpha: isDark ? 0.22 : 0.10),
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.factory_outlined,
-                color: AppPalette.accent,
+                color: accentColor,
               ),
             ),
             const SizedBox(width: 14),
@@ -244,7 +245,6 @@ String _calculationSourceLabel(String source) {
 }
 
 // 미국 EPA 환산 기준을 참고한 생활 속 탄소 비교 계수입니다. (develop d0df5a4 기준)
-const double _passengerCarKgCo2EqPerKm = 0.244;
 const double _smartphoneChargeKgCo2Eq = 0.0124;
 const double _led10WKgCo2EqPerHour = 0.004;
 
@@ -253,6 +253,7 @@ Widget _buildCarbonComparisonCard(
   Clothes item, {
   required Color primaryText,
   required Color secondaryText,
+  required Color accentColor,
   required Color cardColor,
   required Color borderColor,
   required bool isDark,
@@ -262,17 +263,17 @@ Widget _buildCarbonComparisonCard(
     _CarbonComparisonData(
       icon: Icons.directions_car_filled_outlined,
       title: '자동차',
-      value: '약 ${_formatImpactValue(carbon / _passengerCarKgCo2EqPerKm)} km',
+      value: '약 ${formatImpactValue(carbon / passengerCarKgCo2EqPerKm)} km',
     ),
     _CarbonComparisonData(
       icon: Icons.smartphone_outlined,
       title: '스마트폰',
-      value: '약 ${_formatImpactValue(carbon / _smartphoneChargeKgCo2Eq)}회 충전',
+      value: '약 ${formatImpactValue(carbon / _smartphoneChargeKgCo2Eq)}회 충전',
     ),
     _CarbonComparisonData(
       icon: Icons.lightbulb_outline,
       title: 'LED 전구',
-      value: '약 ${_formatImpactValue(carbon / _led10WKgCo2EqPerHour)}시간',
+      value: '약 ${formatImpactValue(carbon / _led10WKgCo2EqPerHour)}시간',
     ),
   ];
 
@@ -316,6 +317,7 @@ Widget _buildCarbonComparisonCard(
                       primaryText: primaryText,
                       secondaryText: secondaryText,
                       isDark: isDark,
+                      accentColor: accentColor,
                     ),
                     if (comparison != comparisons.last)
                       const SizedBox(height: 10),
@@ -333,6 +335,7 @@ Widget _buildCarbonComparisonCard(
                       primaryText: primaryText,
                       secondaryText: secondaryText,
                       isDark: isDark,
+                      accentColor: accentColor,
                     ),
                   ),
                   if (comparison != comparisons.last)
@@ -358,6 +361,7 @@ Widget _buildCarbonComparisonCard(
 Widget _buildCarbonScopeNotice({
   required Color primaryText,
   required Color secondaryText,
+  required Color accentColor,
   required bool isDark,
 }) {
   return Container(
@@ -373,7 +377,7 @@ Widget _buildCarbonScopeNotice({
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Icon(Icons.info_outline, color: AppPalette.accent, size: 20),
+        Icon(Icons.info_outline, color: accentColor, size: 20),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
@@ -391,6 +395,7 @@ Widget _buildCalculationBasisCard(
   Clothes item, {
   required Color primaryText,
   required Color secondaryText,
+  required Color accentColor,
   required Color cardColor,
   required Color borderColor,
 }) {
@@ -407,9 +412,9 @@ Widget _buildCalculationBasisCard(
       children: [
         Row(
           children: [
-            const Icon(
+            Icon(
               Icons.fact_check_outlined,
-              color: AppPalette.accent,
+              color: accentColor,
               size: 20,
             ),
             const SizedBox(width: 8),
@@ -518,6 +523,7 @@ Widget _buildComparisonTile(
   _CarbonComparisonData data, {
   required Color primaryText,
   required Color secondaryText,
+  required Color accentColor,
   required bool isDark,
 }) {
   return Container(
@@ -528,7 +534,7 @@ Widget _buildComparisonTile(
     ),
     child: Row(
       children: [
-        Icon(data.icon, color: AppPalette.accent, size: 22),
+        Icon(data.icon, color: accentColor, size: 22),
         const SizedBox(width: 10),
         Expanded(
           child: Column(
@@ -555,28 +561,29 @@ Widget _buildComparisonTile(
   );
 }
 
-String _formatImpactValue(double value) {
-  if (!value.isFinite || value <= 0) return '1';
-
-  if (value < 10) {
-    final rounded = value.toStringAsFixed(1);
-    return rounded.endsWith('.0')
-        ? rounded.substring(0, rounded.length - 2)
-        : rounded;
-  }
-
-  if (value < 100) {
-    return value.round().toString();
-  }
-
-  return ((value / 10).round() * 10).toString();
-}
-
 String _carbonSourceLabel(Clothes item) {
   return switch (item.carbonFootprintSource) {
-    CarbonFootprintSource.server => '백엔드 계산값',
+    CarbonFootprintSource.server => '서버 계산값',
     CarbonFootprintSource.localEstimate => '앱 임시 추정값',
   };
+}
+
+// 최소·최대 무게가 같으면 추정 범위가 아니라 사용자가 입력한 실제 무게입니다.
+bool _hasExactWeight(Clothes item) {
+  final minWeight = item.minWeightGram;
+  final maxWeight = item.maxWeightGram;
+
+  return minWeight != null &&
+      maxWeight != null &&
+      (maxWeight - minWeight).abs() <= 0.05;
+}
+
+// 계산에 깔린 가정과 결과의 한계를 알립니다(협의안 R3).
+// 저장된 옷에는 어느 부위의 조성인지 남지 않아 겉감이라고 단정하지 않습니다.
+String _carbonAssumptionText(Clothes item) {
+  final weightBasis = _hasExactWeight(item) ? '입력한 무게' : '추정 무게';
+
+  return '저장된 소재 조성과 $weightBasis 기준이며, 옷의 부위별 구성이나 생산 국가·공정 등에 따라 달라질 수 있어요.';
 }
 
 // 실제 무게가 하나의 값인지 범위인지에 따라 계산 근거 문구를 구성합니다.
@@ -588,7 +595,7 @@ String _weightBasisText(Clothes item) {
     return '저장된 소재와 의류 유형 기준';
   }
 
-  if ((maxWeight - minWeight).abs() <= 0.05) {
+  if (_hasExactWeight(item)) {
     return '실제 무게 ${_formatWeightGram(maxWeight)}g';
   }
 

@@ -33,12 +33,12 @@ extension _ClosetSortSheet on _ClosetScreenState {
                 ),
                 const SizedBox(height: 20),
                 _buildSortOptionTile(
-                  label: '친환경 순',
+                  label: '탄소 낮은 순',
                   value: ClosetSortOption.eco,
                   primaryText: primaryText,
                 ),
                 _buildSortOptionTile(
-                  label: '건강도 순',
+                  label: '소재 점수 순',
                   value: ClosetSortOption.health,
                   primaryText: primaryText,
                 ),
@@ -85,6 +85,7 @@ extension _ClosetSortSheet on _ClosetScreenState {
     required Color primaryText,
   }) {
     final isSelected = _sortOption == value;
+    final palette = AppPalette.of(context);
 
     // 넷 중 하나를 고르는 자리이므로 선택한 항목에만 체크를 두고 나머지는 비웁니다.
     // 체크와 빈 원을 섞으면 짝이 맞지 않고, 전부 라디오 원으로 맞추면 목록이
@@ -108,7 +109,9 @@ extension _ClosetSortSheet on _ClosetScreenState {
                     label,
                     style: TextStyle(
                       fontSize: 18,
-                      color: isSelected ? AppPalette.accent : primaryText,
+                      color: isSelected
+                          ? palette.accentForeground
+                          : primaryText,
                       fontWeight:
                           isSelected ? FontWeight.bold : FontWeight.normal,
                     ),
@@ -116,7 +119,7 @@ extension _ClosetSortSheet on _ClosetScreenState {
                 ),
                 // 선택되지 않은 줄에도 아이콘 크기만큼 자리를 두어 네 줄의 높이를 같게 맞춥니다.
                 if (isSelected)
-                  const Icon(Icons.check, color: AppPalette.accent)
+                  Icon(Icons.check, color: palette.accentForeground)
                 else
                   const SizedBox(width: 24, height: 24),
               ],

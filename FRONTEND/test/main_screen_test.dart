@@ -1340,6 +1340,7 @@ class _HeldCarbonApiService extends CarbonApiService {
     required double minWeightGram,
     required double maxWeightGram,
     required String accessToken,
+    double? weightGram,
   }) {
     calls++;
     return _response.future;

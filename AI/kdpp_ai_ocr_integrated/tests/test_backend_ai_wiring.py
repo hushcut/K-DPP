@@ -142,6 +142,19 @@ def test_damaged_image_is_400_before_vision(backend_main, scan_image_client, mon
     assert sum(sum(counts.values()) for counts in backend_main._vision_scan_counts.values()) == 1
 
 
+def test_unreadable_image_has_matching_400_response_and_photo_log(scan_image_client, monkeypatch, capsys):
+    def forbid_vision(*_args, **_kwargs):
+        pytest.fail("unreadable images must stop before Vision")
+
+    monkeypatch.setattr(ocr_text, "_get_vision_client", forbid_vision)
+    monkeypatch.setattr(ocr_text, "_run_google_ocr", forbid_vision)
+    response = scan_image_client.post("/api/scan", files={"image": ("label.jpg", b"not an image", "image/jpeg")})
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "INVALID_IMAGE"
+    [line] = [line for line in capsys.readouterr().err.splitlines() if line.startswith("[scan] 사진 ")]
+    assert "결과=400" in line and "실제형식=-" in line and "열기=UnidentifiedImageError" in line
+
+
 @pytest.mark.parametrize("error_name,status,code", [
     ("InvalidImageError", 400, "INVALID_IMAGE"),
     ("ImageTooLargeError", 413, "PAYLOAD_TOO_LARGE"),

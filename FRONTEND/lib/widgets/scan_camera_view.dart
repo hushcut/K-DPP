@@ -539,18 +539,21 @@ class ScanCameraView extends StatelessWidget {
                   icon: Icons.settings_outlined,
                   text: '설정 앱을 열고 앱 목록에서 K-DPP를 선택하세요.',
                   primaryText: primaryText,
+                  iconColor: palette.accentForeground,
                 ),
                 const SizedBox(height: 10),
                 _buildPermissionGuideStep(
                   icon: Icons.camera_alt_outlined,
                   text: '권한 메뉴에서 카메라를 허용으로 변경하세요.',
                   primaryText: primaryText,
+                  iconColor: palette.accentForeground,
                 ),
                 const SizedBox(height: 10),
                 _buildPermissionGuideStep(
                   icon: Icons.photo_library_outlined,
                   text: '급하다면 앨범 버튼으로 이미 찍어둔 라벨 사진을 선택할 수 있어요.',
                   primaryText: primaryText,
+                  iconColor: palette.accentForeground,
                 ),
                 const SizedBox(height: 20),
                 SizedBox(
@@ -584,11 +587,12 @@ class ScanCameraView extends StatelessWidget {
     required IconData icon,
     required String text,
     required Color primaryText,
+    required Color iconColor,
   }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, color: AppPalette.accent, size: 20),
+        Icon(icon, color: iconColor, size: 20),
         const SizedBox(width: 10),
         Expanded(
           child: Text(

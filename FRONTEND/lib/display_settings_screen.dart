@@ -250,7 +250,7 @@ class _ThemeModeTile extends StatelessWidget {
 
     final cardColor = palette.card;
     final borderColor = selected
-        ? AppPalette.accent
+        ? palette.accentForeground
         : (isDark ? const Color(0xFF2C2C2E) : const Color(0xFFEAEAEA));
     final primaryText = palette.textPrimary;
 
@@ -294,7 +294,7 @@ class _ThemeModeTile extends StatelessWidget {
                         ? Icons.radio_button_checked
                         : Icons.radio_button_off,
                     color: selected
-                        ? AppPalette.accent
+                        ? palette.accentForeground
                         : const Color(0xFF5F6368),
                   ),
                 ],
@@ -328,7 +328,7 @@ class _MaterialNameDisplayTile extends StatelessWidget {
 
     final cardColor = palette.card;
     final borderColor = selected
-        ? AppPalette.accent
+        ? palette.accentForeground
         : (isDark ? const Color(0xFF2C2C2E) : const Color(0xFFEAEAEA));
 
     // 칸 색을 Container 로 칠하면 누름 효과가 그 아래에 가려지므로 Ink 로 칠합니다.
@@ -385,7 +385,7 @@ class _MaterialNameDisplayTile extends StatelessWidget {
                         ? Icons.radio_button_checked
                         : Icons.radio_button_off,
                     color: selected
-                        ? AppPalette.accent
+                        ? palette.accentForeground
                         : const Color(0xFF5F6368),
                   ),
                 ],
@@ -454,10 +454,10 @@ class _NavigationBarOpacityCard extends StatelessWidget {
               ExcludeSemantics(
                 child: Text(
                   '$percent%',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
-                    color: AppPalette.accent,
+                    color: palette.accentForeground,
                   ),
                 ),
               ),
@@ -475,7 +475,7 @@ class _NavigationBarOpacityCard extends StatelessWidget {
                 max: NavigationBarOpacityProvider.maxOpacity,
                 divisions: divisions,
                 label: '$percent%',
-                activeColor: AppPalette.accent,
+                activeColor: palette.accentForeground,
                 semanticFormatterCallback: (value) => '${_percentOf(value)}%',
                 onChanged: provider.preview,
                 onChangeEnd: onChangeEnd,
@@ -556,7 +556,7 @@ class _NavigationBarOpacityPreview extends StatelessWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    Icon(Icons.home, color: AppPalette.accent, size: 20),
+                    Icon(Icons.home, color: palette.accentForeground, size: 20),
                     Container(
                       width: 30,
                       height: 30,

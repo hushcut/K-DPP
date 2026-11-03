@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:k_dpp/utils/motion_preference.dart';
 
 const _secureStorageChannel = MethodChannel(
   'plugins.it_nomads.com/flutter_secure_storage',
@@ -13,8 +14,11 @@ const _secureStorageChannel = MethodChannel(
 /// 그 채널은 응답이 없어 예외가 나는데, 세션 읽기는 실패를 삼키도록 되어 있어 페이크 주입을 잊은
 /// 테스트가 실제 저장소를 탄 채 초록으로 통과했습니다(NEXT_WORK D13). 그래서 테스트가 그 채널을
 /// 한 번이라도 부르면 끝날 때 실패시킵니다. 고칠 때는 `FakeAuthSessionStorage` 를 넘기면 됩니다.
+///
+/// 시험 바인딩도 앱 바인딩(`AppWidgetsBinding`)처럼 iOS '동작 줄이기'를 Flutter 의 애니메이션 줄이기에
+/// 싣습니다. 그래야 reduceMotion 을 켠 시험이 기기와 같게 돕니다.
 Future<void> testExecutable(FutureOr<void> Function() testMain) async {
-  TestWidgetsFlutterBinding.ensureInitialized();
+  _AppTestBinding();
 
   setUp(() {
     final calls = <String>[];
@@ -39,3 +43,6 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
 
   await testMain();
 }
+
+class _AppTestBinding extends AutomatedTestWidgetsFlutterBinding
+    with ReduceMotionSemanticsBinding {}

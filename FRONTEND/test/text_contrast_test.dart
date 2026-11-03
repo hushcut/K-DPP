@@ -22,6 +22,8 @@ import 'package:k_dpp/utils/clothing_type_catalog.dart';
 import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:k_dpp/widgets/auth_form_widgets.dart';
 import 'package:k_dpp/widgets/clothing_type_picker_sheet.dart';
+import 'package:k_dpp/widgets/material_input_collection.dart';
+import 'package:k_dpp/widgets/scan_result_view.dart';
 import 'package:provider/provider.dart';
 
 import 'helpers/fake_auth_session_storage.dart';
@@ -78,7 +80,21 @@ void main() {
       });
     }
 
-    test('수명 만료 글자는 옷장의 붉은 경고 카드 바탕에서도 4.5:1 을 넘는다', () {
+    // C55: 다크에서 바탕에 칠한 강조색 #4A4EFE 는 3.4:1(카드 3.1:1)이었다.
+    test('바탕에 칠하는 강조색은 두 테마의 화면 바탕과 카드에서 4.5:1 을 넘는다', () {
+      for (final palette in [AppPalette.light, AppPalette.dark]) {
+        for (final background in [palette.background, palette.card]) {
+          expect(
+            contrast(palette.accentForeground, background),
+            greaterThan(aa),
+            reason: '${palette.accentForeground} on $background',
+          );
+        }
+      }
+      expect(AppPalette.light.accentForeground, AppPalette.accent);
+    });
+
+    test('점수 정보 없음 글자는 옷장의 붉은 경고 카드 바탕에서도 4.5:1 을 넘는다', () {
       expect(
         contrast(AppPalette.light.dangerText, Colors.red.shade50),
         greaterThan(aa),
@@ -143,7 +159,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('홈 건강도 퍼센트 글자는 좋음·주의·경고 글자색이다', (tester) async {
+    testWidgets('홈 소재 참고 점수 글자는 좋음·주의·경고 글자색이다', (tester) async {
       for (final (health, expected) in [
         (71, light.successText),
         (41, light.warningText),
@@ -154,11 +170,11 @@ void main() {
         ]);
         await pump(tester, provider, const Scaffold(body: HomeScreen()));
 
-        expect(textColor(tester, find.text('$health%')), expected);
+        expect(textColor(tester, find.text('$health점')), expected);
       }
     });
 
-    testWidgets('옷장 카드의 건강 상태 글자는 두 목록 모두 좋음·경고 글자색이고, 지우기 확인 버튼은 경고 바탕이다', (
+    testWidgets('옷장 카드의 소재 참고 점수 글자는 두 목록 모두 좋음·경고 글자색이고, 지우기 확인 버튼은 경고 바탕이다', (
       tester,
     ) async {
       final provider = await providerWith([
@@ -171,8 +187,8 @@ void main() {
         Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
       );
 
-      expect(textColor(tester, find.text('건강 상태: 88%')), light.successText);
-      expect(textColor(tester, find.text('수명 만료 (배출 권장)')), light.dangerText);
+      expect(textColor(tester, find.text('소재 참고 점수: 88점')), light.successText);
+      expect(textColor(tester, find.text('점수 정보 없음')), light.dangerText);
 
       // '내 설정 순' 은 끌어 옮기는 다른 목록으로 그린다.
       await tester.tap(find.byTooltip('옷장 정렬'));
@@ -180,8 +196,8 @@ void main() {
       await tester.tap(find.text('내 설정 순'));
       await tester.pumpAndSettle();
       expect(find.byType(ReorderableListView), findsOneWidget);
-      expect(textColor(tester, find.text('건강 상태: 88%')), light.successText);
-      expect(textColor(tester, find.text('수명 만료 (배출 권장)')), light.dangerText);
+      expect(textColor(tester, find.text('소재 참고 점수: 88점')), light.successText);
+      expect(textColor(tester, find.text('점수 정보 없음')), light.dangerText);
 
       await tester.tap(find.text('선택'));
       await tester.pumpAndSettle();
@@ -296,7 +312,10 @@ void main() {
         await tester.tap(find.text('시트 열기'));
         await tester.pumpAndSettle();
         expect(
-          textColor(tester, find.text('탄소발자국 계산에 사용할 의류 무게 범위를 선택해 주세요.')),
+          textColor(
+            tester,
+            find.text('소재 생산 단계 예상 탄소배출량 계산에 사용할 의류 무게 범위를 선택해 주세요.'),
+          ),
           light.textSecondary,
         );
 
@@ -318,7 +337,7 @@ void main() {
         expect(
           textColor(
             tester,
-            find.text('실제 무게를 알고 있다면 더 정확하게 탄소발자국을 계산할 수 있어요.'),
+            find.text('실제 무게를 알고 있다면 그 무게로 소재 생산 단계 예상 탄소배출량을 계산할 수 있어요.'),
           ),
           light.textSecondary,
         );
@@ -364,6 +383,86 @@ void main() {
       );
       expect(decoration.labelStyle?.color, light.inputLabel);
       expect(decoration.hintStyle?.color, light.inputHint);
+    });
+  });
+
+  group('화면이 팔레트 색을 쓴다(다크)', () {
+    testWidgets('옷장의 선택된 탭·탭 밑줄·정렬 아이콘은 다크용 강조색이다', (
+      tester,
+    ) async {
+      final provider = ClosetProvider(
+        storage: FakeClosetStorage(),
+        authSessionStorage: FakeAuthSessionStorage(),
+      );
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: provider),
+            ChangeNotifierProvider(create: (_) => ThemeProvider()),
+            ChangeNotifierProvider(
+              create: (_) => MaterialNameDisplayProvider(),
+            ),
+          ],
+          child: MaterialApp(
+            theme: ThemeData(brightness: Brightness.dark),
+            builder: AppBannerHost.builder,
+            home: Scaffold(body: ClosetScreen(onOpenReport: (_) {})),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final tabBar = tester.widget<TabBar>(find.byType(TabBar));
+      expect(tabBar.labelColor, AppPalette.dark.accentForeground);
+      expect(tabBar.indicatorColor, AppPalette.dark.accentForeground);
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.sort)).color,
+        AppPalette.dark.accentForeground,
+      );
+      expect(AppPalette.dark.accentForeground, isNot(AppPalette.accent));
+    });
+
+    testWidgets('스캔 결과의 AI 안내 카드 아이콘은 다크용 강조색이다', (tester) async {
+      final materialInputs = MaterialInputCollection()
+        ..setFromMaterials({'cotton': 100});
+      final titleController = TextEditingController(text: '새로 스캔한 의류');
+      addTearDown(materialInputs.dispose);
+      addTearDown(titleController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(brightness: Brightness.dark),
+          home: Scaffold(
+            body: ScanResultView(
+              formKey: GlobalKey<FormState>(),
+              hasTriedSubmit: false,
+              isSaving: false,
+              isScanFailed: false,
+              titleController: titleController,
+              selectedClothingType: ClothingTypeCatalog.defaultOption,
+              materialInputs: materialInputs,
+              scannedCare: '찬물 세탁',
+              originalMaterials: const {'cotton': 100},
+              scanNotices: const ['겉감 소재만 읽었어요.'],
+              validateTitle: (_) => null,
+              validateMaterialName: (_) => null,
+              validateMaterialValue: (_) => null,
+              onSelectClothingType: () {},
+              onAddMaterial: () {},
+              onRemoveMaterial: (_) {},
+              onSubmit: () {},
+              onReset: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('겉감 소재만 읽었어요.'), findsOneWidget);
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.info_outline_rounded)).color,
+        AppPalette.dark.accentForeground,
+      );
     });
   });
 }

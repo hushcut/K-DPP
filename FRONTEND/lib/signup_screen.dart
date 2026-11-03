@@ -265,7 +265,7 @@ class _SignupScreenState extends State<SignupScreen> {
                                   autocorrect: false,
                                   validator: validateEmailInput,
                                   style: TextStyle(color: primaryText),
-                                  cursorColor: AppPalette.accent,
+                                  cursorColor: palette.accentForeground,
                                   decoration: authInputDecoration(
                                     context,
                                     labelText: '이메일',
@@ -294,7 +294,7 @@ class _SignupScreenState extends State<SignupScreen> {
                                   autofillHints: const [AutofillHints.nickname],
                                   validator: _validateNickname,
                                   style: TextStyle(color: primaryText),
-                                  cursorColor: AppPalette.accent,
+                                  cursorColor: palette.accentForeground,
                                   decoration: authInputDecoration(
                                     context,
                                     labelText: '닉네임',
@@ -317,7 +317,7 @@ class _SignupScreenState extends State<SignupScreen> {
                                   autocorrect: false,
                                   validator: validateNewPassword,
                                   style: TextStyle(color: primaryText),
-                                  cursorColor: AppPalette.accent,
+                                  cursorColor: palette.accentForeground,
                                   decoration: authInputDecoration(
                                     context,
                                     labelText: '비밀번호',
@@ -357,7 +357,7 @@ class _SignupScreenState extends State<SignupScreen> {
                                         _passwordController.text,
                                       ),
                                   style: TextStyle(color: primaryText),
-                                  cursorColor: AppPalette.accent,
+                                  cursorColor: palette.accentForeground,
                                   decoration: authInputDecoration(
                                     context,
                                     labelText: '비밀번호 확인',

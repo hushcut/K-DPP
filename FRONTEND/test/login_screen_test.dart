@@ -34,6 +34,7 @@ void main() {
     );
 
     expect(find.text('K-DPP'), findsOneWidget);
+    expect(find.textContaining('의류 소재와 관리 정보를'), findsOneWidget);
     expect(find.text('메인 화면'), findsNothing);
 
     final screenSize = tester.view.physicalSize / tester.view.devicePixelRatio;

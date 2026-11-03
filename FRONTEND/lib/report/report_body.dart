@@ -88,9 +88,9 @@ Widget _buildReportBody(
         children: [
           Row(
             children: [
-              const Icon(
+              Icon(
                 Icons.verified_user_outlined,
-                color: AppPalette.accent,
+                color: palette.accentForeground,
                 size: 28,
               ),
               const SizedBox(width: 8),
@@ -135,11 +135,13 @@ Widget _buildReportBody(
                 icon: Icons.category_outlined,
                 label: item.category,
                 isDark: isDark,
+                accentColor: palette.accentForeground,
               ),
               _buildTagChip(
                 icon: Icons.layers_outlined,
                 label: mainMaterial,
                 isDark: isDark,
+                accentColor: palette.accentForeground,
               ),
             ],
           ),
@@ -162,7 +164,7 @@ Widget _buildReportBody(
                           : 'CO2eq 기준 서버 계산값'
                     : 'CO2eq 기준 임시 추정값',
                 icon: Icons.eco_outlined,
-                color: AppPalette.accent,
+                color: palette.accentForeground,
                 primaryText: primaryText,
                 secondaryText: secondaryText,
                 cardColor: cardColor,
@@ -222,6 +224,7 @@ Widget _buildReportBody(
             secondaryText: secondaryText,
             cardColor: cardColor,
             borderColor: borderColor,
+            accentColor: palette.accentForeground,
           ),
           const SizedBox(height: 12),
 
@@ -234,6 +237,7 @@ Widget _buildReportBody(
             secondaryText: secondaryText,
             cardColor: cardColor,
             borderColor: borderColor,
+            accentColor: palette.accentForeground,
           ),
           const SizedBox(height: 24),
 
@@ -247,7 +251,8 @@ Widget _buildReportBody(
           ),
           const SizedBox(height: 8),
           Text(
-            '이 수치는 전체 생애주기 배출량이 아닙니다. 소재와 무게를 바탕으로 원료·소재 생산 단계에서 발생한 탄소 배출량을 추정한 값입니다.',
+            '이 수치는 전체 생애주기 배출량이 아닙니다. 소재와 무게를 바탕으로 원료·소재 생산 단계에서 발생한 탄소 배출량을 추정한 값입니다. '
+            '${_carbonAssumptionText(item)}',
             style: TextStyle(color: secondaryText, fontSize: 13),
           ),
           const SizedBox(height: 16),
@@ -256,6 +261,7 @@ Widget _buildReportBody(
             item,
             primaryText: primaryText,
             secondaryText: secondaryText,
+            accentColor: palette.accentForeground,
             cardColor: cardColor,
             borderColor: borderColor,
             isDark: isDark,
@@ -266,6 +272,7 @@ Widget _buildReportBody(
             item,
             primaryText: primaryText,
             secondaryText: secondaryText,
+            accentColor: palette.accentForeground,
             cardColor: cardColor,
             borderColor: borderColor,
             isDark: isDark,
@@ -275,6 +282,7 @@ Widget _buildReportBody(
           _buildCarbonScopeNotice(
             primaryText: primaryText,
             secondaryText: secondaryText,
+            accentColor: palette.accentForeground,
             isDark: isDark,
           ),
           const SizedBox(height: 12),
@@ -283,6 +291,7 @@ Widget _buildReportBody(
             item,
             primaryText: primaryText,
             secondaryText: secondaryText,
+            accentColor: palette.accentForeground,
             cardColor: cardColor,
             borderColor: borderColor,
           ),
@@ -312,7 +321,7 @@ Widget _buildReportBody(
           ),
           _buildHistoryRow(
             '권장 조치',
-            item.health <= 20 ? '재사용·기부·분리배출 검토' : '현재 관리 방식 유지',
+            item.health <= 20 ? '세탁 지침 확인' : '현재 관리 방식 유지',
             primaryText: primaryText,
             secondaryText: secondaryText,
           ),

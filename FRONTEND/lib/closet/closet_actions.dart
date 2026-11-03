@@ -17,9 +17,9 @@ extension _ClosetActions on _ClosetScreenState {
   String get _sortLabel {
     switch (_sortOption) {
       case ClosetSortOption.eco:
-        return '친환경 순';
+        return '탄소 낮은 순';
       case ClosetSortOption.health:
-        return '건강도 순';
+        return '소재 점수 순';
       case ClosetSortOption.latest:
         return '최신 등록 순';
       case ClosetSortOption.custom:

@@ -190,6 +190,89 @@ void main() {
       }
     });
 
+    test('직접 입력한 실제 무게는 weight_grams 로 함께 보낸다', () async {
+      late http.Request capturedRequest;
+      final client = MockClient((request) async {
+        capturedRequest = request;
+
+        return http.Response(
+          jsonEncode({
+            'status': 'success',
+            'carbon_factor': 8.3,
+            'carbon_footprint': 5.15,
+            'carbon_footprint_min': 5.15,
+            'carbon_footprint_max': 5.15,
+            'min_weight_grams': 620,
+            'max_weight_grams': 620,
+            'weight_source': 'direct',
+            'unit': 'kg CO2eq',
+            'saved_result_id': 23,
+          }),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      });
+      final service = CarbonApiService(client: client);
+
+      try {
+        final result = await service.calculate(
+          materials: const {'cotton': 100},
+          minWeightGram: 620,
+          maxWeightGram: 620,
+          weightGram: 620,
+          accessToken: 'access-token',
+        );
+
+        expect(jsonDecode(capturedRequest.body), {
+          'materials': {'cotton': 100.0},
+          'min_weight_grams': 620.0,
+          'max_weight_grams': 620.0,
+          'weight_grams': 620.0,
+        });
+        expect(result.weightSource, 'direct');
+      } finally {
+        client.close();
+      }
+    });
+
+    test('무게 거절(WEIGHT_*)은 소재가 아니라 무게를 확인하라고 안내한다', () {
+      for (final code in [
+        'WEIGHT_INVALID',
+        'WEIGHT_MISSING',
+        'WEIGHT_RANGE_INVALID',
+      ]) {
+        final exception = CarbonApiException.fromStatusCode(
+          statusCode: 400,
+          responseBody: jsonEncode({
+            'status': 'error',
+            'error_code': code,
+            'message': '의류 무게는 1g 이상 100,000g 이하로 입력해 주세요.',
+            'detail': {'error_code': code},
+          }),
+        );
+
+        expect(exception.type, CarbonApiErrorType.badRequest);
+        expect(exception.errorCode, code);
+        expect(
+          exception.userMessage,
+          '탄소량을 계산할 수 없어 저장하지 못했어요. 의류 무게를 확인해 주세요.',
+        );
+      }
+
+      // 다른 입력 거절은 전과 같이 소재·혼용률을 확인하라고 한다.
+      expect(
+        CarbonApiException.fromStatusCode(
+          statusCode: 400,
+          responseBody: jsonEncode({
+            'status': 'error',
+            'error_code': 'MATERIAL_RATIO_INVALID',
+            'message': '전체 비율의 합이 100이 아닙니다.',
+          }),
+        ).userMessage,
+        '탄소량을 계산할 수 없어 저장하지 못했어요. 소재와 혼용률을 확인해 주세요.',
+      );
+    });
+
     test('rejects an incomplete success response', () async {
       final client = MockClient(
         (_) async => http.Response(

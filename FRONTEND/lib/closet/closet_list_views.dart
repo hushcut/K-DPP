@@ -155,8 +155,8 @@ extension _ClosetListViews on _ClosetScreenState {
               title: item.title,
               category: item.category,
               status: item.health > 20
-                  ? '건강 상태: ${item.health}%'
-                  : '수명 만료 (배출 권장)',
+                  ? '소재 참고 점수: ${item.health}점'
+                  : '점수 정보 없음',
               statusColor: item.health > 20
                   ? palette.statusGoodText
                   : palette.statusBadText,
@@ -253,9 +253,7 @@ extension _ClosetListViews on _ClosetScreenState {
             item: item,
             title: item.title,
             category: item.category,
-            status: item.health > 20
-                ? '건강 상태: ${item.health}%'
-                : '수명 만료 (배출 권장)',
+            status: item.health > 20 ? '소재 참고 점수: ${item.health}점' : '점수 정보 없음',
             statusColor: item.health > 20
                 ? palette.statusGoodText
                 : palette.statusBadText,
@@ -270,7 +268,7 @@ extension _ClosetListViews on _ClosetScreenState {
     );
   }
 
-  /// 의류의 분류·건강 상태와 선택·경고·재정렬 상태를 한 행에 표시합니다.
+  /// 의류의 분류·소재 참고 점수와 선택·경고·재정렬 상태를 한 행에 표시합니다.
   ///
   /// [dragHandleIndex] 가 있으면(내 설정 순 평소) 오른쪽 끝에 그 위치의 ≡ 손잡이를 둡니다.
   Widget _buildClosetItem(
@@ -290,7 +288,7 @@ extension _ClosetListViews on _ClosetScreenState {
     if (_selectionMode) {
       trailing = Icon(
         isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
-        color: isSelected ? AppPalette.accent : palette.secondaryText,
+        color: isSelected ? palette.accentForeground : palette.secondaryText,
       );
     } else if (dragHandleIndex != null) {
       // 손잡이가 '>' 자리에 섭니다.
@@ -324,7 +322,7 @@ extension _ClosetListViews on _ClosetScreenState {
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: isSelected
-                  ? AppPalette.accent
+                  ? palette.accentForeground
                   : (isWarning
                         ? Colors.redAccent.shade200
                         : palette.borderColor),
@@ -364,7 +362,7 @@ extension _ClosetListViews on _ClosetScreenState {
                 child: Icon(
                   Icons.checkroom,
                   color: isSelected
-                      ? AppPalette.accent
+                      ? palette.accentForeground
                       : (isWarning ? Colors.redAccent : palette.secondaryText),
                   size: 30,
                 ),

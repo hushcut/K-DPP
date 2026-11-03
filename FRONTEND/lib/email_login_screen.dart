@@ -246,7 +246,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                             autocorrect: false,
                             validator: validateEmailInput,
                             style: TextStyle(color: primaryText),
-                            cursorColor: AppPalette.accent,
+                            cursorColor: palette.accentForeground,
                             decoration: authInputDecoration(
                               context,
                               labelText: '이메일',
@@ -263,7 +263,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                             autocorrect: false,
                             validator: _validatePassword,
                             style: TextStyle(color: primaryText),
-                            cursorColor: AppPalette.accent,
+                            cursorColor: palette.accentForeground,
                             decoration: authInputDecoration(
                               context,
                               labelText: '비밀번호',

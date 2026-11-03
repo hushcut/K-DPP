@@ -65,6 +65,22 @@ void main() {
   // 프론트 계수표는 서버 시드(BACKEND/init_data.py MATERIAL_SEEDS)의 사본이다.
   // 두 표가 어긋나는지는 BACKEND/tests/test_material_name_contract.py가 검사한다.
   // 여기서는 그 숫자가 실제 계산에 쓰이는지를 확인한다.
+  test('materialsWithoutFactor 는 표준명으로 찾아 표에 없는 소재만 입력 순서대로 돌려준다', () {
+    expect(
+      ClothingEstimator.materialsWithoutFactor([
+        '면',
+        'COTTON',
+        ' 코튼 ',
+        '모달',
+        '아세테이트',
+        'organic cotton',
+        '한지',
+      ]),
+      ['아세테이트', 'organic cotton', '한지'],
+    );
+    expect(ClothingEstimator.materialsWithoutFactor(const []), isEmpty);
+  });
+
   group('서버 시드 계수 반영', () {
     const serverFactors = <String, double>{
       'cotton': 8.3,

@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
 
+import '../utils/motion_preference.dart';
+
 /// 유리 버튼이 함께 쓰는 크기와 색입니다. 유리 모양은 iOS 에서만 씁니다([usesGlass]).
 ///
 /// 흐림(BackdropFilter)은 걸지 않습니다. 버튼 뒤가 대부분 단색이라 흐려도 보이는 차이가 없고,
@@ -295,8 +297,7 @@ class _GlassPressBuilderState extends State<GlassPressBuilder>
 
   bool get _isIOS => AppGlassStyle.usesGlass(context);
 
-  bool get _reduceMotion =>
-      MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+  bool get _reduceMotion => reducesMotion(context);
 
   bool get _enabled => !_states.value.contains(WidgetState.disabled);
 

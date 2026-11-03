@@ -157,6 +157,8 @@ void main() {
     health: 72,
   );
 
+  const prefilledFailureMessage = '라벨을 확실히 읽지 못했어요. 사진에서 읽은 값이 맞는지 확인해 주세요.';
+
   const unauthorized = ScanApiException(
     type: ScanApiErrorType.unauthorized,
     message: '',
@@ -200,7 +202,7 @@ void main() {
       expect(materialField('20'), findsOneWidget);
       expect(find.textContaining('찬물 손세탁'), findsOneWidget);
       // 소재를 고치지 않았으니 서버 건강도를 그대로 쓴다.
-      expect(find.textContaining('건강도: 72%'), findsOneWidget);
+      expect(find.textContaining('소재 참고 점수: 72점'), findsOneWidget);
       semantics.dispose();
     });
 
@@ -269,7 +271,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byType(BottomSheet),
-          matching: find.text(failure.userMessage),
+          matching: find.text(prefilledFailureMessage),
         ),
         findsOneWidget,
       );
@@ -278,6 +280,8 @@ void main() {
 
       expect(find.text('스캔 실패'), findsOneWidget);
       expect(find.text('직접 입력 모드'), findsOneWidget);
+      expect(find.text(prefilledFailureMessage), findsOneWidget);
+      expect(find.text('소재와 혼용률을 확인해 주세요.'), findsOneWidget);
       expect(materialField('면'), findsOneWidget);
       expect(materialField('60'), findsOneWidget);
       expect(materialField('울'), findsOneWidget);
@@ -287,6 +291,32 @@ void main() {
       expect(find.textContaining('COTTON 60% WOOL 40%'), findsOneWidget);
       // 이유는 시트에서 이미 말했으니 배너로 다시 띄우지 않는다(DECISIONS 96).
       expect(shownBanner(tester), isNull);
+    });
+
+    testWidgets('채울 값이 없는 실패는 전처럼 직접 입력을 부탁한다', (tester) async {
+      await pumpScanScreen(tester);
+      await tapAlbum(tester);
+
+      const failure = ScanApiException(
+        type: ScanApiErrorType.aiRecognitionFailed,
+        message: '',
+        partialMaterials: {'': 60},
+      );
+      await finishAnalysis(tester, const ScanAnalysisFailure(failure));
+
+      expect(
+        find.descendant(
+          of: find.byType(BottomSheet),
+          matching: find.text('라벨을 읽지 못했어요. 직접 입력해 주세요.'),
+        ),
+        findsOneWidget,
+      );
+
+      await chooseType(tester, '반팔 티셔츠');
+
+      expect(find.text('라벨을 읽지 못했어요. 직접 입력해 주세요.'), findsOneWidget);
+      expect(find.text('소재와 혼용률을 직접 입력해 주세요.'), findsOneWidget);
+      expect(find.text(prefilledFailureMessage), findsNothing);
     });
 
     testWidgets('로그인한 채 분석이 401 이면 시트 없이 로그아웃하고 로그인 화면으로 보내며 실패로 알린다', (
@@ -483,6 +513,8 @@ void main() {
         );
         expect(call.minWeightGram, knit.minWeightGram);
         expect(call.maxWeightGram, knit.maxWeightGram);
+        // 예상 무게 범위로 계산하면 실제 무게(weight_grams)는 보내지 않는다.
+        expect(call.weightGram, isNull);
 
         final saved = savedClothes.single;
         expect(saved.title, '분석한 니트');
@@ -498,6 +530,33 @@ void main() {
         expect(shownBanner(tester), isNull);
       },
     );
+
+    testWidgets('실제 무게를 직접 입력했으면 그 무게를 weight_grams 로 보내 서버가 실측 무게로 계산하게 한다', (
+      tester,
+    ) async {
+      await pumpScanScreen(tester, signedIn: true);
+      await tapAlbum(tester);
+      await finishAnalysis(tester, ScanAnalysisSuccess(knitResult()));
+      await tester.scrollUntilVisible(find.text('직접 입력'), 100);
+      await tester.tap(find.text('직접 입력'));
+      await tester.pump();
+      await tester.pump(transition);
+      await tester.enterText(find.widgetWithText(TextField, '의류 종류'), '코트');
+      await tester.enterText(find.widgetWithText(TextField, '실제 무게'), '620');
+      await tester.ensureVisible(find.widgetWithText(ElevatedButton, '적용하기'));
+      await tester.tap(find.widgetWithText(ElevatedButton, '적용하기'));
+      await tester.pump();
+      await tester.pump(transition);
+      expect(find.byType(ScanResultView), findsOneWidget);
+
+      await tapSave(tester);
+
+      final call = carbon.calls.single;
+      expect(call.weightGram, 620);
+      expect(call.minWeightGram, 620);
+      expect(call.maxWeightGram, 620);
+      expect(savedClothes.single.minWeightGram, 620);
+    });
 
     testWidgets('서버 계산이 401 이 아닌 이유로 실패하면 임시 추정값으로 저장하고 그렇게 했다고 안내한다', (
       tester,
@@ -579,10 +638,44 @@ void main() {
       ));
     });
 
+    testWidgets(
+      '서버가 표준명으로 채워 준 값은 한글로 보이고, 저장을 누르기 전에는 계산을 부르지 않는다(DECISIONS 237)',
+      (tester) async {
+        await pumpScanScreen(tester, signedIn: true);
+        await tapAlbum(tester);
+        await finishAnalysis(
+          tester,
+          ScanAnalysisFailure(
+            ScanApiException.fromStatusCode(
+              statusCode: 422,
+              responseBody: jsonEncode({
+                'error_code': 'MATERIAL_EXTRACTION_FAILED',
+                'detail': {
+                  'error_code': 'MATERIAL_EXTRACTION_FAILED',
+                  'materials': const {},
+                  'partial_materials': {'cotton': 100},
+                },
+              }),
+            ),
+          ),
+        );
+        await chooseType(tester, '반팔 티셔츠');
+
+        expect(materialField('면'), findsOneWidget);
+        expect(materialField('cotton'), findsNothing);
+        expect(carbon.calls, isEmpty);
+
+        await tapSave(tester);
+
+        expect(carbon.calls.single.materials, {'면': 100.0});
+        expect(savedClothes.single.materials, {'면': 100.0});
+      },
+    );
+
     // AI 연동 협의안 R1: 서버가 계산할 수 없는 입력이라고 거절(400/422)하면 근거 없는 임시값으로
     // 저장하지 않고, 입력을 그대로 둔 채 고치거나 다시 찍게 한다. 거절 본문은 서버 오류 처리
     // (BACKEND main.py)가 보내는 모양 그대로다. 정상 계산(200)은 위 첫 시험이 본다.
-    group('계산 입력 거절(400/422)만 저장을 멈춘다 — AI 연동 협의안 R1', () {
+    group('계산 입력 거절(400/422)은 저장을 멈춘다 — AI 연동 협의안 R1', () {
       const _ServerRejection materialNotFound = (
         statusCode: 400,
         body: {
@@ -781,6 +874,137 @@ void main() {
         });
       }
 
+      // 서버가 답하지 못하면 앱 소재표로 판정한다(DECISIONS 288). 표에 없는 소재는 추정할 근거가
+      // 없으므로(협의안 T5) 온라인 거절과 똑같이 막아, 장애라고 저장 길이 열리지 않게 한다.
+      for (final type in [
+        CarbonApiErrorType.network,
+        CarbonApiErrorType.timeout,
+        CarbonApiErrorType.server,
+        CarbonApiErrorType.forbidden,
+        CarbonApiErrorType.invalidResponse,
+        CarbonApiErrorType.unknown,
+      ]) {
+        testWidgets('계산이 ${type.name} 로 실패해도 앱 소재표에 없는 소재는 저장하지 않고 입력을 둔다', (
+          tester,
+        ) async {
+          carbon.failWith = type;
+          final provider = await pumpScanScreen(tester, signedIn: true);
+          await openAcetateResult(tester);
+
+          await tapSave(tester);
+
+          expect(carbon.calls, hasLength(1));
+          await expectNotSavedAndEditable(tester, provider);
+          expect(materialField('아세테이트'), findsOneWidget);
+          expect(shownBanner(tester), (
+            '아세테이트 소재는 탄소 계산 기준이 없어 저장하지 못했어요.',
+            AppBannerKind.failure,
+          ));
+        });
+      }
+
+      testWidgets('계산이 401 이어도 앱 소재표에 없는 소재는 기기에 저장하지 않고 로그인 화면으로 보내지 않는다', (
+        tester,
+      ) async {
+        carbon.failWith = CarbonApiErrorType.unauthorized;
+        final provider = await pumpScanScreen(tester, signedIn: true);
+        await openAcetateResult(tester);
+
+        await tapSave(tester);
+
+        expect(carbon.calls, hasLength(1));
+        await expectNotSavedAndEditable(tester, provider);
+        expect(find.text('로그인 화면'), findsNothing);
+        expect(shownBanner(tester), (
+          '아세테이트 소재는 탄소 계산 기준이 없어 저장하지 못했어요.',
+          AppBannerKind.failure,
+        ));
+      });
+
+      testWidgets('세션이 이미 만료됐어도 앱 소재표에 없는 소재는 기기에 저장하지 않고 입력을 둔다', (
+        tester,
+      ) async {
+        final provider = await pumpScanScreen(
+          tester,
+          signedIn: true,
+          sessionExpired: true,
+        );
+        await openAcetateResult(tester);
+
+        await tapSave(tester);
+
+        expect(carbon.calls, isEmpty);
+        await expectNotSavedAndEditable(tester, provider);
+        expect(find.text('로그인 화면'), findsNothing);
+        expect(shownBanner(tester), (
+          '아세테이트 소재는 탄소 계산 기준이 없어 저장하지 못했어요.',
+          AppBannerKind.failure,
+        ));
+      });
+
+      testWidgets('막힌 뒤 아는 소재로 고치면 장애 중에도 임시 추정값으로 저장한다', (tester) async {
+        carbon.failWith = CarbonApiErrorType.network;
+        final provider = await pumpScanScreen(tester, signedIn: true);
+        await openAcetateResult(tester);
+
+        await tapSave(tester);
+        expect(savedClothes, isEmpty);
+
+        await tester.enterText(materialField('아세테이트'), '폴리에스터');
+        await tester.pump();
+        await tapSave(tester);
+
+        expect(carbon.calls, hasLength(2));
+        expect(
+          savedClothes.single.carbonFootprintSource,
+          CarbonFootprintSource.localEstimate,
+        );
+        expect(provider.items, hasLength(1));
+        expect(shownBanner(tester), (
+          '인터넷에 연결할 수 없어 임시 추정값으로 저장했어요.',
+          AppBannerKind.info,
+        ));
+      });
+
+      testWidgets('서버가 계산해 주면 앱 소재표에 없는 소재도 서버 값으로 저장한다', (tester) async {
+        final provider = await pumpScanScreen(tester, signedIn: true);
+        await openAcetateResult(tester);
+
+        await tapSave(tester);
+
+        expect(carbon.calls, hasLength(1));
+        expect(
+          savedClothes.single.carbonFootprintSource,
+          CarbonFootprintSource.server,
+        );
+        expect(provider.items, hasLength(1));
+      });
+
+      testWidgets('오프라인에서 직접 입력한 모르는 소재도 저장하지 않는다', (tester) async {
+        carbon.failWith = CarbonApiErrorType.network;
+        final provider = await pumpScanScreen(tester, signedIn: true);
+        await tapAlbum(tester);
+        await finishAnalysis(
+          tester,
+          const ScanAnalysisFailure(
+            ScanApiException(type: ScanApiErrorType.network, message: ''),
+          ),
+        );
+        await chooseType(tester, '반팔 티셔츠');
+
+        await tester.enterText(find.widgetWithText(TextFormField, '소재명'), '한지');
+        await tester.enterText(materialField('0'), '100');
+        await tester.pump();
+        await tapSave(tester);
+
+        expect(carbon.calls, hasLength(1));
+        await expectNotSavedAndEditable(tester, provider);
+        expect(shownBanner(tester), (
+          '한지 소재는 탄소 계산 기준이 없어 저장하지 못했어요.',
+          AppBannerKind.failure,
+        ));
+      });
+
       // 비로그인 저장은 R1 범위 밖이다(서버 계산을 거치지 않음 — 사용자 2026-10-20).
       testWidgets('로그인하지 않았으면 미지원 소재도 서버에 묻지 않고 전처럼 기기 추정값으로 저장한다', (
         tester,
@@ -798,6 +1022,398 @@ void main() {
         );
         expect(provider.items, hasLength(1));
       });
+    });
+  });
+
+  // AI 연동 협의안 R4: 스캔 응답 warnings 의 공개 코드만 안내 문구로 보인다. 성공 안내는 소재를
+  // 확인하는 동안 결과 화면에 남고, 422 재촬영 권고는 실패 이유를 보이는 종류 선택 시트에 붙는다.
+  // 요청서(준원_R3_R4_앱경고_요청_20261021) §2 확인 기준 넷과 §4 가죽 추정 경고를 본다.
+  group('AI 안내(warnings) — AI 연동 협의안 R4', () {
+    const outerNotice = '겉감 기준으로 읽었어요.';
+    const unidentifiedNotice =
+        '부위 표기를 찾지 못해 라벨의 소재를 그대로 읽었어요. 소재와 비율을 확인해 주세요.';
+    const leatherNotice = '라벨에 비율이 없어 가죽 100%로 보았어요. 확인해 주세요.';
+    const retakeNotice = '소재·혼용률 부분을 다시 찍어 주세요.';
+    const allNotices = [
+      outerNotice,
+      unidentifiedNotice,
+      leatherNotice,
+      retakeNotice,
+    ];
+    // 지금 AI·백엔드가 실제로 보내는 진단 경고와 공개 표에 없는 코드다.
+    const diagnostics = [
+      'generic:unpaired_ratio_rows',
+      'OCR 좌표를 바탕으로 재구성한 줄 순서를 사용했습니다.',
+      'composition_part:shell',
+      'manual_composition_review_required:outer',
+    ];
+
+    ScanResult knitWith(List<String> warnings) => ScanResult(
+      materials: const {'면': 80, '폴리에스터': 20},
+      careInstruction: '찬물 손세탁',
+      title: '분석한 니트',
+      category: 'knit',
+      health: 72,
+      warnings: warnings,
+    );
+
+    // 백엔드(main.py)가 보내는 422 본문 모양 그대로를 실제 변환으로 예외로 바꾼다.
+    ScanApiException recognitionFailure(List<String> warnings) =>
+        ScanApiException.fromStatusCode(
+          statusCode: 422,
+          responseBody: jsonEncode({
+            'status': 'error',
+            'error_code': 'MATERIAL_EXTRACTION_FAILED',
+            'message': '라벨에서 소재 혼용률을 찾지 못했습니다.',
+            'detail': {
+              'message': '라벨에서 소재 혼용률을 찾지 못했습니다.',
+              'error_code': 'MATERIAL_EXTRACTION_FAILED',
+              'materials': const {},
+              'partial_materials': {'cotton': 60},
+              'care_instruction': '라벨 표기법에 맞춰 관리하세요.',
+              'raw_ocr_preview': 'COTTON 60%',
+              'ai_success': false,
+              'parser_error_code': 'composition_not_found',
+              'warnings': warnings,
+            },
+          }),
+        );
+
+    Future<void> openResult(WidgetTester tester, ScanResult result) async {
+      await tapAlbum(tester);
+      await finishAnalysis(tester, ScanAnalysisSuccess(result));
+      await chooseType(tester, '니트');
+      expect(find.byType(ScanResultView), findsOneWidget);
+    }
+
+    Finder inSheet(String text) =>
+        find.descendant(of: find.byType(BottomSheet), matching: find.text(text));
+
+    void expectNoRawText(List<String> raw) {
+      for (final text in raw) {
+        expect(find.textContaining(text), findsNothing, reason: text);
+      }
+    }
+
+    // 서버 표시(is_supported)는 소재 행과 같은 표시명으로 온다.
+    ScanResult acetateFlagged({List<String> warnings = const []}) => ScanResult(
+      materials: const {'아세테이트': 60, '면': 40},
+      materialDetails: const [
+        ScanMaterialDetail(
+          originalName: 'acetate',
+          displayName: '아세테이트',
+          ratio: 60,
+          isSupported: false,
+        ),
+        ScanMaterialDetail(
+          originalName: 'cotton',
+          standardName: 'cotton',
+          displayName: '면',
+          ratio: 40,
+          isSupported: true,
+        ),
+      ],
+      careInstruction: '드라이클리닝',
+      title: '분석한 블라우스',
+      category: 'knit',
+      health: 70,
+      warnings: warnings,
+    );
+    const acetateNotice =
+        '아세테이트 소재는 읽었지만 탄소 계산 기준이 없어 저장할 수 없어요. 라벨과 다르면 고쳐 주세요.';
+    const noBasisPreview = '계산 기준이 없는 소재가 있어요';
+
+    testWidgets('미지원 안내는 그 소재를 고치면 바로 사라지고, 되돌리면 다시 보이며, 부위 안내는 남는다', (
+      tester,
+    ) async {
+      await pumpScanScreen(tester);
+      await openResult(
+        tester,
+        acetateFlagged(warnings: const ['composition_part:outer']),
+      );
+
+      expect(find.text(outerNotice), findsOneWidget);
+      expect(find.text(acetateNotice), findsOneWidget);
+      expect(find.textContaining(noBasisPreview), findsOneWidget);
+      expect(find.textContaining('kg CO2eq'), findsNothing);
+
+      await tester.enterText(materialField('아세테이트'), '폴리에스터');
+      await tester.pump();
+
+      expect(find.text(outerNotice), findsOneWidget);
+      expect(find.text(acetateNotice), findsNothing);
+      expect(find.textContaining(noBasisPreview), findsNothing);
+      expect(find.textContaining('소재 생산 단계 예상 탄소배출량(임시)'), findsOneWidget);
+      expect(find.textContaining('kg CO2eq'), findsOneWidget);
+
+      // 같은 소재면 대소문자가 달라도 안내가 남는다(이름은 서버 표시명 그대로 보인다).
+      await tester.enterText(materialField('폴리에스터'), 'ACETATE');
+      await tester.pump();
+      await tester.enterText(materialField('ACETATE'), '아세테이트');
+      await tester.pump();
+
+      expect(find.text(acetateNotice), findsOneWidget);
+      expect(find.textContaining(noBasisPreview), findsOneWidget);
+
+      // 줄을 지워도 사라진다.
+      await tester.ensureVisible(find.byTooltip('아세테이트 삭제'));
+      await tester.pump();
+      await tester.tap(find.byTooltip('아세테이트 삭제'));
+      await tester.pump();
+
+      expect(materialField('아세테이트'), findsNothing);
+      expect(find.text(outerNotice), findsOneWidget);
+      expect(find.text(acetateNotice), findsNothing);
+      expect(find.textContaining(noBasisPreview), findsNothing);
+    });
+
+    testWidgets('표에 없는 소재가 미리 채워진 실패 화면도 미리보기에 숫자를 보이지 않고, 이름은 받은 그대로다', (
+      tester,
+    ) async {
+      await pumpScanScreen(tester);
+      await tapAlbum(tester);
+      await finishAnalysis(
+        tester,
+        const ScanAnalysisFailure(
+          ScanApiException(
+            type: ScanApiErrorType.aiRecognitionFailed,
+            message: '',
+            partialMaterials: {'acetate': 60, 'cotton': 40},
+          ),
+        ),
+      );
+      await chooseType(tester, '니트');
+
+      expect(materialField('acetate'), findsOneWidget);
+      expect(materialField('면'), findsOneWidget);
+      expect(find.textContaining(noBasisPreview), findsOneWidget);
+      expect(find.textContaining('kg CO2eq'), findsNothing);
+    });
+
+    testWidgets('아는 소재를 모르는 소재로 고치면 미리보기만 바뀌고 안내 카드는 깜빡이지 않는다', (tester) async {
+      await pumpScanScreen(tester);
+      await openResult(tester, knitWith(const []));
+
+      expect(find.textContaining(noBasisPreview), findsNothing);
+
+      await tester.enterText(materialField('폴리에스터'), '한지');
+      await tester.pump();
+
+      expect(find.textContaining(noBasisPreview), findsOneWidget);
+      expect(find.textContaining('소재는 읽었지만'), findsNothing);
+      expect(find.byIcon(Icons.info_outline_rounded), findsNothing);
+    });
+
+    testWidgets('다시 찍은 결과에는 앞 스캔의 미지원 안내가 남지 않는다', (tester) async {
+      await pumpScanScreen(tester);
+      await openResult(tester, acetateFlagged());
+      expect(find.text(acetateNotice), findsOneWidget);
+
+      final retakeButton = find.descendant(
+        of: find.byType(ScanResultView),
+        matching: find.text('다시 촬영'),
+      );
+      await tester.ensureVisible(retakeButton);
+      await tester.pump();
+      await tester.tap(retakeButton);
+      await tester.pump();
+      await tester.pump(transition);
+      // 같은 이름이 폼에 다시 있어도 이번 응답이 표시하지 않았으면 안내하지 않는다.
+      await openResult(
+        tester,
+        ScanResult(
+          materials: const {'아세테이트': 60, '면': 40},
+          careInstruction: '드라이클리닝',
+          title: '다시 찍은 블라우스',
+          category: 'knit',
+          health: 70,
+        ),
+      );
+
+      expect(materialField('아세테이트'), findsOneWidget);
+      expect(find.text(acetateNotice), findsNothing);
+    });
+
+    void expectOnlyNotices(List<String> shown) {
+      for (final notice in allNotices) {
+        expect(
+          find.text(notice),
+          shown.contains(notice) ? findsOneWidget : findsNothing,
+          reason: notice,
+        );
+      }
+    }
+
+    testWidgets('성공 + 부위 코드면 그 부위 안내 한 줄이 소재 입력 바로 위에 남고, 소재 화면은 그대로다', (
+      tester,
+    ) async {
+      await pumpScanScreen(tester);
+      await openResult(
+        tester,
+        knitWith(['composition_part:outer', ...diagnostics]),
+      );
+
+      expectOnlyNotices([outerNotice]);
+      expectNoRawText(['composition_part', ...diagnostics]);
+      expect(find.text('스캔 완료!'), findsOneWidget);
+      expect(materialField('면'), findsOneWidget);
+      expect(materialField('80'), findsOneWidget);
+      expect(materialField('폴리에스터'), findsOneWidget);
+      expect(materialField('20'), findsOneWidget);
+      final noticeTop = tester.getRect(find.text(outerNotice)).top;
+      expect(
+        noticeTop,
+        greaterThan(tester.getRect(find.text('소재 및 혼용률')).top),
+      );
+      expect(noticeTop, lessThan(tester.getRect(materialField('면')).top));
+
+      // 사라지는 배너가 아니다 — 소재를 고치고 시간이 지나도 그 자리에 남는다.
+      expect(shownBanner(tester), isNull);
+      await tester.enterText(materialField('20'), '10');
+      await tester.pump(const Duration(seconds: 10));
+      expect(find.text(outerNotice), findsOneWidget);
+    });
+
+    testWidgets(
+      '성공 + 부위 미확정이면 확인 안내를 보이되 계산·저장은 그대로 하고, 저장한 옷과 다음 스캔에는 안내가 남지 않는다',
+      (tester) async {
+        final provider = await pumpScanScreen(tester, signedIn: true);
+        await openResult(tester, knitWith(['composition_part:unidentified']));
+
+        expectOnlyNotices([unidentifiedNotice]);
+        expectNoRawText(['composition_part', 'unidentified']);
+
+        await tester.ensureVisible(find.text('옷장에 저장하기'));
+        await tester.tap(find.text('옷장에 저장하기'));
+        await tester.pump();
+        await tester.pump(transition);
+
+        // 결정 A(2026-10-21): 부위 미확정이어도 계산·저장을 막지 않는다.
+        expect(carbon.calls.single.materials, {'면': 80.0, '폴리에스터': 20.0});
+        final saved = savedClothes.single;
+        expect(saved.carbonFootprintSource, CarbonFootprintSource.server);
+        expect(provider.items, hasLength(1));
+        // 부위 안내는 저장 이력·옷장에 남기지 않는다(별도 범위).
+        final savedJson = jsonEncode(saved.toJson());
+        for (final text in [unidentifiedNotice, 'composition_part']) {
+          expect(savedJson, isNot(contains(text)));
+        }
+
+        expect(find.byType(ScanCameraView), findsOneWidget);
+        await openResult(tester, knitResult());
+        expectOnlyNotices(const []);
+      },
+    );
+
+    testWidgets(
+      '422 + 재촬영 코드면 종류 선택 시트의 실패 이유 바로 아래에 다시 찍으라는 안내가 보이고, 직접 입력 화면에는 남지 않는다',
+      (tester) async {
+        await pumpScanScreen(tester);
+        await tapAlbum(tester);
+        final failure = recognitionFailure([
+          'generic:unpaired_ratio_rows',
+          'composition_action:retake_composition_region',
+        ]);
+        await finishAnalysis(tester, ScanAnalysisFailure(failure));
+
+        final reason = inSheet(prefilledFailureMessage);
+        final retake = inSheet(retakeNotice);
+        expect(reason, findsOneWidget);
+        expect(retake, findsOneWidget);
+        expect(
+          tester.getRect(retake).top,
+          greaterThanOrEqualTo(tester.getRect(reason).bottom),
+        );
+        expect(
+          tester.getRect(retake).top,
+          lessThan(tester.getRect(inSheet('의류 종류 선택')).top),
+        );
+        expectOnlyNotices([retakeNotice]);
+        expectNoRawText(['composition_action', 'generic:unpaired_ratio_rows']);
+
+        await chooseType(tester, '반팔 티셔츠');
+
+        expect(find.text('직접 입력 모드'), findsOneWidget);
+        expect(find.text(prefilledFailureMessage), findsOneWidget);
+        expect(materialField('면'), findsOneWidget);
+        expect(materialField('60'), findsOneWidget);
+        expectOnlyNotices(const []);
+      },
+    );
+
+    testWidgets('모르는 코드·진단 경고만 오면 성공이든 422 든 아무 안내도, 원문도 보이지 않는다', (
+      tester,
+    ) async {
+      await pumpScanScreen(tester);
+      await openResult(
+        tester,
+        knitWith([
+          ...diagnostics,
+          'composition_action:retake_composition_region',
+        ]),
+      );
+
+      expectOnlyNotices(const []);
+      expectNoRawText(['composition_', ...diagnostics]);
+      expect(materialField('면'), findsOneWidget);
+
+      // 고치지 않았으니 '다시 촬영'은 묻지 않고 촬영 화면으로 돌아간다.
+      final retakeButton = find.descendant(
+        of: find.byType(ScanResultView),
+        matching: find.text('다시 촬영'),
+      );
+      await tester.ensureVisible(retakeButton);
+      await tester.pump();
+      await tester.tap(retakeButton);
+      await tester.pump();
+      await tester.pump(transition);
+      expect(find.byType(ScanCameraView), findsOneWidget);
+
+      await tapAlbum(tester);
+      final failure = recognitionFailure([
+        ...diagnostics,
+        'composition_part:outer',
+        'implicit_leather_composition:outer',
+      ]);
+      await finishAnalysis(tester, ScanAnalysisFailure(failure));
+
+      expect(inSheet(prefilledFailureMessage), findsOneWidget);
+      expectOnlyNotices(const []);
+      expectNoRawText(['composition_', 'implicit_leather', ...diagnostics]);
+    });
+
+    testWidgets('가죽 추정 경고는 접두어로 알아보고 부위 안내 다음 줄에 함께 남는다', (tester) async {
+      final semantics = tester.ensureSemantics();
+      await pumpScanScreen(tester);
+      await openResult(
+        tester,
+        ScanResult(
+          materials: const {'가죽': 100},
+          careInstruction: '가죽 전문 세탁',
+          title: '분석한 재킷',
+          category: 'knit',
+          warnings: const [
+            'implicit_leather_composition:outer',
+            'composition_part:outer',
+          ],
+        ),
+      );
+
+      expectOnlyNotices([outerNotice, leatherNotice]);
+      // 안내마다 따로 읽힌다(소재 제목·합계 줄과도 섞이지 않는다).
+      expect(tester.getSemantics(find.text(outerNotice)).label, outerNotice);
+      expect(
+        tester.getSemantics(find.text(leatherNotice)).label,
+        leatherNotice,
+      );
+      expect(
+        tester.getRect(find.text(leatherNotice)).top,
+        greaterThan(tester.getRect(find.text(outerNotice)).top),
+      );
+      expect(materialField('가죽'), findsOneWidget);
+      expect(materialField('100'), findsOneWidget);
+      expectNoRawText(['implicit_leather', 'composition_part']);
+      semantics.dispose();
     });
   });
 
@@ -923,6 +1539,7 @@ class _FakeCarbonApiService extends CarbonApiService {
       Map<String, double> materials,
       double minWeightGram,
       double maxWeightGram,
+      double? weightGram,
       String accessToken,
     })
   >
@@ -936,11 +1553,13 @@ class _FakeCarbonApiService extends CarbonApiService {
     required double minWeightGram,
     required double maxWeightGram,
     required String accessToken,
+    double? weightGram,
   }) async {
     calls.add((
       materials: materials,
       minWeightGram: minWeightGram,
       maxWeightGram: maxWeightGram,
+      weightGram: weightGram,
       accessToken: accessToken,
     ));
     final rejection = rejectWith;

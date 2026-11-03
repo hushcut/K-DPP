@@ -177,7 +177,7 @@ class _KakaoNicknameScreenState extends State<KakaoNicknameScreen> {
                     },
                     onFieldSubmitted: (_) => _submit(),
                     style: TextStyle(color: primaryText),
-                    cursorColor: AppPalette.accent,
+                    cursorColor: palette.accentForeground,
                     decoration: authInputDecoration(
                       context,
                       labelText: '닉네임',
