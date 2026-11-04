@@ -135,13 +135,14 @@ def main():
         photo = args.photos / item["source"]
         digest = hashlib.sha256(photo.read_bytes()).hexdigest()
         out = args.output / pid
-        if out.exists():
+        # 읽는 도중 중단된 사진은 result.json이 없으므로 다시 읽는다.
+        if (out / "result.json").exists():
             saved = json.loads((out / "result.json").read_text(encoding="utf-8"))
             if not args.resume or saved.get("source_sha256") != digest or saved.get("settings") != settings:
                 raise RuntimeError("기존 사진 결과를 덮어쓰지 않습니다.")
             rows.append(saved)
             continue
-        out.mkdir()
+        out.mkdir(exist_ok=True)
         result = {"id": pid, "source_name": photo.name, "source_sha256": digest, "settings": settings}
         t0 = time.perf_counter()
         try:

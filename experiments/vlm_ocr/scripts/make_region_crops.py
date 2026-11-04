@@ -67,24 +67,26 @@ def main():
             raise RuntimeError(f"{item['id']}: 사진 목록의 해시와 원본이 다릅니다.")
         entry = originals.get(item["source"])
         validated = validate_image_bytes(content)
+        with Image.open(BytesIO(validated.content)) as image:
+            upright = ImageOps.exif_transpose(image).convert("RGB")
+        # 좌표는 회전이 적용된 내용 기준이다. c49205c의 validated 크기는 회전 전 값이라(QA MPO) 쓰지 않는다.
+        width, height = upright.size
         words = decode_layout_words(entry) if entry else ()
+        if words and (max(word.right for word in words) > width * 1.01 or max(word.bottom for word in words) > height * 1.01):
+            raise RuntimeError(f"{item['id']}: 좌표가 이미지 밖에 있어 기준이 다릅니다.")
         # find_material_region은 후보의 좌표 필드만 읽는다.
         candidate = SimpleNamespace(image_key="original", image_variant_key="original",
-                                    image_region=(0, 0, validated.width, validated.height), image_words=words)
+                                    image_region=(0, 0, width, height), image_words=words)
         if not words:
             box = None
         elif args.region == "all_text":
-            box = all_text_region(words, validated.width, validated.height)
+            box = all_text_region(words, width, height)
         else:
-            box = find_material_region([candidate], validated.width, validated.height)
+            box = find_material_region([candidate], width, height)
         if box is None:
             missing.append({"id": item["id"], "reason": "no_cache" if not entry else "no_region"})
             continue
         font_height, angle = material_region_options([candidate], box)
-        with Image.open(BytesIO(validated.content)) as image:
-            upright = ImageOps.exif_transpose(image).convert("RGB")
-        if upright.size != (validated.width, validated.height):
-            raise RuntimeError(f"{item['id']}: 좌표 기준과 이미지 크기가 다릅니다.")
         crop = upright.crop(box)
         rotated = args.deskew and abs(angle) >= MIN_DESKEW_DEGREES
         if rotated:
@@ -96,7 +98,7 @@ def main():
         area = (box[2] - box[0]) * (box[3] - box[1])
         crops.append({"id": item["id"], "source": name, "sha256": hashlib.sha256(buffer.getvalue()).hexdigest(),
                       "parent_source": item["source"], "parent_sha256": item["sha256"], "box": list(box),
-                      "output_size": list(crop.size), "area_share": round(area / (validated.width * validated.height), 4),
+                      "output_size": list(crop.size), "area_share": round(area / (width * height), 4),
                       "font_height": font_height, "angle": angle, "rotated": rotated})
     (args.output / "manifest.json").write_text(json.dumps(crops, ensure_ascii=False, indent=2), encoding="utf-8")
     (args.output / "missing.json").write_text(json.dumps(missing, ensure_ascii=False, indent=2), encoding="utf-8")
