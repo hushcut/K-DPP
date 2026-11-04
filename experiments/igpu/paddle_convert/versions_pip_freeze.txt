@@ -1,0 +1,27 @@
+# 자동 생성(pip freeze). 변환 중 Polygraphy가 onnxruntime, onnx_graphsurgeon, sympy와 그 의존성을 스스로 설치했고 numpy도 올렸다.
+anyio==4.16.0
+certifi==2026.10.23
+flatbuffers==25.12.19
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.20
+ml_dtypes==0.6.0
+mpmath==1.3.0
+networkx==3.6.1
+numpy==2.4.6
+onnx==1.17.0
+onnx_graphsurgeon==0.6.1
+onnxoptimizer==0.3.13
+onnxruntime==1.31.1
+openvino==2026.4.1
+openvino-telemetry==2025.2.0
+opt-einsum==3.3.0
+packaging==25.0
+paddle2onnx==2.0.2rc3
+paddlepaddle==3.1.1
+pillow==13.0.0
+polygraphy==0.53.6
+protobuf==7.36.2
+sympy==1.14.0
+typing_extensions==4.16.0

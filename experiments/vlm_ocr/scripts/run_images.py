@@ -60,6 +60,7 @@ def main():
     parser.add_argument("--loop-guard", action="store_true", help="같은 단위가 반복되는 생성을 멈추고 미완료로 기록한다.")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--prompt", help="모델 기본 프롬프트 대신 쓸 문구.")
+    parser.add_argument("--device", choices=("cpu", "xpu"), default="cpu", help="xpu는 experiments/igpu/venv에서 Intel 내장 그래픽으로 실행한다.")
     args = parser.parse_args()
     if args.input_manifest:
         if args.ids:
@@ -92,7 +93,7 @@ def main():
     prompt = args.prompt or prompt
     settings = {
         "model": args.model, "model_id": manifest["model_id"], "revision": manifest["revision"],
-        "device": "cpu", "dtype": "float32", "threads": args.threads, "prompt": prompt,
+        "device": args.device, "dtype": "float32", "threads": args.threads, "prompt": prompt,
         "max_new_tokens": args.max_new_tokens, "do_sample": False, "use_cache": True,
         "python": platform.python_version(),
         "packages": {name: version(name) for name in ("torch", "torchvision", "transformers", "Pillow", "numpy")},
@@ -121,7 +122,7 @@ def main():
     if loading.get("missing_keys") or loading.get("mismatched_keys"):
         dump(args.output / "loading_problem.json", loading)
         raise RuntimeError("학습되지 않은 누락 파라미터가 있어 실행을 중단했습니다.")
-    model.to("cpu").eval()
+    model.to(args.device).eval()
     load_seconds = time.perf_counter() - started
     processor_config = processor.image_processor.to_dict()
     dump(args.output / "processor_config.json", processor_config)
@@ -161,7 +162,7 @@ def main():
             inputs = processor.apply_chat_template(
                 messages, tokenize=True, add_generation_prompt=True,
                 return_dict=True, return_tensors="pt",
-            ).to("cpu")
+            ).to(args.device)
             input_length = inputs["input_ids"].shape[-1]
             guard = RepeatTailStop(input_length, **LOOP_GUARD) if args.loop_guard else None
             with torch.inference_mode():
@@ -169,7 +170,7 @@ def main():
                     **inputs, max_new_tokens=args.max_new_tokens, do_sample=False, use_cache=True,
                     stopping_criteria=StoppingCriteriaList([guard] if guard else []),
                 )
-            generated = output[0, input_length:]
+            generated = output[0, input_length:].cpu()
             text = processor.decode(generated, skip_special_tokens=True).strip()
             eos = model.generation_config.eos_token_id
             eos_ids = set(eos if isinstance(eos, (list, tuple)) else [eos])
@@ -193,6 +194,8 @@ def main():
         # 배터리·전원 상태에 따라 같은 출력의 시간이 2배 이상 달라져 사진마다 남긴다.
         battery = psutil.sensors_battery()
         result["power_plugged"] = battery.power_plugged if battery else None
+        if args.device == "xpu":
+            result["xpu_peak_mb"] = round(torch.xpu.max_memory_allocated() / 1024**2, 1)
         dump(out / "result.json", result)
         (out / "text.txt").write_text(result["text"] + "\n", encoding="utf-8")
         rows.append(result)
