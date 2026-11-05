@@ -2,6 +2,8 @@
 
 이 저장소 폴더(`C:\K-DPP-OCR`, 브랜치 `kyh/new-ocr`)는 무료 OCR(PaddleOCR·EasyOCR)과 Google Vision을 비교하는 실험 전용이다. 한국어 존댓말로 결론부터 짧게 답한다.
 
+**지금까지의 진행 상황과 다음 할 일은 `experiments/OCR_작업인계_Codex_20261105.md`를 먼저 읽는다.**
+
 ## 작업 위치
 - 이 폴더를 그대로 열어 작업한다. **Codex worktree(별도 작업 폴더)를 새로 만들지 않는다.** 팀 보안 훅(`scripts/security/check_secrets.py`)이 git worktree 안에서는 저장소 위치를 잘못 계산해 커밋·푸시를 막는다.
 - 원격은 GitHub `origin/kyh/new-ocr`다. 작업 전 `git status --short --branch`, `git log -1`로 원격과 같은지 확인한다.
@@ -14,6 +16,8 @@
 | `experiments/paddleocr/` | PaddleOCR 실행(`scripts/04_read_one_image.py`), 승우 인계 기록(`README.md`) |
 | `experiments/easyocr/` | EasyOCR 실행(`scripts/read_one_image.py`) |
 | `experiments/ocr_compare/` | 서비스 파서 비교(`scripts/parser_compare.py`), **결과 정리 문서 `OCR_엔진_비교_결과_20261025.md`** |
+| `experiments/vlm_ocr/` | GLM-OCR·PaddleOCR-VL 실행(`scripts/run_images.py`), 단계별 결과 문서 |
+| `experiments/igpu/` | Intel 내장 그래픽·OpenVINO 실행(`scripts/run_paddleocr_openvino.py`), ONNX 변환(`scripts/convert_paddleocr.py`) |
 
 - 각 폴더의 `venv`(Python 3.11.9)를 쓴다. 버전은 `requirements-yohan-cpu.txt`·`versions_pip_freeze.txt`에 고정돼 있으며 확인 없이 올리지 않는다.
 - PowerShell에서 `$env:PYTHONIOENCODING='utf-8'`을 먼저 설정한다. pip 설치 때는 `$env:PYTHONUTF8=1`도 설정한다. Paddle은 한글 경로의 모델을 못 읽으므로 이 폴더처럼 영문 경로를 유지한다.
