@@ -411,7 +411,7 @@ void main() {
       find.text('소재별 탄소배출계수(kg CO2eq/kg)와 의류 무게(g)를 곱해 계산했습니다.'),
       findsOneWidget,
     );
-    expect(find.text('출처: 기존 V1 개발용 계수(문헌 출처 미확정)'), findsOneWidget);
+    expect(find.text('출처: 기존 추정 계수(문헌 출처 미확정)'), findsOneWidget);
     expect(find.textContaining('팀 승인'), findsNothing);
     expect(find.textContaining('development estimates'), findsNothing);
   });

@@ -830,7 +830,41 @@ void main() {
         await openKnitResult(tester);
         await tapSave(tester);
         await expectNotSavedAndEditable(tester, provider);
-        expect(shownBanner(tester)?.$1, contains('V2 계산 기준'));
+        expect(shownBanner(tester)?.$1, contains('탄소 계산 기준'));
+      });
+
+      testWidgets('서버에 계산 경로가 없으면(404) 앱 임시값으로 저장하지 않는다', (tester) async {
+        carbon.rejectWith = (statusCode: 404, body: {'detail': 'Not Found'});
+        final provider = await pumpScanScreen(tester, signedIn: true);
+        await openKnitResult(tester);
+        await tapSave(tester);
+
+        expect(carbon.calls, hasLength(1));
+        await expectNotSavedAndEditable(tester, provider);
+        expect(shownBanner(tester), (
+          '탄소 계산 근거를 확인할 수 없어 저장하지 못했어요. 잠시 후 다시 시도해 주세요.',
+          AppBannerKind.failure,
+        ));
+      });
+
+      testWidgets('서버가 표준명으로 돌려준 미지원 소재는 한글 이름으로 안내한다', (tester) async {
+        carbon.rejectWith = (
+          statusCode: 422,
+          body: {
+            'error_code': 'FACTOR_UNAVAILABLE',
+            'message': '해당 소재에 사용할 계수가 아직 선정되지 않았습니다.',
+            'unknown_materials': ['cashmere'],
+          },
+        );
+        final provider = await pumpScanScreen(tester, signedIn: true);
+        await openKnitResult(tester);
+        await tapSave(tester);
+
+        await expectNotSavedAndEditable(tester, provider);
+        expect(shownBanner(tester), (
+          '캐시미어 소재는 탄소 계산 기준이 없어 저장하지 못했어요.',
+          AppBannerKind.failure,
+        ));
       });
 
       testWidgets('거절된 뒤 소재를 고쳐 다시 누르면 새 입력으로 계산을 다시 받고, 성공하면 한 번만 저장한다', (
@@ -1200,6 +1234,30 @@ void main() {
       expect(materialField('면'), findsOneWidget);
       expect(find.textContaining(noBasisPreview), findsOneWidget);
       expect(find.textContaining('kg CO2eq'), findsNothing);
+    });
+
+    testWidgets('로그인 상태면 미리보기에 앱 소재표 숫자 대신 저장하면 계산된다고 보인다', (tester) async {
+      await pumpScanScreen(tester, signedIn: true);
+      await openResult(tester, knitWith(const []));
+
+      expect(find.textContaining('소재 생산 단계 예상 탄소배출량: 저장하면 계산돼요'), findsOneWidget);
+      expect(find.textContaining('kg CO2eq'), findsNothing);
+      expect(find.textContaining('(임시)'), findsNothing);
+
+      // 계산 기준이 없는 소재는 로그인 상태에서도 그 안내가 먼저다(저장해도 계산되지 않는다).
+      await tester.enterText(materialField('폴리에스터'), '한지');
+      await tester.pump();
+
+      expect(find.textContaining(noBasisPreview), findsOneWidget);
+      expect(find.textContaining('저장하면 계산돼요'), findsNothing);
+    });
+
+    testWidgets('세션이 만료됐으면 앱 추정값으로 저장하니 미리보기 숫자를 그대로 보인다', (tester) async {
+      await pumpScanScreen(tester, signedIn: true, sessionExpired: true);
+      await openResult(tester, knitWith(const []));
+
+      expect(find.textContaining('저장하면 계산돼요'), findsNothing);
+      expect(find.textContaining('kg CO2eq'), findsOneWidget);
     });
 
     testWidgets('아는 소재를 모르는 소재로 고치면 미리보기만 바뀌고 안내 카드는 깜빡이지 않는다', (tester) async {

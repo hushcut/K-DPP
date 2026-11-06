@@ -36,6 +36,30 @@ void main() {
       );
     });
 
+    test('서버가 표준명으로 돌려준 소재는 한글명으로, 표에 없는 이름은 그대로 알린다', () {
+      expect(
+        badRequest(const ['cashmere']).userMessage,
+        '캐시미어 소재는 탄소 계산 기준이 없어 저장하지 못했어요.',
+      );
+      expect(
+        badRequest(const ['acetate', 'wool']).userMessage,
+        'acetate 외 1개 소재는 탄소 계산 기준이 없어 저장하지 못했어요.',
+      );
+    });
+
+    test('서버에 계산 경로가 없으면(404) 임시값 저장을 막는다', () {
+      final exception = CarbonApiException.fromStatusCode(
+        statusCode: 404,
+        responseBody: '{"detail":"Not Found"}',
+      );
+
+      expect(exception.blocksLocalEstimate, isTrue);
+      expect(
+        exception.userMessage,
+        '탄소 계산 근거를 확인할 수 없어 저장하지 못했어요. 잠시 후 다시 시도해 주세요.',
+      );
+    });
+
     test('기준 없는 소재가 없는 입력 거절은 저장하지 못했다고 하고 소재와 혼용률을 확인하게 한다', () {
       expect(
         badRequest(const []).userMessage,

@@ -36,7 +36,13 @@ class CarbonApiException implements Exception {
   final String? errorCode;
   final List<String> unknownMaterials;
 
-  bool get blocksLocalEstimate => const {
+  /// 서버 값 대신 앱 임시값으로 저장하면 안 되는 실패인지입니다. 404 는 서버에 이 계산 경로가
+  /// 없다는 뜻이라(새 앱이 옛 서버에 붙음) 기다려도 풀리지 않고, 임시값은 나중에 서버 값으로
+  /// 바뀌지 않으므로 막습니다. 코드 없는 503 같은 일반 장애는 지금처럼 임시 저장합니다.
+  bool get blocksLocalEstimate =>
+      statusCode == 404 || _blockingErrorCodes.contains(errorCode);
+
+  static const Set<String> _blockingErrorCodes = {
     'CALCULATION_PROFILE_UNAVAILABLE',
     'CALCULATION_PROFILE_INVALID',
     'FACTOR_UNAVAILABLE',
@@ -45,7 +51,7 @@ class CarbonApiException implements Exception {
     'COMPOSITION_SCOPE_UNSUPPORTED',
     'IDEMPOTENCY_CONFLICT',
     'V2_RESPONSE_INVALID',
-  }.contains(errorCode);
+  };
 
   // 서버가 무게 때문에 계산을 거절한 코드입니다(BACKEND/API_CONTRACT.md 주요 error_code).
   static const Set<String> _weightErrorCodes = {
@@ -67,15 +73,19 @@ class CarbonApiException implements Exception {
   String get userMessage {
     if (errorCode == 'CALCULATION_PROFILE_UNAVAILABLE' ||
         errorCode == 'CALCULATION_PROFILE_INVALID') {
-      return 'V2 계산 기준이 아직 준비되지 않아 저장하지 못했어요. 잠시 후 다시 시도해 주세요.';
+      return '탄소 계산 기준이 아직 준비되지 않아 저장하지 못했어요. 잠시 후 다시 시도해 주세요.';
     }
     if (blocksLocalEstimate && type != CarbonApiErrorType.badRequest) {
-      return 'V2 계산 근거를 확인할 수 없어 저장하지 못했어요. 잠시 후 다시 시도해 주세요.';
+      return '탄소 계산 근거를 확인할 수 없어 저장하지 못했어요. 잠시 후 다시 시도해 주세요.';
     }
     switch (type) {
       case CarbonApiErrorType.badRequest:
         if (unknownMaterials.isNotEmpty) {
-          return unknownMaterialsMessage(unknownMaterials);
+          // 계수가 없다는 거절(FACTOR_UNAVAILABLE)은 서버가 표준명('cashmere')으로 돌려주므로
+          // 한글명('캐시미어')으로 바꿉니다. 표준명이 아닌 이름은 받은 그대로입니다.
+          return unknownMaterialsMessage(
+            unknownMaterials.map(MaterialName.koreanForStandardName).toList(),
+          );
         }
         // 무게 거절을 소재 문구로 안내하면 사용자가 고칠 곳을 찾지 못합니다.
         if (_weightErrorCodes.contains(errorCode)) {

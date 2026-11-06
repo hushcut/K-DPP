@@ -156,6 +156,12 @@ class MaterialName {
     return _koreanNamesByStandardName[standardize(material)] ?? material.trim();
   }
 
+  /// 서버가 돌려준 영문 표준명('cashmere')이면 한글명('캐시미어')으로 바꾼다. 그 밖의 이름
+  /// ('텐셀' 같은 별칭, 표에 없는 자유 입력)은 받은 그대로다 — 사용자가 쓴 이름을 바꾸지 않는다.
+  static String koreanForStandardName(String name) {
+    return _koreanNamesByStandardName[name.trim().toLowerCase()] ?? name;
+  }
+
   /// 안내 문구에 넣을 소재 이름을 만든다. 목록을 다 늘어놓으면 길이에 끝이 없어
   /// 첫 소재와 남은 개수만 쓴다('아세테이트 외 2개').
   static String summarize(List<String> names) {

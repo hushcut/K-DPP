@@ -21,7 +21,13 @@ extension _ScanViewBuilders on _ScanScreenState {
 
   /// 현재 상태와 콜백을 표시 전용 결과 위젯에 전달합니다.
   Widget _buildResultView() {
+    final closet = Provider.of<ClosetProvider>(context);
+
     return ScanResultView(
+      // 로그인 상태면 저장할 때 서버가 계산하므로 미리보기 숫자(앱 소재표 기준)를 보이지
+      // 않습니다. 세션이 만료됐으면 앱 추정값으로 저장하니 미리보기 숫자가 맞습니다.
+      carbonCalculatedOnSave:
+          closet.accessToken != null && closet.isAuthenticated,
       formKey: _formKey,
       hasTriedSubmit: _hasTriedSubmit,
       isSaving: _isSaving,

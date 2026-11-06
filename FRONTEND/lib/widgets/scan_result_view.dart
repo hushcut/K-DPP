@@ -39,6 +39,7 @@ class ScanResultView extends StatelessWidget {
     this.serverCarbonFootprint,
     this.serverWeightGram,
     this.serverCalculationMethod,
+    this.carbonCalculatedOnSave = false,
     required this.validateTitle,
     required this.validateMaterialName,
     required this.validateMaterialValue,
@@ -87,6 +88,12 @@ class ScanResultView extends StatelessWidget {
   final double? serverCarbonFootprint;
   final double? serverWeightGram;
   final String? serverCalculationMethod;
+
+  /// 저장할 때 서버가 탄소량을 계산하는지(로그인 상태)입니다. 그러면 미리보기에 앱 소재표로
+  /// 만든 숫자를 보이지 않습니다. 저장 뒤 서버 값과 크게 달라 저장하니 줄었다·늘었다로
+  /// 읽힐 수 있기 때문입니다.
+  final bool carbonCalculatedOnSave;
+
   // 제목·소재명·함유율 입력에 적용할 상위 폼 검증 함수입니다.
   final FormFieldValidator<String> validateTitle;
   final FormFieldValidator<String> validateMaterialName;
@@ -273,7 +280,13 @@ class ScanResultView extends StatelessWidget {
                             materials.keys,
                           ).isNotEmpty
                       ? '계산 기준이 없는 소재가 있어요'
+                      : carbonCalculatedOnSave
+                      ? '저장하면 계산돼요'
                       : '${calculation.carbonFootprint.toStringAsFixed(1)} kg CO2eq';
+                  final carbonLabel =
+                      carbonCalculatedOnSave || calculation.usesServerCarbon
+                      ? ''
+                      : '(임시)';
 
                   return Container(
                     padding: const EdgeInsets.all(16),
@@ -293,9 +306,9 @@ class ScanResultView extends StatelessWidget {
                         Expanded(
                           child: Text(
                             '무게 기준: ${selectedClothingType.label} · ${selectedClothingType.weightDisplayText}\n'
-                            '저장 시 확인한 한 부위의 소재 비율과 의류 전체 무게로 V2 추정치를 계산해요. 여러 부위의 비율을 섞지 말아 주세요.\n'
+                            '저장 시 확인한 한 부위의 소재 비율과 의류 전체 무게로 탄소 추정치를 계산해요. 여러 부위의 비율을 섞지 말아 주세요.\n'
                             '소재 참고 점수: ${materials.isEmpty ? '소재를 넣으면 계산돼요' : '${calculation.health}점'}\n'
-                            '소재 생산 단계 예상 탄소배출량${calculation.usesServerCarbon ? '' : '(임시)'}: $carbonText',
+                            '소재 생산 단계 예상 탄소배출량$carbonLabel: $carbonText',
                             softWrap: true,
                             style: TextStyle(
                               fontSize: 14,

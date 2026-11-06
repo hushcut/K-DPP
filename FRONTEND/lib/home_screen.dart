@@ -86,7 +86,7 @@ class HomeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'V2·기존 서버·앱 임시값은 기준별로 나눠 표시해요. 서로의 차이는 감축량이 아닙니다.',
+              '계산 기준이 다른 값은 나눠 표시해요. 서로의 차이는 감축량이 아닙니다.',
               style: TextStyle(color: secondaryText, fontSize: 13),
             ),
             for (final group in carbonGroups.entries) ...[
