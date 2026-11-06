@@ -10,11 +10,64 @@ void main() {
     test('uses the Android emulator endpoint by default', () {
       final service = CarbonApiService();
 
-      expect(service.endpoint, 'http://10.0.2.2:8000/api/carbon/calculate');
+      expect(service.endpoint, 'http://10.0.2.2:8000/api/v2/carbon/calculate');
     });
   });
 
   group('FastAPI carbon calculation contract', () {
+    for (final scope in ['research_scenario', 'legacy']) {
+      test('공개용 V2가 아닌 $scope 응답은 임시값으로 우회하지 않는다', () async {
+        final client = MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'carbon_factor': 1,
+              'carbon_footprint': 0.2,
+              'carbon_footprint_min': 0.2,
+              'carbon_footprint_max': 0.2,
+              'min_weight_grams': 200,
+              'max_weight_grams': 200,
+              'saved_result_id': 1,
+              'unit': 'kg CO2eq',
+              'formula_version': scope == 'legacy'
+                  ? 'weight_based_v1'
+                  : 'fiber_mass_v2',
+              'usage_scope': scope,
+              'calculation_scope': 'fiber_production_estimate',
+              'research_only': scope == 'research_scenario',
+              'calculation_source': 'TEST ONLY',
+            }),
+            200,
+          ),
+        );
+        try {
+          await expectLater(
+            CarbonApiService(client: client).calculate(
+              materials: const {'cotton': 100},
+              minWeightGram: 200,
+              maxWeightGram: 200,
+              weightGram: 200,
+              accessToken: 'token',
+            ),
+            throwsA(
+              isA<CarbonApiException>()
+                  .having(
+                    (error) => error.errorCode,
+                    'code',
+                    'V2_RESPONSE_INVALID',
+                  )
+                  .having(
+                    (error) => error.blocksLocalEstimate,
+                    'no fallback',
+                    isTrue,
+                  ),
+            ),
+          );
+        } finally {
+          client.close();
+        }
+      });
+    }
+
     test('sends materials, weight range, and bearer token', () async {
       late http.Request capturedRequest;
       final client = MockClient((request) async {
@@ -23,6 +76,12 @@ void main() {
         return http.Response(
           jsonEncode({
             'status': 'success',
+            'formula_version': 'fiber_mass_v2',
+            'calculation_scope': 'fiber_production_estimate',
+            'usage_scope': 'public_estimate',
+            'research_only': false,
+            'calculation_source':
+                'IDEMAT 2026 RevB2; data from www.ecocostsvalue.com',
             'carbon_factor': 8.3,
             'carbon_footprint': 1.46,
             'carbon_footprint_min': 0.83,
@@ -43,6 +102,7 @@ void main() {
           materials: const {'cotton': 100},
           minWeightGram: 100,
           maxWeightGram: 250,
+          clothingTypeId: 'short_sleeve_tshirt',
           accessToken: 'access-token',
         );
         final requestBody =
@@ -51,14 +111,14 @@ void main() {
         expect(capturedRequest.method, 'POST');
         expect(
           capturedRequest.url,
-          Uri.parse('http://10.0.2.2:8000/api/carbon/calculate'),
+          Uri.parse('http://10.0.2.2:8000/api/v2/carbon/calculate'),
         );
         expect(capturedRequest.headers['authorization'], 'Bearer access-token');
         expect(capturedRequest.headers['ngrok-skip-browser-warning'], 'true');
         expect(requestBody, {
           'materials': {'cotton': 100.0},
-          'min_weight_grams': 100.0,
-          'max_weight_grams': 250.0,
+          'composition_scope': 'single',
+          'clothing_type_id': 'short_sleeve_tshirt',
         });
         expect(result.carbonFactor, 8.3);
         expect(result.carbonFootprint, 1.46);
@@ -85,7 +145,10 @@ void main() {
             'unit': 'kg CO2eq',
             'saved_result_id': 22,
             'weight_source': 'category_average',
-            'calculation_scope': 'material_production_estimate',
+            'formula_version': 'fiber_mass_v2',
+            'calculation_scope': 'fiber_production_estimate',
+            'usage_scope': 'public_estimate',
+            'research_only': false,
             'calculation_basis': '소재 배출계수 × 의류 무게',
             'calculation_source': '소재별 공개 배출계수 정리표',
             'calculation_note': '운송·사용 단계는 포함하지 않습니다.',
@@ -106,7 +169,7 @@ void main() {
 
         expect(result.averageCarbonFootprint, 1.45);
         expect(result.weightSource, 'category_average');
-        expect(result.calculationScope, 'material_production_estimate');
+        expect(result.calculationScope, 'fiber_production_estimate');
         expect(result.calculationBasis, '소재 배출계수 × 의류 무게');
         expect(result.calculationSource, '소재별 공개 배출계수 정리표');
         expect(result.calculationNote, '운송·사용 단계는 포함하지 않습니다.');
@@ -205,6 +268,12 @@ void main() {
             'min_weight_grams': 620,
             'max_weight_grams': 620,
             'weight_source': 'direct',
+            'formula_version': 'fiber_mass_v2',
+            'calculation_scope': 'fiber_production_estimate',
+            'usage_scope': 'public_estimate',
+            'research_only': false,
+            'calculation_source':
+                'IDEMAT 2026 RevB2; data from www.ecocostsvalue.com',
             'unit': 'kg CO2eq',
             'saved_result_id': 23,
           }),
@@ -225,8 +294,7 @@ void main() {
 
         expect(jsonDecode(capturedRequest.body), {
           'materials': {'cotton': 100.0},
-          'min_weight_grams': 620.0,
-          'max_weight_grams': 620.0,
+          'composition_scope': 'single',
           'weight_grams': 620.0,
         });
         expect(result.weightSource, 'direct');

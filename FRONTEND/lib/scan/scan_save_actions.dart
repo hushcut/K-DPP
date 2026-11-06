@@ -29,10 +29,9 @@ extension _ScanSaveActions on _ScanScreenState {
     if (!mounted || (isSaved && !isInCurrentCloset)) return;
 
     if (!isSaved) {
-      AppBanner.of(context).show(
-        '의류를 기기에 저장하지 못했어요. 다시 시도해 주세요.',
-        kind: AppBannerKind.failure,
-      );
+      AppBanner.of(
+        context,
+      ).show('의류를 기기에 저장하지 못했어요. 다시 시도해 주세요.', kind: AppBannerKind.failure);
       return;
     }
 
@@ -127,6 +126,7 @@ extension _ScanSaveActions on _ScanScreenState {
               materials: editedMaterials,
               minWeightGram: _selectedClothingType.minWeightGram,
               maxWeightGram: _selectedClothingType.maxWeightGram,
+              clothingTypeId: _selectedClothingType.id,
               weightGram: _selectedClothingType.isDirectWeight
                   ? _selectedClothingType.estimatedWeightGram
                   : null,
@@ -159,7 +159,8 @@ extension _ScanSaveActions on _ScanScreenState {
               return;
             }
 
-            if (error.type == CarbonApiErrorType.badRequest) {
+            if (error.type == CarbonApiErrorType.badRequest ||
+                error.blocksLocalEstimate) {
               // 서버가 계산할 수 없는 입력이라고 거절했으니 근거 없는 임시값으로 저장하지 않고,
               // 입력을 그대로 둔 채 고치거나 다시 찍게 합니다(AI 연동 협의안 R1). 아래 저장
               // 구간의 finally 에 닿지 않으므로 여기서 저장 버튼을 풉니다.

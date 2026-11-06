@@ -4,6 +4,10 @@
 PR 88 보완·배포·앱 전환 기준: [CARBON_V2_REVIEW_RESOLUTION.md](CARBON_V2_REVIEW_RESOLUTION.md).
 
 V2 입력도 소재 20칸/소재명 64자/OCR 4,000자 제한을 적용합니다.
+V2 응답과 V2 이력 요약에는 저장된 계수 출처·정책 버전의 `calculation_source`,
+`calculation_basis`, `calculation_scope`, `calculation_note`, `weight_source`를 제공합니다.
+`FACTOR_UNAVAILABLE`도 `detail.unknown_materials`에 현재 정책에 없는 양수 소재를 반환합니다.
+앱 기본 계산 경로는 V2입니다. 서버 공개 정책 등록은 deploy/CARBON_V2_ACTIVATION.md를 따릅니다.
 `MATERIAL_NOT_FOUND`의 `detail.unknown_materials`는 미등록 양수 소재명 목록입니다.
 `/me/history`의 V2 항목은 `provenance_status`, `result_kind`, `formula_version`,
 `calculation_snapshot: null`, `provenance_url`을 제공합니다. 전체 스냅샷은

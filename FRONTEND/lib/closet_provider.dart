@@ -646,11 +646,12 @@ class ClosetProvider with ChangeNotifier {
         maxWeightGram: record.maxWeightGram,
         savedResultId: current.savedResultId,
         registeredAt: current.registeredAt,
-        weightSource: current.weightSource,
-        calculationScope: current.calculationScope,
-        calculationBasis: current.calculationBasis,
-        calculationSource: current.calculationSource,
-        calculationNote: current.calculationNote,
+        weightSource: record.weightSource ?? current.weightSource,
+        calculationScope: record.calculationScope ?? current.calculationScope,
+        calculationBasis: record.calculationBasis ?? current.calculationBasis,
+        calculationSource:
+            record.calculationSource ?? current.calculationSource,
+        calculationNote: record.calculationNote ?? current.calculationNote,
       );
 
       if (updatedCount == 0) {
@@ -702,7 +703,17 @@ class ClosetProvider with ChangeNotifier {
         clothes.carbonFootprintMin == record.carbonFootprintMin &&
         clothes.carbonFootprintMax == record.carbonFootprintMax &&
         clothes.minWeightGram == record.minWeightGram &&
-        clothes.maxWeightGram == record.maxWeightGram;
+        clothes.maxWeightGram == record.maxWeightGram &&
+        (record.calculationSource == null ||
+            clothes.calculationSource == record.calculationSource) &&
+        (record.calculationScope == null ||
+            clothes.calculationScope == record.calculationScope) &&
+        (record.calculationBasis == null ||
+            clothes.calculationBasis == record.calculationBasis) &&
+        (record.calculationNote == null ||
+            clothes.calculationNote == record.calculationNote) &&
+        (record.weightSource == null ||
+            clothes.weightSource == record.weightSource);
   }
 
   // 계정 옷장을 불러오고, 요청이 있으면 예전 공용 옷장을 합친 뒤 과거 샘플 항목은 제거합니다.

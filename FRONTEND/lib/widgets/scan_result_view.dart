@@ -293,6 +293,7 @@ class ScanResultView extends StatelessWidget {
                         Expanded(
                           child: Text(
                             '무게 기준: ${selectedClothingType.label} · ${selectedClothingType.weightDisplayText}\n'
+                            '저장 시 확인한 한 부위의 소재 비율과 의류 전체 무게로 V2 추정치를 계산해요. 여러 부위의 비율을 섞지 말아 주세요.\n'
                             '소재 참고 점수: ${materials.isEmpty ? '소재를 넣으면 계산돼요' : '${calculation.health}점'}\n'
                             '소재 생산 단계 예상 탄소배출량${calculation.usesServerCarbon ? '' : '(임시)'}: $carbonText',
                             softWrap: true,

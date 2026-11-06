@@ -210,7 +210,17 @@ Widget _buildProductionCarbonCard(
                   ),
                 if (item.calculationSource != null)
                   Text(
-                    '출처: ${_calculationSourceLabel(item.calculationSource!)}',
+                    '출처: ${_carbonSourceLabel(item)}',
+                    style: TextStyle(
+                      color: secondaryText,
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  ),
+                if (item.calculationScope == 'fiber_production_estimate' &&
+                    item.calculationNote != null)
+                  Text(
+                    item.calculationNote!,
                     style: TextStyle(
                       color: secondaryText,
                       fontSize: 12,
@@ -228,6 +238,9 @@ Widget _buildProductionCarbonCard(
 
 // 서버가 내려준 계산 범위 코드를 사용자 문구로 바꿉니다.
 String _calculationScopeLabel(String scope) {
+  if (scope == 'fiber_production_estimate') {
+    return '범위: 섬유 생산 단계 추정(V2)';
+  }
   if (scope == 'material_production_estimate') {
     return '범위: 원료 및 소재 생산 단계 추정';
   }
@@ -237,9 +250,9 @@ String _calculationScopeLabel(String scope) {
 // 서버가 내려준 출처 이름을 사용자 문구로 바꿉니다. 서버의 지금 이름은 영어 개발용 이름표라
 // 한국어로 보이되, 계수가 아직 추정값인 것은 그대로 알립니다(DECISIONS 227).
 String _calculationSourceLabel(String source) {
-  if (source ==
-      'K-DPP backend material carbon factor table (development estimates)') {
-    return 'K-DPP 소재별 배출계수 표(추정값)';
+  if (source == 'K-DPP 소재별 배출계수 표(추정값)' ||
+      source == 'K-DPP backend material carbon factor table (development estimates)') {
+    return '기존 V1 개발용 계수(문헌 출처 미확정)';
   }
   return source;
 }
@@ -562,10 +575,13 @@ Widget _buildComparisonTile(
 }
 
 String _carbonSourceLabel(Clothes item) {
-  return switch (item.carbonFootprintSource) {
-    CarbonFootprintSource.server => '서버 계산값',
-    CarbonFootprintSource.localEstimate => '앱 임시 추정값',
-  };
+  if (item.carbonFootprintSource == CarbonFootprintSource.localEstimate) {
+    return '앱 임시 계수(기존 추정값·문헌 출처 미확정)';
+  }
+  final source = item.calculationSource?.trim();
+  return source == null || source.isEmpty
+      ? '기존 서버 계산 · 계수 출처 미확인'
+      : _calculationSourceLabel(source);
 }
 
 // 최소·최대 무게가 같으면 추정 범위가 아니라 사용자가 입력한 실제 무게입니다.
@@ -583,7 +599,10 @@ bool _hasExactWeight(Clothes item) {
 String _carbonAssumptionText(Clothes item) {
   final weightBasis = _hasExactWeight(item) ? '입력한 무게' : '추정 무게';
 
-  return '저장된 소재 조성과 $weightBasis 기준이며, 옷의 부위별 구성이나 생산 국가·공정 등에 따라 달라질 수 있어요.';
+  final versionNote = item.calculationScope == 'fiber_production_estimate'
+      ? ' V2는 총무게를 섬유 무게로 가정합니다. 기존 V1·임시 추정값과 기준이 달라 버전 간 차이를 감축량으로 비교할 수 없어요.'
+      : ' 기존 추정값이며 새 V2 계수로 다시 계산한 결과가 아닙니다.';
+  return '저장된 소재 조성과 $weightBasis 기준이며, 옷의 부위별 구성이나 생산 국가·공정 등에 따라 달라질 수 있어요.$versionNote';
 }
 
 // 실제 무게가 하나의 값인지 범위인지에 따라 계산 근거 문구를 구성합니다.
@@ -599,7 +618,7 @@ String _weightBasisText(Clothes item) {
     return '실제 무게 ${_formatWeightGram(maxWeight)}g';
   }
 
-  return '선택 무게 범위 ${_formatWeightGram(minWeight)}~${_formatWeightGram(maxWeight)}g';
+  return '${item.weightSource == 'catalog' ? '유형별 임시 대표 무게·범위' : '선택 무게 범위'} ${_formatWeightGram(minWeight)}~${_formatWeightGram(maxWeight)}g';
 }
 
 String _formatWeightGram(double value) {

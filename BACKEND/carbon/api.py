@@ -37,6 +37,12 @@ def encode(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str, allow_nan=False)
 
 
+def calculation_source(factors, version):
+    """Use saved factor evidence, never assign today's source to a legacy value."""
+    names = list(dict.fromkeys(factor["source_name"] for factor in factors))
+    return "; ".join(names) + f" · 정책 {version}"
+
+
 def fail(code, status=422, **details):
     messages = {
         "CALCULATION_PROFILE_UNAVAILABLE": "사용 가능한 계산 기준이 아직 준비되지 않았습니다.",
@@ -72,11 +78,18 @@ def history_provenance(result, *, include_snapshot=False):
         snapshot = json.loads(result.calculation_snapshot_json)
         if not isinstance(snapshot, dict):
             raise TypeError("snapshot must be an object")
-    except (json.JSONDecodeError, TypeError):
+        response = snapshot.get("response", {})
+        if not isinstance(response, dict):
+            raise TypeError("snapshot response must be an object")
+        metadata = {key: response.get(key) for key in (
+            "weight_source", "calculation_scope", "calculation_basis", "calculation_source", "calculation_note")}
+        if not metadata["calculation_source"] and snapshot.get("factors") and snapshot.get("profile"):
+            metadata["calculation_source"] = calculation_source(snapshot["factors"], snapshot["profile"]["version"])
+    except (json.JSONDecodeError, TypeError, KeyError):
         return {"provenance_status": "invalid", "calculation_snapshot": None,
                 "result_kind": result.result_kind or "legacy_unknown",
                 "formula_version": result.formula_version}
-    return {"provenance_status": "available", "calculation_snapshot": snapshot if include_snapshot else None,
+    return {**metadata, "provenance_status": "available", "calculation_snapshot": snapshot if include_snapshot else None,
             "provenance_url": f"/api/v2/carbon/results/{result.id}",
             "result_kind": result.result_kind, "formula_version": result.formula_version}
 
@@ -158,6 +171,10 @@ def build_router(get_db, get_user, clothing_options):
                 aliases[key] = material.name_en
         try:
             ratios = normalize(request.materials, aliases)
+            unsupported = [name for name in ratios if db.get(
+                database.ProfileFactor, (profile.id, by_name[name].id)) is None]
+            if unsupported:
+                fail("FACTOR_UNAVAILABLE", 422, unknown_materials=unsupported)
             factors = resolve_factors(db, profile.id, [by_name[name].id for name in ratios])
             calculated = calculate(request.materials, aliases,
                 {name: factor["value"] for name, factor in factors.items()},
@@ -197,7 +214,15 @@ def build_router(get_db, get_user, clothing_options):
             "assumptions": ["total_garment_mass_as_fiber_proxy"],
             "calculation_note": "총무게를 섬유 무게로 가정한 추정치입니다. 후속 제조·사용·폐기는 제외합니다.",
             "emission_factors": json.loads(encode(factor_snapshots)),
+            "calculation_source": calculation_source(factor_snapshots, profile.version),
+            "calculation_basis": ("소재별 혼용률 × 배출계수(kg CO2eq/kg fiber) × 무게(g) ÷ 1000. "
+                f"적용 무게: {representative}g ({'사용자 입력' if weight_source == 'direct' else '유형별 임시 대표값'}). "
+                "대표 무게 기준 추정값이며 통계적 평균이 아닙니다."),
         }
+        if profile.usage_scope == "public_estimate":
+            response["calculation_note"] += " 무료 교육용 추정치이며 제품 인증·소재 간 우열 비교·감축 주장에 사용할 수 없습니다."
+        if "polyester" in ratios and any("IDEMAT" in factor["source_name"] for factor in factor_snapshots):
+            response["calculation_note"] += " 폴리에스터는 버진 비텍스처 필라멘트 공정의 대체값으로, 재생·단섬유 제품을 대표하지 않습니다."
         snapshot = {
             "schema_version": 1, "input": payload,
             "profile": {"id": profile.id, "key": profile.key, "version": profile.version,

@@ -10,6 +10,11 @@ class AnalysisHistoryRecord {
     this.minWeightGram,
     this.maxWeightGram,
     this.createdAt,
+    this.weightSource,
+    this.calculationScope,
+    this.calculationBasis,
+    this.calculationSource,
+    this.calculationNote,
   });
 
   // 이력과 사용자의 서버 식별자를 묶어 둡니다.
@@ -24,6 +29,11 @@ class AnalysisHistoryRecord {
   final double? minWeightGram;
   final double? maxWeightGram;
   final DateTime? createdAt;
+  final String? weightSource;
+  final String? calculationScope;
+  final String? calculationBasis;
+  final String? calculationSource;
+  final String? calculationNote;
 
   /// 서버 JSON을 이력으로 변환하며 필수 값이 없거나 형식이 맞지 않으면 [FormatException]을 던집니다.
   factory AnalysisHistoryRecord.fromJson(Map<String, dynamic> json) {
@@ -56,6 +66,11 @@ class AnalysisHistoryRecord {
       minWeightGram: _parseDouble(json['min_weight_grams']),
       maxWeightGram: _parseDouble(json['max_weight_grams']),
       createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
+      weightSource: json['weight_source'] as String?,
+      calculationScope: json['calculation_scope'] as String?,
+      calculationBasis: json['calculation_basis'] as String?,
+      calculationSource: json['calculation_source'] as String?,
+      calculationNote: json['calculation_note'] as String?,
     );
   }
 

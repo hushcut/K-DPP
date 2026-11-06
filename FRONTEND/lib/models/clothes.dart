@@ -34,6 +34,17 @@ class Clothes {
   final String? calculationSource;
   final String? calculationNote;
 
+  /// Different policies/legacy estimates must not appear as one comparable total.
+  String get carbonBasisLabel {
+    if (carbonFootprintSource == CarbonFootprintSource.localEstimate) {
+      return '앱 임시 추정';
+    }
+    if (calculationScope == 'fiber_production_estimate') {
+      return 'V2 · ${calculationSource ?? '계수 출처 미확인'}';
+    }
+    return '기존 서버 추정';
+  }
+
   Clothes({
     required this.title,
     required this.category,

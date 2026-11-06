@@ -821,6 +821,18 @@ void main() {
         expect(shownBanner(tester)?.$2, AppBannerKind.failure);
       });
 
+      testWidgets('503 V2 정책 미등록은 V1 임시값으로 저장하지 않는다', (tester) async {
+        carbon.rejectWith = (
+          statusCode: 503,
+          body: {'error_code': 'CALCULATION_PROFILE_UNAVAILABLE'},
+        );
+        final provider = await pumpScanScreen(tester, signedIn: true);
+        await openKnitResult(tester);
+        await tapSave(tester);
+        await expectNotSavedAndEditable(tester, provider);
+        expect(shownBanner(tester)?.$1, contains('V2 계산 기준'));
+      });
+
       testWidgets('거절된 뒤 소재를 고쳐 다시 누르면 새 입력으로 계산을 다시 받고, 성공하면 한 번만 저장한다', (
         tester,
       ) async {
@@ -1554,6 +1566,7 @@ class _FakeCarbonApiService extends CarbonApiService {
     required double maxWeightGram,
     required String accessToken,
     double? weightGram,
+    String? clothingTypeId,
   }) async {
     calls.add((
       materials: materials,

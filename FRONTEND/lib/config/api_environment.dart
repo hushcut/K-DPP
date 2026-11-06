@@ -66,7 +66,7 @@ abstract final class ApiEnvironment {
 
   static final String carbonEndpoint = _carbonEndpointOverride.isNotEmpty
       ? _carbonEndpointOverride
-      : '$baseUrl/api/carbon/calculate';
+      : '$baseUrl/api/v2/carbon/calculate';
 
   static final String materialsEndpoint = _materialsEndpointOverride.isNotEmpty
       ? _materialsEndpointOverride
