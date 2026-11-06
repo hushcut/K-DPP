@@ -40,7 +40,7 @@ class Clothes {
       return '앱 임시 추정';
     }
     if (calculationScope == 'fiber_production_estimate') {
-      return 'V2 · ${calculationSource ?? '계수 출처 미확인'}';
+      return calculationSource ?? '계수 출처 미확인';
     }
     return '기존 서버 추정';
   }

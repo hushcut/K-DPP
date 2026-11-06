@@ -239,7 +239,7 @@ Widget _buildProductionCarbonCard(
 // 서버가 내려준 계산 범위 코드를 사용자 문구로 바꿉니다.
 String _calculationScopeLabel(String scope) {
   if (scope == 'fiber_production_estimate') {
-    return '범위: 섬유 생산 단계 추정(V2)';
+    return '범위: 섬유 생산 단계 추정';
   }
   if (scope == 'material_production_estimate') {
     return '범위: 원료 및 소재 생산 단계 추정';
@@ -252,7 +252,7 @@ String _calculationScopeLabel(String scope) {
 String _calculationSourceLabel(String source) {
   if (source == 'K-DPP 소재별 배출계수 표(추정값)' ||
       source == 'K-DPP backend material carbon factor table (development estimates)') {
-    return '기존 V1 개발용 계수(문헌 출처 미확정)';
+    return '기존 추정 계수(문헌 출처 미확정)';
   }
   return source;
 }
@@ -600,8 +600,8 @@ String _carbonAssumptionText(Clothes item) {
   final weightBasis = _hasExactWeight(item) ? '입력한 무게' : '추정 무게';
 
   final versionNote = item.calculationScope == 'fiber_production_estimate'
-      ? ' V2는 총무게를 섬유 무게로 가정합니다. 기존 V1·임시 추정값과 기준이 달라 버전 간 차이를 감축량으로 비교할 수 없어요.'
-      : ' 기존 추정값이며 새 V2 계수로 다시 계산한 결과가 아닙니다.';
+      ? ' 총무게를 섬유 무게로 가정합니다. 기존·임시 추정값과 기준이 달라 서로의 차이를 감축량으로 비교할 수 없어요.'
+      : ' 기존 추정값이며 지금 계수로 다시 계산한 결과가 아닙니다.';
   return '저장된 소재 조성과 $weightBasis 기준이며, 옷의 부위별 구성이나 생산 국가·공정 등에 따라 달라질 수 있어요.$versionNote';
 }
 
