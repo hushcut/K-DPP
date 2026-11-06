@@ -56,6 +56,20 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  // '섬유'는 원단(textile)으로도 읽혀 실제보다 넓게 계산한 것처럼 보이므로, 범위 줄은 이름 대신
+  // 들어간 것과 빠진 것을 적는다(DECISIONS 2026-11-07).
+  testWidgets('V2 범위 줄은 원료에서 섬유까지이고 실·원단·염색·봉제가 빠졌다고 알린다', (tester) async {
+    final provider = ClosetProvider(storage: FakeClosetStorage());
+    await provider.addClothes(garment());
+    await tester.pumpWidget(host(provider, const ReportScreen()));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('범위: 원료에서 섬유까지(실·원단 만들기, 염색, 봉제는 빠짐)', skipOffstage: false),
+      findsOneWidget,
+    );
+    expect(find.textContaining('섬유 생산 단계', skipOffstage: false), findsNothing);
+  });
+
   testWidgets('옛 결과에 IDEMAT 출처를 소급 적용하지 않는다', (tester) async {
     final provider = ClosetProvider(storage: FakeClosetStorage());
     await provider.addClothes(garment(v2: false, carbon: 7.5));

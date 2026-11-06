@@ -239,7 +239,9 @@ Widget _buildProductionCarbonCard(
 // 서버가 내려준 계산 범위 코드를 사용자 문구로 바꿉니다.
 String _calculationScopeLabel(String scope) {
   if (scope == 'fiber_production_estimate') {
-    return '범위: 섬유 생산 단계 추정';
+    // V2 계수는 원료부터 섬유까지만 담는다(BACKEND/policies/idemat_2026_free_public_selection.json
+    // 의 excluded). '섬유 생산 단계'는 원단(textile)까지로도 읽혀 이름 대신 빠진 공정을 적는다.
+    return '범위: 원료에서 섬유까지(실·원단 만들기, 염색, 봉제는 빠짐)';
   }
   if (scope == 'material_production_estimate') {
     return '범위: 원료 및 소재 생산 단계 추정';
