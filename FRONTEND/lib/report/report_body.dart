@@ -250,9 +250,9 @@ Widget _buildReportBody(
             ),
           ),
           const SizedBox(height: 8),
+          // 가정·한계 문장은 탄소 카드의 '계산 기준 보기' 안으로 옮겼습니다(DECISIONS 2026-11-07).
           Text(
-            '이 수치는 전체 생애주기 배출량이 아닙니다. 소재와 무게를 바탕으로 원료·소재 생산 단계에서 발생한 탄소 배출량을 추정한 값입니다. '
-            '${_carbonAssumptionText(item)}',
+            '전체 생애주기 배출량이 아니라, 소재와 무게로 원료·소재 생산 단계만 추정한 값이에요.',
             style: TextStyle(color: secondaryText, fontSize: 13),
           ),
           const SizedBox(height: 16),
@@ -276,24 +276,6 @@ Widget _buildReportBody(
             cardColor: cardColor,
             borderColor: borderColor,
             isDark: isDark,
-          ),
-          const SizedBox(height: 12),
-
-          _buildCarbonScopeNotice(
-            primaryText: primaryText,
-            secondaryText: secondaryText,
-            accentColor: palette.accentForeground,
-            isDark: isDark,
-          ),
-          const SizedBox(height: 12),
-
-          _buildCalculationBasisCard(
-            item,
-            primaryText: primaryText,
-            secondaryText: secondaryText,
-            accentColor: palette.accentForeground,
-            cardColor: cardColor,
-            borderColor: borderColor,
           ),
           const SizedBox(height: 24),
 

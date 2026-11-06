@@ -10,6 +10,7 @@ import 'package:k_dpp/services/carbon_api_service.dart';
 import 'package:provider/provider.dart';
 
 import 'helpers/fake_closet_storage.dart';
+import 'helpers/report_basis.dart';
 
 const source =
     'IDEMAT 2026 RevB2; data from www.ecocostsvalue.com · 정책 2026-10-18-v1';
@@ -40,17 +41,27 @@ Widget host(ClosetProvider provider, Widget child) => MultiProvider(
 );
 
 void main() {
-  testWidgets('두 출처 영역 모두 실제 V2 문헌과 정책 버전을 표시한다', (tester) async {
+  // 출처('data from www.ecocostsvalue.com')는 IDEMAT 를 쓰는 조건이라 접지 않고 한 번만 보인다.
+  // 무료 교육용 제한·폴리에스터 가정은 '계산 기준 보기' 안에 있다(DECISIONS 2026-11-07).
+  testWidgets('V2 출처는 접지 않고 한 번 보이고, 무료 교육용 안내는 계산 기준 안에 있다', (tester) async {
     final provider = ClosetProvider(storage: FakeClosetStorage());
     await provider.addClothes(garment());
     await tester.pumpWidget(host(provider, const ReportScreen()));
     await tester.pumpAndSettle();
     expect(find.text('출처: $source', skipOffstage: false), findsOneWidget);
-    expect(find.text(source, skipOffstage: false), findsOneWidget);
+    expect(find.textContaining('ecocostsvalue', skipOffstage: false), findsOneWidget);
+    expect(
+      find.textContaining('무료 교육용 추정치', skipOffstage: false),
+      findsNothing,
+    );
+
+    await openCalculationBasis(tester);
     expect(
       find.textContaining('무료 교육용 추정치', skipOffstage: false),
       findsOneWidget,
     );
+    // 계산식은 무게 줄과 겹쳐 보이지 않는다.
+    expect(find.text('혼용률 × 계수 × 무게 ÷ 1000', skipOffstage: false), findsNothing);
     expect(find.textContaining('K-DPP 소재별', skipOffstage: false), findsNothing);
     expect(find.text('백엔드 계산값', skipOffstage: false), findsNothing);
     expect(tester.takeException(), isNull);
@@ -63,11 +74,37 @@ void main() {
     await provider.addClothes(garment());
     await tester.pumpWidget(host(provider, const ReportScreen()));
     await tester.pumpAndSettle();
+    await openCalculationBasis(tester);
     expect(
       find.text('범위: 원료에서 섬유까지(실·원단 만들기, 염색, 봉제는 빠짐)', skipOffstage: false),
       findsOneWidget,
     );
     expect(find.textContaining('섬유 생산 단계', skipOffstage: false), findsNothing);
+  });
+
+  // 서버 안내문이 '총무게를 섬유 무게로 가정'을 이미 말하면 앱 가정 문장은 되풀이하지 않고,
+  // 안내문이 없으면 앱 문장이 그 가정을 알린다(DECISIONS 2026-11-07).
+  testWidgets('총무게를 섬유 무게로 가정한다는 말은 계산 기준 안에서 한 번만 나온다', (tester) async {
+    const assumption = '총무게를 섬유 무게로';
+    for (final note in [
+      '총무게를 섬유 무게로 가정한 추정치입니다. 무료 교육용 추정치입니다.',
+      null,
+    ]) {
+      final item = garment();
+      final provider = ClosetProvider(storage: FakeClosetStorage());
+      await provider.addClothes(
+        Clothes.fromJson({...item.toJson(), 'calculationNote': note}),
+      );
+      await tester.pumpWidget(host(provider, const ReportScreen()));
+      await tester.pumpAndSettle();
+      await openCalculationBasis(tester);
+      expect(
+        find.textContaining(assumption, skipOffstage: false),
+        findsOneWidget,
+        reason: 'note=$note',
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
   });
 
   testWidgets('옛 결과에 IDEMAT 출처를 소급 적용하지 않는다', (tester) async {
@@ -77,7 +114,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('IDEMAT', skipOffstage: false), findsNothing);
     expect(
-      find.text('기존 서버 계산 · 계수 출처 미확인', skipOffstage: false),
+      find.text('출처: 기존 서버 계산 · 계수 출처 미확인', skipOffstage: false),
       findsOneWidget,
     );
     expect(provider.items.single.carbonFootprint, 7.5);

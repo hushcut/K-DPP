@@ -160,79 +160,76 @@ Widget _buildProductionCarbonCard(
           primaryText: primaryText,
           secondaryText: secondaryText,
         ),
-        // 서버 계산일 때만 백엔드가 내려준 계산 범위·근거·출처를 보여 줍니다.
-        // 서버의 calculation_note 는 팀 내부 메모('최종 발표 전 팀 승인 출처로 교체…')라 보여 주지
-        // 않습니다. 옷과 함께 폰에 저장돼 있어 서버를 고쳐도 남으므로 여기서 거릅니다(DECISIONS 227).
-        if (item.carbonFootprintSource == CarbonFootprintSource.server &&
-            (item.calculationScope != null ||
-                item.calculationBasis != null ||
-                item.calculationSource != null)) ...[
-          const SizedBox(height: 14),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: isDark
-                  ? AppPalette.dark.background
-                  : AppPalette.light.background,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: borderColor),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '계산 기준',
-                  style: TextStyle(
-                    color: primaryText,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                if (item.calculationScope != null)
-                  Text(
-                    _calculationScopeLabel(item.calculationScope!),
-                    style: TextStyle(
-                      color: secondaryText,
-                      fontSize: 12,
-                      height: 1.5,
-                    ),
-                  ),
-                if (item.calculationBasis != null)
-                  Text(
-                    item.calculationBasis!,
-                    style: TextStyle(
-                      color: secondaryText,
-                      fontSize: 12,
-                      height: 1.5,
-                    ),
-                  ),
-                if (item.calculationSource != null)
-                  Text(
-                    '출처: ${_carbonSourceLabel(item)}',
-                    style: TextStyle(
-                      color: secondaryText,
-                      fontSize: 12,
-                      height: 1.5,
-                    ),
-                  ),
-                if (item.calculationScope == 'fiber_production_estimate' &&
-                    item.calculationNote != null)
-                  Text(
-                    item.calculationNote!,
-                    style: TextStyle(
-                      color: secondaryText,
-                      fontSize: 12,
-                      height: 1.5,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
+        // 출처는 접지 않습니다. IDEMAT 계수를 쓰는 조건이 출처 표기('data from www.ecocostsvalue.com')라
+        // 늘 보여야 합니다(BACKEND/policies/idemat_2026_free_public_selection.json required_attribution).
+        const SizedBox(height: 12),
+        Text(
+          '출처: ${_carbonSourceLabel(item)}',
+          style: TextStyle(color: secondaryText, fontSize: 12, height: 1.5),
+        ),
+        const SizedBox(height: 4),
+        _buildCalculationBasisFold(
+          item,
+          primaryText: primaryText,
+          secondaryText: secondaryText,
+          accentColor: accentColor,
+        ),
       ],
     ),
+  );
+}
+
+// 계산 범위·무게·가정·한계를 한곳에 모아 '계산 기준 보기'로 접어 둡니다. 예전엔 탄소 카드 안과
+// 아래 '계산 기준' 카드·미포함 안내 상자에 나뉘어 출처·범위가 두세 번 되풀이됐습니다(DECISIONS 2026-11-07).
+// 서버의 계산식(calculation_basis)은 무게 줄과 겹쳐 보이지 않습니다. 서버의 calculation_note 는
+// V2 일 때만 보입니다 — 옛 서버 값의 메모는 팀 내부 메모('최종 발표 전 팀 승인 출처로 교체…')라
+// 옷과 함께 폰에 남아 있어 여기서 거릅니다(DECISIONS 227).
+Widget _buildCalculationBasisFold(
+  Clothes item, {
+  required Color primaryText,
+  required Color secondaryText,
+  required Color accentColor,
+}) {
+  final scope = item.carbonFootprintSource == CarbonFootprintSource.server
+      ? item.calculationScope
+      : null;
+  final lines = [
+    scope != null
+        ? _calculationScopeLabel(scope)
+        : '범위: 원료 및 소재 생산 단계 추정',
+    '무게: ${_weightBasisText(item)}',
+    _carbonAssumptionText(item),
+    if (scope == 'fiber_production_estimate' && item.calculationNote != null)
+      item.calculationNote!,
+  ];
+
+  // 펼치고 접을 때 위아래 테두리가 생기지 않게 두 모양을 빈 테두리로 둡니다.
+  return ExpansionTile(
+    tilePadding: EdgeInsets.zero,
+    childrenPadding: const EdgeInsets.only(bottom: 4),
+    expandedCrossAxisAlignment: CrossAxisAlignment.start,
+    shape: const Border(),
+    collapsedShape: const Border(),
+    iconColor: accentColor,
+    collapsedIconColor: secondaryText,
+    title: Text(
+      '계산 기준 보기',
+      style: TextStyle(
+        color: primaryText,
+        fontSize: 13,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+    children: [
+      for (final line in lines)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Text(
+            line,
+            style: TextStyle(color: secondaryText, fontSize: 12, height: 1.5),
+          ),
+        ),
+    ],
   );
 }
 
@@ -373,133 +370,6 @@ Widget _buildCarbonComparisonCard(
   );
 }
 
-Widget _buildCarbonScopeNotice({
-  required Color primaryText,
-  required Color secondaryText,
-  required Color accentColor,
-  required bool isDark,
-}) {
-  return Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      color: isDark ? const Color(0xFF1E2A3A) : const Color(0xFFEEF4FF),
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(
-        color: isDark ? const Color(0xFF30445F) : const Color(0xFFD9E6FF),
-      ),
-    ),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(Icons.info_outline, color: accentColor, size: 20),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            '봉제·제조, 운송, 사용, 세탁, 폐기 과정의 배출량은 현재 수치에 포함하지 않습니다.',
-            style: TextStyle(color: secondaryText, fontSize: 13, height: 1.5),
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-// 탄소 계산 출처, 사용된 의류 무게와 계산 범위를 모아 표시합니다.
-Widget _buildCalculationBasisCard(
-  Clothes item, {
-  required Color primaryText,
-  required Color secondaryText,
-  required Color accentColor,
-  required Color cardColor,
-  required Color borderColor,
-}) {
-  return Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: cardColor,
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: borderColor),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(
-              Icons.fact_check_outlined,
-              color: accentColor,
-              size: 20,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              '계산 기준',
-              style: TextStyle(
-                color: primaryText,
-                fontSize: 15,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        _buildBasisRow(
-          label: '출처',
-          value: _carbonSourceLabel(item),
-          primaryText: primaryText,
-          secondaryText: secondaryText,
-        ),
-        const SizedBox(height: 8),
-        _buildBasisRow(
-          label: '무게',
-          value: _weightBasisText(item),
-          primaryText: primaryText,
-          secondaryText: secondaryText,
-        ),
-        const SizedBox(height: 8),
-        _buildBasisRow(
-          label: '범위',
-          value: '소재, 혼용률, 의류 무게 기준의 원료·소재 생산 단계',
-          primaryText: primaryText,
-          secondaryText: secondaryText,
-        ),
-      ],
-    ),
-  );
-}
-
-Widget _buildBasisRow({
-  required String label,
-  required String value,
-  required Color primaryText,
-  required Color secondaryText,
-}) {
-  return Row(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      SizedBox(
-        width: 44,
-        child: Text(
-          label,
-          style: TextStyle(
-            color: secondaryText,
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
-      const SizedBox(width: 10),
-      Expanded(
-        child: Text(
-          value,
-          style: TextStyle(color: primaryText, fontSize: 13, height: 1.45),
-        ),
-      ),
-    ],
-  );
-}
-
 Widget _buildScopeRow({
   required IconData icon,
   required String label,
@@ -601,8 +471,11 @@ bool _hasExactWeight(Clothes item) {
 String _carbonAssumptionText(Clothes item) {
   final weightBasis = _hasExactWeight(item) ? '입력한 무게' : '추정 무게';
 
+  // 서버 V2 안내문(calculation_note)이 같은 가정을 이미 말하면 '계산 기준 보기' 안에서 두 번 읽히므로 뺍니다.
+  final noteSaysFiberMass =
+      item.calculationNote?.contains('총무게를 섬유 무게로') ?? false;
   final versionNote = item.calculationScope == 'fiber_production_estimate'
-      ? ' 총무게를 섬유 무게로 가정합니다. 기존·임시 추정값과 기준이 달라 서로의 차이를 감축량으로 비교할 수 없어요.'
+      ? '${noteSaysFiberMass ? '' : ' 총무게를 섬유 무게로 가정합니다.'} 기존·임시 추정값과 기준이 달라 서로의 차이를 감축량으로 비교할 수 없어요.'
       : ' 기존 추정값이며 지금 계수로 다시 계산한 결과가 아닙니다.';
   return '저장된 소재 조성과 $weightBasis 기준이며, 옷의 부위별 구성이나 생산 국가·공정 등에 따라 달라질 수 있어요.$versionNote';
 }
