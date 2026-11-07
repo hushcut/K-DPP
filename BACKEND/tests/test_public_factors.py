@@ -66,15 +66,21 @@ def test_every_selected_factor_has_provenance_and_korean_note_where_assumed():
             assert item["display_note_ko"].endswith("니다.")
 
 
+def selected_factor(session, name):
+    # 비밀정보 검사(gitleaks generic-api-key)가 '이름=따옴표 값' 꼴을 키로 보므로 소재 id 로 찾는다.
+    material = session.query(database.Material).filter_by(name_en=name).one()
+    return session.query(database.MaterialFactor).filter_by(material_id=material.id).one()
+
+
 def test_manifest_publishes_all_materials(client):
     with database.SessionLocal() as session:
         result = publish_manifest(session, approved_public_manifest(), apply=True,
                                   free_public_release=True)
         assert sorted(result["materials"]) == sorted(EXPECTED)
-        nylon = session.query(database.MaterialFactor).filter_by(factor_key="idemat-2026-nylon").one()
+        nylon = selected_factor(session, "nylon")
         assert nylon.version == "2026-11-07-v1"
         assert nylon.reviewed_at.date().isoformat() == "2026-11-07"
-        cotton = session.query(database.MaterialFactor).filter_by(factor_key="idemat-2026-cotton").one()
+        cotton = selected_factor(session, "cotton")
         assert cotton.reviewed_at.date().isoformat() == "2026-10-18"
 
 

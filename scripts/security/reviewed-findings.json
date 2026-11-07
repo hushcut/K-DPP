@@ -172,6 +172,15 @@
         58
       ],
       "reason": "candidate_set_cross_check.json: image_key/image_variant_key are reviewed SHA-256 image/cache identities already published in kyh/ai fixtures; exact immutable blob and finding lines only."
+    },
+    {
+      "object": "b07b8e894f936c2dee2d7f528413bf59f4392670",
+      "rule": "generic-api-key",
+      "lines": [
+        74,
+        77
+      ],
+      "reason": "BACKEND/tests/test_public_factors.py (commit 5020595): factor_key=\"idemat-2026-nylon\"/\"idemat-2026-cotton\" are public emission-factor identifiers built from the material name, not credentials; the next version of the file no longer uses this form. Exact immutable blob and finding lines only."
     }
   ]
 }
