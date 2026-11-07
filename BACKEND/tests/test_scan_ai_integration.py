@@ -280,13 +280,14 @@ def test_scan_log_line_records_422_codes(client, vision, capsys):
     assert "혼용율" not in line and "면 100" not in line
 
 
-def test_unreadable_photo_is_logged_and_left_to_ai(client, vision, capsys):
+def test_unreadable_photo_is_logged_as_invalid_input(client, vision, capsys):
     response = scan_file(client, b"not an image")
     [line] = scan_log_lines(capsys)
 
-    # 서버는 열지 못한 사진을 바꾸지 않고 넘기며, 오류는 지금처럼 AI 의 형식 검사에서 난다.
-    assert response.status_code == 502
-    assert "결과=502" in line and "실제형식=-" in line and "열기=UnidentifiedImageError" in line
+    # 서버는 열지 못한 사진을 AI 검사로 넘기되, 손상 입력을 OCR 장애와 구분한다.
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "INVALID_IMAGE"
+    assert "결과=400" in line and "실제형식=-" in line and "열기=UnidentifiedImageError" in line
     assert vision.calls == 0
 
 

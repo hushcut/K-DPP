@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi import HTTPException, UploadFile
+from fastapi.testclient import TestClient
 from PIL import Image
 import pytest
 from starlette.datastructures import Headers
@@ -84,6 +85,100 @@ def make_upload(content_type="image/jpeg"):
     buffer.seek(0)
     headers = Headers({"content-type": content_type}) if content_type else Headers()
     return UploadFile(filename="label.jpg", file=buffer, headers=headers)
+
+
+@pytest.fixture
+def scan_image_client(backend_main, scan_db, monkeypatch, tmp_path):
+    # These error paths must stop before DB access. Use the real HTTP route,
+    # middleware and exception handler without entering the DB-checking lifespan.
+    def forbid_db(*_args, **_kwargs):
+        pytest.fail("image input errors must not connect to a database")
+
+    monkeypatch.setattr(backend_main.database.engine, "connect", forbid_db)
+    monkeypatch.setattr(backend_main.tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(backend_main, "_vision_scan_counts", {})
+    monkeypatch.setattr(backend_main, "SCAN_DAILY_MAX", None)
+    monkeypatch.setattr(backend_main, "SCAN_USER_DAILY_MAX", 20)
+    monkeypatch.setattr(backend_main.app, "dependency_overrides", {
+        backend_main.get_db: lambda: scan_db,
+        backend_main.get_current_user: lambda: SimpleNamespace(id=1),
+    })
+    client = TestClient(backend_main.app)
+    yield client
+    client.close()
+    assert scan_db.saved == [] and not scan_db.committed
+    assert list(tmp_path.iterdir()) == [], "failed uploads must remove their temporary files"
+
+
+def damaged_scan_image(image_format, truncated=False):
+    image = Image.new("RGB", (64, 40), "white")
+    exif = b"Exif\0\0BAD!0000"
+    if truncated:
+        exif = Image.Exif()
+        exif[274] = 6
+    buffer = BytesIO()
+    image.save(buffer, format=image_format, exif=exif, dpi=(72, 72))
+    return buffer.getvalue()[:-8] if truncated else buffer.getvalue()
+
+
+@pytest.mark.parametrize("image_format,truncated", [("JPEG", False), ("PNG", False), ("WEBP", False), ("JPEG", True)])
+def test_damaged_image_is_400_before_vision(backend_main, scan_image_client, monkeypatch, image_format, truncated):
+    def forbid_vision(*_args, **_kwargs):
+        pytest.fail("damaged images must stop before Vision")
+
+    monkeypatch.setattr(ocr_text, "_get_vision_client", forbid_vision)
+    monkeypatch.setattr(ocr_text, "_run_google_ocr", forbid_vision)
+    content_type = "image/" + image_format.lower()
+    response = scan_image_client.post("/api/scan", files={
+        "image": ("label", damaged_scan_image(image_format, truncated), content_type),
+    })
+    body = response.json()
+    assert response.status_code == 400
+    assert body["status"] == "error"
+    assert body["error_code"] == body["detail"]["error_code"] == "INVALID_IMAGE"
+    assert "다른 사진" in body["message"]
+    assert not any(key in body["detail"] for key in INTERNAL_KEYS)
+    # Classification does not change the existing reservation policy.
+    assert sum(sum(counts.values()) for counts in backend_main._vision_scan_counts.values()) == 1
+
+
+def test_unreadable_image_has_matching_400_response_and_photo_log(scan_image_client, monkeypatch, capsys):
+    def forbid_vision(*_args, **_kwargs):
+        pytest.fail("unreadable images must stop before Vision")
+
+    monkeypatch.setattr(ocr_text, "_get_vision_client", forbid_vision)
+    monkeypatch.setattr(ocr_text, "_run_google_ocr", forbid_vision)
+    response = scan_image_client.post("/api/scan", files={"image": ("label.jpg", b"not an image", "image/jpeg")})
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "INVALID_IMAGE"
+    [line] = [line for line in capsys.readouterr().err.splitlines() if line.startswith("[scan] 사진 ")]
+    assert "결과=400" in line and "실제형식=-" in line and "열기=UnidentifiedImageError" in line
+
+
+@pytest.mark.parametrize("error_name,status,code", [
+    ("InvalidImageError", 400, "INVALID_IMAGE"),
+    ("ImageTooLargeError", 413, "PAYLOAD_TOO_LARGE"),
+    ("UnsupportedImageError", 415, "UNSUPPORTED_IMAGE_FORMAT"),
+    ("OcrTimeoutError", 504, "OCR_TIMEOUT"),
+    ("OcrTotalTimeoutError", 504, "OCR_TIMEOUT"),
+    ("OcrConfigurationError", 502, "OCR_FAILED"),
+    ("OcrQuotaExceededError", 502, "OCR_FAILED"),
+    ("OcrUnavailableError", 502, "OCR_FAILED"),
+    ("OcrServiceError", 502, "OCR_FAILED"),
+    ("RuntimeError", 502, "OCR_FAILED"),
+])
+def test_ocr_exception_families_have_distinct_safe_http_responses(
+    backend_main, scan_image_client, monkeypatch, error_name, status, code,
+):
+    def fail_ocr(*_args, **_kwargs):
+        error_type = RuntimeError if error_name == "RuntimeError" else getattr(ocr_text, error_name)
+        raise error_type("private-diagnostic-marker")
+
+    monkeypatch.setattr(backend_main, "run_ocr", fail_ocr)
+    response = scan_image_client.post("/api/scan", files={"image": ("label.jpg", b"input", "image/jpeg")})
+    assert response.status_code == status
+    assert response.json()["error_code"] == code
+    assert "private-diagnostic-marker" not in response.text
 
 
 def test_backend_imports_the_repository_ai_modules(backend_main) -> None:
