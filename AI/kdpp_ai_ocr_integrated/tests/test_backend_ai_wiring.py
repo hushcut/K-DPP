@@ -75,6 +75,9 @@ def scan_db(backend_main, monkeypatch):
         "find_material",
         lambda _db, name: SimpleNamespace(name_en=name, name_ko=names[name]),
     )
+    # The scan marks a material supported only when the active V2 policy has a factor for it;
+    # None means "no single active policy", so support falls back to catalog membership as before.
+    monkeypatch.setattr(backend_main, "active_profile_material_ids", lambda _db: None)
     return RecordingDb()
 
 

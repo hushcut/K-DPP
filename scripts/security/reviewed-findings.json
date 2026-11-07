@@ -181,6 +181,14 @@
         77
       ],
       "reason": "BACKEND/tests/test_public_factors.py (commit 5020595): factor_key=\"idemat-2026-nylon\"/\"idemat-2026-cotton\" are public emission-factor identifiers built from the material name, not credentials; the next version of the file no longer uses this form. Exact immutable blob and finding lines only."
+    },
+    {
+      "object": "bfd4dbe541f6f3c0149b7aca8aa2eb604d69f031",
+      "rule": "generic-api-key",
+      "lines": [
+        4
+      ],
+      "reason": "Commit message of bfd4dbe (already pushed, cannot change): line 4 quotes the same two public emission-factor identifiers to explain the previous entry, not credentials. Exact immutable commit object and finding line only."
     }
   ]
 }
