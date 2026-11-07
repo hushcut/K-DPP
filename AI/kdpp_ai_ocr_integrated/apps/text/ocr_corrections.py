@@ -1434,6 +1434,9 @@ def same_region_recovery(
     if any(token in forbidden for token in _tokens(candidate.text) + _tokens(alternative.text)):
         return False
 
+    if _same_response_korean_spacing_recovery(candidate, alternative, part):
+        return True
+
     if _same_region_placeholder_recovery(candidate, alternative, part, candidates):
         return True
 
@@ -2169,6 +2172,132 @@ def _literal_name_tokens(text):
         r"[가-힣一-龥ぁ-んァ-ンー]|[^\W\d_가-힣一-龥ぁ-んァ-ンー]+|\d+|[^\w\s]",
         unicodedata.normalize('NFKC', text).casefold(),
     ))
+
+
+def _same_response_korean_spacing_recovery(candidate, alternative, part):
+    """Release only layout spacing damage to one literal, fenced outer row.
+
+    No name or percentage is repaired. The successful raw row must already
+    contain the complete declaration in the same provider word polygons.
+    """
+    from apps.text.candidate_evidence import _has_explicit_complete_pairs
+    from apps.text.material_extraction import _material_evidence
+    from apps.text.parse_label import build_line_infos, _is_metadata_line
+
+    reasons = set(candidate.rejected_composition_parts.get(part, ()))
+    if (
+        part != "outer" or not candidate.layout_used or alternative.layout_used
+        or candidate.parser_status != "failed" or candidate.parts or candidate.conflicting_parts
+        or set(candidate.rejected_composition_parts) != {part}
+        or not reasons or reasons - {"unpaired_material_rows", "invalid_composition_evidence"}
+        or set(candidate.unpaired_ratio_parts) - {part}
+        or alternative.selected_part != part or set(alternative.parts) != {part}
+        or len(alternative.parts[part]) != 1 or tuple(alternative.parts[part].values()) != (100,)
+        or not _has_explicit_complete_pairs(alternative)
+        or not candidate.image_key or not candidate.image_variant_key or not candidate.source
+        or candidate.image_key != alternative.image_key
+        or candidate.image_variant_key != alternative.image_variant_key
+        or candidate.source != alternative.source or candidate.image_words != alternative.image_words
+        or len(candidate.image_region) != 4 or candidate.image_region != alternative.image_region
+        or candidate.observed_materials != alternative.observed_materials
+        or candidate.observed_ratios != alternative.observed_ratios
+    ):
+        return False
+    words = candidate.image_words
+    if (not words or len(set(words)) != len(words) or len({word.page for word in words}) != 1
+            or any(len(word.vertices) != 4 for word in words)):
+        return False
+    left, top, right, bottom = candidate.image_region
+    if (not all(math.isfinite(value) for value in candidate.image_region)
+            or left >= right or top >= bottom
+            or any(not (left - 2 <= word.left < word.right <= right + 2
+                        and top - 2 <= word.top < word.bottom <= bottom + 2)
+                   or (word.left, word.top, word.right, word.bottom) != (
+                       min(x for x, _y in word.vertices), min(y for _x, y in word.vertices),
+                       max(x for x, _y in word.vertices), max(y for _x, y in word.vertices),
+                   ) for word in words)):
+        return False
+    tokens = _annotation_tokens(alternative.text)
+    if (Counter(tokens) != Counter(_annotation_tokens(candidate.text))
+            or not _covers_row_tokens(tokens, list(words), tokenise=_annotation_tokens)
+            or not _covers_row_tokens(_annotation_tokens(candidate.text), list(words),
+                                      tokenise=_annotation_tokens)):
+        return False
+    raw_infos = build_line_infos(alternative.text)
+    composition = [info for info in raw_infos if info.materials and not _is_metadata_line(info)]
+    if len(composition) != 1:
+        return False
+    row = composition[0]
+    evidence = _material_evidence(row.normalized)
+    if (row.part != part or row.marker_part != part or row.materials != tuple(alternative.parts[part])
+            or row.numbers != (100,) or not row.explicit_percent
+            or row.invalid_evidence or row.unresolved_materials or len(evidence) != 1
+            or not re.fullmatch(r"[가-힣]+", row.normalized[evidence[0].start:evidence[0].end])):
+        return False
+    # Both literal headings fence this single raw row. Provider paragraph
+    # order may put one complete care caption before its printed heading.
+    lines = [line.strip() for line in alternative.text.splitlines() if line.strip()]
+    positions = [i for i, line in enumerate(lines) if normalize_text(line) == row.normalized]
+    if len(positions) != 1 or not 0 < positions[0] < len(lines) - 1:
+        return False
+    index = positions[0]
+    # The general annotation tokenizer applies OCR spelling corrections.
+    # This exception permits whitespace only, never a corrected character.
+    literal_row = _literal_name_tokens(lines[index])
+    literal_layout = _literal_name_tokens(candidate.text)
+    if (
+        literal_row != _literal_name_tokens(row.raw)
+        or sum(literal_layout[start:start + len(literal_row)] == literal_row
+               for start in range(len(literal_layout) - len(literal_row) + 1)) != 1
+    ):
+        return False
+    from apps.text.line_context import _CARE_PHRASES
+
+    care_index = index + 1
+    if normalize_text(lines[care_index]) in _CARE_PHRASES:
+        care_index += 1
+    if care_index >= len(lines):
+        return False
+    heading, care = lines[index - 1], lines[care_index]
+    if (
+        not re.fullmatch(r"섬유의\s*조성\s*(?:및|또는)\s*혼용[률율]",
+                         normalize_text(heading).strip(" <>[]():"))
+        or not re.fullmatch(r"취급\s*주의\s*(?:표기|사항)", normalize_text(care).strip(" <>[]():"))
+    ):
+        return False
+    layout_infos = [info for info in build_line_infos(candidate.text) if not _is_metadata_line(info)
+                    and (info.materials or info.numbers or info.explicit_percent
+                         or info.invalid_evidence or info.unresolved_materials)]
+    split_row = " ".join(info.raw for info in layout_infos)
+    if (any(info.part != part for info in layout_infos)
+            or _annotation_tokens(split_row) != _annotation_tokens(row.raw)
+            or _tokens(split_row) == _tokens(row.raw)):
+        return False
+    core = _row_words(row.raw, words, tokenise=_literal_name_tokens)
+    before = _row_words(heading, words, tokenise=_annotation_tokens)
+    after = _row_words(care, words, tokenise=_annotation_tokens)
+    if not core or not before or not after or not _physical_row(row.raw, core, tokenise=_literal_name_tokens):
+        return False
+    anchor = max(core, key=lambda word: math.dist(word.vertices[0], word.vertices[1]))
+    (x0, y0), (x1, y1), *_ = anchor.vertices
+    length = math.hypot(x1 - x0, y1 - y0)
+    normal = (-(y1 - y0) / length, (x1 - x0) / length)
+
+    def extent(items):
+        values = [normal[0] * x + normal[1] * y for item in items for x, y in item.vertices]
+        return min(values), max(values)
+
+    low, high = extent(core)
+    if extent(before)[1] >= low - 1 or extent(after)[0] <= high + 1:
+        return False
+    for caption in lines[index + 1:care_index]:
+        caption_words = _row_words(caption, words, tokenise=_annotation_tokens)
+        if not caption_words or extent(caption_words)[0] <= high + 1:
+            return False
+    # Paragraph order cannot move a neighbouring unknown word outside this
+    # composition. Every unused annotation must really lie outside its band.
+    return all(extent((word,))[1] < low - 1 or extent((word,))[0] > high + 1
+               for word in words if word not in core)
 
 
 def _literal_name_row_words(line, words):

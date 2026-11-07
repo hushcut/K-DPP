@@ -221,6 +221,69 @@ def _has_complete_preceding_composition(infos: list[LineInfo]) -> bool:
     )
 
 
+_WASH_TEMPERATURE_CAPTIONS = {
+    "hand wash", "hand wash cold", "cold hand wash", "hand wash warm",
+    "warm hand wash", "machine wash", "machine wash cold", "machine wash warm",
+    "wash separately", "손세탁", "찬물 손세탁", "냉수 손세탁", "미온수 손세탁",
+    "기계세탁", "물세탁", "별도 세탁", "분리 세탁", "단독 세탁", "手洗", "手洗い",
+}
+_NEUTRAL_DETERGENT_CAPTIONS = {"중성", "중성세제", "중성 세제", "neutral", "neutral detergent"}
+_SPLIT_WASH_CONTEXT = set(_CARE_PHRASES) | _WASH_TEMPERATURE_CAPTIONS | _NEUTRAL_DETERGENT_CAPTIONS
+
+
+def _mark_split_wash_temperatures(infos: list[LineInfo]) -> list[LineInfo]:
+    """Fence a literal temperature with complete content and exact care rows.
+
+    Whole-row matches preserve unknown words, numbers and uncertainty signs.
+    Neither a different part nor unrelated metadata can supply the content.
+    """
+
+    adjusted = list(infos)
+    for position, info in enumerate(infos):
+        if info.is_metadata or info.normalized not in {"30", "40", "50", "60", "70", "95"}:
+            continue
+        previous = infos[position - 1] if position else None
+        following = infos[position + 1:position + 3]
+        preceded_by_wash = previous is not None and previous.normalized in _WASH_TEMPERATURE_CAPTIONS
+        followed_by_wash = (
+            len(following) == 2
+            and following[0].normalized in _NEUTRAL_DETERGENT_CAPTIONS
+            and following[1].normalized in _WASH_TEMPERATURE_CAPTIONS
+            and all(row.part == info.part for row in following)
+        )
+        if not (preceded_by_wash or followed_by_wash):
+            continue
+        # A run of bare values may be a ratio column, even below a care word.
+        if following:
+            next_row = following[0]
+            # Earlier rules may already have cleared a second temperature.
+            # Inspect its literal text as well as the parsed numeric fields.
+            if (not next_row.materials and re.search(r"\d|%", next_row.normalized)):
+                continue
+            if (
+                not next_row.is_metadata and next_row.marker_part is None
+                and not next_row.materials and next_row.normalized not in _SPLIT_WASH_CONTEXT
+            ):
+                continue
+        boundary = position
+        while boundary:
+            row = infos[boundary - 1]
+            if (
+                row.part != info.part or row.marker_part is not None
+                or row.materials or row.numbers or row.unresolved_materials or row.invalid_evidence
+                or row.normalized not in _SPLIT_WASH_CONTEXT
+            ):
+                break
+            boundary -= 1
+        if (
+            not boundary or infos[boundary - 1].part != info.part
+            or not _has_complete_preceding_composition(infos[:boundary])
+        ):
+            continue
+        adjusted[position] = replace(info, numbers=(), is_metadata=True, inferred_metadata=True)
+    return adjusted
+
+
 def _is_non_composition_numeric_row(
     line: str, previous: LineInfo | None, following: str,
     *, preceding_infos: list[LineInfo] | None = None,
@@ -727,7 +790,9 @@ def _build_line_analysis(text: str) -> LineAnalysis:
             is_metadata=is_metadata, inferred_metadata=inferred_metadata,
         ))
     return LineAnalysis(
-        infos=tuple(_mark_split_imitation_leather(_apply_trailing_part_markers(_mark_leading_garment_size(infos)))),
+        infos=tuple(_mark_split_imitation_leather(_mark_split_wash_temperatures(
+            _apply_trailing_part_markers(_mark_leading_garment_size(infos)),
+        ))),
         restored_indices=frozenset(restored_rows),
         translation_indices=frozenset(translations.recovered_rows if not unproven_rewrite else ()),
         translation_warnings=tuple(translation_warnings),
