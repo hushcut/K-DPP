@@ -8,6 +8,7 @@ import 'package:k_dpp/widgets/app_banner.dart';
 import 'package:provider/provider.dart';
 import 'helpers/app_banner_expect.dart';
 import 'helpers/fake_closet_storage.dart';
+import 'helpers/report_basis.dart';
 
 void main() {
   testWidgets('ReportScreen은 arguments가 없어도 currentReportItem을 표시한다', (
@@ -50,10 +51,8 @@ void main() {
     expect(find.textContaining('단계별 탄소 배출량'), findsNothing);
     expect(find.text('원료·소재 생산 탄소 배출량'), findsOneWidget);
     expect(find.text('탄소 배출량 체감'), findsOneWidget);
-    expect(find.text('계산 기준'), findsOneWidget);
     expect(find.text('앱 임시 추정값'), findsWidgets);
-    expect(find.text('저장된 소재와 의류 유형 기준'), findsOneWidget);
-    expect(find.textContaining('전체 생애주기 배출량이 아닙니다'), findsOneWidget);
+    expect(find.textContaining('전체 생애주기 배출량이 아니라'), findsOneWidget);
     expect(find.text('자동차'), findsOneWidget);
     expect(find.text('스마트폰'), findsOneWidget);
     expect(find.text('LED 전구'), findsOneWidget);
@@ -61,6 +60,17 @@ void main() {
     expect(find.text('찬물 세탁 후 자연 건조'), findsOneWidget);
     // 소재 이름의 기본 표시 언어는 한글이다(D16). 영문 키로 저장된 옷도 한글명으로 보인다.
     expect(find.textContaining('면 80%'), findsWidgets);
+
+    // 계산 기준은 탄소 카드 한 곳에만 있고 접혀 있다. 출처는 접지 않는다(DECISIONS 2026-11-07).
+    expect(find.text('계산 기준'), findsNothing);
+    expect(find.text('계산 기준 보기'), findsOneWidget);
+    expect(find.text('출처: 앱 임시 계수(기존 추정값·문헌 출처 미확정)'), findsOneWidget);
+    expect(find.text('무게: 저장된 소재와 의류 유형 기준'), findsNothing);
+
+    await openCalculationBasis(tester);
+    expect(find.text('무게: 저장된 소재와 의류 유형 기준'), findsOneWidget);
+    expect(find.text('범위: 원료 및 소재 생산 단계 추정'), findsOneWidget);
+    expect(find.textContaining('저장된 소재 조성과 추정 무게 기준이며'), findsOneWidget);
   });
 
   // 2026-09-24 사용자 요청: 맞춤 관리 가이드를 탄소 배출량보다 위에 둔다.
@@ -406,12 +416,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.text('출처: 기존 추정 계수(문헌 출처 미확정)'), findsOneWidget);
+    await openCalculationBasis(tester);
+
     expect(find.text('범위: 원료 및 소재 생산 단계 추정'), findsOneWidget);
+    // 계산식은 무게 줄과 겹쳐 보이지 않는다(DECISIONS 2026-11-07).
     expect(
       find.text('소재별 탄소배출계수(kg CO2eq/kg)와 의류 무게(g)를 곱해 계산했습니다.'),
-      findsOneWidget,
+      findsNothing,
     );
-    expect(find.text('출처: 기존 추정 계수(문헌 출처 미확정)'), findsOneWidget);
     expect(find.textContaining('팀 승인'), findsNothing);
     expect(find.textContaining('development estimates'), findsNothing);
   });
@@ -448,14 +461,17 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('원료·소재 생산 단계 추정값'), findsOneWidget);
-    expect(find.text('범위: 원료 및 소재 생산 단계 추정'), findsOneWidget);
-    expect(find.text('소재, 혼용률, 의류 무게 기준의 원료·소재 생산 단계'), findsOneWidget);
+    // 미포함은 카드의 한 줄로만 알린다 — 같은 말을 되풀이하던 안내 상자는 뺐다(DECISIONS 2026-11-07).
     expect(find.text('봉제·제조, 운송, 사용, 세탁, 폐기 과정'), findsOneWidget);
     expect(
       find.text('봉제·제조, 운송, 사용, 세탁, 폐기 과정의 배출량은 현재 수치에 포함하지 않습니다.'),
-      findsOneWidget,
+      findsNothing,
     );
+    expect(find.text('소재, 혼용률, 의류 무게 기준의 원료·소재 생산 단계'), findsNothing);
     expect(find.textContaining('생산·제조'), findsNothing);
+
+    await openCalculationBasis(tester);
+    expect(find.text('범위: 원료 및 소재 생산 단계 추정'), findsOneWidget);
   });
 
   // C37: 탄소 카드·생활 환산·계산 근거의 숫자 문구는 그동안 제목('자동차' 등)만 단언해,
@@ -546,7 +562,7 @@ void main() {
 
       expect(find.text('1.4 kg CO2eq'), findsOneWidget);
       expect(find.text('서버 계산값 · 0.8~2.1 kg CO2eq 범위'), findsOneWidget);
-      expect(find.text('기존 서버 계산 · 계수 출처 미확인'), findsOneWidget);
+      expect(find.text('출처: 기존 서버 계산 · 계수 출처 미확인'), findsOneWidget);
       expect(find.text('백엔드 계산값'), findsNothing);
       expect(find.text('앱 임시 추정값'), findsNothing);
     });
@@ -557,9 +573,8 @@ void main() {
         clothesWith(source: CarbonFootprintSource.server),
       );
 
-      // 카드 부제와 '출처' 줄이 같은 말을 쓴다.
       expect(find.text('서버 계산값'), findsOneWidget);
-      expect(find.text('기존 서버 계산 · 계수 출처 미확인'), findsOneWidget);
+      expect(find.text('출처: 기존 서버 계산 · 계수 출처 미확인'), findsOneWidget);
       expect(find.textContaining('kg CO2eq 범위'), findsNothing);
     });
 
@@ -568,14 +583,16 @@ void main() {
         tester,
         clothesWith(minWeightGram: 99.5, maxWeightGram: 250),
       );
-      expect(find.text('선택 무게 범위 99.5~250g'), findsOneWidget);
+      await openCalculationBasis(tester);
+      expect(find.text('무게: 선택 무게 범위 99.5~250g'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await pumpReportFor(
         tester,
         clothesWith(minWeightGram: 612.5, maxWeightGram: 612.5),
       );
-      expect(find.text('실제 무게 612.5g'), findsOneWidget);
+      await openCalculationBasis(tester);
+      expect(find.text('무게: 실제 무게 612.5g'), findsOneWidget);
       expect(find.textContaining('선택 무게 범위'), findsNothing);
     });
 
@@ -588,6 +605,7 @@ void main() {
         clothesWith(),
       ]) {
         await pumpReportFor(tester, item);
+        await openCalculationBasis(tester);
         expect(find.textContaining('저장된 소재 조성과 추정 무게 기준이며'), findsOneWidget);
         expect(find.textContaining(limit), findsOneWidget);
         await tester.pumpWidget(const SizedBox.shrink());
@@ -597,6 +615,7 @@ void main() {
         tester,
         clothesWith(minWeightGram: 612.5, maxWeightGram: 612.5),
       );
+      await openCalculationBasis(tester);
       expect(find.textContaining('저장된 소재 조성과 입력한 무게 기준이며'), findsOneWidget);
       expect(find.textContaining(limit), findsOneWidget);
       // 부위를 모르는 옷을 겉감 기준이라고 하면 틀린 말이 된다.
