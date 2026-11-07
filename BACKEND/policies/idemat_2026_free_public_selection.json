@@ -1,10 +1,15 @@
 {
   "decision_status": "selected_for_free_public_capstone",
-  "decision_date": "2026-10-18",
+  "decision_date": "2026-11-07",
   "automatic_activation": false,
   "deployment_manifest": false,
   "profile_key": "idemat-2026-free-public-capstone",
-  "version": "2026-10-18-v1",
+  "version": "2026-11-07-v1",
+  "revision_history": [
+    {"version": "2026-10-18-v1", "materials": ["cotton", "polyester", "acrylic", "linen"]},
+    {"version": "2026-11-07-v1", "added": ["nylon", "spandex", "polyurethane", "rayon", "viscose", "modal", "wool", "leather", "down", "feather"],
+     "note": "Rows and values re-read from the workbook with the same SHA-256; the four 2026-10-18 factors are unchanged."}
+  ],
   "method": "IPCC2021_GWP100_Idemat2026",
   "scope": "fiber_production_estimate",
   "unit": "kg CO2eq/kg fiber",
@@ -15,6 +20,7 @@
     "url": "https://www.ecocostsvalue.com/EVR/img/Idemat_2026RevB2.xlsx",
     "sha256": "31253400aa2bf7b142dc92cbcf5a9426ae17bc531a083dea06bcd58895d35e6d",
     "metadata_url": "https://www.ecocostsvalue.com/EVR/img/SimaproMETAdata260520.xlsx",
+    "metadata_sha256": "e076ca75d8a7004569b8f40f8ca488c95a936106c23618784a4216229eed9b7e",
     "license_page": "https://www.ecocostsvalue.com/data-tools-books/",
     "license_agreement": "https://www.ecocostsvalue.com/EVR/img/User_License_Agreement_2026_(260228)_.pdf",
     "method_locator": "Introduction!A9: IPCC 2021 GWP 100a; Idemat2026!G2:G3: carbon, kgCO2e",
@@ -38,7 +44,9 @@
       "product_form": "cotton fibre trade mix, without global sea transport",
       "geography": "source trade mix China, India and USA; not a Korean production average",
       "assumptions": ["Use the source trade-mix fibre proxy when origin is unknown."],
-      "excluded": ["global sea transport", "yarn spinning", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"]
+      "excluded": ["global sea transport", "yarn spinning", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"],
+      "reviewed_on": "2026-10-18",
+      "technical_selector": "Codex (user-delegated)"
     },
     {
       "material": "polyester",
@@ -62,7 +70,10 @@
         "This is not a measured or global-average factor for all polyester."
       ],
       "excluded": ["texturing", "staple cutting", "additional drawing not documented in the source process", "yarn spinning after fibre formation", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"],
-      "unsupported_variants": ["recycled polyester", "verified staple fibre production"]
+      "unsupported_variants": ["recycled polyester", "verified staple fibre production"],
+      "reviewed_on": "2026-10-18",
+      "technical_selector": "Codex (user-delegated)",
+      "display_note_ko": "폴리에스터는 버진 비텍스처 필라멘트 공정의 대체값으로, 재생·단섬유 제품을 대표하지 않습니다."
     },
     {
       "material": "acrylic",
@@ -73,7 +84,9 @@
       "source_process": "A.140.01.101.240814",
       "product_form": "acrylic fibres",
       "assumptions": ["Use the source acrylic-fibre proxy; do not add the PET extrusion process to an existing fibre inventory."],
-      "excluded": ["yarn spinning", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"]
+      "excluded": ["yarn spinning", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"],
+      "reviewed_on": "2026-10-18",
+      "technical_selector": "Codex (user-delegated)"
     },
     {
       "material": "linen",
@@ -84,7 +97,216 @@
       "source_process": "A.140.01.121.230701",
       "product_form": "European scutched flax fibres for spinning linen, source metadata states 12% moisture",
       "assumptions": ["Use the European flax-fibre proxy for linen; do not map ramie or hemp to linen."],
-      "excluded": ["yarn spinning", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"]
+      "excluded": ["yarn spinning", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"],
+      "reviewed_on": "2026-10-18",
+      "technical_selector": "Codex (user-delegated)"
+    },
+    {
+      "material": "nylon",
+      "value_decimal": "6.254138",
+      "display_value": "6.25",
+      "evidence_type": "derived",
+      "source_cells": ["Idemat2026!G1119", "Idemat2026!G1143"],
+      "source_processes": ["A.140.01.114.230701", "A.140.03.116.230701"],
+      "product_form": "virgin nylon (50% PA6, 50% PA66 pellets) + untextured filament / POY extrusion proxy (80-500 dtex)",
+      "derivation": {
+        "operation": "sum",
+        "nylon_pellets_kgCO2eq_per_kg": "5.46",
+        "filament_extrusion_kgCO2eq_per_kg": "0.794138",
+        "expression": "5.46 + 0.794138 = 6.254138",
+        "pellet_input_kg_per_kg_output_assumption": "1"
+      },
+      "assumptions": [
+        "Source metadata for the nylon pellet row: copy of Idemat 50% Nylon 6 and 50% Nylon 66.",
+        "Apply the same pellet + filament-extrusion method as polyester; the extrusion process is the PET-referenced generic polymer filament process.",
+        "Use a 1:1 pellet-to-output mass proxy; no unreported yield-loss correction is invented.",
+        "Not a measured or global-average factor for all nylon."
+      ],
+      "excluded": ["texturing", "staple cutting", "yarn spinning after fibre formation", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"],
+      "unsupported_variants": ["recycled nylon", "bio-based nylon"],
+      "reviewed_on": "2026-11-07",
+      "technical_selector": "Claude (user-delegated)",
+      "display_note_ko": "나일론은 나일론6·66 수지에 폴리에스터와 같은 필라멘트 압출 공정을 더한 대체값입니다."
+    },
+    {
+      "material": "spandex",
+      "value_decimal": "4.499511066666667",
+      "display_value": "4.50",
+      "evidence_type": "derived",
+      "source_cells": ["Idemat2026!G1112", "Idemat2026!G1143"],
+      "source_processes": ["A.140.01.107.230701", "A.140.03.116.230701"],
+      "product_form": "elastane (polyurethane) pellet proxy + generic polymer filament extrusion proxy (80-500 dtex)",
+      "derivation": {
+        "operation": "sum",
+        "elastane_pellets_kgCO2eq_per_kg": "3.705373066666667",
+        "filament_extrusion_kgCO2eq_per_kg": "0.794138",
+        "expression": "3.705373066666667 + 0.794138 = 4.499511066666667",
+        "pellet_input_kg_per_kg_output_assumption": "1"
+      },
+      "assumptions": [
+        "Source metadata for the elastane pellet row: copy of PUR flex. moulded TDI; it is a polyurethane proxy, not a measured elastane polymer inventory.",
+        "Real elastane is mostly dry-spun; the melt-extrusion process is a substitute for fibre formation.",
+        "Use a 1:1 pellet-to-output mass proxy; no unreported yield-loss correction is invented."
+      ],
+      "excluded": ["dry spinning solvent recovery", "yarn spinning after fibre formation", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"],
+      "reviewed_on": "2026-11-07",
+      "technical_selector": "Claude (user-delegated)",
+      "display_note_ko": "스판덱스·폴리우레탄은 폴리우레탄 수지 대체값에 필라멘트 압출을 더한 값으로, 실제 건식 방사 공정과 다릅니다."
+    },
+    {
+      "material": "polyurethane",
+      "value_decimal": "4.499511066666667",
+      "display_value": "4.50",
+      "evidence_type": "derived",
+      "source_cells": ["Idemat2026!G1112", "Idemat2026!G1143"],
+      "source_processes": ["A.140.01.107.230701", "A.140.03.116.230701"],
+      "product_form": "polyurethane fibre on a garment label treated as elastane; same proxy as spandex",
+      "derivation": {
+        "operation": "sum",
+        "elastane_pellets_kgCO2eq_per_kg": "3.705373066666667",
+        "filament_extrusion_kgCO2eq_per_kg": "0.794138",
+        "expression": "3.705373066666667 + 0.794138 = 4.499511066666667",
+        "pellet_input_kg_per_kg_output_assumption": "1"
+      },
+      "assumptions": [
+        "Korean garment labels commonly list elastane as polyurethane (폴리우레탄); use the spandex proxy.",
+        "Source metadata for the elastane pellet row: copy of PUR flex. moulded TDI; it is a polyurethane proxy, not a measured elastane polymer inventory.",
+        "Real elastane is mostly dry-spun; the melt-extrusion process is a substitute for fibre formation."
+      ],
+      "excluded": ["PU coatings or synthetic leather", "dry spinning solvent recovery", "yarn spinning after fibre formation", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"],
+      "reviewed_on": "2026-11-07",
+      "technical_selector": "Claude (user-delegated)",
+      "display_note_ko": "스판덱스·폴리우레탄은 폴리우레탄 수지 대체값에 필라멘트 압출을 더한 값으로, 실제 건식 방사 공정과 다릅니다."
+    },
+    {
+      "material": "rayon",
+      "value_decimal": "1.5",
+      "display_value": "1.50",
+      "evidence_type": "literature",
+      "source_cells": ["Idemat2026!A1123", "Idemat2026!F1123", "Idemat2026!G1123"],
+      "source_process": "A.140.01.118.230701",
+      "product_form": "viscose fibre production; source metadata cites Shen & Patel (2010), fibre type Lenzing Modal",
+      "assumptions": [
+        "The source row is a single Lenzing Modal case used as a substitute for generic rayon, viscose and modal.",
+        "The source row is already a fibre inventory (reference flow 1 ton of fibre); do not add the separate viscose spinning process (A.140.03.117)."
+      ],
+      "excluded": ["yarn spinning", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"],
+      "unsupported_variants": ["lyocell", "cupro", "acetate", "bamboo viscose"],
+      "reviewed_on": "2026-11-07",
+      "technical_selector": "Claude (user-delegated)",
+      "display_note_ko": "레이온·비스코스·모달은 특정 모달 섬유 사례(Lenzing Modal)를 대신 쓴 값입니다."
+    },
+    {
+      "material": "viscose",
+      "value_decimal": "1.5",
+      "display_value": "1.50",
+      "evidence_type": "literature",
+      "source_cells": ["Idemat2026!A1123", "Idemat2026!F1123", "Idemat2026!G1123"],
+      "source_process": "A.140.01.118.230701",
+      "product_form": "viscose fibre production; source metadata cites Shen & Patel (2010), fibre type Lenzing Modal",
+      "assumptions": [
+        "The source row is a single Lenzing Modal case used as a substitute for generic rayon, viscose and modal.",
+        "The source row is already a fibre inventory (reference flow 1 ton of fibre); do not add the separate viscose spinning process (A.140.03.117)."
+      ],
+      "excluded": ["yarn spinning", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"],
+      "unsupported_variants": ["lyocell", "cupro", "acetate", "bamboo viscose"],
+      "reviewed_on": "2026-11-07",
+      "technical_selector": "Claude (user-delegated)",
+      "display_note_ko": "레이온·비스코스·모달은 특정 모달 섬유 사례(Lenzing Modal)를 대신 쓴 값입니다."
+    },
+    {
+      "material": "modal",
+      "value_decimal": "1.5",
+      "display_value": "1.50",
+      "evidence_type": "literature",
+      "source_cells": ["Idemat2026!A1123", "Idemat2026!F1123", "Idemat2026!G1123"],
+      "source_process": "A.140.01.118.230701",
+      "product_form": "viscose fibre production; source metadata cites Shen & Patel (2010), fibre type Lenzing Modal",
+      "assumptions": [
+        "The source row is a single Lenzing Modal case; it is not a modal industry average.",
+        "The source row is already a fibre inventory (reference flow 1 ton of fibre); do not add the separate viscose spinning process (A.140.03.117)."
+      ],
+      "excluded": ["yarn spinning", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"],
+      "reviewed_on": "2026-11-07",
+      "technical_selector": "Claude (user-delegated)",
+      "display_note_ko": "레이온·비스코스·모달은 특정 모달 섬유 사례(Lenzing Modal)를 대신 쓴 값입니다."
+    },
+    {
+      "material": "wool",
+      "value_decimal": "61.09769333333334",
+      "display_value": "61.10",
+      "evidence_type": "literature",
+      "source_cells": ["Idemat2026!A1124", "Idemat2026!F1124", "Idemat2026!G1124"],
+      "source_process": "A.140.01.119.230701",
+      "product_form": "clean (scoured) merino wool from Australia, transported to Rotterdam",
+      "geography": "single Australian merino case; not a Korean or global wool average",
+      "assumptions": [
+        "Source metadata: Wiedemann et al. (2015) case 4, merino high-quality wool, 50% yield from greasy wool, economic allocation of 51.8% to wool versus meat.",
+        "Transport from Australia to Rotterdam is included in the source value.",
+        "Not applied to cashmere, mohair, yak or other animal hair."
+      ],
+      "excluded": ["yarn spinning", "fabric formation", "dyeing", "garment manufacture", "use", "end of life"],
+      "unsupported_variants": ["recycled wool", "cashmere", "mohair", "yak"],
+      "reviewed_on": "2026-11-07",
+      "technical_selector": "Claude (user-delegated)",
+      "display_note_ko": "울은 호주산 메리노 양모(세척 뒤, 유럽까지 운송 포함) 한 사례의 값입니다."
+    },
+    {
+      "material": "leather",
+      "value_decimal": "16.419932",
+      "display_value": "16.42",
+      "evidence_type": "literature",
+      "source_cells": ["Idemat2026!A6", "Idemat2026!F6", "Idemat2026!G6"],
+      "source_process": "A.010.02.101.240318",
+      "product_form": "chrome-tanned leather, hides from Argentina; per kg of leather, not a fibre",
+      "geography": "single source case; not a Korean or global leather average",
+      "assumptions": [
+        "Source metadata: hides are treated as a by-product of milk and meat production without significant value, so livestock burden is not allocated to the hide.",
+        "Chrome tanning is assumed when the tanning method is unknown; vegetable tanning (G7) is not selected.",
+        "The garment-mass formula treats leather as the material mass; the fiber scope label does not literally apply."
+      ],
+      "excluded": ["livestock burden of the hide", "finishing beyond the source process", "garment manufacture", "use", "end of life"],
+      "unsupported_variants": ["vegetable-tanned leather", "synthetic leather"],
+      "reviewed_on": "2026-11-07",
+      "technical_selector": "Claude (user-delegated)",
+      "display_note_ko": "가죽은 크롬 무두질 공정 값이며, 원피를 만드는 축산 단계 배출은 넣지 않았습니다."
+    },
+    {
+      "material": "down",
+      "value_decimal": "0.4291713933333334",
+      "display_value": "0.43",
+      "evidence_type": "literature",
+      "source_cells": ["Idemat2026!A1165", "Idemat2026!F1165", "Idemat2026!G1165"],
+      "source_process": "A.140.04.102.241204",
+      "product_form": "duck down fill from China (Liaoning), transported to Rotterdam",
+      "geography": "single Chinese duck-down case; the Polish case (G1166, 0.3094105266666667) is not selected",
+      "assumptions": [
+        "Use the higher of the two source down rows (China 0.429 vs Poland 0.309) when origin is unknown; the difference is mainly sea transport.",
+        "Source metadata: down is a co-product of meat with economic allocation of about 10%.",
+        "Duck down is used for goose down as well."
+      ],
+      "excluded": ["transport after Rotterdam", "garment manufacture", "use", "end of life"],
+      "reviewed_on": "2026-11-07",
+      "technical_selector": "Claude (user-delegated)",
+      "display_note_ko": "다운·깃털은 중국산 오리털(유럽까지 운송 포함) 한 사례의 값입니다."
+    },
+    {
+      "material": "feather",
+      "value_decimal": "0.4291713933333334",
+      "display_value": "0.43",
+      "evidence_type": "literature",
+      "source_cells": ["Idemat2026!A1165", "Idemat2026!F1165", "Idemat2026!G1165"],
+      "source_process": "A.140.04.102.241204",
+      "product_form": "feather fill treated as the duck down fill row from China",
+      "geography": "single Chinese duck-down case",
+      "assumptions": [
+        "The source has no separate feather row; the down rows list 'Feather Fill - A mix of larger duck or goose feathers - and Eiderdown' as alternative names.",
+        "Use the same China down row as down so that typical down/feather fill labels are not rejected."
+      ],
+      "excluded": ["transport after Rotterdam", "garment manufacture", "use", "end of life"],
+      "reviewed_on": "2026-11-07",
+      "technical_selector": "Claude (user-delegated)",
+      "display_note_ko": "다운·깃털은 중국산 오리털(유럽까지 운송 포함) 한 사례의 값입니다."
     }
   ],
   "unsupported_material_policy": "Reject the whole estimate if any positive-ratio material has no selected compatible factor. Never drop it or substitute a V1/TE value.",

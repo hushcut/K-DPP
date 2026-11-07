@@ -12,6 +12,7 @@ import database
 from .domain import CarbonError, calculate, normalize
 from .factors import resolve_factors
 from .input_limits import MaterialName, RawOcrText, reject_too_many_materials
+from .public_policy import public_display_notes
 
 
 class CalculationRequest(BaseModel):
@@ -221,8 +222,15 @@ def build_router(get_db, get_user, clothing_options):
         }
         if profile.usage_scope == "public_estimate":
             response["calculation_note"] += " 무료 교육용 추정치이며 제품 인증·소재 간 우열 비교·감축 주장에 사용할 수 없습니다."
-        if "polyester" in ratios and any("IDEMAT" in factor["source_name"] for factor in factor_snapshots):
-            response["calculation_note"] += " 폴리에스터는 버진 비텍스처 필라멘트 공정의 대체값으로, 재생·단섬유 제품을 대표하지 않습니다."
+        # 대체값 가정은 소재마다 결과에 밝힌다(선정 JSON 의 display_note_ko, 같은 문장은 한 번만).
+        idemat_materials = {factor["standard_name"] for factor in factor_snapshots
+                            if "IDEMAT" in factor["source_name"]}
+        material_notes = []
+        for material, note in public_display_notes().items():
+            if material in idemat_materials and note not in material_notes:
+                material_notes.append(note)
+        if material_notes:
+            response["calculation_note"] += " " + " ".join(material_notes)
         snapshot = {
             "schema_version": 1, "input": payload,
             "profile": {"id": profile.id, "key": profile.key, "version": profile.version,
