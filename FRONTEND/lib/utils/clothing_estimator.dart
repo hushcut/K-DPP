@@ -91,6 +91,42 @@ class ClothingEstimator {
     ];
   }
 
+  /// 서버 공개 V2 정책에 계수가 없는 소재를 입력 순서대로 돌려준다.
+  ///
+  /// 로그인 계정의 옷은 저장할 때 서버(V2)가 계산한다. 서버가 답하지 못해 앱 추정값으로 남길 때도
+  /// 이 목록에 없는 소재(캐시미어 등)는 옛 소재표 값으로 대신하지 않는다 — 온라인이면 422 로 막히는
+  /// 옷이 끊겼을 때만 저장되면 안 된다(#113 리뷰 3번, 선정 JSON 의 unsupported_material_policy).
+  /// 미리보기도 이것으로 저장 전에 알린다. 비로그인 저장은 [materialsWithoutFactor] 를 그대로 쓴다.
+  static List<String> materialsWithoutPublicFactor(Iterable<String> materials) {
+    return [
+      for (final material in materials)
+        if (!_publicFactorMaterials.contains(
+          MaterialName.standardize(material),
+        ))
+          material,
+    ];
+  }
+
+  /// 서버 공개 V2 정책(IDEMAT 2026 RevB2, `2026-11-07-v1`)에 계수가 있는 표준명이다.
+  /// `BACKEND/policies/idemat_2026_free_public_selection.json` 의 `factors[].material` 사본이고,
+  /// 어긋나면 `BACKEND/tests/test_public_material_copy.py` 가 실패한다.
+  static const Set<String> _publicFactorMaterials = {
+    'cotton',
+    'polyester',
+    'acrylic',
+    'linen',
+    'nylon',
+    'spandex',
+    'polyurethane',
+    'rayon',
+    'viscose',
+    'modal',
+    'wool',
+    'leather',
+    'down',
+    'feather',
+  };
+
   /// 소재 구성의 단순성 및 소재 종류에 따라 초기 건강 점수를 60~95로 산정한다.
   static int estimateInitialHealth(Map<String, double> materials) {
     if (materials.isEmpty) return 80;

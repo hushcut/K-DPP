@@ -3,14 +3,13 @@ from decimal import Decimal
 from typing import Annotated, Literal
 import hashlib
 import json
-import os
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 import database
 from .domain import CarbonError, calculate, normalize
-from .factors import resolve_factors
+from .factors import active_profiles, resolve_factors
 from .input_limits import MaterialName, RawOcrText, reject_too_many_materials
 from .public_policy import public_display_notes
 
@@ -152,10 +151,7 @@ def build_router(get_db, get_user, clothing_options):
             weight_source, catalog_version = "catalog", "legacy-placeholder-v1"
         else:
             fail("WEIGHT_MISSING", 400)
-        profiles = db.query(database.CalculationProfile).filter_by(
-            status="active", usage_scope=(
-                "research_scenario" if os.getenv("K_DPP_CARBON_USAGE_SCOPE") == "research_scenario"
-                else "public_estimate")).all()
+        profiles = active_profiles(db)
         if len(profiles) != 1:
             fail("CALCULATION_PROFILE_UNAVAILABLE", 503)
         profile = profiles[0]

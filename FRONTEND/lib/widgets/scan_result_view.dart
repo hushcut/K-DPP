@@ -40,6 +40,7 @@ class ScanResultView extends StatelessWidget {
     this.serverWeightGram,
     this.serverCalculationMethod,
     this.carbonCalculatedOnSave = false,
+    this.checksPublicFactors = false,
     required this.validateTitle,
     required this.validateMaterialName,
     required this.validateMaterialValue,
@@ -93,6 +94,11 @@ class ScanResultView extends StatelessWidget {
   /// 만든 숫자를 보이지 않습니다. 저장 뒤 서버 값과 크게 달라 저장하니 줄었다·늘었다로
   /// 읽힐 수 있기 때문입니다.
   final bool carbonCalculatedOnSave;
+
+  /// 로그인 계정의 옷인지(세션 만료 포함)입니다. 그러면 서버 공개(V2) 계수가 없는 소재를
+  /// 미리보기에서 '계산 기준이 없는 소재'로 알립니다 — 저장이 서버에서도, 끊겼을 때도 막힙니다.
+  /// 비로그인이면 앱 소재표에 없는 소재만 알립니다.
+  final bool checksPublicFactors;
 
   // 제목·소재명·함유율 입력에 적용할 상위 폼 검증 함수입니다.
   final FormFieldValidator<String> validateTitle;
@@ -274,11 +280,16 @@ class ScanResultView extends StatelessWidget {
                     serverCalculationMethod: serverCalculationMethod,
                   );
                   // 계수표에 없는 소재가 있으면 기본계수로 만든 숫자를 보이지 않습니다(DECISIONS 288).
-                  final carbonText =
-                      !calculation.usesServerCarbon &&
-                          ClothingEstimator.materialsWithoutFactor(
-                            materials.keys,
-                          ).isNotEmpty
+                  // 로그인 계정은 서버 공개 계수가 없으면 저장이 막히니 그것을 먼저 알립니다.
+                  final missingBasis = checksPublicFactors
+                      ? ClothingEstimator.materialsWithoutPublicFactor(
+                          materials.keys,
+                        ).isNotEmpty
+                      : !calculation.usesServerCarbon &&
+                            ClothingEstimator.materialsWithoutFactor(
+                              materials.keys,
+                            ).isNotEmpty;
+                  final carbonText = missingBasis
                       ? '계산 기준이 없는 소재가 있어요'
                       : carbonCalculatedOnSave
                       ? '저장하면 계산돼요'

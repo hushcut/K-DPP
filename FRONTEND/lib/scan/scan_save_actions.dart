@@ -41,11 +41,14 @@ extension _ScanSaveActions on _ScanScreenState {
     );
   }
 
-  /// 서버 계산 없이 저장해야 하는데 앱 소재표에도 없는 소재가 있으면 저장을 막습니다. 저장하면
-  /// 근거 없는 기본계수 값이 옷장·홈 합계·서버 백업에 섞입니다(협의안 T5, DECISIONS 288).
-  /// 온라인에서도 저장되지 않는 옷이라 잃는 것이 없고, 입력은 그대로 둡니다.
+  /// 로그인 계정이 서버 계산 없이 저장해야 하는데 서버 공개(V2) 계수가 없는 소재가 있으면 저장을
+  /// 막습니다. 저장하면 근거 없는 기본계수나 공개 정책이 대신하지 않는 옛 소재표 값이 옷장·홈 합계·
+  /// 서버 백업에 섞입니다(협의안 T5, DECISIONS 288, #113 리뷰 3번). 온라인에서도 저장되지 않는 옷이라
+  /// 잃는 것이 없고, 입력은 그대로 둡니다. 로그인 계정의 저장 길에서만 부릅니다.
   bool _blockSaveWithoutCarbonBasis(Map<String, double> materials) {
-    final unknown = ClothingEstimator.materialsWithoutFactor(materials.keys);
+    final unknown = ClothingEstimator.materialsWithoutPublicFactor(
+      materials.keys,
+    );
 
     if (unknown.isEmpty) return false;
 

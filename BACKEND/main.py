@@ -48,6 +48,7 @@ import hmac
 import secrets
 import database
 from carbon.api import build_router, history_provenance
+from carbon.factors import active_profile_material_ids
 from carbon.input_limits import (
     MAX_MATERIAL_ENTRIES, MAX_MATERIAL_NAME_LENGTH, MAX_RAW_OCR_TEXT_LENGTH,
     MaterialName, RawOcrText, reject_too_many_materials,
@@ -2009,6 +2010,9 @@ def build_emission_factors(materials: dict[str, float], db: Session) -> list[dic
 
 def build_material_details(materials: dict[str, float], db: Session) -> list[dict]:
     material_details = []
+    # 저장(V2 계산)이 받아 줄 소재만 지원으로 표시해, 저장을 눌러야 막히는 걸 알게 되지 않게 합니다.
+    # 활성 V2 정책이 없으면 저장이 어차피 503 이라 예전처럼 소재 표에 있는지만 봅니다.
+    v2_material_ids = active_profile_material_ids(db)
 
     for original_name, ratio in materials.items():
         material = find_material(db, original_name)
@@ -2018,7 +2022,8 @@ def build_material_details(materials: dict[str, float], db: Session) -> list[dic
                 "standard_name": material.name_en if material is not None else None,
                 "display_name": material.name_ko if material is not None else original_name,
                 "ratio": ratio,
-                "is_supported": material is not None,
+                "is_supported": material is not None
+                and (v2_material_ids is None or material.id in v2_material_ids),
             }
         )
 

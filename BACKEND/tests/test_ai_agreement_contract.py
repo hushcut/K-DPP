@@ -4,6 +4,8 @@
 - R2: 스캔의 `is_supported` 와 계산 API 의 `unknown_materials` 는 같은 소재 표로 판정한다.
   AI 가 알아보는 소재 중 서버 표에 없는 것(10-17 기준 acetate·alpaca·hemp·triacetate)은
   스캔에서 이름을 그대로 둔 채 미지원으로 보이고, 계산은 400 으로 거절된다.
+  활성 V2 정책이 있으면(2026-11-07) `is_supported` 는 그 정책에 계수가 있는지까지 본다 —
+  소재 표에 있어도 공개 계수가 없으면(캐시미어 등) 미지원이고 V2 계산은 422 FACTOR_UNAVAILABLE 이다.
 - R4: AI 의 `warnings` 는 200 과 422 모두 그대로 전달된다. 서버가 모르는 코드도 걸러지지 않는다.
 
 앱은 이 세 가지를 믿고 '계산 거절이면 저장하지 않음'·'미지원 소재는 계산 불가 안내'를 붙인다.
@@ -105,6 +107,45 @@ def test_scan_support_flag_matches_calculation_for_every_ai_material(client, mon
     # 미지원 = AI 사전에는 있고 서버 소재 표에는 없는 이름. 소재를 더하면(R3 승인 출처 뒤) 저절로 줄어든다.
     assert sorted(unsupported) == sorted(set(rules.MATERIAL_ALIASES) - seed_names)
     assert unsupported, "AI 사전과 서버 표가 같아졌다면 이 시험의 미지원 쪽은 더 이상 아무것도 보지 않는다"
+
+
+def test_scan_support_flag_matches_v2_public_policy_for_every_ai_material(client, monkeypatch):
+    """활성 V2 정책이 있으면 `is_supported` 는 저장(V2 계산)이 받아 주는지와 같다(#113 리뷰 3번).
+
+    소재 표에는 있지만 공개 계수가 없는 소재(캐시미어 등)도 스캔에서 미지원으로 보여,
+    저장을 눌러야 막히는 걸 알게 되지 않는다.
+    """
+    from carbon.policy_admin import publish_manifest
+    from carbon.public_policy import approved_public_manifest, load_selection
+
+    with database.SessionLocal() as session:
+        publish_manifest(session, approved_public_manifest(), apply=True, free_public_release=True)
+    headers = login(client, "support-v2@example.com")
+    public = {item["material"] for item in load_selection()["factors"]}
+    supported = set()
+
+    for name in rules.MATERIAL_ALIASES:
+        scan = scan_with_parsed(client, headers, monkeypatch, {"status": "success", "materials": {name: 100}})
+        assert scan.status_code == 200, name
+        [detail] = scan.json()["material_details"]
+
+        calculation = client.post(
+            "/api/v2/carbon/calculate",
+            json={"materials": {name: 100}, "weight_grams": 300, "composition_scope": "single"},
+            headers=headers,
+        )
+        if detail["is_supported"]:
+            assert calculation.status_code == 200, name
+            supported.add(detail["standard_name"])
+        else:
+            assert calculation.status_code in (400, 422), name
+            assert calculation.json()["error_code"] in ("MATERIAL_NOT_FOUND", "FACTOR_UNAVAILABLE"), name
+
+    ai_names = set(rules.MATERIAL_ALIASES)
+    assert supported == public & ai_names
+    # 소재 표에는 있지만 공개 계수가 없는 소재가 실제로 걸러졌는지 — 없으면 V1 판정과 구분되지 않는다.
+    seed_names = {seed["name_en"] for seed in init_data.MATERIAL_SEEDS}
+    assert (ai_names & seed_names) - public, "모든 소재에 공개 계수가 생기면 이 시험의 미지원 쪽은 더 이상 아무것도 보지 않는다"
 
 
 def test_ai_warnings_pass_through_on_200_and_422(client, monkeypatch):
