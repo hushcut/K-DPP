@@ -1,6 +1,30 @@
 """Read-only policy resolution. Candidate factors never become defaults."""
+import os
+
 import database
 from .domain import CarbonError, number
+
+
+def active_profiles(session):
+    """Active profiles of the usage scope the V2 API calculates with (exactly one is usable)."""
+    usage_scope = ("research_scenario" if os.getenv("K_DPP_CARBON_USAGE_SCOPE") == "research_scenario"
+                   else "public_estimate")
+    return session.query(database.CalculationProfile).filter_by(
+        status="active", usage_scope=usage_scope).all()
+
+
+def active_profile_material_ids(session):
+    """Material ids the V2 API has a factor for, or None when no single active profile exists.
+
+    The scan uses this for `is_supported` so that a material shown as supported before saving is
+    one the V2 calculation accepts. Without an active profile every V2 save fails with 503 anyway,
+    so callers fall back to catalog membership instead of flagging every material.
+    """
+    profiles = active_profiles(session)
+    if len(profiles) != 1:
+        return None
+    return {link.material_id for link in session.query(database.ProfileFactor).filter_by(
+        profile_id=profiles[0].id)}
 
 
 def resolve_factors(session, profile_id, material_ids):

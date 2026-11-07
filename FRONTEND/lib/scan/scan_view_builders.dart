@@ -28,6 +28,8 @@ extension _ScanViewBuilders on _ScanScreenState {
       // 않습니다. 세션이 만료됐으면 앱 추정값으로 저장하니 미리보기 숫자가 맞습니다.
       carbonCalculatedOnSave:
           closet.accessToken != null && closet.isAuthenticated,
+      // 로그인 계정의 저장 길(서버 계산·끊김·세션 만료)은 모두 서버 공개 계수로 판정합니다.
+      checksPublicFactors: closet.accessToken != null,
       formKey: _formKey,
       hasTriedSubmit: _hasTriedSubmit,
       isSaving: _isSaving,

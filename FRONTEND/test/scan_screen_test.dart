@@ -1051,6 +1051,95 @@ void main() {
         ));
       });
 
+      // 앱 옛 소재표에는 있지만 서버 공개(V2) 계수가 없는 소재(#113 리뷰 3번). 온라인이면 422 로
+      // 막히는 옷이 끊겼을 때·세션이 만료됐을 때만 옛 소재표 값으로 저장되면 안 된다.
+      ScanResult cashmereResult() => ScanResult(
+        materials: const {'캐시미어': 70, '울': 30},
+        careInstruction: '드라이클리닝',
+        title: '분석한 니트',
+        category: 'knit',
+        health: 70,
+      );
+      const cashmereBlocked = '캐시미어 소재는 탄소 계산 기준이 없어 저장하지 못했어요.';
+
+      Future<void> openCashmereResult(WidgetTester tester) async {
+        await tapAlbum(tester);
+        await finishAnalysis(tester, ScanAnalysisSuccess(cashmereResult()));
+        await chooseType(tester, '니트');
+        expect(find.byType(ScanResultView), findsOneWidget);
+      }
+
+      for (final type in [
+        CarbonApiErrorType.network,
+        CarbonApiErrorType.timeout,
+        CarbonApiErrorType.server,
+      ]) {
+        testWidgets('계산이 ${type.name} 로 실패해도 공개 계수가 없는 소재는 옛 소재표 값으로 저장하지 않는다', (
+          tester,
+        ) async {
+          carbon.failWith = type;
+          final provider = await pumpScanScreen(tester, signedIn: true);
+          await openCashmereResult(tester);
+
+          await tapSave(tester);
+
+          expect(carbon.calls, hasLength(1));
+          await expectNotSavedAndEditable(tester, provider);
+          expect(shownBanner(tester), (cashmereBlocked, AppBannerKind.failure));
+        });
+      }
+
+      testWidgets('세션이 만료됐어도 공개 계수가 없는 소재는 기기에 저장하지 않는다', (tester) async {
+        final provider = await pumpScanScreen(
+          tester,
+          signedIn: true,
+          sessionExpired: true,
+        );
+        await openCashmereResult(tester);
+
+        await tapSave(tester);
+
+        expect(carbon.calls, isEmpty);
+        await expectNotSavedAndEditable(tester, provider);
+        expect(shownBanner(tester), (cashmereBlocked, AppBannerKind.failure));
+      });
+
+      testWidgets('끊긴 채 막혀도 공개 계수가 있는 소재로 고치면 임시 추정값으로 저장한다', (tester) async {
+        carbon.failWith = CarbonApiErrorType.network;
+        final provider = await pumpScanScreen(tester, signedIn: true);
+        await openCashmereResult(tester);
+
+        await tapSave(tester);
+        expect(savedClothes, isEmpty);
+
+        await tester.enterText(materialField('캐시미어'), '나일론');
+        await tester.pump();
+        await tapSave(tester);
+
+        expect(
+          savedClothes.single.carbonFootprintSource,
+          CarbonFootprintSource.localEstimate,
+        );
+        expect(provider.items, hasLength(1));
+      });
+
+      testWidgets('로그인하지 않았으면 공개 계수가 없는 소재도 전처럼 기기 추정값으로 저장한다', (tester) async {
+        final provider = await pumpScanScreen(tester);
+        await openCashmereResult(tester);
+
+        expect(find.textContaining('계산 기준이 없는 소재가 있어요'), findsNothing);
+        expect(find.textContaining('kg CO2eq'), findsOneWidget);
+
+        await tapSave(tester);
+
+        expect(carbon.calls, isEmpty);
+        expect(
+          savedClothes.single.carbonFootprintSource,
+          CarbonFootprintSource.localEstimate,
+        );
+        expect(provider.items, hasLength(1));
+      });
+
       // 비로그인 저장은 R1 범위 밖이다(서버 계산을 거치지 않음 — 사용자 2026-10-20).
       testWidgets('로그인하지 않았으면 미지원 소재도 서버에 묻지 않고 전처럼 기기 추정값으로 저장한다', (
         tester,
@@ -1258,6 +1347,35 @@ void main() {
 
       expect(find.textContaining('저장하면 계산돼요'), findsNothing);
       expect(find.textContaining('kg CO2eq'), findsOneWidget);
+
+      // 공개 계수가 없는 소재는 세션이 만료돼도 저장이 막히니 숫자 대신 그 안내다.
+      await tester.enterText(materialField('폴리에스터'), '실크');
+      await tester.pump();
+
+      expect(find.textContaining(noBasisPreview), findsOneWidget);
+      expect(find.textContaining('kg CO2eq'), findsNothing);
+    });
+
+    testWidgets('로그인 상태면 앱 소재표에 있어도 공개 계수가 없는 소재를 저장 전에 알린다', (tester) async {
+      await pumpScanScreen(tester, signedIn: true);
+      await openResult(tester, knitWith(const []));
+
+      await tester.enterText(materialField('폴리에스터'), '캐시미어');
+      await tester.pump();
+
+      expect(find.textContaining(noBasisPreview), findsOneWidget);
+      expect(find.textContaining('저장하면 계산돼요'), findsNothing);
+
+      // 2026-11-07 에 더한 공개 소재(나일론·다운·깃털 등)는 저장하면 계산된다.
+      var previous = '캐시미어';
+      for (final name in ['나일론', '오리솜털', '오리깃털', '폴리우레탄', '모달', '가죽']) {
+        await tester.enterText(materialField(previous), name);
+        await tester.pump();
+        previous = name;
+
+        expect(find.textContaining(noBasisPreview), findsNothing, reason: name);
+        expect(find.textContaining('저장하면 계산돼요'), findsOneWidget, reason: name);
+      }
     });
 
     testWidgets('아는 소재를 모르는 소재로 고치면 미리보기만 바뀌고 안내 카드는 깜빡이지 않는다', (tester) async {

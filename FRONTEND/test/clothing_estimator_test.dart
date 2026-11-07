@@ -81,6 +81,33 @@ void main() {
     expect(ClothingEstimator.materialsWithoutFactor(const []), isEmpty);
   });
 
+  // 공개 계수 목록은 BACKEND/policies/idemat_2026_free_public_selection.json 의 사본이다.
+  // 어긋나는지는 BACKEND/tests/test_public_material_copy.py 가 검사한다.
+  test('materialsWithoutPublicFactor 는 앱 소재표에 있어도 공개 계수가 없는 소재를 돌려준다', () {
+    expect(
+      ClothingEstimator.materialsWithoutPublicFactor([
+        '면',
+        '나일론',
+        '엘라스테인',
+        '폴리우레탄',
+        '레이온',
+        '비스코스',
+        '모달',
+        '모',
+        '가죽',
+        '거위솜털',
+        '오리깃털',
+        '캐시미어',
+        '실크',
+        '텐셀',
+        '대나무',
+        '아세테이트',
+      ]),
+      ['캐시미어', '실크', '텐셀', '대나무', '아세테이트'],
+    );
+    expect(ClothingEstimator.materialsWithoutPublicFactor(const []), isEmpty);
+  });
+
   group('서버 시드 계수 반영', () {
     const serverFactors = <String, double>{
       'cotton': 8.3,

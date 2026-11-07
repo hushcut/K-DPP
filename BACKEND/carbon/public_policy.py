@@ -3,10 +3,22 @@ import json
 from pathlib import Path
 
 
+SELECTION_PATH = Path(__file__).resolve().parents[1] / "policies/idemat_2026_free_public_selection.json"
+
+
+def load_selection():
+    return json.loads(SELECTION_PATH.read_text(encoding="utf-8"))
+
+
+def public_display_notes():
+    """Korean per-material assumption sentences shown with IDEMAT results, in selection order."""
+    return {item["material"]: item["display_note_ko"]
+            for item in load_selection()["factors"] if item.get("display_note_ko")}
+
+
 def approved_public_manifest():
     from .policy_admin import PolicyManifest
-    selection = json.loads((Path(__file__).resolve().parents[1] /
-        "policies/idemat_2026_free_public_selection.json").read_text(encoding="utf-8"))
+    selection = load_selection()
     profile = {"key": selection["profile_key"], "version": selection["version"],
         "formula_version": "fiber_mass_v2", "method": selection["method"],
         "scope": selection["scope"], "usage_scope": "public_estimate"}
@@ -32,7 +44,8 @@ def approved_public_manifest():
             "components": item.get("derivation"),
             "selection_assumption": " ".join(item["assumptions"]),
             "review_note": "Delegated technical selection; independent approval not claimed.",
-            "evidence_reviewed_at": "2026-10-18T00:00:00Z", "technical_selector": "Codex (user-delegated)"})
+            "evidence_reviewed_at": item["reviewed_on"] + "T00:00:00Z",
+            "technical_selector": item["technical_selector"]})
     return PolicyManifest.model_validate({"profile": profile, "factors": factors})
 
 
