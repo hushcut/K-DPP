@@ -18,6 +18,7 @@ PART_PATTERNS = {
         "outshell2", "outshell 2", "cutshell2", "cutshell 2",
         "shell2", "shell 2", "outer2", "outer 2",
         "겉감2", "겉감 2", "겉 감2", "겉 감 2",
+        "面料2", "面料 2", "表地2", "表地 2",
     ],
     "outer": [
         "겉감",
@@ -36,6 +37,7 @@ PART_PATTERNS = {
         "outshell1", "outshell 1", "cutshell1", "cutshell 1",
         "shell1", "shell 1", "outer1", "outer 1",
         "겉감1", "겉감 1", "겉 감1", "겉 감 1",
+        "面料1", "面料 1", "表地1", "表地 1",
         "outer",
         "face",
         "main fabric",
@@ -426,6 +428,11 @@ _PART_MARKER_PATTERNS = {
 # or care instructions without naming a composition part.
 _SHORT_PART_MARKERS = {"솜", "립", "袖", "표면", "실", "자수", "자수실", "刺绣", "刺繍"}
 
+_NUMBERED_CJK_OUTER_MARKERS = {
+    f"{heading}{separator}{index}"
+    for heading in ("面料", "表地") for separator in ("", " ") for index in (1, 2)
+}
+
 _SCOPED_MAIN_HEADINGS = {
     "main material", "matiere principale", "matière principale", "主料",
     "empiecement en bord cote", "empiècement en bord côte",
@@ -435,6 +442,12 @@ _SCOPED_MAIN_HEADINGS = {
 def is_part_marker_match(text: str, match: re.Match[str]) -> bool:
     """Reject short markers embedded in words, but keep joined marker+fiber OCR."""
     marker = match.group().casefold()
+    if marker in _NUMBERED_CJK_OUTER_MARKERS:
+        # A literal fabric index is a heading, not a word inside negated or
+        # opaque prose. Do not create a new part from an embedded match.
+        prefix = text[:match.start()].rsplit("\n", 1)[-1]
+        if not re.fullmatch(r"\s*(?:(?:cn|jp|zh|ja)\s*:\s*)?[\[(]?\s*", prefix):
+            return False
     if marker in _SCOPED_MAIN_HEADINGS:
         # These words also occur in descriptions and negated captions. Only
         # a heading at the start of its row (optionally country-labelled)

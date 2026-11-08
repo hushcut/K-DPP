@@ -179,7 +179,8 @@ _OUTLINED_WASH_SYMBOL_OCR_PATTERN = re.compile(
     r"|\\\s*(?:30|40|50|60|70|95)\s*/?)"
 )
 _NUMBERED_OUTER_MARKER_PATTERN = re.compile(
-    r"(?<![a-z0-9])(?:outshell|cutshell|shell|outer|겉\s*감)\s*[12](?![a-z0-9.,]|\s*%)"
+    r"(?<![a-z0-9])(?:(?:outshell|cutshell|shell|outer|겉\s*감)\s*[12]"
+    r"|(?:面料|表地)[ \t]*[12])(?![a-z0-9.,]|\s*%)"
 )
 _STORAGE_DOWN_PATTERN = re.compile(r"(?<![a-z])(?:fold|ford)\s+down(?![a-z])")
 _STORAGE_CAPTION_WORDS = {
@@ -759,7 +760,8 @@ def _build_line_analysis(text: str) -> LineAnalysis:
         composition_text = masked_caption
         # Heading indices name separate fabrics; they are not fiber ratios.
         composition_text = normalize_text(_NUMBERED_OUTER_MARKER_PATTERN.sub(
-            lambda match: re.sub(r"[12]", " ", match.group()), composition_text,
+            lambda match: re.sub(r"[12]", " ", match.group())
+            if is_part_marker_match(composition_text, match) else match.group(), composition_text,
         ))
         materials = tuple(extract_materials(composition_text))
         number_only_line = not materials and not _TOKEN_PATTERN.search(composition_text)
