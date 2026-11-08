@@ -1839,6 +1839,13 @@ _METADATA_VALUE_PATTERNS = {
         r"[0-9]+(?:[.,][0-9]+)?\s*%(?:\s*(?:이하|미만|max(?:imum)?))?"
     ),
 }
+_CONTACT_HEADER_PATTERN = re.compile(
+    r"[•·*]?[ \t]*(?:고객[ \t]*상담실|소비자[ \t]*상담실|전화[ \t]*번호|tel|telephone)"
+    r"[ \t]*:[ \t]*(?P<value>.*)"
+)
+_CONTACT_VALUE_PATTERN = re.compile(
+    r"(?:0[0-9]{1,3}|\+[0-9]{1,3})[ \t]*-[ \t]*[0-9][0-9()+/\-~^ \t]*"
+)
 # 한국 의류 호칭에서 흔한 5단위 값만 무표기 사이즈 후보로 인정한다.
 _UNLABELED_KOREAN_GARMENT_SIZE_VALUES = {
     str(value) for value in range(80, 125, 5)
@@ -2064,6 +2071,19 @@ def _classify_metadata_line(
     line: str, pending_kind: str | None
 ) -> tuple[bool, str | None]:
     """명시한 항목의 값만 제외하며, 헤더의 대기 상태는 바로 다음 줄에만 적용한다."""
+    # Preserve the provider text, including damaged phone digits. Only a
+    # labelled contact field and at most one immediately adjacent phone row
+    # are metadata; a percent, fiber name, or unlabelled number is not.
+    contact = _CONTACT_HEADER_PATTERN.fullmatch(line)
+    if contact:
+        value = contact.group("value")
+        if not value or _CONTACT_VALUE_PATTERN.fullmatch(value):
+            return True, "contact"
+        return False, None
+    if pending_kind == "contact":
+        if _CONTACT_VALUE_PATTERN.fullmatch(line):
+            return True, None
+        pending_kind = None
     # This explicitly labelled product category supplies no fiber ratio.
     # Match the whole caption so a percentage, other part or unknown word
     # cannot be hidden by a broad product-header exclusion.
