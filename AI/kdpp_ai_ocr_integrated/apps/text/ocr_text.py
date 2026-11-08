@@ -524,11 +524,23 @@ def _build_payload_candidates(
             from apps.text.headed_inline_recovery import (
                 literal_headed_blend_over_failed_layout, literal_unheaded_blend_over_failed_layout,
             )
+            from apps.text.single_part_table_recovery import verified_single_part_layout
 
             if (literal_yarn_table_over_failed_layout(candidates[0], candidates[1])
                     or literal_headed_blend_over_failed_layout(candidates[0], candidates[1])
                     or literal_unheaded_blend_over_failed_layout(candidates[0], candidates[1])):
                 candidates = candidates[:1]
+            else:
+                rendered = verified_single_part_layout(candidates[0], candidates[1])
+                if rendered is not None:
+                    verified = _build_candidate(source, rendered, layout_used=True)
+                    raw = candidates[0]
+                    if (verified.parser_status == "success" and verified.parts == raw.parts
+                            and verified.selected_part == raw.selected_part):
+                        candidates = [raw, replace(
+                            verified, image_key=raw.image_key, image_variant_key=raw.image_variant_key,
+                            image_words=raw.image_words, image_region=raw.image_region,
+                        )]
     return candidates
 
 
