@@ -105,7 +105,10 @@ _RATIO_ROW_LABELS = COMPOSITION_HINTS | {
 }
 _RATIO_ROW_LABEL_PATTERN = re.compile(
     "|".join(
-        rf"(?<![a-z]){re.escape(label)}(?![a-z])" if label.isascii() else re.escape(label)
+        (rf"(?<![a-z]){re.escape(label)}(?![a-z])" if label.isascii() else re.escape(label))
+        # A numbered heading must not consume the first digit of 100% and
+        # prevent the unnumbered heading from matching at that same position.
+        + (r"(?!\d)" if label[-1].isdigit() else "")
         for label in sorted(_RATIO_ROW_LABELS, key=len, reverse=True)
     )
 )
@@ -2061,6 +2064,14 @@ def _classify_metadata_line(
     line: str, pending_kind: str | None
 ) -> tuple[bool, str | None]:
     """명시한 항목의 값만 제외하며, 헤더의 대기 상태는 바로 다음 줄에만 적용한다."""
+    # This explicitly labelled product category supplies no fiber ratio.
+    # Match the whole caption so a percentage, other part or unknown word
+    # cannot be hidden by a broad product-header exclusion.
+    if re.fullmatch(
+        r"제품[ \t]*구분[ \t]*:[ \t]*(?:솜털[ \t]*(?:\([ \t]*다운[ \t]*\)[ \t]*)?|다운[ \t]*)제품",
+        line,
+    ):
+        return True, None
     # A standalone currency amount above 100 cannot be a fiber percentage.
     # Keep signed amounts, percent signs and any attached material/text out.
     amount = re.fullmatch(r"[$€£₩]\s*([0-9]+(?:\.[0-9]{1,2})?)", line)
