@@ -320,6 +320,9 @@ _NON_ASCII_PART_PREFIXES = tuple(
     for normalized_prefix in (_normalized_alias(prefix),)
     if not normalized_prefix.isascii()
 )
+_JOINED_HAN_KANA_ALIAS = re.compile(
+    r"([\u4e00-\u9fff]+)([\u3040-\u30ff]+)|([\u3040-\u30ff]+)([\u4e00-\u9fff]+)"
+)
 
 
 def find_material_key(word: str) -> str | None:
@@ -331,6 +334,18 @@ def find_material_key(word: str) -> str | None:
     material = ALIAS_TO_MATERIAL.get(corrected)
     if material:
         return material
+
+    # Labels may print the same fiber in Han and Japanese without a separator
+    # (綿コットン). Consume both complete registered names, retaining the
+    # original token as evidence; a blend or unknown suffix cannot match.
+    joined = _JOINED_HAN_KANA_ALIAS.fullmatch(corrected)
+    if joined:
+        left, right = (joined.group(1), joined.group(2)) if joined.group(1) else (
+            joined.group(3), joined.group(4),
+        )
+        material = ALIAS_TO_MATERIAL.get(left)
+        if material and ALIAS_TO_MATERIAL.get(right) == material:
+            return material
 
     # OCR sometimes joins a Korean part marker and its first material
     # (for example, ``배색면``). Only split a known non-ASCII marker and
