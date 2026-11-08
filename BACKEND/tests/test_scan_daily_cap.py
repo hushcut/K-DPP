@@ -56,9 +56,9 @@ def counts_today():
     return counts
 
 
-def test_user_cap_is_twenty():
-    # 계약 문서·청구 최악값 계산(DECISIONS 164)이 이 값을 쓴다.
-    assert main.SCAN_USER_DAILY_MAX == 20
+def test_user_cap_is_sixty():
+    # 전시회 체험용 서버 판의 값이다(DECISIONS 300 — develop 은 20 그대로).
+    assert main.SCAN_USER_DAILY_MAX == 60
 
 
 def test_vision_scans_stop_at_daily_cap(client, vision):
@@ -70,7 +70,7 @@ def test_vision_scans_stop_at_daily_cap(client, vision):
     assert response.status_code == 429
     body = response.json()
     assert body["error_code"] == "SCAN_DAILY_LIMIT"
-    assert "하루 20번" in body["message"]
+    assert "하루 60번" in body["message"]
     # 12:00 KST 에 막히면 다음 한국 자정까지 12시간.
     assert body["detail"]["retry_after"] == 12 * 60 * 60
     # 막힌 요청은 Vision 을 부르지 않고 세지도 않는다.
@@ -270,11 +270,11 @@ def slow_day(monkeypatch):
 
 
 def test_concurrent_scans_stop_at_user_cap(slow_day):
-    results = reserve_from_threads([1] * 40)
+    results = reserve_from_threads([1] * 80)
 
     assert slow_day.slow_writes == main.SCAN_USER_DAILY_MAX  # 틈을 벌리는 쓰기를 실제로 거쳤다
     assert results.count(200) == main.SCAN_USER_DAILY_MAX
-    assert results.count(429) == 40 - main.SCAN_USER_DAILY_MAX
+    assert results.count(429) == 80 - main.SCAN_USER_DAILY_MAX
     assert slow_day == {1: main.SCAN_USER_DAILY_MAX}
 
 
