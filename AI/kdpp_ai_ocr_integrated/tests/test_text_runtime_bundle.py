@@ -48,6 +48,17 @@ def test_text_runtime_bundle_imports_without_repository_source(tmp_path) -> None
             "-c",
             (
                 "from apps.service.main import app; "
+                "from apps.text.care_cell_geometry import vertical_care_cell; "
+                "from apps.text.composition_region_recovery import recover_composition_region; "
+                "from apps.text.main_material_recovery import recover_main_material_layout; "
+                "from apps.text.multilingual_layout_recovery import recover_multilingual_outer_layout; "
+                "from apps.text.ocr_row_search import physical_row_options; "
+                "from apps.text.single_row_metadata_recovery import recover_fit_origin_layout; "
+                "from apps.text.parse_label import parse_label; "
+                "parsed = parse_label('MAIN MATERIAL: 100% POLYESTER (100% RECYCLED)'); "
+                "assert parsed['status'] == 'success'; "
+                "assert parsed['selected_part'] == 'outer'; "
+                "assert parsed['materials'] == {'polyester': 100}; "
                 "paths = app.openapi()['paths']; "
                 "assert set(paths) == {'/health', '/v1/parse-text', '/v1/analyze-label'}; "
                 "import sys; "

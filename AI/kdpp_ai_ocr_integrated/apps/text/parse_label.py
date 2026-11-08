@@ -7,6 +7,7 @@ from apps.text.line_analysis_cache import LineAnalysis, line_analysis_scope, reu
 from apps.text.part_policy import PART_PRIORITY as PART_PRIORITY
 from apps.text.part_policy import OUTER_PARTS
 from apps.text.ratio_contract import EXACT_RATIO_TOTAL, has_exact_total
+from apps.text.recycled_content import has_unbound_recycled_ratio, unclosed_recycled_property_rows
 from apps.text.translation_alternatives import prepare_translation_alternatives
 from apps.text.scoped_materials import read_yarn_materials, confirmed_yarn_declaration
 from apps.text.line_context import (
@@ -38,14 +39,23 @@ from apps.text.material_extraction import (
     extract_materials,
     find_material_key,
     is_part_marker_match,
+    join_recycled_property_rows,
     normalize_text,
     restore_registered_han_aliases,
+    recycled_composition_view,
     unresolved_material_tokens,
 )
 from apps.text.rules import (
     CARE_CONFLICTS,
     CARE_RULES,
     MATERIAL_KOREAN,
+)
+
+_RECYCLED_UNCERTAIN_CONTEXT = re.compile(
+    r"(?:(?:gb|f|fr|cn)\s*:\s*)?(?:(?:"
+    + "|".join(re.escape(alias) for aliases in PART_PATTERNS.values() for alias in aliases)
+    + r")\s*:?\s*)?(?:unknown|unregistered|not|no|알\s*수\s*없는\s*소재|未知繊維|未知纤维|不明)\s*:?",
+    re.IGNORECASE,
 )
 
 
@@ -672,6 +682,7 @@ def _build_line_analysis(text: str) -> LineAnalysis:
     current_part = "generic"
     pending_metadata_kind = None
     original_prepared = _split_part_markers(normalize_text(text))
+    original_prepared = join_recycled_property_rows(original_prepared)
     prepared = _split_part_markers(_prepare_multilingual_rows(original_prepared))
     restored_rows = _multilingual_restored_row_indices(original_prepared, prepared)
     unproven_rewrite = restored_rows is None
@@ -689,6 +700,7 @@ def _build_line_analysis(text: str) -> LineAnalysis:
     if translations.damaged_rows:
         translation_warnings.extend(("damaged_translation_fragment", "unread_translation_rows"))
     raw_lines = translations.text.split("\n")
+    unclosed_recycled_rows = unclosed_recycled_property_rows(translations.text)
     content_indices = [i for i, raw in enumerate(raw_lines) if normalize_text(raw)]
     last_content_index = content_indices[-1] if content_indices else -1
     following_lines = {
@@ -752,6 +764,7 @@ def _build_line_analysis(text: str) -> LineAnalysis:
             composition_text, allow_plain_numbers=bool(materials) or number_only_line,
         )
         invalid_evidence |= index in translations.rejected_rows
+        invalid_evidence |= index in unclosed_recycled_rows
         invalid_evidence |= bool(_IMITATION_LEATHER_PATTERN.search(composition_text))
         invalid_evidence |= storage_caption_invalid
         has_arabic_material = bool(materials) and _has_registered_arabic_material(composition_text)
@@ -789,6 +802,16 @@ def _build_line_analysis(text: str) -> LineAnalysis:
             marker_part=marker_part, invalid_evidence=invalid_evidence,
             is_metadata=is_metadata, inferred_metadata=inferred_metadata,
         ))
+    # A newly readable property row cannot hide an explicit UNKNOWN/NOT
+    # declaration on a separate row of the same part. Ordinary opaque label
+    # metadata is left to its existing rules; no brand vocabulary is guessed.
+    uncertain_parts = {info.part for info in infos if not info.is_metadata
+                       and _RECYCLED_UNCERTAIN_CONTEXT.fullmatch(info.normalized)}
+    if uncertain_parts:
+        infos = [replace(info, invalid_evidence=True)
+                 if info.part in uncertain_parts and info.materials
+                 and recycled_composition_view(info.normalized) != info.normalized
+                 else info for info in infos]
     return LineAnalysis(
         infos=tuple(_mark_split_imitation_leather(_mark_split_wash_temperatures(
             _apply_trailing_part_markers(_mark_leading_garment_size(infos)),
@@ -1861,7 +1884,7 @@ def _read_numbers(
     explicit_matches = [
         match for match in matches if match.group().strip().endswith("%")
     ]
-    invalid = False
+    invalid = has_unbound_recycled_ratio(normalized)
 
     def parse_match(
         match: re.Match[str],

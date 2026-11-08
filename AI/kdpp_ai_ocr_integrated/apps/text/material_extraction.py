@@ -6,6 +6,10 @@ from functools import lru_cache
 import unicodedata
 
 from apps.text.rules import MATERIAL_ALIASES, OCR_CORRECTIONS
+from apps.text.recycled_content import (
+    join_following_recycled_property, join_wrapped_recycled_property,
+    mask_recycled_properties, recycled_pair_pattern,
+)
 
 
 PART_PATTERNS = {
@@ -35,6 +39,9 @@ PART_PATTERNS = {
         "outer",
         "face",
         "main fabric",
+        "main material",
+        "matiere principale",
+        "matière principale",
         "kain luar",
         "本体",
         "面料",
@@ -44,6 +51,7 @@ PART_PATTERNS = {
         "表素材",
         "表生地",
         "主面料",
+        "主料",
         "外层",
         "外層",
     ],
@@ -84,7 +92,8 @@ PART_PATTERNS = {
     "pocket": [
         "주머니감", "주머니천", "주머니", "pocket", "口袋布", "袋布", "ポケット布"
     ],
-    "rib": ["립", "리브", "rib", "罗纹", "羅紋"],
+    "rib": ["립", "리브", "rib", "rib part", "罗纹", "羅紋", "empiecement en bord cote",
+            "empiècement en bord côte"],
     "sleeve": ["소매", "sleeve", "袖子", "袖部", "袖"],
     "color_block": ["배색", "contrast", "配色", "拼接", "別布"],
     "embroidery_yarn": [
@@ -139,6 +148,17 @@ ALIAS_TO_MATERIAL = {
     if alias.strip()
 }
 
+_RECYCLED_PAIR_PATTERN = recycled_pair_pattern(ALIAS_TO_MATERIAL)
+_RECYCLED_HEADING_PATTERN = re.compile(
+    r"(?:(?:gb|f|fr|cn)\s*:\s*)?(?:"
+    + "|".join(re.escape(alias) for aliases in PART_PATTERNS.values() for alias in aliases)
+    + r")\s*:?", re.IGNORECASE,
+)
+_WRAPPED_RIB_HEADING = re.compile(
+    r"(?<![a-z])(?:rib[ \t\n]+part|empiecement[ \t\n]+en[ \t\n]+bord[ \t\n]+cote"
+    r"|empiècement[ \t\n]+en[ \t\n]+bord[ \t\n]+côte)(?![a-z])", re.IGNORECASE,
+)
+
 MULTIWORD_ALIASES = sorted(
     (
         (alias, material)
@@ -190,6 +210,18 @@ _HAN_PART_HEADING_PATTERN = re.compile(
     )
     + r")(?P<after>[ \t:;()\[\]{}]*)$"
 )
+_HAN_COLON_PART_HEADING_PATTERN = re.compile(
+    r"(?m)(?P<before>^|%[ \t]*)(?P<part>"
+    + "|".join(
+        r"[ \t]*".join(map(re.escape, alias))
+        for alias in sorted(
+            {alias for aliases in PART_PATTERNS.values() for alias in aliases
+             if re.fullmatch(r"[\u4e00-\u9fff]{2,}", alias)},
+            key=lambda alias: (-len(alias), alias),
+        )
+    )
+    + r")(?=[ \t]*:)",
+)
 
 
 def restore_registered_han_aliases(text: str, *, allow_newlines: bool = False) -> str:
@@ -240,6 +272,10 @@ def normalize_text(text: str) -> str:
     normalized = normalized.replace("：", ":").replace("％", "%")
     normalized = normalized.replace("·", " ").replace("\u00a0", " ")
     normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = join_wrapped_recycled_property(normalized)
+    normalized = _WRAPPED_RIB_HEADING.sub(
+        lambda match: re.sub(r"\s+", " ", match.group()), normalized,
+    )
 
     for wrong, correct in OCR_CORRECTIONS.items():
         normalized = _replace_token(normalized, wrong.casefold(), correct.casefold())
@@ -247,6 +283,10 @@ def normalize_text(text: str) -> str:
     # Restore only a complete heading on its own row, never metadata or
     # characters separated by a row boundary.
     if _HAN_GAP_PATTERNS[False].search(normalized):
+        normalized = _HAN_COLON_PART_HEADING_PATTERN.sub(
+            lambda match: match.group("before")
+            + re.sub(r"[ \t]+", "", match.group("part")), normalized,
+        )
         normalized = _HAN_PART_HEADING_PATTERN.sub(
             lambda match: match.group("before")
             + re.sub(r"[ \t]+", "", match.group("part"))
@@ -256,7 +296,13 @@ def normalize_text(text: str) -> str:
     normalized = restore_registered_han_aliases(normalized)
 
     lines = [re.sub(r"[ \t]+", " ", line).strip() for line in normalized.split("\n")]
-    return "\n".join(line for line in lines if line)
+    normalized = "\n".join(line for line in lines if line)
+    return join_recycled_property_rows(normalized)
+
+
+def join_recycled_property_rows(text: str) -> str:
+    """Bind a closed next-row property without crossing a part heading."""
+    return join_following_recycled_property(text, _RECYCLED_PAIR_PATTERN, _RECYCLED_HEADING_PATTERN)
 
 
 def clean_ocr_preview(text: str, max_len: int = 220) -> str:
@@ -300,7 +346,15 @@ def find_material_key(word: str) -> str | None:
     return None
 
 
+def recycled_composition_view(line: str) -> str:
+    """Keep the original row unless a literal bound property was verified."""
+    masked = mask_recycled_properties(line, _RECYCLED_PAIR_PATTERN, _RECYCLED_HEADING_PATTERN)
+    return re.sub(r"\s+", " ", masked).strip() if masked != line else line
+
+
 def _strip_excluded_segments(line: str) -> str:
+    line = recycled_composition_view(line)
+
     def remove_if_excluded(match: re.Match[str]) -> str:
         content = match.group(0).casefold()
         return " " if any(word in content for word in EXCLUDED_SEGMENT_WORDS) else content
@@ -357,10 +411,34 @@ _PART_MARKER_PATTERNS = {
 # or care instructions without naming a composition part.
 _SHORT_PART_MARKERS = {"솜", "립", "袖", "표면", "실", "자수", "자수실", "刺绣", "刺繍"}
 
+_SCOPED_MAIN_HEADINGS = {
+    "main material", "matiere principale", "matière principale", "主料",
+    "empiecement en bord cote", "empiècement en bord côte",
+}
+
 
 def is_part_marker_match(text: str, match: re.Match[str]) -> bool:
     """Reject short markers embedded in words, but keep joined marker+fiber OCR."""
     marker = match.group().casefold()
+    if marker in _SCOPED_MAIN_HEADINGS:
+        # These words also occur in descriptions and negated captions. Only
+        # a heading at the start of its row (optionally country-labelled)
+        # establishes a new composition part.
+        prefix = text[:match.start()].rsplit("\n", 1)[-1]
+        if not re.fullmatch(r"\s*(?:(?:gb|f|fr|cn)\s*:\s*)?", prefix):
+            # A wrapped French rib heading may follow the previous fiber's
+            # closed property and a printed slash. Retain the complete
+            # declaration; never split an opaque or negated prefix away.
+            declaration = prefix.strip()
+            if (marker not in {"empiecement en bord cote", "empiècement en bord côte"}
+                    or not declaration.endswith("/")
+                    or not _RECYCLED_PAIR_PATTERN.fullmatch(
+                        recycled_composition_view(declaration[:-1].rstrip()),
+                    )):
+                return False
+        suffix = text[match.end():].split("\n", 1)[0]
+        if suffix and not re.match(r"\s*(?::|$|\d|[([])", suffix):
+            return False
     if marker in PART_PATTERNS["embroidery_yarn"]:
         # Exclusion captions are not yarn compositions. Keep the caption intact
         # so the existing exclusion parser can remove it before reading ratios.
