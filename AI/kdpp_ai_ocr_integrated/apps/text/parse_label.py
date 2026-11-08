@@ -235,6 +235,64 @@ def _has_complete_preceding_composition(infos: list[LineInfo]) -> bool:
     )
 
 
+_INSPECTED_PRODUCT_CODE = re.compile(r"[a-z]{2,8}[0-9][a-z0-9]{2,11}(?P<stamp> 검사필)?")
+_INSPECTED_PRODUCT_GROUPS = re.compile(r"[0-9]{1,3}[ \t]+[0-9]{1,3}[ \t]+[0-9]{1,3}")
+_INSPECTED_PRODUCT_SPLIT_HEAD = re.compile(r"[0-9]{1,3}[ \t]+[0-9]{1,3}")
+_INSPECTED_PRODUCT_SPLIT_STAMP = re.compile(r"([0-9]{1,3})[ \t]+검사필")
+_MANUFACTURE_MONTH_ROW = re.compile(
+    r"제조[ \t]*년[ \t]*월[ \t]*:[ \t]*(?:19|20)[0-9]{2}[./-](?:0?[1-9]|1[0-2])"
+)
+
+
+def _mark_inspected_product_identifiers(infos: list[LineInfo]) -> list[LineInfo]:
+    """Fence a whole product/inspection/date block after complete content.
+
+    Bare numeric groups alone are not identifiers. Require a readable product
+    code, inspection stamp and labelled manufacture month, in adjacent rows
+    of the same part. Preserve plausible ratio columns and every extra token.
+    """
+    adjusted = list(infos)
+    for position in range(1, len(infos) - 1):
+        current, code_row = infos[position], infos[position - 1]
+        code = _INSPECTED_PRODUCT_CODE.fullmatch(code_row.normalized)
+        if (code is None or code_row.materials or code_row.numbers
+                or code_row.invalid_evidence or code_row.unresolved_materials
+                or current.materials or current.unresolved_materials or current.marker_part):
+            continue
+        targets = [position]
+        if _INSPECTED_PRODUCT_GROUPS.fullmatch(current.normalized):
+            groups = re.findall(r"[0-9]+", current.normalized)
+            date_position = position + 1 if code.group("stamp") else position + 2
+            if not code.group("stamp") and infos[position + 1].normalized != "검사필":
+                continue
+        else:
+            # A layout row may wrap the last group beside the inspection stamp.
+            # Account for the same three complete groups without dropping text.
+            stamp = _INSPECTED_PRODUCT_SPLIT_STAMP.fullmatch(infos[position + 1].normalized)
+            if (code.group("stamp") or stamp is None
+                    or not _INSPECTED_PRODUCT_SPLIT_HEAD.fullmatch(current.normalized)):
+                continue
+            groups = re.findall(r"[0-9]+", current.normalized) + [stamp.group(1)]
+            targets.append(position + 1)
+            date_position = position + 2
+        if sum(map(len, groups)) < 7 or sum(map(int, groups)) <= 100:
+            continue
+        if (date_position >= len(infos)
+                or not _MANUFACTURE_MONTH_ROW.fullmatch(infos[date_position].normalized)):
+            continue
+        block = infos[position - 1:date_position + 1]
+        if (any(row.part != current.part or row.marker_part is not None for row in block)
+                or any(right.index != left.index + 1 for left, right in zip(block, block[1:]))
+                or not _has_complete_preceding_composition(infos[:position - 1])):
+            continue
+        for target in targets:
+            # The explicit stamp/date block is metadata, not an inferred size.
+            adjusted[target] = replace(
+                infos[target], numbers=(), invalid_evidence=False, is_metadata=True,
+            )
+    return adjusted
+
+
 _WASH_TEMPERATURE_CAPTIONS = {
     "hand wash", "hand wash cold", "cold hand wash", "hand wash warm",
     "warm hand wash", "machine wash", "machine wash cold", "machine wash warm",
@@ -819,7 +877,9 @@ def _build_line_analysis(text: str) -> LineAnalysis:
                  else info for info in infos]
     return LineAnalysis(
         infos=tuple(_mark_split_imitation_leather(_mark_split_wash_temperatures(
-            _apply_trailing_part_markers(_mark_leading_garment_size(infos)),
+            _mark_inspected_product_identifiers(
+                _apply_trailing_part_markers(_mark_leading_garment_size(infos)),
+            ),
         ))),
         restored_indices=frozenset(restored_rows),
         translation_indices=frozenset(translations.recovered_rows if not unproven_rewrite else ()),
