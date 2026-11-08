@@ -521,10 +521,13 @@ def _build_payload_candidates(
                               image_region=image_region) for candidate in candidates]
         if len(candidates) == 2:
             from apps.text.ocr_candidates import literal_yarn_table_over_failed_layout
-            from apps.text.headed_inline_recovery import literal_headed_blend_over_failed_layout
+            from apps.text.headed_inline_recovery import (
+                literal_headed_blend_over_failed_layout, literal_unheaded_blend_over_failed_layout,
+            )
 
             if (literal_yarn_table_over_failed_layout(candidates[0], candidates[1])
-                    or literal_headed_blend_over_failed_layout(candidates[0], candidates[1])):
+                    or literal_headed_blend_over_failed_layout(candidates[0], candidates[1])
+                    or literal_unheaded_blend_over_failed_layout(candidates[0], candidates[1])):
                 candidates = candidates[:1]
     return candidates
 

@@ -108,7 +108,16 @@ def _unique_pair(text, words):
 
 def literal_headed_blend_over_failed_layout(raw, layout):
     """Discard only a shuffled view of one physically proved headed blend."""
-    from apps.text.parse_label import build_line_infos, _read_numbers
+    return _literal_blend_over_failed_layout(raw, layout, headed=True)
+
+
+def literal_unheaded_blend_over_failed_layout(raw, layout):
+    """Keep two literal physical pairs without inventing a heading or part."""
+    return _literal_blend_over_failed_layout(raw, layout, headed=False)
+
+
+def _literal_blend_over_failed_layout(raw, layout, *, headed):
+    from apps.text.parse_label import build_line_infos, _read_numbers, _is_metadata_line
 
     if (raw.source != "original" or raw.layout_used or not layout.layout_used
             or raw.parser_status != "success" or layout.parser_status != "failed"
@@ -127,17 +136,31 @@ def literal_headed_blend_over_failed_layout(raw, layout):
             or set(layout.rejected_composition_parts) - {"generic", "embroidery_yarn"}
             or not layout.rejected_composition_parts.get("generic")
             or set(layout.rejected_composition_parts["generic"])
-            - {"invalid_composition_evidence", "unpaired_material_rows"}
+            - ({"invalid_composition_evidence", "unpaired_material_rows"}
+               | ({"unresolved_material_token"} if not headed else set()))
             or Counter(layout.observed_materials.get("generic", ()))
             != Counter(raw.observed_materials.get("generic", ()))
-            or Counter(layout.observed_ratios.get("generic", ()))
-            != Counter(raw.observed_ratios.get("generic", ()))):
+            or (headed and Counter(layout.observed_ratios.get("generic", ()))
+                != Counter(raw.observed_ratios.get("generic", ())))):
         return False
     infos = build_line_infos(raw.text)
     rows = [info for info in infos if info.materials or "%" in info.normalized]
     if (len(rows) != 1 or any(info.marker_part or info.unresolved_materials for info in infos)):
         return False
     info = rows[0]
+    if not headed:
+        # Reordered care/identifier rows can expose numbers the raw parser
+        # already classified as metadata. Account for each extra occurrence
+        # literally; a new number or a ratio from another part stays blocked.
+        metadata = Counter(float(token) for row in infos if row is not info
+                           and _is_metadata_line(row) and not row.materials
+                           and "%" not in row.raw
+                           for token in literal_tokens(row.raw)
+                           if re.fullmatch(r"[0-9]+", token) and 0 < int(token) <= 100)
+        extra = (Counter(layout.observed_ratios.get("generic", ()))
+                 - Counter(raw.observed_ratios.get("generic", ())))
+        if not extra <= metadata:
+            return False
     line = normalize_text(info.raw)
     materials = _material_evidence(line)
     _, invalid, explicit, numbers = _read_numbers(line, allow_plain_numbers=False)
@@ -148,13 +171,15 @@ def literal_headed_blend_over_failed_layout(raw, layout):
             or Counter(zip(info.materials, map(float, info.numbers))) != Counter(raw.parts["generic"].items())):
         return False
     heading = line[:materials[0].start]
-    if not re.fullmatch(r"\s*-?\s*(?:소재|혼용률|혼용율|composition|fabric content)\s*:\s*", heading):
+    if (headed and not re.fullmatch(
+            r"\s*-?\s*(?:소재|혼용률|혼용율|composition|fabric content)\s*:\s*", heading)
+            or not headed and heading.strip()):
         return False
     if (line[numbers[1].end:].strip()
             or not re.fullmatch(r"[\s,;/]*", line[numbers[0].end:materials[1].start])):
         return False
     pairs = [line[m.start:n.end] for m, n in zip(materials, numbers)]
-    groups = [_unique_pair(heading.lstrip(" -"), raw.image_words)]
+    groups = [_unique_pair(heading.lstrip(" -"), raw.image_words)] if headed else []
     groups.extend(_unique_pair(pair, raw.image_words) for pair in pairs)
     if not all(groups) or len({word for group in groups for word in group}) != sum(map(len, groups)):
         return False
@@ -165,11 +190,31 @@ def literal_headed_blend_over_failed_layout(raw, layout):
             if _pair_options(swapped, raw.image_words):
                 return False
     for left, right in zip(groups, groups[1:]):
-        if max(w.right for w in left) > min(w.left for w in right) + 2:
+        if headed:
+            def project(word):
+                return (word.left, word.right), (word.top, word.bottom)
+        else:
+            anchor = max(left, key=lambda word: math.dist(word.vertices[0], word.vertices[1]))
+            a, b, *_ = anchor.vertices
+            length = math.dist(a, b)
+            ux, uy = (b[0] - a[0]) / length, (b[1] - a[1]) / length
+            other = max(right, key=lambda word: math.dist(word.vertices[0], word.vertices[1]))
+            c, d, *_ = other.vertices
+            span = math.dist(c, d)
+            # Without a shared heading, adjacent cells must also face the
+            # same reading direction. Separate/reversed labels are not a row.
+            if (ux * (d[0] - c[0]) + uy * (d[1] - c[1])) / span < math.cos(math.radians(3)):
+                return False
+            def project(word):
+                xs = [ux * x + uy * y for x, y in word.vertices]
+                ys = [-uy * x + ux * y for x, y in word.vertices]
+                return (min(xs), max(xs)), (min(ys), max(ys))
+        boxes = [[project(word) for word in group] for group in (left, right)]
+        if max(box[0][1] for box in boxes[0]) > min(box[0][0] for box in boxes[1]) + 2:
             return False
-        lo = max(min(w.top for w in left), min(w.top for w in right))
-        hi = min(max(w.bottom for w in left), max(w.bottom for w in right))
-        height = min(max(w.bottom for w in group) - min(w.top for w in group) for group in (left, right))
+        lo = max(min(box[1][0] for box in group) for group in boxes)
+        hi = min(max(box[1][1] for box in group) for group in boxes)
+        height = min(max(box[1][1] for box in group) - min(box[1][0] for box in group) for group in boxes)
         if hi - lo < .5 * height:
             return False
     core = {word for group in groups for word in group}
@@ -177,9 +222,10 @@ def literal_headed_blend_over_failed_layout(raw, layout):
     # hull around the entire row also encloses unrelated text above/below
     # its bend. The short bridges still protect every gap between cells.
     envelopes = [_hull(point for word in group for point in word.vertices) for group in groups]
-    envelopes.extend(_hull(point for word in (max(left, key=lambda w: w.center_x),
-                                            min(right, key=lambda w: w.center_x))
-                           for point in word.vertices) for left, right in zip(groups, groups[1:]))
+    for left, right in zip(groups, groups[1:]):
+        bridge = ((max(left, key=lambda w: w.center_x), min(right, key=lambda w: w.center_x))
+                  if headed else (left[-1], right[0]))
+        envelopes.append(_hull(point for word in bridge for point in word.vertices))
     # Every opaque word, number, part or extra fiber inside the composition
     # envelope remains evidence. Only literal separator punctuation is exempt.
     return all(word in core or re.fullmatch(r"[-,:;/]+", word.text.strip())
