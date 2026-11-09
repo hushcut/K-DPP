@@ -6,10 +6,10 @@ import re
 
 from apps.text.headed_inline_recovery import _hull, _overlap, _unique_pair, literal_tokens
 from apps.text.material_extraction import NEGATING_MODIFIERS, UNPRICED_MATERIALS, _material_evidence, normalize_text
-from apps.text.ocr_geometry import _row_options, complete_annotation_geometry
+from apps.text.ocr_geometry import _row_options, complete_annotation_geometry, same_place_annotations
 
 
-_TRIM = re.compile(r"\(\s*(?P<noun>[가-힣]{1,6})\s*,\s*상표\s*,\s*보강재\s*,\s*자수\s*,\s*장식\s*제외\s*\)")
+_TRIM = re.compile(r"\(\s*(?P<noun>[가-힣]{1,6})\s*,\s*상표\s*,\s*보강재\s*,\s*자수\s*,?\s*장식\s*제외\s*\)")
 _PUNCTUATION = re.compile(r"[-,:;()/]+")
 
 
@@ -103,9 +103,15 @@ def _curved_name_ratio(name, owner, percentage, words):
 
 def literal_single_part_table_over_failed_layout(raw, layout):
     """Keep only a fully located outer declaration from one original reply."""
+    return _literal_single_part_table(raw, layout, original_only=True)
+
+
+def _literal_single_part_table(raw, layout, *, original_only):
     from apps.text.parse_label import build_line_infos, _is_metadata_line
 
-    if (raw.source != "original" or raw.layout_used or not layout.layout_used
+    if ((original_only and raw.source != "original")
+            or raw.source not in {"original", "preprocessed", "material_crop", "material_crop_rotated"}
+            or raw.layout_used or not layout.layout_used
             or raw.parser_status != "success" or layout.parser_status != "failed"
             or raw.selected_part != "outer" or set(raw.parts) != {"outer"}
             or len(raw.parts["outer"]) != 1 or tuple(raw.parts["outer"].values()) != (100,)
@@ -117,8 +123,10 @@ def literal_single_part_table_over_failed_layout(raw, layout):
             or Counter(literal_tokens(raw.text)) != Counter(literal_tokens(layout.text))
             or not complete_annotation_geometry(raw, literal_tokens)
             or not complete_annotation_geometry(layout, literal_tokens)
-            or set(layout.observed_materials) - {"generic", "outer"}
-            or set(layout.observed_ratios) - {"generic", "outer"}
+            or set(layout.observed_materials) - ({"generic", "outer"} if original_only
+                                               else {"generic", "outer", "embroidery_yarn"})
+            or set(layout.observed_ratios) - ({"generic", "outer"} if original_only
+                                            else {"generic", "outer", "embroidery_yarn"})
             or Counter(material for values in layout.observed_materials.values() for material in values)
             != Counter(raw.parts["outer"].keys())):
         return False
@@ -218,3 +226,66 @@ def verified_single_part_layout(raw, layout):
     if Counter(literal_tokens(rendered)) != Counter(literal_tokens(raw.text)):
         return None
     return rendered
+
+
+def recover_corroborated_single_part_layout(candidate, alternative, part, candidates):
+    """A crop's scrambled view cannot veto its own physically proved raw table.
+
+    The original reply must independently retain the same outer declaration,
+    heading and literal exclusion boundary at the same image coordinates.
+    """
+    from apps.text.parse_label import build_line_infos
+
+    if (part not in {"generic", "outer", "embroidery_yarn"}
+            or candidate.source not in {"preprocessed", "material_crop", "material_crop_rotated"}
+            or not candidate.layout_used or candidate.parser_status != "failed"
+            or alternative.source != "original" or alternative.layout_used
+            or alternative.parser_status != "success" or set(alternative.parts) != {"outer"}
+            or alternative.parser_warnings or alternative.unpaired_ratio_parts
+            or alternative.rejected_composition_parts or alternative.conflicting_parts
+            or alternative.unconfirmed_outer_parts
+            or candidate.image_key != alternative.image_key
+            or candidate.image_variant_key == alternative.image_variant_key
+            or not complete_annotation_geometry(alternative, literal_tokens)):
+        return False
+    original = build_line_infos(alternative.text)
+    original_owners = [row for row in original if row.materials]
+    original_ratios = [row for row in original if '%' in row.raw]
+    original_headings = [row for row in original if row.normalized in {"혼용률", "혼용율"}]
+    original_footers = [row for row in original if _TRIM.fullmatch(row.normalized)]
+    if not all(len(rows) == 1 for rows in (original_owners, original_ratios, original_headings, original_footers)):
+        return False
+    a, b, c, d = alternative.image_region
+    left, top, right, bottom = candidate.image_region
+    if not a <= left < right <= c or not b <= top < bottom <= d:
+        return False
+    for raw in candidates:
+        if (raw.layout_used or raw.source != candidate.source
+                or raw.image_key != candidate.image_key or raw.image_variant_key != candidate.image_variant_key
+                or raw.image_words != candidate.image_words or raw.image_region != candidate.image_region
+                or raw.parts != alternative.parts
+                or not _literal_single_part_table(raw, candidate, original_only=False)):
+            continue
+        infos = build_line_infos(raw.text)
+        owner = next(row for row in infos if row.materials)
+        ratio = next(row for row in infos if '%' in row.raw)
+        heading = next(row for row in infos if row.normalized in {"혼용률", "혼용율"})
+        footer = next(row for row in infos if _TRIM.fullmatch(row.normalized))
+        source_core = _chain_options(owner.raw, raw.image_words) + _unique_pair(ratio.raw, raw.image_words)
+        target_core = (_chain_options(original_owners[0].raw, alternative.image_words)
+                       + _unique_pair(original_ratios[0].raw, alternative.image_words))
+        source_heading = _chain_options(heading.raw, raw.image_words)
+        target_heading = _chain_options(original_headings[0].raw, alternative.image_words)
+        source_footer = _chain_options(footer.raw, raw.image_words, caption=True)
+        target_footer = _chain_options(original_footers[0].raw, alternative.image_words, caption=True)
+        if (not all((source_core, target_core, source_heading, target_heading, source_footer, target_footer))
+                or not same_place_annotations(source_core, target_core)
+                or not same_place_annotations(source_heading, target_heading)
+                or _content_tokens(footer.raw) != _content_tokens(original_footers[0].raw)):
+            continue
+        # Both complete literal lists are proved separately; OCR punctuation
+        # may differ, but each substantive cell must overlap the other list.
+        if (all(any(_overlap(word.vertices, other.vertices) for other in target_footer) for word in source_footer)
+                and all(any(_overlap(word.vertices, other.vertices) for other in source_footer) for word in target_footer)):
+            return True
+    return False

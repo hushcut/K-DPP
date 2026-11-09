@@ -165,6 +165,88 @@ def test_no_rendering_is_created_without_matching_proof():
     assert verified_single_part_layout(raw, replace(layout, image_key="another-photo")) is None
 
 
+def test_a_missing_comma_between_written_exclusion_items_changes_no_fiber():
+    raw, layout = readings(split_footer=True)
+    for old in (raw, layout):
+        changed = replace(old, text=old.text.replace("자수, 장식", "자수 장식"),
+                          image_words=tuple(replace(w, text="자수") if w.text == "자수," else w
+                                            for w in old.image_words))
+        if old is raw:
+            raw = changed
+        else:
+            layout = changed
+    assert literal_single_part_table_over_failed_layout(raw, layout)
+
+
+@pytest.mark.parametrize("source", ["preprocessed", "material_crop", "material_crop_rotated"])
+def test_a_scrambled_reread_uses_its_own_raw_table_and_same_place_original(source):
+    from apps.text.single_part_table_recovery import recover_corroborated_single_part_layout
+
+    original, layout = readings()
+    raw = replace(original, source=source, image_variant_key="reread")
+    layout = replace(layout, source=source, image_variant_key="reread")
+    assert not literal_single_part_table_over_failed_layout(raw, layout)
+    for part in ("generic", "outer", "embroidery_yarn"):
+        assert recover_corroborated_single_part_layout(layout, original, part, [original, raw, layout])
+    assert not recover_corroborated_single_part_layout(layout, original, "lining", [original, raw, layout])
+
+
+def test_corroborating_original_cannot_hide_an_unconfirmed_outer_part():
+    from apps.text.single_part_table_recovery import recover_corroborated_single_part_layout
+
+    original, layout = readings()
+    raw = replace(original, source="material_crop", image_variant_key="crop")
+    layout = replace(layout, source="material_crop", image_variant_key="crop")
+    original = replace(original, unconfirmed_outer_parts=("outer_2",))
+    assert not recover_corroborated_single_part_layout(layout, original, "outer", [original,raw,layout])
+
+
+@pytest.mark.parametrize("defect", ["missing_raw", "other_image", "same_variant", "other_fiber",
+                                  "unknown_fiber", "moved_footer", "extra_ratio", "unknown_between",
+                                  "missing_geometry", "wrong_part", "actual_embroidery", "missing_percent"])
+def test_reread_recovery_cannot_hide_real_evidence_or_borrow_other_source(defect):
+    from apps.text.single_part_table_recovery import recover_corroborated_single_part_layout
+
+    original, layout = readings()
+    raw = replace(original, source="material_crop", image_variant_key="crop")
+    layout = replace(layout, source="material_crop", image_variant_key="crop")
+    candidates = [original, raw, layout]
+    if defect == "missing_raw":
+        candidates = [original, layout]
+    elif defect == "other_image":
+        original = replace(original, image_key="other-photo")
+    elif defect == "same_variant":
+        original = replace(original, image_variant_key="crop")
+    elif defect == "other_fiber":
+        original = replace(original, parts={"outer": {"cotton": 100}})
+    elif defect in {"unknown_fiber", "actual_embroidery"}:
+        raw = replace(raw, parts={"outer": {"polyester": 90}, "embroidery_yarn": {"nylon": 10}})
+        candidates = [original, raw, layout]
+    elif defect in {"moved_footer", "missing_geometry", "unknown_between"}:
+        words = raw.image_words
+        if defect == "moved_footer":
+            words = words[:-1] + (box(CAPTION,100,700,750),)
+        elif defect == "missing_geometry":
+            words = (replace(words[0], vertices=()),) + words[1:]
+        else:
+            words = words + (box("UNKNOWN", 550, 220, 60),)
+        raw, layout = (replace(item, image_words=words,
+                               text=item.text + ("\nUNKNOWN" if defect == "unknown_between" else ""))
+                       for item in (raw, layout))
+        candidates = [original, raw, layout]
+    elif defect == "extra_ratio":
+        layout = replace(layout, observed_ratios={"generic": [100, 5]})
+    elif defect == "wrong_part":
+        raw = replace(raw, parts={"lining": {"polyester": 100}})
+        candidates = [original, raw, layout]
+    elif defect == "missing_percent":
+        words = raw.image_words[:5] + raw.image_words[7:]
+        raw, layout = (replace(item, image_words=words, text=item.text.replace("100%", ""))
+                       for item in (raw, layout))
+        candidates = [original, raw, layout]
+    assert not recover_corroborated_single_part_layout(layout, original, "outer", candidates)
+
+
 def test_a_percentage_swallowed_by_reordered_exclusion_text_still_needs_its_real_cell():
     raw, old = readings(split_footer=True)
     text = f"SIZE M\n혼용률\n겉감: POLYESTER\n{CAPTION.replace('자수', '100% 자수')}"

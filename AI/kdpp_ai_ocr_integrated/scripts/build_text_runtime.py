@@ -54,6 +54,7 @@ RUNTIME_FILES = (
     "apps/text/single_part_table_recovery.py",
     "apps/text/single_row_metadata_recovery.py",
     "apps/text/table_care_recovery.py",
+    "apps/text/written_care_band_recovery.py",
 )
 
 
