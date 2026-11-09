@@ -499,6 +499,20 @@ raw_ocr_text: COTTON 80% POLYESTER 20%  (optional, 4000자 이하)
 - `parser_error_code`: AI 파서의 실패 코드(`composition_not_found`·`ambiguous_composition` 등, 없으면 `""`).
   화면 분기는 상태 코드로 합니다.
 
+### Invalid Image Input (400 / 413 / 415)
+
+AI 이미지 검증에서 EXIF 손상·방향 보정 대상 JPEG의 픽셀 잘림 등을 발견하면 입력 오류로 반환합니다.
+응답은 공통 오류 형식이며, 내부 예외 문자열·EXIF 내용은 포함하지 않습니다.
+
+| HTTP | error_code | 경우 |
+| --- | --- | --- |
+| 400 | `INVALID_IMAGE` | 이미지 디코딩 또는 방향 정보를 읽을 수 없음. 다른 사진으로 재시도 |
+| 413 | `PAYLOAD_TOO_LARGE` | AI 검증·변환 과정에서 이미지 용량·해상도 제한 초과 |
+| 415 | `UNSUPPORTED_IMAGE_FORMAT` | 실제 이미지 형식이 AI 지원 범위 밖임 |
+
+일반 이미지 오류의 하위형인 크기·형식 오류도 각각 413·415로 구분합니다.
+이 오류는 Vision 전에 발생할 수 있으며 소재 추출 실패(422)와 구분합니다.
+
 ### OCR Failure (502 / 504)
 
 Vision 을 부른 뒤 실패하면 예외 원문은 서버 로그(`[scan] OCR 실패: …` — 예외 이름으로 원인 구분)에만 남기고
@@ -520,10 +534,12 @@ Google Vision 을 부르는 스캔(`raw_ocr_text` 없이 보낸 요청)은 하�
 - 한 계정 하루 **20번**(`main.SCAN_USER_DAILY_MAX`)을 넘으면 `429 SCAN_DAILY_LIMIT`.
 - 서버 전체 하루 `K_DPP_SCAN_DAILY_MAX` 번(환경변수, 비우면 없음 — 배포는 필수)을 넘으면
   `503 SCAN_UNAVAILABLE`. 둘 다 닿았으면 429 를 줍니다.
-- Vision 을 부르기 직전에 세고 결과(성공·422·502·504)와 상관없이 되돌리지 않습니다.
+- OCR 처리 진입 직전에 예약하고 결과(성공·400·413·415·422·502·504)와 상관없이 되돌리지 않습니다.
   `raw_ocr_text` 로 OCR 을 건너뛴 요청과 업로드 검사(413·415)·OCR·분석·라벨 파서 모듈 없음(503
   `AI_MODULE_FAILED` — 모두 Vision 전에 확인)으로 끝난 요청은 세지 않습니다. 막힌 요청은 Vision 을
   부르지 않습니다.
+- 예약 뒤 AI 입력 검증에서 발견한 오류(400·413·415)도 기존 예약 정책에 따라 횟수를 유지합니다.
+  예약 전 업로드 검사에서 반환한 413·415와 구분합니다.
 
 ```json
 {
