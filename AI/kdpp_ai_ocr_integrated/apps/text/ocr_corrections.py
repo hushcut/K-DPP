@@ -1588,6 +1588,11 @@ def same_region_recovery(
     if recover_bounded_care_number(candidate, alternative, part):
         return True
 
+    from apps.text.remote_background_recovery import recover_remote_background_number
+
+    if recover_remote_background_number(candidate, alternative, part, candidates or []):
+        return True
+
     from apps.text.table_care_recovery import verified_care_table_layout
 
     if (part == "generic" and verified_care_table_layout(

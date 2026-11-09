@@ -49,6 +49,7 @@ RUNTIME_FILES = (
     "apps/text/part_policy.py",
     "apps/text/ratio_contract.py",
     "apps/text/recycled_content.py",
+    "apps/text/remote_background_recovery.py",
     "apps/text/rules.py",
     "apps/text/single_part_table_recovery.py",
     "apps/text/single_row_metadata_recovery.py",
