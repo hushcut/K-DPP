@@ -33,6 +33,7 @@ MATERIAL_ALIASES = {
         "medvilne",
         "kokvilna",
         "kapas",
+        "katun",
         "bawełna",
         "면",
         "코튼",

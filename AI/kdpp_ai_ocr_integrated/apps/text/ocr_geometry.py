@@ -61,6 +61,44 @@ def _covers_row_tokens(row: tuple[str, ...], words: list[OcrWord], *, tokenise=_
     return False
 
 
+def complete_annotation_geometry(item, tokenise) -> bool:
+    """Require literal coverage and valid, bounded polygons on one image page."""
+    words = item.image_words
+    if (not item.image_key or not item.image_variant_key or not item.source
+            or len(item.image_region) != 4 or not words or len(words) > 128
+            or len(set(words)) != len(words) or len({word.page for word in words}) != 1
+            or any(len(word.vertices) != 4 for word in words)
+            or not _covers_row_tokens(tokenise(item.text), list(words), tokenise=tokenise)):
+        return False
+    left, top, right, bottom = item.image_region
+    if not all(math.isfinite(value) for value in item.image_region) or left >= right or top >= bottom:
+        return False
+    for word in words:
+        points = word.vertices
+        if (not (left - 2 <= word.left < word.right <= right + 2
+                 and top - 2 <= word.top < word.bottom <= bottom + 2)
+                or (word.left, word.top, word.right, word.bottom) != (
+                    min(x for x, _ in points), min(y for _, y in points),
+                    max(x for x, _ in points), max(y for _, y in points))):
+            return False
+        edges = [(points[(i + 1) % 4][0] - points[i][0],
+                  points[(i + 1) % 4][1] - points[i][1]) for i in range(4)]
+        turns = [a[0] * b[1] - a[1] * b[0] for a, b in zip(edges, edges[1:] + edges[:1])]
+        if not (all(value > 0 for value in turns) or all(value < 0 for value in turns)):
+            return False
+    return True
+
+
+def same_place_annotations(source, target) -> bool:
+    """Match complete literal cells bidirectionally without digit/spelling repair."""
+    return (all(_matching_token_parts(word, [other for other in target if _overlaps(word, other)],
+                                      allow_change=False, literal_cjk=True) == 0 for word in source)
+            and all(_matching_token_parts(word, [other for other in source if _overlaps(word, other)],
+                                           allow_change=False, literal_cjk=True) == 0 for word in target)
+            and _numeric_components_align(source, target, (), corroborated=False)
+            and _numeric_components_align(target, source, (), corroborated=False))
+
+
 def _row_words(text: str, words: tuple[OcrWord, ...], *, tokenise=_tokens) -> tuple[OcrWord, ...]:
     row = tokenise(text)
     row_tokens = Counter(row)

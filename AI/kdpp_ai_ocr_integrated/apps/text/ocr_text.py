@@ -521,9 +521,38 @@ def _build_payload_candidates(
                               image_region=image_region) for candidate in candidates]
         if len(candidates) == 2:
             from apps.text.ocr_candidates import literal_yarn_table_over_failed_layout
+            from apps.text.headed_inline_recovery import (
+                literal_headed_blend_over_failed_layout, literal_unheaded_blend_over_failed_layout,
+            )
+            from apps.text.single_part_table_recovery import verified_single_part_layout
 
-            if literal_yarn_table_over_failed_layout(candidates[0], candidates[1]):
+            if (literal_yarn_table_over_failed_layout(candidates[0], candidates[1])
+                    or literal_headed_blend_over_failed_layout(candidates[0], candidates[1])
+                    or literal_unheaded_blend_over_failed_layout(candidates[0], candidates[1])):
                 candidates = candidates[:1]
+            else:
+                rendered = verified_single_part_layout(candidates[0], candidates[1])
+                if rendered is not None:
+                    verified = _build_candidate(source, rendered, layout_used=True)
+                    raw = candidates[0]
+                    if (verified.parser_status == "success" and verified.parts == raw.parts
+                            and verified.selected_part == raw.selected_part):
+                        candidates = [raw, replace(
+                            verified, image_key=raw.image_key, image_variant_key=raw.image_variant_key,
+                            image_words=raw.image_words, image_region=raw.image_region,
+                        )]
+        if len(candidates) == 2:
+            from apps.text.ocr_corrections import _literal_name_tokens
+            from apps.text.table_care_recovery import verified_care_table_layout
+
+            raw, layout = candidates
+            rendered = verified_care_table_layout(raw, layout, tokenise=_literal_name_tokens)
+            if rendered is not None:
+                verified = _build_candidate(source, rendered, layout_used=True)
+                candidates = [raw, replace(
+                    verified, image_key=raw.image_key, image_variant_key=raw.image_variant_key,
+                    image_words=raw.image_words, image_region=raw.image_region,
+                )]
     return candidates
 
 
