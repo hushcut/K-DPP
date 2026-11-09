@@ -22,16 +22,18 @@ def box(text, x, y, width, height=30):
     )
 
 
-def readings(temperature=30, *, heading="취급시 주의사항", source_value=None, target_value=None):
+def readings(
+    temperature=30, *, heading="취급시 주의사항", source_value=None, target_value=None, ratio="100%", ratio_row="ACRYLIC 100%"
+):
     bad = str(temperature) + "'0" if source_value is None else source_value
     peer = str(temperature) + "0" if target_value is None else target_value
 
     def build(source, value, layout):
-        text = f"겉감 (SHELL)\nACRYLIC 100%\n{heading}\n{value}\n품번: MODEL1234"
+        text = f"겉감 (SHELL)\n{ratio_row}\n{heading}\n{value}\n품번: MODEL1234"
         words = (
             box("겉감 (SHELL)", 100, 100, 220),
             box("ACRYLIC", 100, 170, 180),
-            box("100%", 400, 170, 100),
+            box(ratio, 400, 170, 100),
             box(heading, 100, 260, 250),
             box(value, 180, 340, 40, 20),
             box("품번: MODEL1234", 100, 430, 300),
@@ -65,6 +67,13 @@ def test_located_written_band_and_independent_full_reading_explain_only_the_extr
 def test_other_digits_percentages_or_uncertainty_signs_are_not_explained(value):
     raw, peer = readings(source_value=value)
     assert not recover_bounded_care_number(raw, peer, "outer")
+
+
+@pytest.mark.parametrize("ratio", ["100.0%", "100.00 %"])
+def test_decimal_hundred_percent_row_is_checked_without_raising(ratio):
+    raw, peer = readings(ratio=ratio, ratio_row=f"ACRYLIC\n{ratio}")
+    assert raw.parser_status == "failed" and peer.parser_status == "success"
+    assert recover_bounded_care_number(raw, peer, "outer") in {True, False}
 
 
 def test_mixed_alias_fonts_use_a_shared_direction_without_ignoring_a_bridge_word():

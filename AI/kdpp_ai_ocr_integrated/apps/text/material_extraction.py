@@ -426,7 +426,7 @@ _PART_MARKER_PATTERNS = {
 
 # These short labels also appear inside fiber names, product descriptions,
 # or care instructions without naming a composition part.
-_SHORT_PART_MARKERS = {"솜", "립", "袖", "표면", "실", "자수", "자수실", "刺绣", "刺繍"}
+_SHORT_PART_MARKERS = {"솜", "립", "袖", "표면", "실", "자수", "자수실", "刺绣", "刺繍", "쉘", "シェル", "몸체"}
 
 _NUMBERED_CJK_OUTER_MARKERS = {
     f"{heading}{separator}{index}"

@@ -112,7 +112,10 @@ def _band(view, part, composition):
     if any(i.numbers or i.materials or i.invalid_evidence or i.unresolved_materials
            for i in infos if name.index < i.index < percent_rows[0].index):
         return None
-    literal_percentage = re.search(r"100\s*%", percent_rows[0].normalized).group()
+    percentage_match = re.search(r"100(?:\.0+)?\s*%", percent_rows[0].normalized)
+    if percentage_match is None:
+        return None
+    literal_percentage = percentage_match.group()
     minimal = parse_label(owners[0].raw + '\n' + alias_text + ' ' + literal_percentage)
     if minimal['status'] != 'success' or minimal['parts'] != {part: composition}:
         return None

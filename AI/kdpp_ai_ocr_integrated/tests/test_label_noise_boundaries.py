@@ -43,6 +43,23 @@ def test_written_shell_headings_and_exclusions_keep_outer_composition(text):
     assert result["selected_part"] == "outer"
 
 
+@pytest.mark.parametrize(("text", "part"), [
+    ("안감\n소프트쉘 재킷\n면 95%\n스판덱스 5%", "lining"),
+    ("주머니감\n미쉘\n면 100%", "pocket"),
+    ("소프트쉘 자켓\n폴리에스터 92%\n스판덱스 8%", "generic"),
+    ("면 100%\n(주)미쉘코리아", "generic"),
+    ("ソフトシェル ジャケット\n綿 100%", "generic"),
+])
+def test_shell_alias_inside_a_longer_word_does_not_name_the_outer_part(text, part):
+    result = parse_label(text)
+    assert result["status"] == "success", result
+    assert result["selected_part"] == part
+
+
+def test_product_name_with_shell_alias_cannot_separate_a_second_composition():
+    assert parse_label("안감\n폴리에스터 100%\n소프트쉘 자켓\n면 100%")["status"] == "failed"
+
+
 @pytest.mark.parametrize("code", [
     "2-9639/080-023-9639", "+82.1600.4775.", "341-479786(53-02)", "485-37 212945",
     "80~120", "80-120",
