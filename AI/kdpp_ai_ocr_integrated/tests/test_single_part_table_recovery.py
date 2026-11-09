@@ -163,3 +163,82 @@ def test_rendering_moves_only_the_original_percentage_and_preserves_all_tokens()
 def test_no_rendering_is_created_without_matching_proof():
     raw, layout = readings()
     assert verified_single_part_layout(raw, replace(layout, image_key="another-photo")) is None
+
+
+def test_a_percentage_swallowed_by_reordered_exclusion_text_still_needs_its_real_cell():
+    raw, old = readings(split_footer=True)
+    text = f"SIZE M\n혼용률\n겉감: POLYESTER\n{CAPTION.replace('자수', '100% 자수')}"
+    layout = replace(build_candidate("original", text, parse_candidate=parse_label, layout_used=True),
+                     image_key=old.image_key, image_variant_key=old.image_variant_key,
+                     image_region=old.image_region, image_words=old.image_words)
+    assert not any(100 in values for values in layout.observed_ratios.values())
+    assert literal_single_part_table_over_failed_layout(raw, layout)
+    rendered = verified_single_part_layout(raw, layout)
+    assert rendered and parse_label(rendered)["materials"] == {"polyester": 100}
+
+
+@pytest.mark.parametrize("noun", ["실체", "부속물"])
+def test_literal_nonfiber_exclusion_noun_is_retained_without_spelling_repair(noun):
+    raw, layout = readings()
+    caption = CAPTION.replace("심지", noun)
+    def changed(item):
+        parsed = build_candidate(item.source, item.text.replace(CAPTION, caption),
+                                 parse_candidate=parse_label, layout_used=item.layout_used)
+        return replace(parsed, image_key=item.image_key, image_variant_key=item.image_variant_key,
+                       image_region=item.image_region, image_words=item.image_words[:-1] +
+                       (replace(item.image_words[-1], text=caption),))
+    raw, layout = changed(raw), changed(layout)
+    rendered = verified_single_part_layout(raw, layout)
+    assert rendered and caption in rendered
+    assert "심지" not in rendered
+
+
+@pytest.mark.parametrize("noun", ["면", "나일론", "COTTON", "UNKNOWN", "부속물 5%"])
+def test_fiber_or_numeric_text_cannot_supply_the_exclusion_noun(noun):
+    raw, layout = readings()
+    caption = CAPTION.replace("심지", noun)
+    raw, layout = (replace(item, text=item.text.replace(CAPTION, caption),
+                           image_words=item.image_words[:-1] + (replace(item.image_words[-1], text=caption),))
+                   for item in (raw, layout))
+    assert not literal_single_part_table_over_failed_layout(raw, layout)
+
+
+def curved_cells():
+    from math import cos, radians, sin
+    def tilted(text, x, y, width, angle):
+        c, s = cos(radians(angle)), sin(radians(angle))
+        vertices = tuple((round(x + px * c - py * s), round(y + px * s + py * c))
+                         for px, py in ((0, 0), (width, 0), (width, 30), (0, 30)))
+        xs, ys = zip(*vertices)
+        return OcrWord(text, min(xs), min(ys), max(xs), max(ys), vertices)
+    alias = (tilted("폴리", 100, 100, 100, 10), tilted("에스터", 210, 120, 160, 10))
+    percent = (tilted("100", 440, 156, 100, 2), tilted("%", 550, 160, 40, 2))
+    return alias, percent, tilted
+
+
+def test_split_literal_alias_and_percentage_can_follow_a_bounded_curved_baseline():
+    from apps.text.single_part_table_recovery import _curved_name_ratio
+    alias, percentage, _ = curved_cells()
+    assert _curved_name_ratio("폴리에스터", alias, percentage, alias + percentage)
+    assert not _curved_name_ratio("에스터", alias[-1:], percentage, alias[-1:] + percentage)
+
+
+@pytest.mark.parametrize("defect", ["steep", "different_row", "far", "left", "intrusion", "wrong_name"])
+def test_a_curve_does_not_join_different_rows_or_hide_intervening_evidence(defect):
+    from apps.text.single_part_table_recovery import _curved_name_ratio
+    alias, percentage, tilted = curved_cells()
+    name = "폴리에스터"
+    if defect == "steep":
+        percentage = (tilted("100%", 440, 156, 140, 25),)
+    elif defect == "different_row":
+        percentage = (tilted("100%", 440, 300, 140, 2),)
+    elif defect == "far":
+        percentage = (tilted("100%", 1500, 270, 140, 2),)
+    elif defect == "left":
+        percentage = (tilted("100%", 0, 100, 60, 2),)
+    elif defect == "wrong_name":
+        name = "폴리에스더"
+    words = alias + percentage
+    if defect == "intrusion":
+        words += (box("UNKNOWN", 395, 155, 35, 25),)
+    assert not _curved_name_ratio(name, alias, percentage, words)

@@ -9,7 +9,7 @@ from apps.text.material_extraction import NEGATING_MODIFIERS, UNPRICED_MATERIALS
 from apps.text.ocr_geometry import _row_options, complete_annotation_geometry
 
 
-_TRIM = re.compile(r"\(\s*심지\s*,\s*상표\s*,\s*보강재\s*,\s*자수\s*,\s*장식\s*제외\s*\)")
+_TRIM = re.compile(r"\(\s*(?P<noun>[가-힣]{1,6})\s*,\s*상표\s*,\s*보강재\s*,\s*자수\s*,\s*장식\s*제외\s*\)")
 _PUNCTUATION = re.compile(r"[-,:;()/]+")
 
 
@@ -62,6 +62,45 @@ def _chain_options(text, words, *, caption=False):
     return found[0] if len(found) == 1 else ()
 
 
+def _curved_name_ratio(name, owner, percentage, words):
+    """A split literal alias can meet a ratio along a modest curved baseline.
+
+    Each end must be a valid physical word/ratio. Its centre-to-centre bridge
+    must agree with the mean of BOTH printed directions, with an empty gap.
+    This cannot connect a lone guessed fragment or a different material row.
+    """
+    options = _row_options(name, owner, tokenise=literal_tokens)
+    if len(options) != 1 or len(options[0]) < 2:
+        return False
+    alias = tuple(owner[i] for i in options[0])
+    if alias[-1] != owner[-1] or not percentage:
+        return False
+    last, first = alias[-1], percentage[0]
+    if not _unique_pair(last.text, (last,)):
+        return False
+    def direction(word):
+        a, b, *_ = word.vertices
+        size = math.dist(a, b)
+        return ((b[0] - a[0]) / size, (b[1] - a[1]) / size)
+    left, right = direction(last), direction(first)
+    if sum(a * b for a, b in zip(left, right)) < math.cos(math.radians(10)):
+        return False
+    length = math.hypot(left[0] + right[0], left[1] + right[1])
+    u = ((left[0] + right[0]) / length, (left[1] + right[1]) / length)
+    normal = (-u[1], u[0])
+    start = tuple((a + b) / 2 for a, b in zip(last.vertices[1], last.vertices[2]))
+    end = tuple((a + b) / 2 for a, b in zip(first.vertices[0], first.vertices[3]))
+    delta = (end[0] - start[0], end[1] - start[1])
+    heights = [math.dist(word.vertices[0], word.vertices[3]) for word in (last, first)]
+    gap = sum(a * b for a, b in zip(u, delta))
+    if not (0 < gap <= 6 * max(heights)) or abs(sum(a * b for a, b in zip(normal, delta))) > .4 * min(heights):
+        return False
+    selected = (last, *percentage)
+    envelope = _hull(point for word in selected for point in word.vertices)
+    return all(word in selected or _PUNCTUATION.fullmatch(word.text.strip())
+               or not _overlap(envelope, word.vertices) for word in words)
+
+
 def literal_single_part_table_over_failed_layout(raw, layout):
     """Keep only a fully located outer declaration from one original reply."""
     from apps.text.parse_label import build_line_infos, _is_metadata_line
@@ -81,8 +120,15 @@ def literal_single_part_table_over_failed_layout(raw, layout):
             or set(layout.observed_materials) - {"generic", "outer"}
             or set(layout.observed_ratios) - {"generic", "outer"}
             or Counter(material for values in layout.observed_materials.values() for material in values)
-            != Counter(raw.parts["outer"].keys())
-            or 100 not in [value for values in layout.observed_ratios.values() for value in values]):
+            != Counter(raw.parts["outer"].keys())):
+        return False
+    observed = [value for values in layout.observed_ratios.values() for value in values]
+    # The literal percentage can be swallowed by a reordered exclusion block.
+    # It must still exist exactly once in that block, never be supplied from
+    # a size/identifier or inferred because a declaration ought to total 100.
+    if 100 not in observed and not re.search(
+        r"\([^)]*\b100\s*%[^)]*제외[^)]*\)", layout.text, re.DOTALL,
+    ):
         return False
     forbidden = NEGATING_MODIFIERS | UNPRICED_MATERIALS | {"unknown", "olefin", "未知繊維", "未知纤维"}
     if any(token in forbidden for token in literal_tokens(raw.text)):
@@ -96,6 +142,11 @@ def literal_single_part_table_over_failed_layout(raw, layout):
             or any(info.unresolved_materials for info in infos)):
         return False
     heading, owner, ratio, footer = headings[0], owners[0], ratios[0], footers[0]
+    noun = _TRIM.fullmatch(footer.normalized).group("noun")
+    # A literal exclusion noun is retained as printed, not corrected to 심지.
+    # Actual fibers, negation and unpriced materials cannot supply this fence.
+    if _material_evidence(noun) or noun in NEGATING_MODIFIERS | UNPRICED_MATERIALS:
+        return False
     metadata = Counter(float(token) for row in infos if row not in (owner, ratio)
                        and _is_metadata_line(row) and not row.materials and "%" not in row.raw
                        for token in literal_tokens(row.raw)
@@ -125,7 +176,9 @@ def literal_single_part_table_over_failed_layout(raw, layout):
     # physical row. This ties the ratio to the complete registered name chain.
     tail = _unique_pair(owner_cell[-1].text + " " + ratio.raw, words)
     if not tail or set(tail) != {owner_cell[-1], *percent_cell}:
-        return False
+        name = owner.normalized[evidence[0].start:evidence[0].end]
+        if not _curved_name_ratio(name, owner_cell, percent_cell, words):
+            return False
     anchor = max(owner_cell, key=lambda word: math.dist(word.vertices[0], word.vertices[1]))
     a, b, *_ = anchor.vertices
     length = math.dist(a, b)
