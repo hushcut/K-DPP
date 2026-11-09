@@ -1583,6 +1583,11 @@ def same_region_recovery(
     if _same_response_care_boundary_recovery(candidate, alternative, part):
         return True
 
+    from apps.text.bounded_care_band import recover_bounded_care_number
+
+    if recover_bounded_care_number(candidate, alternative, part):
+        return True
+
     from apps.text.table_care_recovery import verified_care_table_layout
 
     if (part == "generic" and verified_care_table_layout(

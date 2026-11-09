@@ -21,6 +21,7 @@ RUNTIME_FILES = (
     "apps/service/request_limits.py",
     "apps/service/response_contract.py",
     "apps/text/__init__.py",
+    "apps/text/bounded_care_band.py",
     "apps/text/candidate_evidence.py",
     "apps/text/care_cell_geometry.py",
     "apps/text/composition_candidates.py",
