@@ -7,6 +7,7 @@ from apps.text.line_analysis_cache import LineAnalysis, line_analysis_scope, reu
 from apps.text.part_policy import PART_PRIORITY as PART_PRIORITY
 from apps.text.part_policy import OUTER_PARTS
 from apps.text.ratio_contract import EXACT_RATIO_TOTAL, has_exact_total
+from apps.text.recycled_content import has_unbound_recycled_ratio, unclosed_recycled_property_rows
 from apps.text.translation_alternatives import prepare_translation_alternatives
 from apps.text.scoped_materials import read_yarn_materials, confirmed_yarn_declaration
 from apps.text.line_context import (
@@ -38,14 +39,23 @@ from apps.text.material_extraction import (
     extract_materials,
     find_material_key,
     is_part_marker_match,
+    join_recycled_property_rows,
     normalize_text,
     restore_registered_han_aliases,
+    recycled_composition_view,
     unresolved_material_tokens,
 )
 from apps.text.rules import (
     CARE_CONFLICTS,
     CARE_RULES,
     MATERIAL_KOREAN,
+)
+
+_RECYCLED_UNCERTAIN_CONTEXT = re.compile(
+    r"(?:(?:gb|f|fr|cn)\s*:\s*)?(?:(?:"
+    + "|".join(re.escape(alias) for aliases in PART_PATTERNS.values() for alias in aliases)
+    + r")\s*:?\s*)?(?:unknown|unregistered|not|no|알\s*수\s*없는\s*소재|未知繊維|未知纤维|不明)\s*:?",
+    re.IGNORECASE,
 )
 
 
@@ -95,7 +105,10 @@ _RATIO_ROW_LABELS = COMPOSITION_HINTS | {
 }
 _RATIO_ROW_LABEL_PATTERN = re.compile(
     "|".join(
-        rf"(?<![a-z]){re.escape(label)}(?![a-z])" if label.isascii() else re.escape(label)
+        (rf"(?<![a-z]){re.escape(label)}(?![a-z])" if label.isascii() else re.escape(label))
+        # A numbered heading must not consume the first digit of 100% and
+        # prevent the unnumbered heading from matching at that same position.
+        + (r"(?!\d)" if label[-1].isdigit() else "")
         for label in sorted(_RATIO_ROW_LABELS, key=len, reverse=True)
     )
 )
@@ -139,13 +152,35 @@ def _looks_like_non_composition_number(line: str) -> bool:
 
 
 _NUMERIC_IDENTIFIER_ROW_PATTERN = re.compile(r"\(?\s*[0-9]+(?:\s*-\s*[0-9]+){1,3}\s*\)?")
+# 연락처·품번·치수 범위는 하이픈 외에 점·빗금·괄호·더하기·물결로도 묶음을 잇는다.
+_SEPARATED_NUMBER_ROW_PATTERN = re.compile(r"[0-9+\-./()~\s]+")
+
+
+def _is_separated_numeric_identifier(line: str) -> bool:
+    """기호로 이은 숫자 묶음 중 혼용률이 될 수 없는 연락처·품번·범위를 찾는다."""
+
+    if not _SEPARATED_NUMBER_ROW_PATTERN.fullmatch(line) or not re.search(r"[-./()+~]", line):
+        return False
+    # A decimal is one value; ``100.0000001`` must stay a malformed ratio.
+    numbers = re.findall(r"[0-9]+(?:\.[0-9]+)?", line)
+    if len(numbers) < 2:
+        return False
+    integers = [number for number in numbers if "." not in number]
+    # A fiber ratio never exceeds 100; a long run with a four-digit group is a
+    # phone or product number. ``40-60`` and ``60.5/39.5`` remain ratio evidence.
+    return (
+        (sum(len(number.replace(".", "")) for number in numbers) >= 7
+         and max(len(number.split(".")[0]) for number in numbers) >= 4)
+        or any(len(number) > 3 or int(number) > 100 for number in integers)
+    )
 _WASH_SYMBOL_OCR_PATTERN = re.compile(r"1(?:30|40|50|60|70|95)\s*[/\\]")
 _OUTLINED_WASH_SYMBOL_OCR_PATTERN = re.compile(
     r"(?:\(\s*(?:30|40|50|60|70|95)0\s*\)?\s*/?"
     r"|\\\s*(?:30|40|50|60|70|95)\s*/?)"
 )
 _NUMBERED_OUTER_MARKER_PATTERN = re.compile(
-    r"(?<![a-z0-9])(?:outshell|cutshell|shell|outer|겉\s*감)\s*[12](?![a-z0-9.,]|\s*%)"
+    r"(?<![a-z0-9])(?:(?:outshell|cutshell|shell|outer|겉\s*감)\s*[12]"
+    r"|(?:面料|表地)[ \t]*[12])(?![a-z0-9.,]|\s*%)"
 )
 _STORAGE_DOWN_PATTERN = re.compile(r"(?<![a-z])(?:fold|ford)\s+down(?![a-z])")
 _STORAGE_CAPTION_WORDS = {
@@ -200,6 +235,127 @@ def _has_complete_preceding_composition(infos: list[LineInfo]) -> bool:
     )
 
 
+_INSPECTED_PRODUCT_CODE = re.compile(r"[a-z]{2,8}[0-9][a-z0-9]{2,11}(?P<stamp> 검사필)?")
+_INSPECTED_PRODUCT_GROUPS = re.compile(r"[0-9]{1,3}[ \t]+[0-9]{1,3}[ \t]+[0-9]{1,3}")
+_INSPECTED_PRODUCT_SPLIT_HEAD = re.compile(r"[0-9]{1,3}[ \t]+[0-9]{1,3}")
+_INSPECTED_PRODUCT_SPLIT_STAMP = re.compile(r"([0-9]{1,3})[ \t]+검사필")
+_MANUFACTURE_MONTH_ROW = re.compile(
+    r"제조[ \t]*년[ \t]*월[ \t]*:[ \t]*(?:19|20)[0-9]{2}[./-](?:0?[1-9]|1[0-2])"
+)
+
+
+def _mark_inspected_product_identifiers(infos: list[LineInfo]) -> list[LineInfo]:
+    """Fence a whole product/inspection/date block after complete content.
+
+    Bare numeric groups alone are not identifiers. Require a readable product
+    code, inspection stamp and labelled manufacture month, in adjacent rows
+    of the same part. Preserve plausible ratio columns and every extra token.
+    """
+    adjusted = list(infos)
+    for position in range(1, len(infos) - 1):
+        current, code_row = infos[position], infos[position - 1]
+        code = _INSPECTED_PRODUCT_CODE.fullmatch(code_row.normalized)
+        if (code is None or code_row.materials or code_row.numbers
+                or code_row.invalid_evidence or code_row.unresolved_materials
+                or current.materials or current.unresolved_materials or current.marker_part):
+            continue
+        targets = [position]
+        if _INSPECTED_PRODUCT_GROUPS.fullmatch(current.normalized):
+            groups = re.findall(r"[0-9]+", current.normalized)
+            date_position = position + 1 if code.group("stamp") else position + 2
+            if not code.group("stamp") and infos[position + 1].normalized != "검사필":
+                continue
+        else:
+            # A layout row may wrap the last group beside the inspection stamp.
+            # Account for the same three complete groups without dropping text.
+            stamp = _INSPECTED_PRODUCT_SPLIT_STAMP.fullmatch(infos[position + 1].normalized)
+            if (code.group("stamp") or stamp is None
+                    or not _INSPECTED_PRODUCT_SPLIT_HEAD.fullmatch(current.normalized)):
+                continue
+            groups = re.findall(r"[0-9]+", current.normalized) + [stamp.group(1)]
+            targets.append(position + 1)
+            date_position = position + 2
+        if sum(map(len, groups)) < 7 or sum(map(int, groups)) <= 100:
+            continue
+        if (date_position >= len(infos)
+                or not _MANUFACTURE_MONTH_ROW.fullmatch(infos[date_position].normalized)):
+            continue
+        block = infos[position - 1:date_position + 1]
+        if (any(row.part != current.part or row.marker_part is not None for row in block)
+                or any(right.index != left.index + 1 for left, right in zip(block, block[1:]))
+                or not _has_complete_preceding_composition(infos[:position - 1])):
+            continue
+        for target in targets:
+            # The explicit stamp/date block is metadata, not an inferred size.
+            adjusted[target] = replace(
+                infos[target], numbers=(), invalid_evidence=False, is_metadata=True,
+            )
+    return adjusted
+
+
+_WASH_TEMPERATURE_CAPTIONS = {
+    "hand wash", "hand wash cold", "cold hand wash", "hand wash warm",
+    "warm hand wash", "machine wash", "machine wash cold", "machine wash warm",
+    "wash separately", "손세탁", "찬물 손세탁", "냉수 손세탁", "미온수 손세탁",
+    "기계세탁", "물세탁", "별도 세탁", "분리 세탁", "단독 세탁", "手洗", "手洗い",
+}
+_NEUTRAL_DETERGENT_CAPTIONS = {"중성", "중성세제", "중성 세제", "neutral", "neutral detergent"}
+_SPLIT_WASH_CONTEXT = set(_CARE_PHRASES) | _WASH_TEMPERATURE_CAPTIONS | _NEUTRAL_DETERGENT_CAPTIONS
+
+
+def _mark_split_wash_temperatures(infos: list[LineInfo]) -> list[LineInfo]:
+    """Fence a literal temperature with complete content and exact care rows.
+
+    Whole-row matches preserve unknown words, numbers and uncertainty signs.
+    Neither a different part nor unrelated metadata can supply the content.
+    """
+
+    adjusted = list(infos)
+    for position, info in enumerate(infos):
+        if info.is_metadata or info.normalized not in {"30", "40", "50", "60", "70", "95"}:
+            continue
+        previous = infos[position - 1] if position else None
+        following = infos[position + 1:position + 3]
+        preceded_by_wash = previous is not None and previous.normalized in _WASH_TEMPERATURE_CAPTIONS
+        followed_by_wash = (
+            len(following) == 2
+            and following[0].normalized in _NEUTRAL_DETERGENT_CAPTIONS
+            and following[1].normalized in _WASH_TEMPERATURE_CAPTIONS
+            and all(row.part == info.part for row in following)
+        )
+        if not (preceded_by_wash or followed_by_wash):
+            continue
+        # A run of bare values may be a ratio column, even below a care word.
+        if following:
+            next_row = following[0]
+            # Earlier rules may already have cleared a second temperature.
+            # Inspect its literal text as well as the parsed numeric fields.
+            if (not next_row.materials and re.search(r"\d|%", next_row.normalized)):
+                continue
+            if (
+                not next_row.is_metadata and next_row.marker_part is None
+                and not next_row.materials and next_row.normalized not in _SPLIT_WASH_CONTEXT
+            ):
+                continue
+        boundary = position
+        while boundary:
+            row = infos[boundary - 1]
+            if (
+                row.part != info.part or row.marker_part is not None
+                or row.materials or row.numbers or row.unresolved_materials or row.invalid_evidence
+                or row.normalized not in _SPLIT_WASH_CONTEXT
+            ):
+                break
+            boundary -= 1
+        if (
+            not boundary or infos[boundary - 1].part != info.part
+            or not _has_complete_preceding_composition(infos[:boundary])
+        ):
+            continue
+        adjusted[position] = replace(info, numbers=(), is_metadata=True, inferred_metadata=True)
+    return adjusted
+
+
 def _is_non_composition_numeric_row(
     line: str, previous: LineInfo | None, following: str,
     *, preceding_infos: list[LineInfo] | None = None,
@@ -216,6 +372,8 @@ def _is_non_composition_numeric_row(
             and "%" not in following
             and _contains_only_known_phrases(following, set(_CARE_PHRASES))
             and _has_complete_preceding_composition(preceding_infos or [])):
+        return True
+    if _is_separated_numeric_identifier(line):
         return True
     if _NUMERIC_IDENTIFIER_ROW_PATTERN.fullmatch(line):
         groups = re.findall(r"[0-9]+", line)
@@ -586,6 +744,7 @@ def _build_line_analysis(text: str) -> LineAnalysis:
     current_part = "generic"
     pending_metadata_kind = None
     original_prepared = _split_part_markers(normalize_text(text))
+    original_prepared = join_recycled_property_rows(original_prepared)
     prepared = _split_part_markers(_prepare_multilingual_rows(original_prepared))
     restored_rows = _multilingual_restored_row_indices(original_prepared, prepared)
     unproven_rewrite = restored_rows is None
@@ -603,6 +762,7 @@ def _build_line_analysis(text: str) -> LineAnalysis:
     if translations.damaged_rows:
         translation_warnings.extend(("damaged_translation_fragment", "unread_translation_rows"))
     raw_lines = translations.text.split("\n")
+    unclosed_recycled_rows = unclosed_recycled_property_rows(translations.text)
     content_indices = [i for i, raw in enumerate(raw_lines) if normalize_text(raw)]
     last_content_index = content_indices[-1] if content_indices else -1
     following_lines = {
@@ -658,7 +818,8 @@ def _build_line_analysis(text: str) -> LineAnalysis:
         composition_text = masked_caption
         # Heading indices name separate fabrics; they are not fiber ratios.
         composition_text = normalize_text(_NUMBERED_OUTER_MARKER_PATTERN.sub(
-            lambda match: re.sub(r"[12]", " ", match.group()), composition_text,
+            lambda match: re.sub(r"[12]", " ", match.group())
+            if is_part_marker_match(composition_text, match) else match.group(), composition_text,
         ))
         materials = tuple(extract_materials(composition_text))
         number_only_line = not materials and not _TOKEN_PATTERN.search(composition_text)
@@ -666,6 +827,7 @@ def _build_line_analysis(text: str) -> LineAnalysis:
             composition_text, allow_plain_numbers=bool(materials) or number_only_line,
         )
         invalid_evidence |= index in translations.rejected_rows
+        invalid_evidence |= index in unclosed_recycled_rows
         invalid_evidence |= bool(_IMITATION_LEATHER_PATTERN.search(composition_text))
         invalid_evidence |= storage_caption_invalid
         has_arabic_material = bool(materials) and _has_registered_arabic_material(composition_text)
@@ -703,8 +865,22 @@ def _build_line_analysis(text: str) -> LineAnalysis:
             marker_part=marker_part, invalid_evidence=invalid_evidence,
             is_metadata=is_metadata, inferred_metadata=inferred_metadata,
         ))
+    # A newly readable property row cannot hide an explicit UNKNOWN/NOT
+    # declaration on a separate row of the same part. Ordinary opaque label
+    # metadata is left to its existing rules; no brand vocabulary is guessed.
+    uncertain_parts = {info.part for info in infos if not info.is_metadata
+                       and _RECYCLED_UNCERTAIN_CONTEXT.fullmatch(info.normalized)}
+    if uncertain_parts:
+        infos = [replace(info, invalid_evidence=True)
+                 if info.part in uncertain_parts and info.materials
+                 and recycled_composition_view(info.normalized) != info.normalized
+                 else info for info in infos]
     return LineAnalysis(
-        infos=tuple(_mark_split_imitation_leather(_apply_trailing_part_markers(_mark_leading_garment_size(infos)))),
+        infos=tuple(_mark_split_imitation_leather(_mark_split_wash_temperatures(
+            _mark_inspected_product_identifiers(
+                _apply_trailing_part_markers(_mark_leading_garment_size(infos)),
+            ),
+        ))),
         restored_indices=frozenset(restored_rows),
         translation_indices=frozenset(translations.recovered_rows if not unproven_rewrite else ()),
         translation_warnings=tuple(translation_warnings),
@@ -1725,6 +1901,13 @@ _METADATA_VALUE_PATTERNS = {
         r"[0-9]+(?:[.,][0-9]+)?\s*%(?:\s*(?:이하|미만|max(?:imum)?))?"
     ),
 }
+_CONTACT_HEADER_PATTERN = re.compile(
+    r"[•·*]?[ \t]*(?:고객[ \t]*상담실|소비자[ \t]*상담실|전화[ \t]*번호|tel|telephone)"
+    r"[ \t]*:[ \t]*(?P<value>.*)"
+)
+_CONTACT_VALUE_PATTERN = re.compile(
+    r"(?:0[0-9]{1,3}|\+[0-9]{1,3})[ \t]*-[ \t]*[0-9][0-9()+/\-~^ \t]*"
+)
 # 한국 의류 호칭에서 흔한 5단위 값만 무표기 사이즈 후보로 인정한다.
 _UNLABELED_KOREAN_GARMENT_SIZE_VALUES = {
     str(value) for value in range(80, 125, 5)
@@ -1773,7 +1956,7 @@ def _read_numbers(
     explicit_matches = [
         match for match in matches if match.group().strip().endswith("%")
     ]
-    invalid = False
+    invalid = has_unbound_recycled_ratio(normalized)
 
     def parse_match(
         match: re.Match[str],
@@ -1950,6 +2133,27 @@ def _classify_metadata_line(
     line: str, pending_kind: str | None
 ) -> tuple[bool, str | None]:
     """명시한 항목의 값만 제외하며, 헤더의 대기 상태는 바로 다음 줄에만 적용한다."""
+    # Preserve the provider text, including damaged phone digits. Only a
+    # labelled contact field and at most one immediately adjacent phone row
+    # are metadata; a percent, fiber name, or unlabelled number is not.
+    contact = _CONTACT_HEADER_PATTERN.fullmatch(line)
+    if contact:
+        value = contact.group("value")
+        if not value or _CONTACT_VALUE_PATTERN.fullmatch(value):
+            return True, "contact"
+        return False, None
+    if pending_kind == "contact":
+        if _CONTACT_VALUE_PATTERN.fullmatch(line):
+            return True, None
+        pending_kind = None
+    # This explicitly labelled product category supplies no fiber ratio.
+    # Match the whole caption so a percentage, other part or unknown word
+    # cannot be hidden by a broad product-header exclusion.
+    if re.fullmatch(
+        r"제품[ \t]*구분[ \t]*:[ \t]*(?:솜털[ \t]*(?:\([ \t]*다운[ \t]*\)[ \t]*)?|다운[ \t]*)제품",
+        line,
+    ):
+        return True, None
     # A standalone currency amount above 100 cannot be a fiber percentage.
     # Keep signed amounts, percent signs and any attached material/text out.
     amount = re.fullmatch(r"[$€£₩]\s*([0-9]+(?:\.[0-9]{1,2})?)", line)
