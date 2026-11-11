@@ -62,10 +62,15 @@ try:
     # 글자만 돌려주는 run_ocr 는 후보 충돌·짝 없는 비율 같은 근거를 버리므로, 근거를 담은
     # OcrResult 를 받아 analyze_ocr_result 로 넘깁니다(AI 담당 기준 커밋 1648c38, DECISIONS 210).
     from apps.text.ocr_text import run_ocr_with_metadata as run_ocr
-    from apps.text.ocr_errors import OcrTimeoutError
+    from apps.text.ocr_errors import (
+        ImageTooLargeError, InvalidImageError, OcrTimeoutError, UnsupportedImageError,
+    )
 except Exception:
     run_ocr = None
+    ImageTooLargeError = None
+    InvalidImageError = None
     OcrTimeoutError = None
+    UnsupportedImageError = None
 
 try:
     from apps.text.parse_label import parse_label
@@ -2440,6 +2445,24 @@ def extract_label_input(
             credential_path=str(credential_path) if credential_path.exists() else "",
         )
     except Exception as exc:
+        if InvalidImageError is not None and isinstance(exc, InvalidImageError):
+            status_code, error_code, message = (
+                400, "INVALID_IMAGE", "이미지 파일이 올바르지 않습니다. 다른 사진으로 다시 시도해 주세요.",
+            )
+            # 크기·형식 예외도 InvalidImageError의 하위형이므로 먼저 구분합니다.
+            if ImageTooLargeError is not None and isinstance(exc, ImageTooLargeError):
+                status_code, error_code, message = (
+                    413, "PAYLOAD_TOO_LARGE", "이미지 용량 또는 해상도가 너무 큽니다. 작은 사진으로 다시 시도해 주세요.",
+                )
+            elif UnsupportedImageError is not None and isinstance(exc, UnsupportedImageError):
+                status_code, error_code, message = (
+                    415, "UNSUPPORTED_IMAGE_FORMAT", "JPG, PNG, WEBP 이미지 파일만 지원합니다.",
+                )
+            print(f"[scan] 이미지 입력 거절: {type(exc).__name__}", file=sys.stderr)
+            raise HTTPException(
+                status_code=status_code,
+                detail=build_error_detail(message, error_code),
+            ) from exc
         # 예외 원문에는 서버 경로·계정 식별자 등이 섞일 수 있어
         # 서버 로그에만 남기고 클라이언트에는 고정 메시지만 돌려줍니다.
         # 설정·한도·일시 장애 같은 원인은 예외 이름으로 이 로그에서 구분합니다(DECISIONS 211).

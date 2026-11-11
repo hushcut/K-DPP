@@ -48,6 +48,25 @@ def test_text_runtime_bundle_imports_without_repository_source(tmp_path) -> None
             "-c",
             (
                 "from apps.service.main import app; "
+                "from apps.text.care_cell_geometry import vertical_care_cell; "
+                "from apps.text.composition_region_recovery import recover_composition_region; "
+                "from apps.text.main_material_recovery import recover_main_material_layout; "
+                "from apps.text.multilingual_layout_recovery import recover_multilingual_outer_layout; "
+                "from apps.text.ocr_row_search import physical_row_options; "
+                "from apps.text.single_row_metadata_recovery import recover_fit_origin_layout; "
+                "from apps.text.parse_label import parse_label; "
+                "parsed = parse_label('MAIN MATERIAL: 100% POLYESTER (100% RECYCLED)'); "
+                "assert parsed['status'] == 'success'; "
+                "assert parsed['selected_part'] == 'outer'; "
+                "assert parsed['materials'] == {'polyester': 100}; "
+                "from apps.text.ocr_text import OcrPayload, _build_payload_candidates, _assess_candidates; "
+                "from apps.text.ocr_layout import OcrWord; "
+                "words = (OcrWord('COTTON', 10, 10, 110, 30, ((10,10),(110,10),(110,30),(10,30)), 0), "
+                "OcrWord('100%', 150, 10, 190, 30, ((150,10),(190,10),(190,30),(150,30)), 0)); "
+                "payload = OcrPayload('COTTON 100%', layout_text='COTTON  100%', layout_words=words); "
+                "candidates = _build_payload_candidates('original', payload, image_key='one-photo', "
+                "image_variant_key='one-response', image_transform=(1,0,0,0,1,0), image_region=(0,0,300,100)); "
+                "assert _assess_candidates(candidates).status == 'success'; "
                 "paths = app.openapi()['paths']; "
                 "assert set(paths) == {'/health', '/v1/parse-text', '/v1/analyze-label'}; "
                 "import sys; "
@@ -60,6 +79,8 @@ def test_text_runtime_bundle_imports_without_repository_source(tmp_path) -> None
         check=False,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
     assert completed.returncode == 0, completed.stderr

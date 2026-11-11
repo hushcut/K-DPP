@@ -11,7 +11,9 @@ from collections import Counter
 from typing import TYPE_CHECKING
 
 from apps.text.composition_candidates import equivalent_composition
-from apps.text.material_extraction import PART_PATTERNS, _material_evidence, normalize_text
+from apps.text.material_extraction import (
+    PART_PATTERNS, _material_evidence, normalize_text, recycled_composition_view,
+)
 from apps.text.rules import EQUIVALENT_MATERIALS
 
 if TYPE_CHECKING:
@@ -55,10 +57,11 @@ def literal_yarn_table_over_failed_layout(raw: OcrCandidate, layout: OcrCandidat
 def row_has_explicit_pairs(info) -> bool:
     """A row's fibers and percentages alternate, each fiber beside its own ratio."""
 
-    if not info.explicit_percent:
+    if not info.explicit_percent or not info.materials:
         return False
-    materials = _material_evidence(info.normalized)
-    numbers = list(re.finditer(r"\d+(?:[.,]\d+)?\s*%", info.normalized))
+    view = recycled_composition_view(info.normalized)
+    materials = _material_evidence(view)
+    numbers = list(re.finditer(r"\d+(?:[.,]\d+)?\s*%", view))
     order = sorted(
         [(item.start, "material") for item in materials]
         + [(item.start(), "ratio") for item in numbers]
