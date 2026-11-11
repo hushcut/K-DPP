@@ -31,6 +31,7 @@ def run_with_payloads(monkeypatch, payloads):
 
 @pytest.mark.parametrize("text", [
     "쉘: 100% 면/장식 제외",
+    "셸: 100% 면/장식 제외",
     "シェル: 100% 綿/コットン/装飾部分を除く",
     "몸체: 100% 면",
     "面料:100%棉/不包括裝飾部分",
@@ -48,12 +49,24 @@ def test_written_shell_headings_and_exclusions_keep_outer_composition(text):
     ("주머니감\n미쉘\n면 100%", "pocket"),
     ("소프트쉘 자켓\n폴리에스터 92%\n스판덱스 8%", "generic"),
     ("면 100%\n(주)미쉘코리아", "generic"),
+    ("안감\n소프트셸 재킷\n면 95%\n스판덱스 5%", "lining"),
+    ("면 100%\n(주)미셸코리아", "generic"),
     ("ソフトシェル ジャケット\n綿 100%", "generic"),
 ])
 def test_shell_alias_inside_a_longer_word_does_not_name_the_outer_part(text, part):
     result = parse_label(text)
     assert result["status"] == "success", result
     assert result["selected_part"] == part
+
+
+def test_korean_standard_shell_spelling_with_lining_and_filling_keeps_outer():
+    # 11-10 실사진(랄프로렌 패딩): '셸' 을 몰라 겉감 줄을 버리고 라벨 전체가 composition_not_found 였다.
+    result = parse_label(
+        "셸: 100% 나일론 (재생)\n안감: 100% 나일론 (재생)\n필링: 100% 폴리에스터 (재생)\n장식 제외"
+    )
+    assert result["status"] == "success", result
+    assert result["selected_part"] == "outer"
+    assert result["materials"] == {"nylon": 100}
 
 
 def test_product_name_with_shell_alias_cannot_separate_a_second_composition():
